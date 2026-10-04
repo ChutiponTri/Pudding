@@ -85,7 +85,7 @@
   "courses": {
     "title": "Course Structure & Standard Indicators",
     "subtitle": "Group sections and assignments by parent course, with co-teaching and research support",
-    "create_course_modal_title": "Create New Course",
+    "create_course_modal_title": "New Course",
     "create_course_btn": "Create Course",
     "delete_course": "Delete Course",
     "delete_course_confirm": "Are you sure you want to delete this course? All associated classrooms and assignments will be removed.",

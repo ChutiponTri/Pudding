@@ -57,7 +57,7 @@ export const TeacherLoggedOutView: React.FC = () => {
               className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
             >
               <UserPlus className="w-4 h-4 text-orange-600" />
-              <span>{language === "th" ? "ลงทะเบียนบัญชีใหม่" : "Create Account"}</span>
+              <span>{language === "th" ? "สมัครสมาชิก" : "Create Account"}</span>
             </Link>
 
             <Link
