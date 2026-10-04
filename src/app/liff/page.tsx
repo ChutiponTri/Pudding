@@ -1228,6 +1228,7 @@ export default function LiffStudentPage() {
               </label>
               <input
                 type="text"
+                inputMode="numeric"
                 autoFocus
                 value={inputStudentId}
                 onChange={(e) => setInputStudentId(e.target.value.trim())}

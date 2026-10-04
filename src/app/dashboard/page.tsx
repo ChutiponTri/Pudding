@@ -612,7 +612,7 @@ export default function DashboardPage() {
           {/* 3. Create Assignment / Exam CTA */}
           <Link
             href="/creation"
-            className="group px-6 py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white shadow-xl shadow-black/30 hover:shadow-2xl hover:shadow-black/40 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-slate-800 text-left"
+            className="group px-3 py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white shadow-xl shadow-black/30 hover:shadow-2xl hover:shadow-black/40 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-slate-800 text-left"
           >
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
               <Sparkles className="w-5 h-5" />
