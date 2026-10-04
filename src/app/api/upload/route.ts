@@ -11,6 +11,11 @@ const ALLOWED_MIME_TYPES = [
   'image/png',
   'image/webp',
   'image/gif',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg',
+  'audio/mpeg',
+  'audio/wav',
 ];
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB

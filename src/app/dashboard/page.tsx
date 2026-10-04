@@ -1,4 +1,5 @@
 'use client';
+import { useUser } from '@clerk/nextjs';
 
 import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
@@ -54,6 +55,7 @@ import {
 
 export default function DashboardPage() {
   const { t, language } = useLanguage();
+  const { user: clerkUser } = useUser();
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
@@ -509,7 +511,7 @@ export default function DashboardPage() {
             <span>Pudding Learning Intelligence</span>
           </div>
           <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-950">
-            {t('dashboard.welcome')}, {t('nav.demo_teacher')}
+            {t('dashboard.welcome')}, {clerkUser?.fullName || clerkUser?.firstName || t('nav.demo_teacher')}
           </h1>
           <p className="text-slate-900/90 text-sm max-w-xl font-medium">
             {t('dashboard.overview_subtitle')}

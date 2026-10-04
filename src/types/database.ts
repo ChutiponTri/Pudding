@@ -2,6 +2,7 @@ export type UserRole = 'teacher' | 'student' | 'admin';
 
 export interface User {
   id: string;
+  clerk_id?: string;
   line_uid?: string;
   student_id?: string;
   first_name: string;
@@ -9,6 +10,7 @@ export interface User {
   role: UserRole;
   avatar_url?: string;
   email?: string;
+  is_line_connected?: boolean;
 }
 
 export type TeacherRole = 'primary' | 'assistant';

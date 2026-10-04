@@ -1,6 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useUser, UserButton, Show } from '@clerk/nextjs';
+import { dataService } from '@/lib/supabase/dataService';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -13,12 +15,31 @@ import {
   PlusCircle,
   FileCheck2,
   Bell,
+  LogIn,
+  Smartphone,
 } from 'lucide-react';
 import { mockTeacher } from '@/lib/supabase/mockData';
 
 export const Navbar: React.FC = () => {
   const pathname = usePathname();
   const { t, language } = useLanguage();
+  const { user, isSignedIn, isLoaded } = useUser();
+
+  useEffect(() => {
+    if (isSignedIn && user) {
+      dataService.syncClerkUser({
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        imageUrl: user.imageUrl,
+        email: user.primaryEmailAddress?.emailAddress,
+      }).catch((err: unknown) => console.error("Error syncing clerk user:", err));
+    }
+  }, [isSignedIn, user]);
+
+  if (pathname.startsWith('/liff')) {
+    return null;
+  }
 
   const navItems = [
     {
@@ -103,22 +124,38 @@ export const Navbar: React.FC = () => {
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-900 animate-pulse" />
           </button>
 
-          {/* Teacher Profile Avatar */}
-          <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200 dark:border-slate-800">
-            <img
-              src={mockTeacher.avatar_url}
-              alt={mockTeacher.first_name}
-              className="w-8 h-8 rounded-full object-cover ring-2 ring-amber-500/30"
-            />
-            <div className="hidden lg:block text-left">
-              <span className="block text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
-                {t('nav.demo_teacher')}
-              </span>
-              <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
-                {t('nav.teacher_role')}
-              </span>
+          {/* Teacher Profile Avatar / Clerk Authentication */}
+          <Show when={"signed-in"}>
+            <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200 dark:border-slate-800">
+              <UserButton
+                appearance={{
+                  elements: {
+                    userButtonAvatarBox: "w-8 h-8 ring-2 ring-amber-500/40",
+                  },
+                }}
+              />
+              <div className="hidden lg:block text-left">
+                <span className="block text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
+                  {user?.fullName || user?.firstName || t("nav.demo_teacher")}
+                </span>
+                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                  {t("nav.teacher_role")}
+                </span>
+              </div>
             </div>
-          </div>
+          </Show>
+
+          <Show when={"signed-out"}>
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
+              <Link
+                href="/sign-in"
+                className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>{language === "th" ? "เข้าสู่ระบบ" : "Sign In"}</span>
+              </Link>
+            </div>
+          </Show>
         </div>
       </div>
     </header>

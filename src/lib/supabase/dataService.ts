@@ -49,6 +49,86 @@ function setStored<T>(key: string, value: T): void {
 }
 
 export const dataService = {
+  // ==========================================
+  // CLERK AUTH USER SYNC
+  // ==========================================
+  async syncClerkUser(clerkUser: {
+    id: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    imageUrl?: string | null;
+    email?: string | null;
+  }): Promise<User> {
+    const defaultUser: User = {
+      id: clerkUser.id,
+      clerk_id: clerkUser.id,
+      first_name: clerkUser.firstName || "คุณครู",
+      last_name: clerkUser.lastName || "",
+      avatar_url: clerkUser.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150",
+      email: clerkUser.email || "",
+      role: "teacher",
+    };
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        let existing = null;
+        try {
+          const { data, error } = await supabase
+            .from("users")
+            .select("*")
+            .or(`clerk_id.eq.${clerkUser.id},email.eq.${clerkUser.email || "non-existent"}`)
+            .maybeSingle();
+          if (!error) existing = data;
+        } catch {
+          // If clerk_id column not yet migrated, fallback to email / id
+          const { data } = await supabase
+            .from("users")
+            .select("*")
+            .or(`id.eq.${clerkUser.id},email.eq.${clerkUser.email || "non-existent"}`)
+            .maybeSingle();
+          existing = data;
+        }
+
+        if (existing) {
+          const updated = {
+            clerk_id: clerkUser.id,
+            first_name: clerkUser.firstName || existing.first_name,
+            last_name: clerkUser.lastName || existing.last_name,
+            avatar_url: clerkUser.imageUrl || existing.avatar_url,
+            email: clerkUser.email || existing.email,
+          };
+          const { data } = await supabase
+            .from("users")
+            .update(updated)
+            .eq("id", existing.id)
+            .select()
+            .single();
+          return (data as User) || { ...existing, ...updated };
+        } else {
+          const { data } = await supabase
+            .from("users")
+            .insert({
+              id: clerkUser.id,
+              clerk_id: clerkUser.id,
+              first_name: defaultUser.first_name,
+              last_name: defaultUser.last_name,
+              avatar_url: defaultUser.avatar_url,
+              email: defaultUser.email,
+              role: "teacher",
+            })
+            .select()
+            .single();
+          return (data as User) || defaultUser;
+        }
+      } catch (err) {
+        console.error("Error syncing Clerk user to Supabase:", err);
+      }
+    }
+
+    setStored("clerk_user_" + clerkUser.id, defaultUser);
+    return defaultUser;
+  },
   // ==============================================================================
   // COURSES
   // ==============================================================================
@@ -350,6 +430,11 @@ export const dataService = {
     return getStoredOr<Assignment[]>('assignments', mockAssignments);
   },
 
+  async getQuestions(assignmentId: string): Promise<Question[]> {
+    const { questions } = await this.getAssignmentById(assignmentId);
+    return questions;
+  },
+
   async getAssignmentById(id: string): Promise<{ assignment: Assignment | null; questions: Question[] }> {
     if (isSupabaseConfigured) {
       const supabase = createClient();
@@ -433,6 +518,122 @@ export const dataService = {
   // ==============================================================================
   // SUBMISSIONS
   // ==============================================================================
+  async submitStudentWork(payload: {
+    assignment_id: string;
+    student_id: string;
+    student_name: string;
+    answers: Array<{
+      question_id: string;
+      answer_text?: string;
+      file_url?: string;
+    }>;
+    antiCheating: {
+      tab_switch_count: number;
+      away_time_seconds: number;
+      events: Array<{
+        event_type: "tab_hidden" | "window_blur" | "tab_visible" | "window_focus";
+        timestamp: string;
+        duration_seconds: number;
+        details?: string;
+      }>;
+    };
+  }): Promise<Submission> {
+    const subId = `sub-${payload.assignment_id}-${payload.student_id}`;
+    const isSuspicious = payload.antiCheating.tab_switch_count >= 3 || payload.antiCheating.away_time_seconds >= 30;
+
+    const submission: Submission = {
+      id: subId,
+      assignment_id: payload.assignment_id,
+      student_id: payload.student_id,
+      status: "submitted",
+      started_at: new Date(Date.now() - (payload.antiCheating.away_time_seconds * 1000 + 120000)).toISOString(),
+      submitted_at: new Date().toISOString(),
+      time_spent_seconds: 120 + payload.antiCheating.away_time_seconds,
+      tab_switch_count: payload.antiCheating.tab_switch_count,
+      total_time_away_seconds: payload.antiCheating.away_time_seconds,
+      is_flagged_suspicious: isSuspicious,
+      total_score: 0,
+    };
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase.from("submissions").upsert({
+          id: submission.id,
+          assignment_id: submission.assignment_id,
+          student_id: submission.student_id,
+          status: submission.status,
+          started_at: submission.started_at,
+          submitted_at: submission.submitted_at,
+          time_spent_seconds: submission.time_spent_seconds,
+          tab_switch_count: submission.tab_switch_count,
+          total_time_away_seconds: submission.total_time_away_seconds,
+          is_flagged_suspicious: submission.is_flagged_suspicious,
+          total_score: submission.total_score,
+        });
+
+        for (const ans of payload.answers) {
+          await supabase.from("submission_answers").upsert({
+            id: `ans-${subId}-${ans.question_id}`,
+            submission_id: subId,
+            question_id: ans.question_id,
+            text_answer: ans.answer_text || "",
+            file_url: ans.file_url || null,
+          });
+        }
+
+        for (let i = 0; i < payload.antiCheating.events.length; i++) {
+          const evt = payload.antiCheating.events[i];
+          await supabase.from("submission_events").insert({
+            id: `evt-${subId}-${Date.now()}-${i}`,
+            submission_id: subId,
+            event_type: evt.event_type,
+            away_duration_seconds: evt.duration_seconds,
+            created_at: evt.timestamp,
+            details: evt.details || null,
+          });
+        }
+      } catch (err) {
+        console.error("Error submitting to Supabase:", err);
+      }
+    }
+
+    const submissions = getStoredOr<Submission[]>("submissions", mockSubmissions);
+    const existingIdx = submissions.findIndex((s) => s.id === subId);
+    if (existingIdx !== -1) {
+      submissions[existingIdx] = submission;
+    } else {
+      submissions.push(submission);
+    }
+    setStored("submissions", submissions);
+
+    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>("submission_answers", mockSubmissionAnswers);
+    allAnswers[subId] = allAnswers[subId] || {};
+    for (const ans of payload.answers) {
+      allAnswers[subId][ans.question_id] = {
+        id: `ans-${subId}-${ans.question_id}`,
+        submission_id: subId,
+        question_id: ans.question_id,
+        text_answer: ans.answer_text,
+        file_url: ans.file_url,
+      };
+    }
+    setStored("submission_answers", allAnswers);
+
+    const allEvents = getStoredOr<Record<string, SubmissionEvent[]>>("submission_events", mockSubmissionEvents);
+    allEvents[subId] = payload.antiCheating.events.map((evt, idx) => ({
+      id: `evt-${subId}-${Date.now()}-${idx}`,
+      submission_id: subId,
+      event_type: evt.event_type,
+      away_duration_seconds: evt.duration_seconds,
+      created_at: evt.timestamp,
+      details: evt.details,
+    }));
+    setStored("submission_events", allEvents);
+
+    return submission;
+  },
+
   async getSubmissions(assignmentId: string): Promise<Submission[]> {
     if (isSupabaseConfigured) {
       const supabase = createClient();

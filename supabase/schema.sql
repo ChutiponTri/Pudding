@@ -13,6 +13,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.users (
   id TEXT PRIMARY KEY,
+  clerk_id TEXT UNIQUE,                       -- Clerk User ID (e.g. user_2xxx...)
   line_uid TEXT UNIQUE,                       -- LINE User ID from LINE LIFF (e.g. U1234567890abcdef...)
   student_id TEXT,                            -- Student identification number (e.g. 54101)
   first_name TEXT NOT NULL,
@@ -26,6 +27,8 @@ CREATE TABLE IF NOT EXISTS public.users (
 );
 
 -- Index for fast LINE LIFF lookup
+ALTER TABLE IF EXISTS public.users ADD COLUMN IF NOT EXISTS clerk_id TEXT UNIQUE;
+CREATE INDEX IF NOT EXISTS idx_users_clerk_id ON public.users(clerk_id);
 CREATE INDEX IF NOT EXISTS idx_users_line_uid ON public.users(line_uid);
 CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
 
