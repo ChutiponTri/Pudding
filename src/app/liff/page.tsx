@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import {
-  Smartphone,
   CheckCircle2,
   Clock,
   Mic,
@@ -10,40 +9,44 @@ import {
   Upload,
   ChevronRight,
   ArrowLeft,
-  Sparkles,
   ShieldCheck,
   ShieldAlert,
   Send,
   PlusCircle,
   BookOpen,
+  LogOut,
+  LogIn,
+  AlertCircle,
+  Loader2,
+  Sparkles,
 } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 
-// Demo students for preview outside LINE browser
-const DEMO_STUDENTS = [
-  { id: "54101", name: "กัญญาดา สุขใจ", line_uid: "U1234567890abcdef1", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120" },
-  { id: "54102", name: "ณภัทร วงศ์ษา", line_uid: "U1234567890abcdef2", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=120" },
-  { id: "54103", name: "วิภาวี มงคล", line_uid: "U1234567890abcdef3", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=120" },
-];
+interface RealLineStudent {
+  id: string; // LINE userId
+  name: string; // LINE displayName
+  line_uid: string;
+  avatar: string;
+}
 
 export default function LiffStudentPage() {
-  // LINE LIFF State
+  // LINE LIFF & Auth State
   const [liffId, setLiffId] = useState<string>("");
-  const [isLiffReady, setIsLiffReady] = useState(false);
+  const [authStatus, setAuthStatus] = useState<"loading" | "unauthenticated" | "authenticated" | "error">("loading");
+  const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
   const [isInLineClient, setIsInLineClient] = useState(false);
-  const [isRealLineUser, setIsRealLineUser] = useState(false);
   const [liffInstance, setLiffInstance] = useState<any>(null);
-  const [currentStudent, setCurrentStudent] = useState(DEMO_STUDENTS[0]);
+  const [currentStudent, setCurrentStudent] = useState<RealLineStudent | null>(null);
 
   // Data State
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [selectedClassroom, setSelectedClassroom] = useState<Classroom | null>(null);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingData, setIsLoadingData] = useState(false);
 
-  // Active Taking State
+  // Active Assignment/Exam State
   const [activeAssignment, setActiveAssignment] = useState<Assignment | null>(null);
   const [activeQuestions, setActiveQuestions] = useState<Question[]>([]);
   const [studentAnswers, setStudentAnswers] = useState<Record<string, { text: string; file_url?: string }>>({});
@@ -85,74 +88,129 @@ export default function LiffStudentPage() {
     answers: Record<string, SubmissionAnswer>;
   } | null>(null);
 
-  // 1. Initialize LIFF SDK
+  // 1. Initialize LIFF SDK & Enforce Authentication
   useEffect(() => {
+    let isMounted = true;
+
     async function initLiff() {
+      setAuthStatus("loading");
+      setAuthErrorMessage(null);
+
       try {
         const res = await fetch("/api/liff/config");
         const config = await res.json();
         const id = config.liffId || process.env.NEXT_PUBLIC_LINE_LIFF_ID || "";
+        
+        if (!isMounted) return;
         setLiffId(id);
 
-        if (id) {
-          const liff = (await import("@line/liff")).default;
-          await liff.init({ liffId: id });
-          setLiffInstance(liff);
-          const inClient = liff.isInClient();
-          setIsInLineClient(inClient);
-
-          if (!liff.isLoggedIn()) {
-            if (inClient) {
-              liff.login();
-            }
-          } else {
-            const profile = await liff.getProfile();
-            const realLineStudent = {
-              id: profile.userId,
-              name: profile.displayName,
-              line_uid: profile.userId,
-              avatar: profile.pictureUrl || DEMO_STUDENTS[0].avatar,
-            };
-            setCurrentStudent(realLineStudent);
-            setIsRealLineUser(true);
-
-            // Real sync of LINE profile into Supabase
-            await dataService.syncLineStudentUser({
-              line_uid: profile.userId,
-              name: profile.displayName,
-              avatar: profile.pictureUrl,
-              student_id: profile.userId.substring(0, 8),
-            });
-          }
+        if (!id) {
+          throw new Error("ไม่พบ LINE_LIFF_ID ในระบบ กรุณาตรวจสอบการตั้งค่า .env");
         }
-      } catch (err) {
-        console.warn("LIFF initialization fallback to simulation mode:", err);
-      } finally {
-        setIsLiffReady(true);
+
+        const liff = (await import("@line/liff")).default;
+        await liff.init({ liffId: id });
+        
+        if (!isMounted) return;
+        setLiffInstance(liff);
+
+        const inClient = liff.isInClient();
+        setIsInLineClient(inClient);
+
+        // Check if user is logged in
+        if (!liff.isLoggedIn()) {
+          // Check if user explicitly logged out previously
+          const explicitlyLoggedOut = typeof window !== "undefined" && sessionStorage.getItem("pudding_liff_logged_out") === "true";
+
+          if (inClient) {
+            // Inside LINE App: Auto-login silently
+            liff.login();
+            return;
+          } else if (!explicitlyLoggedOut) {
+            // Outside LINE App: Auto-redirect to LINE Login directly as requested
+            liff.login({ redirectUri: window.location.href });
+            return;
+          }
+
+          // If auto-redirect didn't fire (e.g. explicitly logged out or blocked), show Login Gate
+          setAuthStatus("unauthenticated");
+          return;
+        }
+
+        // Successfully Logged In: Retrieve real LINE user profile
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem("pudding_liff_logged_out");
+        }
+
+        const profile = await liff.getProfile();
+        const realStudent: RealLineStudent = {
+          id: profile.userId,
+          name: profile.displayName || "นักเรียน LINE",
+          line_uid: profile.userId,
+          avatar: profile.pictureUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
+        };
+
+        if (!isMounted) return;
+        setCurrentStudent(realStudent);
+
+        // Real sync of LINE profile into Supabase users table
+        await dataService.syncLineStudentUser({
+          line_uid: profile.userId,
+          name: profile.displayName || "นักเรียน LINE",
+          avatar: profile.pictureUrl || null,
+          student_id: profile.userId.substring(0, 8),
+        });
+
+        setAuthStatus("authenticated");
+      } catch (err: any) {
+        console.error("LIFF initialization error:", err);
+        if (isMounted) {
+          setAuthErrorMessage(err?.message || "ไม่สามารถเชื่อมต่อ LINE LIFF ได้");
+          setAuthStatus("error");
+        }
       }
     }
+
     initLiff();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
+  // Trigger LINE Login
   const handleLineLogin = () => {
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("pudding_liff_logged_out");
+    }
     if (liffInstance) {
       liffInstance.login({ redirectUri: window.location.href });
     } else {
-      alert("กรุณาเปิดลิงก์ผ่านแอปพลิเคชัน LINE เพื่อเข้าสู่ระบบ");
-    }
-  };
-
-  const handleLineLogout = () => {
-    if (liffInstance && liffInstance.isLoggedIn()) {
-      liffInstance.logout();
       window.location.reload();
     }
   };
 
-  // 2. Load Classrooms and Assignments
+  // Logout from LINE LIFF
+  const handleLineLogout = () => {
+    if (confirm("ต้องการออกจากระบบ LINE LIFF หรือไม่?")) {
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("pudding_liff_logged_out", "true");
+      }
+      if (liffInstance && liffInstance.isLoggedIn()) {
+        liffInstance.logout();
+      }
+      setCurrentStudent(null);
+      setAuthStatus("unauthenticated");
+    }
+  };
+
+  // 2. Load Classrooms, Assignments, and Submissions for Authenticated Student
   useEffect(() => {
+    if (authStatus !== "authenticated" || !currentStudent) return;
+
     async function loadData() {
-      setIsLoading(true);
+      if (!currentStudent) return;
+      setIsLoadingData(true);
       try {
         const classes = await dataService.getClassrooms();
         setClassrooms(classes);
@@ -173,13 +231,14 @@ export default function LiffStudentPage() {
 
         setSelectedClassroom(active);
 
-        // If URL contains join params and we have a student, auto-enroll in Supabase!
+        // Auto-enroll if arrived via invite code or classId link
         if (active && (codeParam || classIdParam)) {
+          const names = currentStudent.name.split(" ");
           await dataService.addStudentToClassroom(active.id, {
-            id: currentStudent.line_uid || currentStudent.id,
-            first_name: currentStudent.name.split(" ")[0] || currentStudent.name,
-            last_name: currentStudent.name.split(" ")[1] || "",
-            student_id: currentStudent.id,
+            id: currentStudent.line_uid,
+            first_name: names[0] || currentStudent.name,
+            last_name: names.slice(1).join(" ") || "",
+            student_id: currentStudent.line_uid.substring(0, 8),
             avatar_url: currentStudent.avatar,
             line_uid: currentStudent.line_uid,
           });
@@ -190,22 +249,23 @@ export default function LiffStudentPage() {
         const allAssigns = await dataService.getAssignments();
         setAssignments(allAssigns);
 
-        // Load existing submissions for this student
+        // Load existing submissions for this real LINE student
         const subMap: Record<string, Submission> = {};
         for (const a of allAssigns) {
           const subs = await dataService.getSubmissions(a.id);
-          const found = subs.find((s) => s.student_id === currentStudent.id);
+          const found = subs.find((s) => s.student_id === currentStudent.id || s.student_id === currentStudent.line_uid);
           if (found) subMap[a.id] = found;
         }
         setSubmissions(subMap);
       } catch (err) {
         console.error("Failed to load student data:", err);
       } finally {
-        setIsLoading(false);
+        setIsLoadingData(false);
       }
     }
+
     loadData();
-  }, [currentStudent]);
+  }, [authStatus, currentStudent]);
 
   // When opening an assignment, fetch questions
   const handleOpenAssignment = async (a: Assignment) => {
@@ -295,6 +355,7 @@ export default function LiffStudentPage() {
 
   // Voice Recorder Handler
   const startRecording = async (questionId: string) => {
+    if (!currentStudent) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -362,6 +423,7 @@ export default function LiffStudentPage() {
 
   // Image / File Upload Handler
   const handleFileUpload = async (questionId: string, file: File) => {
+    if (!currentStudent) return;
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -387,9 +449,9 @@ export default function LiffStudentPage() {
     }
   };
 
-  // Submit Assignment with Anti-Cheating Payload
+  // Submit Assignment with Real LINE Student Identity & Anti-Cheating Audit
   const handleSubmitTask = async () => {
-    if (!activeAssignment) return;
+    if (!activeAssignment || !currentStudent) return;
 
     setIsSubmitting(true);
     try {
@@ -423,23 +485,26 @@ export default function LiffStudentPage() {
 
   // Join Classroom via Invite Code
   const handleJoinClassroom = async () => {
-    if (!joinInviteCode.trim()) return;
+    if (!joinInviteCode.trim() || !currentStudent) return;
     const matched = classrooms.find(
       (c) => c.invite_code?.toLowerCase() === joinInviteCode.trim().toLowerCase()
     );
     if (matched) {
+      const names = currentStudent.name.split(" ");
       await dataService.addStudentToClassroom(matched.id, {
-        first_name: currentStudent.name.split(" ")[0] || currentStudent.name,
-        last_name: currentStudent.name.split(" ")[1] || "",
-        student_id: currentStudent.id,
-        email: `${currentStudent.id}@student.pudding.ac.th`,
+        id: currentStudent.line_uid,
+        first_name: names[0] || currentStudent.name,
+        last_name: names.slice(1).join(" ") || "",
+        student_id: currentStudent.line_uid.substring(0, 8),
+        email: `${currentStudent.line_uid.substring(0, 8)}@student.pudding.ac.th`,
         line_uid: currentStudent.line_uid,
+        avatar_url: currentStudent.avatar,
       });
       setSelectedClassroom(matched);
       setIsJoinModalOpen(false);
       setJoinInviteCode("");
-      setJoinMessage("เข้าร่วมห้องเรียนสำเร็จ!");
-      setTimeout(() => setJoinMessage(null), 3000);
+      setJoinMessage(`🎉 เข้าร่วมห้องเรียน "${matched.name}" สำเร็จ!`);
+      setTimeout(() => setJoinMessage(null), 3500);
     } else {
       setJoinMessage("ไม่พบห้องเรียนจากรหัสที่ระบุ กรุณาตรวจสอบรหัสอีกครั้ง");
     }
@@ -452,7 +517,157 @@ export default function LiffStudentPage() {
     setViewingGradedSub({ assignment: a, submission: s, questions: qs, answers });
   };
 
-  // Filter assignments for selected classroom
+  // ==========================================
+  // VIEW: 1. Loading State
+  // ==========================================
+  if (authStatus === "loading") {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-4 min-h-[500px]">
+        <div className="relative">
+          <div className="w-20 h-20 rounded-3xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center text-4xl shadow-lg ring-8 ring-amber-500/10 animate-bounce">
+            🍮
+          </div>
+          <Loader2 className="w-6 h-6 text-[#06C755] animate-spin absolute -bottom-1 -right-1 bg-white dark:bg-slate-900 rounded-full p-0.5 shadow-md" />
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-base font-black text-slate-900 dark:text-white">
+            กำลังเชื่อมต่อ LINE LIFF...
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            ระบบตรวจสอบการเข้าสู่ระบบบัญชี LINE ของนักเรียน
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // VIEW: 2. Error State
+  // ==========================================
+  if (authStatus === "error") {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-5 min-h-[500px]">
+        <div className="w-16 h-16 rounded-3xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center shadow-md">
+          <AlertCircle className="w-8 h-8" />
+        </div>
+        <div className="space-y-2 max-w-xs">
+          <h2 className="text-base font-black text-slate-900 dark:text-white">
+            ไม่สามารถเชื่อมต่อ LINE LIFF
+          </h2>
+          <p className="text-xs text-rose-600 dark:text-rose-400 font-medium leading-relaxed">
+            {authErrorMessage}
+          </p>
+          <p className="text-[11px] text-slate-500 leading-normal">
+            กรุณาตรวจสอบว่าได้ตั้งค่า LINE LIFF ID ใน .env และระบุ Endpoint URL ใน LINE Developers Console ตรงกับหน้านี้
+          </p>
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-6 py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-md hover:opacity-90 active:scale-95 transition-all"
+        >
+          ลองใหม่อีกครั้ง
+        </button>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // VIEW: 3. Unauthenticated State (Forced Login Screen)
+  // ==========================================
+  if (authStatus === "unauthenticated" || !currentStudent) {
+    return (
+      <div className="flex-1 flex flex-col justify-between p-6 bg-radial from-emerald-500/10 via-transparent to-transparent text-slate-900 dark:text-white min-h-[600px]">
+        {/* Top Branding */}
+        <div className="pt-8 text-center space-y-4">
+          <div className="relative inline-block">
+            <div className="w-24 h-24 rounded-3xl bg-gradient-to-tr from-amber-400 to-amber-200 dark:from-amber-600 dark:to-amber-400 flex items-center justify-center text-5xl shadow-2xl ring-8 ring-emerald-500/20 mx-auto">
+              🍮
+            </div>
+            <span className="absolute -bottom-2 -right-2 px-2.5 py-0.5 rounded-full bg-[#06C755] text-white text-[10px] font-black shadow-md border-2 border-white dark:border-slate-900">
+              LIFF
+            </span>
+          </div>
+
+          <div className="space-y-1.5">
+            <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
+              พุดดิ้ง (Pudding)
+            </h1>
+            <p className="text-xs font-bold text-[#06C755]">
+              ระบบห้องเรียนและการส่งข้อสอบสำหรับนักเรียน
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed pt-1">
+              กรุณาเข้าสู่ระบบด้วยบัญชี LINE ของคุณเพื่อเข้าใช้งานห้องเรียน ส่งงาน และทำข้อสอบออนไลน์
+            </p>
+          </div>
+        </div>
+
+        {/* Feature Highlights Card */}
+        <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-md rounded-3xl p-5 border border-slate-200 dark:border-slate-700/80 shadow-lg space-y-3.5 my-6">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-[#06C755] flex items-center justify-center font-bold text-sm shrink-0">
+              📝
+            </div>
+            <div className="text-left">
+              <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                ส่งการบ้านและทำข้อสอบ
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                รองรับการพิมพ์ อัดเสียง และแนบรูปภาพส่งคุณครู
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-600 flex items-center justify-center font-bold text-sm shrink-0">
+              📊
+            </div>
+            <div className="text-left">
+              <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                ดูผลคะแนนและข้อเสนอแนะ
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                ตรวจเช็คคะแนนและคำแนะนำรายข้อได้ทันทีหลังคุณครูตรวจ
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center font-bold text-sm shrink-0">
+              🛡️
+            </div>
+            <div className="text-left">
+              <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                ระบบยืนยันตัวตนอัตโนมัติ
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                ผูกคะแนนกับบัญชี LINE จริง ไม่สูญหายและปลอดภัย
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Forced Login Action Button */}
+        <div className="space-y-3 pb-6">
+          <button
+            onClick={handleLineLogin}
+            className="w-full py-4 rounded-2xl bg-[#06C755] hover:bg-[#05b34c] text-white font-black text-sm shadow-xl shadow-emerald-500/30 flex items-center justify-center gap-2.5 transition-all active:scale-98 cursor-pointer"
+          >
+            <LogIn className="w-5 h-5" />
+            <span>เข้าสู่ระบบด้วย LINE (LINE Login)</span>
+          </button>
+
+          <p className="text-[10px] text-center text-slate-400 flex items-center justify-center gap-1">
+            <span>🔒</span>
+            <span>บังคับเข้าสู่ระบบเพื่อยืนยันตัวตนนักเรียนและบันทึกประวัติความซื่อสัตย์</span>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // VIEW: 4. Authenticated Student Portal
+  // ==========================================
   const filteredAssignments = assignments.filter((a) => {
     if (!selectedClassroom) return true;
     return a.classroom_id === selectedClassroom.id;
@@ -470,25 +685,18 @@ export default function LiffStudentPage() {
           <span className="font-extrabold tracking-tight">พุดดิ้ง • LINE LIFF</span>
         </div>
         <div className="flex items-center gap-2">
-          {isRealLineUser ? (
-            <div className="flex items-center gap-1.5 text-[11px] bg-black/20 px-2.5 py-0.5 rounded-full">
-              <span className="w-2 h-2 rounded-full bg-emerald-200 animate-pulse" />
-              <span className="max-w-[120px] truncate">{currentStudent.name}</span>
-              <button
-                onClick={handleLineLogout}
-                className="text-[10px] text-emerald-100 hover:text-white underline ml-1 cursor-pointer"
-              >
-                ออก
-              </button>
-            </div>
-          ) : (
+          <div className="flex items-center gap-1.5 text-[11px] bg-black/20 px-2.5 py-0.5 rounded-full">
+            <span className="w-2 h-2 rounded-full bg-emerald-200 animate-pulse" />
+            <span className="max-w-[110px] truncate">{currentStudent.name}</span>
             <button
-              onClick={handleLineLogin}
-              className="text-[11px] bg-black/25 hover:bg-black/35 px-2.5 py-0.5 rounded-full font-bold transition-colors cursor-pointer flex items-center gap-1"
+              onClick={handleLineLogout}
+              title="ออกจากระบบ"
+              className="text-[10px] text-emerald-100 hover:text-white underline ml-1 cursor-pointer flex items-center gap-0.5"
             >
-              <span>LINE Login</span>
+              <LogOut className="w-3 h-3" />
+              <span>ออก</span>
             </button>
-          )}
+          </div>
         </div>
       </div>
 
@@ -500,45 +708,36 @@ export default function LiffStudentPage() {
         </div>
       )}
 
-      {/* Student Profile & Active Classroom Bar */}
+      {/* Real Student Profile Bar */}
       <div className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <img
             src={currentStudent.avatar}
             alt={currentStudent.name}
-            className="w-11 h-11 rounded-2xl object-cover ring-2 ring-emerald-500/40 shadow-xs"
+            className="w-11 h-11 rounded-2xl object-cover ring-2 ring-[#06C755] shadow-xs"
           />
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-black text-slate-900 dark:text-white line-clamp-1">
                 {currentStudent.name}
               </span>
-              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
-                ม.4
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                LINE ผู้ใช้จริง
               </span>
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-              รหัสนักเรียน: {currentStudent.id}
+            <p className="text-[10px] font-mono text-slate-500 dark:text-slate-400 font-medium truncate max-w-[180px]">
+              UID: {currentStudent.line_uid}
             </p>
           </div>
         </div>
 
-        {!isInLineClient && (
-          <select
-            value={currentStudent.id}
-            onChange={(e) => {
-              const matched = DEMO_STUDENTS.find((s) => s.id === e.target.value);
-              if (matched) setCurrentStudent(matched);
-            }}
-            className="text-[11px] font-bold py-1.5 px-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
-          >
-            {DEMO_STUDENTS.map((s) => (
-              <option key={s.id} value={s.id}>
-                จำลอง: {s.name.split(" ")[0]}
-              </option>
-            ))}
-          </select>
-        )}
+        <button
+          onClick={handleLineLogout}
+          className="text-xs text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          title="ออกจากระบบ"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Join Message Banner */}
@@ -557,7 +756,7 @@ export default function LiffStudentPage() {
               <button
                 key={cls.id}
                 onClick={() => setSelectedClassroom(cls)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
                   isSelected
                     ? "bg-[#06C755] text-white shadow-xs"
                     : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
@@ -571,7 +770,7 @@ export default function LiffStudentPage() {
 
         <button
           onClick={() => setIsJoinModalOpen(true)}
-          className="shrink-0 p-1.5 rounded-xl bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 flex items-center gap-1 text-xs font-bold px-2.5"
+          className="shrink-0 p-1.5 rounded-xl bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 flex items-center gap-1 text-xs font-bold px-2.5 cursor-pointer"
         >
           <PlusCircle className="w-3.5 h-3.5" />
           <span>ใส่รหัสเข้าห้อง</span>
@@ -581,141 +780,151 @@ export default function LiffStudentPage() {
       {/* MAIN CONTENT AREA */}
       {!activeAssignment ? (
         <div className="p-4 space-y-5">
-          {/* Pending Tasks Section */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                <BookOpen className="w-4 h-4 text-amber-500" />
-                <span>งานและข้อสอบที่ต้องทำ ({pendingAssignments.length})</span>
-              </h2>
+          {isLoadingData ? (
+            <div className="p-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-[#06C755]" />
+              <span>กำลังโหลดข้อมูลงานและข้อสอบ...</span>
             </div>
-
-            {pendingAssignments.length === 0 ? (
-              <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-2">
-                <span className="text-3xl">🎉</span>
-                <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  ไม่มีการบ้านหรือข้อสอบค้างส่ง
-                </p>
-                <p className="text-[11px] text-slate-400">คุณส่งงานครบทุกชิ้นในห้องเรียนนี้แล้ว</p>
-              </div>
-            ) : (
+          ) : (
+            <>
+              {/* Pending Tasks Section */}
               <div className="space-y-3">
-                {pendingAssignments.map((a) => (
-                  <div
-                    key={a.id}
-                    className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
-                              a.is_exam
-                                ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
-                                : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                            }`}
-                          >
-                            {a.is_exam ? "📝 ข้อสอบออนไลน์" : "📋 การบ้าน / ใบงาน"}
-                          </span>
-                          <span className="text-[11px] text-slate-500 font-medium">
-                            {a.classroom_name || selectedClassroom?.name}
-                          </span>
-                        </div>
-                        <h3 className="font-bold text-sm text-slate-900 dark:text-white leading-snug">
-                          {a.title}
-                        </h3>
-                      </div>
-                      <span className="text-xs font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-1 rounded-xl">
-                        {a.total_points || 20} คะแนน
-                      </span>
-                    </div>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <BookOpen className="w-4 h-4 text-amber-500" />
+                    <span>งานและข้อสอบที่ต้องทำ ({pendingAssignments.length})</span>
+                  </h2>
+                </div>
 
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between border-t border-slate-100 dark:border-slate-800/80 pt-2.5">
-                      <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-medium">
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>กำหนดส่ง: {new Date(a.due_date).toLocaleDateString("th-TH")}</span>
-                      </div>
-
-                      <button
-                        onClick={() => handleOpenAssignment(a)}
-                        className="px-4 py-2 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all"
-                      >
-                        <span>เริ่มทำข้อสอบ</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                {pendingAssignments.length === 0 ? (
+                  <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <span className="text-3xl">🎉</span>
+                    <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      ไม่มีการบ้านหรือข้อสอบค้างส่ง
+                    </p>
+                    <p className="text-[11px] text-slate-400">คุณส่งงานครบทุกชิ้นในห้องเรียนนี้แล้ว</p>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Completed Submissions Section */}
-          <div className="space-y-3 pt-2">
-            <h2 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              <span>ส่งแล้ว & ผลคะแนน ({completedAssignments.length})</span>
-            </h2>
-
-            {completedAssignments.length === 0 ? (
-              <p className="text-[11px] text-slate-400 italic">ยังไม่มีประวัติการส่งงาน</p>
-            ) : (
-              <div className="space-y-2.5">
-                {completedAssignments.map((a) => {
-                  const sub = submissions[a.id];
-                  const hasScore = sub && sub.total_score !== undefined && sub.total_score > 0;
-                  return (
-                    <div
-                      key={a.id}
-                      onClick={() => sub && handleOpenGradedDetail(a, sub)}
-                      className={`p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 cursor-pointer hover:border-emerald-400`}
-                    >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-xs text-slate-900 dark:text-white">
-                            {a.title}
+                ) : (
+                  <div className="space-y-3">
+                    {pendingAssignments.map((a) => (
+                      <div
+                        key={a.id}
+                        className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all space-y-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
+                                  a.is_exam
+                                    ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                                    : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                                }`}
+                              >
+                                {a.is_exam ? "📝 ข้อสอบออนไลน์" : "📋 การบ้าน / ใบงาน"}
+                              </span>
+                              <span className="text-[11px] text-slate-500 font-medium">
+                                {a.classroom_name || selectedClassroom?.name}
+                              </span>
+                            </div>
+                            <h3 className="font-bold text-sm text-slate-900 dark:text-white leading-snug">
+                              {a.title}
+                            </h3>
+                          </div>
+                          <span className="text-xs font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-1 rounded-xl">
+                            {a.total_points || 20} คะแนน
                           </span>
                         </div>
-                        <p className="text-[10px] text-slate-400">
-                          ส่งเมื่อ: {new Date(sub?.submitted_at || sub?.started_at || "").toLocaleDateString("th-TH")}
-                        </p>
-                      </div>
 
-                      <div className="text-right">
-                        {hasScore ? (
-                          <div className="flex items-center gap-1.5">
-                            <div>
-                              <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">
-                                {sub?.total_score} / {a.total_points || 20}
-                              </span>
-                              <p className="text-[9px] text-emerald-500 font-bold">ตรวจแล้ว • ดูผล</p>
-                            </div>
-                            <ChevronRight className="w-4 h-4 text-slate-400" />
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between border-t border-slate-100 dark:border-slate-800/80 pt-2.5">
+                          <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-medium">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>กำหนดส่ง: {new Date(a.due_date).toLocaleDateString("th-TH")}</span>
                           </div>
-                        ) : (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                            ส่งแล้ว รอครูตรวจ
-                          </span>
-                        )}
+
+                          <button
+                            onClick={() => handleOpenAssignment(a)}
+                            className="px-4 py-2 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                          >
+                            <span>เริ่มทำข้อสอบ</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+
+              {/* Completed Submissions Section */}
+              <div className="space-y-3 pt-2">
+                <h2 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  <span>ส่งแล้ว & ผลคะแนน ({completedAssignments.length})</span>
+                </h2>
+
+                {completedAssignments.length === 0 ? (
+                  <p className="text-[11px] text-slate-400 italic">ยังไม่มีประวัติการส่งงาน</p>
+                ) : (
+                  <div className="space-y-2.5">
+                    {completedAssignments.map((a) => {
+                      const sub = submissions[a.id];
+                      const hasScore = sub && sub.total_score !== undefined && sub.total_score > 0;
+                      return (
+                        <div
+                          key={a.id}
+                          onClick={() => sub && handleOpenGradedDetail(a, sub)}
+                          className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 cursor-pointer hover:border-[#06C755] transition-colors"
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-xs text-slate-900 dark:text-white">
+                                {a.title}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-400">
+                              ส่งเมื่อ: {new Date(sub?.submitted_at || sub?.started_at || "").toLocaleDateString("th-TH")}
+                            </p>
+                          </div>
+
+                          <div className="text-right">
+                            {hasScore ? (
+                              <div className="flex items-center gap-1.5">
+                                <div>
+                                  <span className="text-xs font-black text-[#06C755]">
+                                    {sub?.total_score} / {a.total_points || 20}
+                                  </span>
+                                  <p className="text-[9px] text-emerald-500 font-bold">ตรวจแล้ว • ดูผล</p>
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-slate-400" />
+                              </div>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                ส่งแล้ว รอครูตรวจ
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       ) : (
-        /* EXAM / ASSIGNMENT TAKING MODE (WITH REAL-TIME ANTI-CHEATING DETECTION) */
-        <div className="flex-1 flex flex-col p-4 space-y-4">
-          <div className="sticky top-0 z-30 -mx-4 -mt-4 px-4 py-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shadow-xs">
+        /* ACTIVE TAKING EXAM/ASSIGNMENT VIEW */
+        <div className="p-4 space-y-4">
+          {/* Top Bar with Back and Anti-Cheating Pill */}
+          <div className="flex items-center justify-between gap-2">
             <button
               onClick={() => {
                 if (confirm("ต้องการออกจากหน้าข้อสอบหรือไม่? (ข้อมูลที่ตอบไว้จะยังไม่ถูกส่ง)")) {
                   setActiveAssignment(null);
                 }
               }}
-              className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
+              className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
@@ -741,7 +950,7 @@ export default function LiffStudentPage() {
 
           {submissionSuccess ? (
             <div className="my-auto text-center space-y-4 p-6 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-md">
-              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center text-3xl">
+              <div className="w-16 h-16 rounded-full bg-emerald-100 text-[#06C755] mx-auto flex items-center justify-center text-3xl font-black">
                 ✓
               </div>
               <h2 className="text-lg font-black text-slate-900 dark:text-white">
@@ -756,7 +965,7 @@ export default function LiffStudentPage() {
               </div>
               <button
                 onClick={() => setActiveAssignment(null)}
-                className="w-full py-3 rounded-2xl bg-[#06C755] text-white font-bold text-xs shadow-md"
+                className="w-full py-3 rounded-2xl bg-[#06C755] text-white font-bold text-xs shadow-md cursor-pointer"
               >
                 กลับสู่หน้าหลัก
               </button>
@@ -830,7 +1039,7 @@ export default function LiffStudentPage() {
                           <button
                             type="button"
                             onClick={stopRecording}
-                            className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 animate-pulse"
+                            className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 animate-pulse cursor-pointer"
                           >
                             <MicOff className="w-3.5 h-3.5" />
                             <span>หยุดบันทึก ({recordingSeconds}s)</span>
@@ -839,7 +1048,7 @@ export default function LiffStudentPage() {
                           <button
                             type="button"
                             onClick={() => startRecording(q.id)}
-                            className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5"
+                            className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                           >
                             <Mic className="w-3.5 h-3.5 text-rose-500" />
                             <span>อัดเสียงอ่าน/พูด</span>
@@ -851,7 +1060,7 @@ export default function LiffStudentPage() {
                         )}
                       </div>
 
-                      <label className="cursor-pointer px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5">
+                      <label className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer">
                         <Upload className="w-3.5 h-3.5 text-blue-500" />
                         <span>แนบรูป / ไฟล์งาน</span>
                         <input
@@ -883,7 +1092,7 @@ export default function LiffStudentPage() {
                   type="button"
                   disabled={isSubmitting}
                   onClick={handleSubmitTask}
-                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-[#06C755] hover:from-emerald-700 hover:to-[#05b34c] text-white font-black text-sm shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 transition-transform active:scale-98 disabled:opacity-50"
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-[#06C755] hover:from-emerald-700 hover:to-[#05b34c] text-white font-black text-sm shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 transition-transform active:scale-98 disabled:opacity-50 cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
                   <span>{isSubmitting ? "กำลังส่งข้อสอบ..." : "ส่งข้อสอบ / ยืนยันการส่งงาน"}</span>
@@ -902,7 +1111,7 @@ export default function LiffStudentPage() {
               เข้าร่วมห้องเรียนด้วยรหัส
             </h3>
             <p className="text-xs text-slate-500">
-              กรอกรหัสเชิญเข้าห้องเรียน 6 หลักที่ได้รับจากคุณครู (เช่น THAI-401)
+              กรอกรหัสเชิญเข้าห้องเรียนที่ได้รับจากอาจารย์ (เช่น THAI-401)
             </p>
             <input
               type="text"
@@ -915,14 +1124,14 @@ export default function LiffStudentPage() {
               <button
                 type="button"
                 onClick={() => setIsJoinModalOpen(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold"
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
               >
                 ยกเลิก
               </button>
               <button
                 type="button"
                 onClick={handleJoinClassroom}
-                className="flex-1 py-2.5 rounded-xl bg-[#06C755] text-white text-xs font-bold"
+                className="flex-1 py-2.5 rounded-xl bg-[#06C755] text-white text-xs font-bold cursor-pointer"
               >
                 เข้าร่วมห้อง
               </button>
@@ -937,7 +1146,7 @@ export default function LiffStudentPage() {
           <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="p-2 rounded-xl bg-emerald-100 text-emerald-600 text-lg">
+                <span className="p-2 rounded-xl bg-emerald-100 text-[#06C755] text-lg">
                   🏆
                 </span>
                 <div>
@@ -951,14 +1160,14 @@ export default function LiffStudentPage() {
               </div>
               <button
                 onClick={() => setViewingGradedSub(null)}
-                className="text-xs font-bold p-1 text-slate-400 hover:text-slate-600"
+                className="text-xs font-bold p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 ✕ ปิด
               </button>
             </div>
 
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-center space-y-1">
-              <span className="text-3xl font-black text-emerald-600 dark:text-emerald-400">
+              <span className="text-3xl font-black text-[#06C755]">
                 {viewingGradedSub.submission.total_score} / {viewingGradedSub.assignment.total_points || 20}
               </span>
               <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
@@ -979,7 +1188,7 @@ export default function LiffStudentPage() {
                   >
                     <div className="flex items-center justify-between font-bold">
                       <span>ข้อ {i + 1}: {q.question_text}</span>
-                      <span className="text-emerald-600 font-black">
+                      <span className="text-[#06C755] font-black">
                         {ans?.teacher_score ?? ans?.ai_mock_score ?? 0} / {q.max_score} คะแนน
                       </span>
                     </div>
@@ -1000,7 +1209,7 @@ export default function LiffStudentPage() {
 
             <button
               onClick={() => setViewingGradedSub(null)}
-              className="w-full py-3 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-xs"
+              className="w-full py-3 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-xs cursor-pointer"
             >
               ตกลง
             </button>
