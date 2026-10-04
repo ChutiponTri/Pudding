@@ -133,21 +133,29 @@ export default function DashboardPage() {
 
   const loadAllData = async () => {
     try {
+      const teacherId = clerkUser?.id;
       const [crs, cls, as, ind, subs] = await Promise.all([
-        dataService.getCourses(),
-        dataService.getClassrooms(),
+        dataService.getCourses(teacherId),
+        dataService.getClassrooms(teacherId),
         dataService.getAssignments(),
         dataService.getLearningIndicators(),
         dataService.getAllSubmissions(),
       ]);
+
+      const myClassrooms = teacherId ? cls.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId)) : cls;
+      const myClassroomIds = new Set(myClassrooms.map((c) => c.id));
+      const myAssignments = teacherId ? as.filter((a) => myClassroomIds.has(a.classroom_id)) : as;
+      const myAssignmentIds = new Set(myAssignments.map((a) => a.id));
+      const mySubmissions = teacherId ? subs.filter((s) => myAssignmentIds.has(s.assignment_id)) : subs;
+
       setCourses(crs);
-      setClassrooms(cls);
-      setAssignments(as);
+      setClassrooms(myClassrooms);
+      setAssignments(myAssignments);
       setIndicators(ind);
-      setAllSubmissions(subs);
+      setAllSubmissions(mySubmissions);
 
       if (managingClassroom) {
-        const refreshed = cls.find((c) => c.id === managingClassroom.id) || null;
+        const refreshed = myClassrooms.find((c) => c.id === managingClassroom.id) || null;
         setManagingClassroom(refreshed);
       }
     } catch (err) {
@@ -159,7 +167,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadAllData();
-  }, []);
+  }, [clerkUser?.id]);
 
   // Filter classrooms by selected semester
   const filteredClassrooms = useMemo(() => {
@@ -225,6 +233,11 @@ export default function DashboardPage() {
     if (!courseCodeInput.trim() || !courseNameInput.trim()) return;
 
     const academicYearStr = formatAcademicPeriod(courseSemesterInput, courseYearInput, language);
+    const currentTeacherId = clerkUser?.id || "teacher-default";
+    const currentTeacherName = `${clerkUser?.firstName || ""} ${clerkUser?.lastName || ""}`.trim() || clerkUser?.username || "คุณครู";
+    const currentTeacherEmail = clerkUser?.primaryEmailAddress?.emailAddress || "teacher@pudding.ac.th";
+    const currentTeacherAvatar = clerkUser?.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150";
+
     await dataService.createCourse({
       code: courseCodeInput.trim().toUpperCase(),
       name: courseNameInput.trim(),
@@ -232,13 +245,13 @@ export default function DashboardPage() {
       semester: courseSemesterInput,
       year_ce: courseYearInput,
       academic_year: academicYearStr,
-      primary_teacher_id: 'teacher-tippanan',
+      primary_teacher_id: currentTeacherId,
       teachers: [
         {
-          teacher_id: 'teacher-tippanan',
-          name: 'ครูธิปนรรจ์ พรายหนู (Primary Owner)',
-          email: 'tippanan.p@pudding.ac.th',
-          avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
+          teacher_id: currentTeacherId,
+          name: `${currentTeacherName} (Primary Owner)`,
+          email: currentTeacherEmail,
+          avatar_url: currentTeacherAvatar,
           role: 'primary',
         },
       ],
@@ -322,11 +335,20 @@ export default function DashboardPage() {
       });
       showToast(language === 'th' ? 'แก้ไขห้องเรียนเรียบร้อย' : 'Classroom updated');
     } else {
+      const currentTeacherId = clerkUser?.id || "teacher-default";
+      const currentTeacherName = `${clerkUser?.firstName || ""} ${clerkUser?.lastName || ""}`.trim() || clerkUser?.username || "คุณครู";
       await dataService.createClassroom({
         course_id: selectedCourseForClass,
         course_name: parentCourse?.name,
-        teacher_id: 'teacher-tippanan',
-        teachers: parentCourse?.teachers || [],
+        teacher_id: currentTeacherId,
+        teachers: parentCourse?.teachers?.length ? parentCourse.teachers : [
+          {
+            teacher_id: currentTeacherId,
+            name: currentTeacherName,
+            email: clerkUser?.primaryEmailAddress?.emailAddress || "teacher@pudding.ac.th",
+            role: "primary",
+          }
+        ],
         name: classNameInput.trim(),
         subject_code: subjectCodeInput.trim(),
         semester: formSemester,
@@ -732,7 +754,32 @@ export default function DashboardPage() {
 
         {/* Grouped Course Cards */}
         <div className="space-y-6">
-          {groupedCourses.map((course) => (
+          {groupedCourses.length === 0 ? (
+            <div className="text-center py-16 px-6 bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-amber-50 dark:bg-amber-950/60 text-amber-500 mx-auto flex items-center justify-center text-3xl shadow-xs">
+                📚
+              </div>
+              <div className="space-y-1 max-w-sm mx-auto">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  {language === "th" ? "ยังไม่มีรายวิชาในระบบ" : "No courses yet"}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  {language === "th"
+                    ? "เริ่มต้นด้วยการสร้างรายวิชาแรกของคุณเพื่อจัดกลุ่มห้องเรียนและแบบทดสอบ"
+                    : "Get started by creating your first course to group classrooms and assignments."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenCreateCourseModal}
+                className="px-5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs inline-flex items-center gap-2 shadow-sm transition-transform active:scale-95 cursor-pointer"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>+ {language === "th" ? "สร้างรายวิชาแรกของคุณ" : "Create First Course"}</span>
+              </button>
+            </div>
+          ) : (
+            groupedCourses.map((course) => (
             <div
               key={course.id}
               className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs p-6 space-y-6 transition-all hover:border-slate-300 dark:hover:border-slate-700"
@@ -940,7 +987,8 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
 

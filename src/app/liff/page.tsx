@@ -19,6 +19,7 @@ import {
   AlertCircle,
   Loader2,
   Sparkles,
+  Edit2,
 } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
@@ -28,6 +29,7 @@ interface RealLineStudent {
   name: string; // LINE displayName
   line_uid: string;
   avatar: string;
+  student_id?: string;
 }
 
 export default function LiffStudentPage() {
@@ -38,6 +40,12 @@ export default function LiffStudentPage() {
   const [isInLineClient, setIsInLineClient] = useState(false);
   const [liffInstance, setLiffInstance] = useState<any>(null);
   const [currentStudent, setCurrentStudent] = useState<RealLineStudent | null>(null);
+
+  // Student ID First-time Prompt & Edit State
+  const [isStudentIdModalOpen, setIsStudentIdModalOpen] = useState(false);
+  const [isFirstTimeStudentId, setIsFirstTimeStudentId] = useState(false);
+  const [inputStudentId, setInputStudentId] = useState("");
+  const [isSavingStudentId, setIsSavingStudentId] = useState(false);
 
   // Data State
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
@@ -119,20 +127,16 @@ export default function LiffStudentPage() {
 
         // Check if user is logged in
         if (!liff.isLoggedIn()) {
-          // Check if user explicitly logged out previously
           const explicitlyLoggedOut = typeof window !== "undefined" && sessionStorage.getItem("pudding_liff_logged_out") === "true";
 
           if (inClient) {
-            // Inside LINE App: Auto-login silently
             liff.login();
             return;
           } else if (!explicitlyLoggedOut) {
-            // Outside LINE App: Auto-redirect to LINE Login directly as requested
             liff.login({ redirectUri: window.location.href });
             return;
           }
 
-          // If auto-redirect didn't fire (e.g. explicitly logged out or blocked), show Login Gate
           setAuthStatus("unauthenticated");
           return;
         }
@@ -143,25 +147,33 @@ export default function LiffStudentPage() {
         }
 
         const profile = await liff.getProfile();
+
+        // Real sync of LINE profile into Supabase users table
+        const syncedUser = await dataService.syncLineStudentUser({
+          line_uid: profile.userId,
+          name: profile.displayName || "นักเรียน LINE",
+          avatar: profile.pictureUrl || null,
+        });
+
+        const activeStudentId = syncedUser.student_id;
         const realStudent: RealLineStudent = {
           id: profile.userId,
           name: profile.displayName || "นักเรียน LINE",
           line_uid: profile.userId,
           avatar: profile.pictureUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
+          student_id: activeStudentId,
         };
 
         if (!isMounted) return;
         setCurrentStudent(realStudent);
-
-        // Real sync of LINE profile into Supabase users table
-        await dataService.syncLineStudentUser({
-          line_uid: profile.userId,
-          name: profile.displayName || "นักเรียน LINE",
-          avatar: profile.pictureUrl || null,
-          student_id: profile.userId.substring(0, 8),
-        });
-
         setAuthStatus("authenticated");
+
+        // Force student ID setup if missing or dummy
+        if (!activeStudentId || activeStudentId.startsWith("U") || activeStudentId.length < 2) {
+          setInputStudentId(activeStudentId && !activeStudentId.startsWith("U") ? activeStudentId : "");
+          setIsFirstTimeStudentId(true);
+          setIsStudentIdModalOpen(true);
+        }
       } catch (err: any) {
         console.error("LIFF initialization error:", err);
         if (isMounted) {
@@ -204,6 +216,31 @@ export default function LiffStudentPage() {
     }
   };
 
+  // Save Student ID (First-time or Edited)
+  const handleSaveStudentId = async () => {
+    const trimmed = inputStudentId.trim();
+    if (!trimmed || !currentStudent) return;
+
+    setIsSavingStudentId(true);
+    try {
+      const ok = await dataService.updateStudentId(currentStudent.id, trimmed);
+      if (ok) {
+        setCurrentStudent((prev) => (prev ? { ...prev, student_id: trimmed } : null));
+        setIsStudentIdModalOpen(false);
+        setIsFirstTimeStudentId(false);
+        setJoinMessage("✅ บันทึกรหัสนักเรียนเรียบร้อยแล้ว");
+        setTimeout(() => setJoinMessage(null), 3000);
+      } else {
+        alert("ไม่สามารถบันทึกรหัสนักเรียนได้ กรุณาลองใหม่อีกครั้ง");
+      }
+    } catch (err) {
+      console.error("Failed to save student ID:", err);
+      alert("เกิดข้อผิดพลาดในการบันทึกรหัสนักเรียน");
+    } finally {
+      setIsSavingStudentId(false);
+    }
+  };
+
   // 2. Load Classrooms, Assignments, and Submissions for Authenticated Student
   useEffect(() => {
     if (authStatus !== "authenticated" || !currentStudent) return;
@@ -212,48 +249,61 @@ export default function LiffStudentPage() {
       if (!currentStudent) return;
       setIsLoadingData(true);
       try {
-        const classes = await dataService.getClassrooms();
-        setClassrooms(classes);
+        const allClasses = await dataService.getClassrooms();
 
         // Check URL params for invite code or classId
         const params = new URLSearchParams(window.location.search);
         const codeParam = params.get("code");
         const classIdParam = params.get("classId");
 
-        let active = classes[0] || null;
-        if (classIdParam) {
-          const matched = classes.find((c) => c.id === classIdParam);
-          if (matched) active = matched;
-        } else if (codeParam) {
-          const matched = classes.find((c) => c.invite_code?.toLowerCase() === codeParam.toLowerCase());
-          if (matched) active = matched;
-        }
+        // Filter ONLY classrooms that this student has actually enrolled in
+        let enrolled = allClasses.filter((c) =>
+          c.students?.some((s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid)
+        );
 
-        setSelectedClassroom(active);
+        let active = enrolled[0] || null;
 
         // Auto-enroll if arrived via invite code or classId link
-        if (active && (codeParam || classIdParam)) {
-          const names = currentStudent.name.split(" ");
-          await dataService.addStudentToClassroom(active.id, {
-            id: currentStudent.line_uid,
-            first_name: names[0] || currentStudent.name,
-            last_name: names.slice(1).join(" ") || "",
-            student_id: currentStudent.line_uid.substring(0, 8),
-            avatar_url: currentStudent.avatar,
-            line_uid: currentStudent.line_uid,
-          });
-          setJoinMessage(`🎉 คุณได้เข้าร่วมห้องเรียน "${active.name}" เรียบร้อยแล้ว!`);
+        if (codeParam || classIdParam) {
+          const matched = allClasses.find(
+            (c) =>
+              (classIdParam && c.id === classIdParam) ||
+              (codeParam && c.invite_code?.toLowerCase() === codeParam.toLowerCase())
+          );
+          if (matched) {
+            const names = currentStudent.name.split(" ");
+            await dataService.addStudentToClassroom(matched.id, {
+              id: currentStudent.line_uid,
+              first_name: names[0] || currentStudent.name,
+              last_name: names.slice(1).join(" ") || "",
+              student_id: currentStudent.student_id || currentStudent.line_uid.substring(0, 8),
+              avatar_url: currentStudent.avatar,
+              line_uid: currentStudent.line_uid,
+            });
+            setJoinMessage(`🎉 คุณได้เข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว!`);
+            active = matched;
+            if (!enrolled.some((c) => c.id === matched.id)) {
+              enrolled = [matched, ...enrolled];
+            }
+          }
         }
 
-        // Load assignments
+        setClassrooms(enrolled);
+        setSelectedClassroom(active);
+
+        // Load assignments for enrolled classrooms
         const allAssigns = await dataService.getAssignments();
-        setAssignments(allAssigns);
+        const enrolledClassIds = new Set(enrolled.map((c) => c.id));
+        const relevantAssigns = allAssigns.filter((a) => enrolledClassIds.has(a.classroom_id));
+        setAssignments(relevantAssigns);
 
         // Load existing submissions for this real LINE student
         const subMap: Record<string, Submission> = {};
-        for (const a of allAssigns) {
+        for (const a of relevantAssigns) {
           const subs = await dataService.getSubmissions(a.id);
-          const found = subs.find((s) => s.student_id === currentStudent.id || s.student_id === currentStudent.line_uid);
+          const found = subs.find(
+            (s) => s.student_id === currentStudent.id || s.student_id === currentStudent.line_uid
+          );
           if (found) subMap[a.id] = found;
         }
         setSubmissions(subMap);
@@ -265,7 +315,7 @@ export default function LiffStudentPage() {
     }
 
     loadData();
-  }, [authStatus, currentStudent]);
+  }, [authStatus, currentStudent?.id, currentStudent?.student_id]);
 
   // When opening an assignment, fetch questions
   const handleOpenAssignment = async (a: Assignment) => {
@@ -377,7 +427,7 @@ export default function LiffStudentPage() {
           const formData = new FormData();
           formData.append("file", audioBlob, `voice_${questionId}_${Date.now()}.webm`);
           formData.append("assignment_id", activeAssignment?.id || "general");
-          formData.append("student_id", currentStudent.id);
+          formData.append("student_id", currentStudent.student_id || currentStudent.id);
 
           const res = await fetch("/api/upload", {
             method: "POST",
@@ -428,7 +478,7 @@ export default function LiffStudentPage() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("assignment_id", activeAssignment?.id || "general");
-      formData.append("student_id", currentStudent.id);
+      formData.append("student_id", currentStudent.student_id || currentStudent.id);
 
       const res = await fetch("/api/upload", {
         method: "POST",
@@ -463,7 +513,7 @@ export default function LiffStudentPage() {
 
       const sub = await dataService.submitStudentWork({
         assignment_id: activeAssignment.id,
-        student_id: currentStudent.id,
+        student_id: currentStudent.student_id || currentStudent.id,
         student_name: currentStudent.name,
         answers: answersPayload,
         antiCheating: {
@@ -486,7 +536,8 @@ export default function LiffStudentPage() {
   // Join Classroom via Invite Code
   const handleJoinClassroom = async () => {
     if (!joinInviteCode.trim() || !currentStudent) return;
-    const matched = classrooms.find(
+    const allClasses = await dataService.getClassrooms();
+    const matched = allClasses.find(
       (c) => c.invite_code?.toLowerCase() === joinInviteCode.trim().toLowerCase()
     );
     if (matched) {
@@ -495,16 +546,23 @@ export default function LiffStudentPage() {
         id: currentStudent.line_uid,
         first_name: names[0] || currentStudent.name,
         last_name: names.slice(1).join(" ") || "",
-        student_id: currentStudent.line_uid.substring(0, 8),
-        email: `${currentStudent.line_uid.substring(0, 8)}@student.pudding.ac.th`,
+        student_id: currentStudent.student_id || currentStudent.line_uid.substring(0, 8),
+        email: `${(currentStudent.student_id || currentStudent.line_uid).substring(0, 8)}@student.pudding.ac.th`,
         line_uid: currentStudent.line_uid,
         avatar_url: currentStudent.avatar,
       });
+
+      setClassrooms((prev) => (prev.some((c) => c.id === matched.id) ? prev : [matched, ...prev]));
       setSelectedClassroom(matched);
       setIsJoinModalOpen(false);
       setJoinInviteCode("");
       setJoinMessage(`🎉 เข้าร่วมห้องเรียน "${matched.name}" สำเร็จ!`);
       setTimeout(() => setJoinMessage(null), 3500);
+
+      // Refresh assignments for this new classroom
+      const allAssigns = await dataService.getAssignments();
+      const relevant = allAssigns.filter((a) => a.classroom_id === matched.id);
+      setAssignments((prev) => [...prev.filter((a) => a.classroom_id !== matched.id), ...relevant]);
     } else {
       setJoinMessage("ไม่พบห้องเรียนจากรหัสที่ระบุ กรุณาตรวจสอบรหัสอีกครั้ง");
     }
@@ -563,7 +621,7 @@ export default function LiffStudentPage() {
         </div>
         <button
           onClick={() => window.location.reload()}
-          className="px-6 py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-md hover:opacity-90 active:scale-95 transition-all"
+          className="px-6 py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold shadow-md hover:opacity-90 active:scale-95 transition-all cursor-pointer"
         >
           ลองใหม่อีกครั้ง
         </button>
@@ -708,7 +766,7 @@ export default function LiffStudentPage() {
         </div>
       )}
 
-      {/* Real Student Profile Bar */}
+      {/* Real Student Profile Bar with Editable Student ID */}
       <div className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <img
@@ -725,15 +783,31 @@ export default function LiffStudentPage() {
                 LINE ผู้ใช้จริง
               </span>
             </div>
-            <p className="text-[10px] font-mono text-slate-500 dark:text-slate-400 font-medium truncate max-w-[180px]">
-              UID: {currentStudent.line_uid}
-            </p>
+            
+            {/* Student ID display with Edit Button */}
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                รหัส: <b className="font-mono text-slate-800 dark:text-slate-200">{currentStudent.student_id || "ยังไม่ระบุ"}</b>
+              </span>
+              <button
+                onClick={() => {
+                  setInputStudentId(currentStudent.student_id || "");
+                  setIsFirstTimeStudentId(false);
+                  setIsStudentIdModalOpen(true);
+                }}
+                className="text-[10px] font-bold text-[#06C755] hover:underline flex items-center gap-0.5 cursor-pointer ml-1"
+                title="แก้ไขรหัสนักเรียน"
+              >
+                <Edit2 className="w-3 h-3" />
+                <span>แก้ไข</span>
+              </button>
+            </div>
           </div>
         </div>
 
         <button
           onClick={handleLineLogout}
-          className="text-xs text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          className="text-xs text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
           title="ออกจากระบบ"
         >
           <LogOut className="w-4 h-4" />
@@ -750,22 +824,26 @@ export default function LiffStudentPage() {
       {/* Classroom Selector Pills */}
       <div className="px-4 py-3 bg-slate-100 dark:bg-slate-900/60 flex items-center justify-between gap-2 overflow-x-auto">
         <div className="flex items-center gap-1.5 flex-1 overflow-x-auto py-0.5">
-          {classrooms.map((cls) => {
-            const isSelected = selectedClassroom?.id === cls.id;
-            return (
-              <button
-                key={cls.id}
-                onClick={() => setSelectedClassroom(cls)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                  isSelected
-                    ? "bg-[#06C755] text-white shadow-xs"
-                    : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
-                }`}
-              >
-                {cls.name}
-              </button>
-            );
-          })}
+          {classrooms.length === 0 ? (
+            <span className="text-xs text-slate-500 italic px-2">ยังไม่มีห้องเรียนที่เข้าร่วม</span>
+          ) : (
+            classrooms.map((cls) => {
+              const isSelected = selectedClassroom?.id === cls.id;
+              return (
+                <button
+                  key={cls.id}
+                  onClick={() => setSelectedClassroom(cls)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                    isSelected
+                      ? "bg-[#06C755] text-white shadow-xs"
+                      : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                  }`}
+                >
+                  {cls.name}
+                </button>
+              );
+            })
+          )}
         </div>
 
         <button
@@ -784,6 +862,29 @@ export default function LiffStudentPage() {
             <div className="p-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-[#06C755]" />
               <span>กำลังโหลดข้อมูลงานและข้อสอบ...</span>
+            </div>
+          ) : classrooms.length === 0 ? (
+            /* Clean Empty State for New Students */
+            <div className="text-center py-12 px-4 bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-emerald-50 dark:bg-emerald-950/50 text-[#06C755] mx-auto flex items-center justify-center text-3xl shadow-xs">
+                🎒
+              </div>
+              <div className="space-y-1.5 max-w-xs mx-auto">
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                  ยินดีต้อนรับสู่ พุดดิ้ง (Pudding)!
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  คุณยังไม่ได้เข้าร่วมห้องเรียนใดๆ กรุณานำรหัสเชิญจากคุณครูมากดเข้าร่วมห้องเรียนเพื่อเริ่มต้นส่งงานหรือทำข้อสอบ
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsJoinModalOpen(true)}
+                className="px-5 py-3 rounded-2xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs inline-flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition-transform active:scale-95 cursor-pointer"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>ใส่รหัสเข้าห้องเรียน (เช่น THAI-401)</span>
+              </button>
             </div>
           ) : (
             <>
@@ -1100,6 +1201,62 @@ export default function LiffStudentPage() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* MANDATORY / EDITABLE STUDENT ID MODAL */}
+      {isStudentIdModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl space-y-4 border border-slate-200 dark:border-slate-800">
+            <div className="text-center space-y-1.5">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-[#06C755] flex items-center justify-center text-xl mx-auto font-black shadow-xs">
+                🆔
+              </div>
+              <h3 className="text-base font-black text-slate-900 dark:text-white">
+                {isFirstTimeStudentId ? "ระบุรหัสนักเรียน / รหัสนักศึกษา" : "แก้ไขรหัสนักเรียน / นักศึกษา"}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                {isFirstTimeStudentId
+                  ? "กรุณาระบุรหัสนักเรียนของคุณ เพื่อใช้ในการส่งงานและบันทึกคะแนนในระบบ (จำเป็นต้องกรอกก่อนเข้าใช้งาน)"
+                  : "แก้ไขรหัสนักเรียนของคุณเพื่อให้ตรงกับทะเบียนโรงเรียน"}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                รหัสนักเรียน (Student ID):
+              </label>
+              <input
+                type="text"
+                autoFocus
+                value={inputStudentId}
+                onChange={(e) => setInputStudentId(e.target.value.trim())}
+                placeholder="เช่น 54101 หรือ 66010123"
+                className="w-full p-3 rounded-2xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-mono font-bold text-center text-slate-900 dark:text-white focus:ring-2 focus:ring-[#06C755] focus:outline-hidden"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              {!isFirstTimeStudentId && (
+                <button
+                  type="button"
+                  disabled={isSavingStudentId}
+                  onClick={() => setIsStudentIdModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={isSavingStudentId || !inputStudentId.trim()}
+                onClick={handleSaveStudentId}
+                className="flex-1 py-2.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {isSavingStudentId ? "กำลังบันทึก..." : "บันทึกรหัสนักเรียน"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -1,5 +1,7 @@
 'use client';
 
+import { useUser } from '@clerk/nextjs';
+
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -26,6 +28,7 @@ import {
 } from 'lucide-react';
 
 export default function ClassroomsPage() {
+  const { user: clerkUser } = useUser();
   const { t, language } = useLanguage();
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +62,7 @@ export default function ClassroomsPage() {
 
   const loadData = async () => {
     try {
-      const cls = await dataService.getClassrooms();
+      const cls = await dataService.getClassrooms(clerkUser?.id);
       setClassrooms(cls);
       if (selectedClassroomForStudents) {
         const refreshed = cls.find((c) => c.id === selectedClassroomForStudents.id) || null;
@@ -74,7 +77,7 @@ export default function ClassroomsPage() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [clerkUser?.id]);
 
   const handleOpenCreateModal = () => {
     setEditingClassroom(null);
@@ -105,7 +108,7 @@ export default function ClassroomsPage() {
       showNotification(language === 'th' ? 'แก้ไขข้อมูลห้องเรียนสำเร็จ' : 'Classroom updated successfully');
     } else {
       await dataService.createClassroom({
-        teacher_id: 'teacher-tippanan',
+        teacher_id: clerkUser?.id || 'teacher-default',
         name: classNameInput.trim(),
         subject_code: subjectCodeInput.trim(),
         academic_year: academicYearInput.trim(),

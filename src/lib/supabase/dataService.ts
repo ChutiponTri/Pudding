@@ -63,41 +63,119 @@ export const dataService = {
     const lastName = names.slice(1).join(" ") || "";
     const userId = student.line_uid;
 
+    let finalStudentId: string | null = student.student_id || null;
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        // Check if student already exists and has a real student_id
+        const { data: existingUser } = await supabase
+          .from("users")
+          .select("*")
+          .eq("id", userId)
+          .maybeSingle();
+
+        if (existingUser && existingUser.student_id && !student.student_id) {
+          finalStudentId = existingUser.student_id;
+        }
+
+        const userPayload: Record<string, any> = {
+          id: userId,
+          first_name: firstName,
+          last_name: lastName,
+          avatar_url: student.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
+          email: `${userId.substring(0, 8)}@student.pudding.ac.th`,
+          role: "student",
+          line_uid: student.line_uid,
+          is_line_connected: true,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (finalStudentId) {
+          userPayload.student_id = finalStudentId;
+        }
+
+        await supabase.from("users").upsert(userPayload);
+        console.log("Synced real LINE student to Supabase:", userId, firstName, "student_id:", finalStudentId);
+
+        const returnedUser: User = {
+          id: userId,
+          first_name: firstName,
+          last_name: lastName,
+          student_id: finalStudentId || undefined,
+          avatar_url: userPayload.avatar_url,
+          email: userPayload.email,
+          role: "student",
+          line_uid: student.line_uid,
+          is_line_connected: true,
+        };
+        setStored("line_student_" + userId, returnedUser);
+        return returnedUser;
+      } catch (err) {
+        console.error("Error syncing LINE student to Supabase:", err);
+      }
+    }
+
     const userRecord: User = {
       id: userId,
       first_name: firstName,
       last_name: lastName,
-      student_id: student.student_id || userId.substring(0, 8),
+      student_id: finalStudentId || undefined,
       avatar_url: student.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
       email: `${userId.substring(0, 8)}@student.pudding.ac.th`,
       role: "student",
       line_uid: student.line_uid,
       is_line_connected: true,
     };
+    setStored("line_student_" + userId, userRecord);
+    return userRecord;
+  },
+
+  async updateStudentId(userId: string, newStudentId: string): Promise<boolean> {
+    const trimmed = newStudentId.trim();
+    if (!trimmed) return false;
 
     if (isSupabaseConfigured) {
       try {
         const supabase = createClient();
-        await supabase.from("users").upsert({
-          id: userRecord.id,
-          first_name: userRecord.first_name,
-          last_name: userRecord.last_name,
-          student_id: userRecord.student_id,
-          avatar_url: userRecord.avatar_url,
-          email: userRecord.email,
-          role: "student",
-          line_uid: userRecord.line_uid,
-          is_line_connected: true,
-          updated_at: new Date().toISOString(),
-        });
-        console.log("Synced real LINE student to Supabase:", userRecord.id, userRecord.first_name);
+        const { error } = await supabase
+          .from("users")
+          .update({
+            student_id: trimmed,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", userId);
+
+        if (error) {
+          console.error("Supabase updateStudentId error:", error.message);
+          return false;
+        }
+
+        // Also update any enrolled classrooms with updated student_id
+        const { data: classrooms } = await supabase.from("classrooms").select("id, students");
+        if (classrooms) {
+          for (const cls of classrooms) {
+            const stdList = (cls.students || []) as any[];
+            let touched = false;
+            const updated = stdList.map((s) => {
+              if (s.id === userId || s.line_uid === userId) {
+                touched = true;
+                return { ...s, student_id: trimmed };
+              }
+              return s;
+            });
+            if (touched) {
+              await supabase.from("classrooms").update({ students: updated }).eq("id", cls.id);
+            }
+          }
+        }
+        return true;
       } catch (err) {
-        console.error("Error syncing LINE student to Supabase:", err);
+        console.error("Error in updateStudentId:", err);
+        return false;
       }
     }
-
-    setStored("line_student_" + userId, userRecord);
-    return userRecord;
+    return true;
   },
 
   async syncClerkUser(clerkUser: {
@@ -160,18 +238,28 @@ export const dataService = {
   // ==============================================================================
   // COURSES
   // ==============================================================================
-  async getCourses(): Promise<Course[]> {
+  async getCourses(teacherId?: string): Promise<Course[]> {
     if (isSupabaseConfigured) {
       const supabase = createClient();
-      const { data, error } = await supabase.from('courses').select('*').order('created_at', { ascending: false });
+      let query = supabase.from('courses').select('*').order('created_at', { ascending: false });
+      const { data, error } = await query;
       if (!error && data) {
-        return data as Course[];
+        const all = data as Course[];
+        if (teacherId) {
+          return all.filter((c) => c.primary_teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
+        }
+        return all;
       }
       if (error && error.code !== 'PGRST205') {
         console.warn('Supabase getCourses error:', error.message);
       }
+      return [];
     }
-    return getStoredOr<Course[]>('courses', mockCourses);
+    const stored = getStoredOr<Course[]>('courses', []);
+    if (teacherId) {
+      return stored.filter((c) => c.primary_teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
+    }
+    return stored;
   },
 
   async getCourseById(id: string): Promise<Course | null> {
@@ -194,9 +282,39 @@ export const dataService = {
 
     if (isSupabaseConfigured) {
       const supabase = createClient();
+      
+      // Ensure primary teacher exists in users table before inserting to prevent foreign key errors
+      if (newCourse.primary_teacher_id) {
+        try {
+          const { data: userExists } = await supabase
+            .from("users")
+            .select("id")
+            .eq("id", newCourse.primary_teacher_id)
+            .maybeSingle();
+
+          if (!userExists) {
+            const primaryObj = newCourse.teachers?.find((t) => t.teacher_id === newCourse.primary_teacher_id) || newCourse.teachers?.[0];
+            const nameParts = (primaryObj?.name || "คุณครู").trim().split(" ");
+            await supabase.from("users").upsert({
+              id: newCourse.primary_teacher_id,
+              first_name: nameParts[0] || "คุณครู",
+              last_name: nameParts.slice(1).join(" ") || "",
+              role: "teacher",
+              email: primaryObj?.email || null,
+              avatar_url: primaryObj?.avatar_url || null,
+              updated_at: new Date().toISOString(),
+            });
+            console.log("Auto-created teacher record in users table:", newCourse.primary_teacher_id);
+          }
+        } catch (uErr) {
+          console.warn("Pre-checking teacher in users table notice:", uErr);
+        }
+      }
+
       const { error } = await supabase.from('courses').insert(newCourse);
       if (error) {
         console.error('Supabase createCourse error:', error);
+        throw error;
       }
     }
 
@@ -266,18 +384,27 @@ export const dataService = {
   // ==============================================================================
   // CLASSROOMS
   // ==============================================================================
-  async getClassrooms(): Promise<Classroom[]> {
+  async getClassrooms(teacherId?: string): Promise<Classroom[]> {
     if (isSupabaseConfigured) {
       const supabase = createClient();
       const { data, error } = await supabase.from('classrooms').select('*').order('created_at', { ascending: false });
       if (!error && data) {
-        return data as Classroom[];
+        const all = data as Classroom[];
+        if (teacherId) {
+          return all.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
+        }
+        return all;
       }
       if (error && error.code !== 'PGRST205') {
         console.warn('Supabase getClassrooms error:', error.message);
       }
+      return [];
     }
-    return getStoredOr<Classroom[]>('classrooms', mockClassrooms);
+    const stored = getStoredOr<Classroom[]>('classrooms', []);
+    if (teacherId) {
+      return stored.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
+    }
+    return stored;
   },
 
   async getClassroomById(id: string): Promise<Classroom | null> {
@@ -306,8 +433,38 @@ export const dataService = {
 
     if (isSupabaseConfigured) {
       const supabase = createClient();
+
+      if (newClassroom.teacher_id) {
+        try {
+          const { data: userExists } = await supabase
+            .from("users")
+            .select("id")
+            .eq("id", newClassroom.teacher_id)
+            .maybeSingle();
+
+          if (!userExists) {
+            const teacherObj = newClassroom.teachers?.find((t) => t.teacher_id === newClassroom.teacher_id) || newClassroom.teachers?.[0];
+            const nameParts = (teacherObj?.name || "คุณครู").trim().split(" ");
+            await supabase.from("users").upsert({
+              id: newClassroom.teacher_id,
+              first_name: nameParts[0] || "คุณครู",
+              last_name: nameParts.slice(1).join(" ") || "",
+              role: "teacher",
+              email: teacherObj?.email || null,
+              avatar_url: teacherObj?.avatar_url || null,
+              updated_at: new Date().toISOString(),
+            });
+          }
+        } catch (uErr) {
+          console.warn("Pre-checking teacher in users for classroom notice:", uErr);
+        }
+      }
+
       const { error } = await supabase.from('classrooms').insert(newClassroom);
-      if (error) console.error('Supabase createClassroom error:', error);
+      if (error) {
+        console.error('Supabase createClassroom error:', error);
+        throw error;
+      }
     }
 
     const classrooms = getStoredOr<Classroom[]>('classrooms', []);
@@ -459,7 +616,7 @@ export const dataService = {
       const { data, error } = await supabase.from('learning_indicators').select('*').order('order_index');
       if (!error && data) return data as LearningIndicator[];
     }
-    return getStoredOr<LearningIndicator[]>('learning_indicators', mockLearningIndicators);
+    return getStoredOr<LearningIndicator[]>('learning_indicators', []);
   },
 
   // ==============================================================================
@@ -471,7 +628,7 @@ export const dataService = {
       const { data, error } = await supabase.from('assignments').select('*').order('created_at', { ascending: false });
       if (!error && data) return data as Assignment[];
     }
-    return getStoredOr<Assignment[]>('assignments', mockAssignments);
+    return getStoredOr<Assignment[]>('assignments', []);
   },
 
   async getQuestions(assignmentId: string): Promise<Question[]> {
@@ -492,9 +649,9 @@ export const dataService = {
       }
     }
 
-    const assignments = getStoredOr<Assignment[]>('assignments', mockAssignments);
+    const assignments = getStoredOr<Assignment[]>('assignments', []);
     const assignment = assignments.find((a) => a.id === id) || null;
-    const allQuestions = getStoredOr<Question[]>('questions', mockQuestions);
+    const allQuestions = getStoredOr<Question[]>('questions', []);
     const questions = allQuestions.filter((q) => q.assignment_id === id);
 
     return { assignment, questions };
@@ -642,7 +799,7 @@ export const dataService = {
       }
     }
 
-    const submissions = getStoredOr<Submission[]>("submissions", mockSubmissions);
+    const submissions = getStoredOr<Submission[]>("submissions", []);
     const existingIdx = submissions.findIndex((s) => s.id === subId);
     if (existingIdx !== -1) {
       submissions[existingIdx] = submission;
@@ -651,7 +808,7 @@ export const dataService = {
     }
     setStored("submissions", submissions);
 
-    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>("submission_answers", mockSubmissionAnswers);
+    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>("submission_answers", {});
     allAnswers[subId] = allAnswers[subId] || {};
     for (const ans of payload.answers) {
       allAnswers[subId][ans.question_id] = {
@@ -664,7 +821,7 @@ export const dataService = {
     }
     setStored("submission_answers", allAnswers);
 
-    const allEvents = getStoredOr<Record<string, SubmissionEvent[]>>("submission_events", mockSubmissionEvents);
+    const allEvents = getStoredOr<Record<string, SubmissionEvent[]>>("submission_events", {});
     allEvents[subId] = payload.antiCheating.events.map((evt, idx) => ({
       id: `evt-${subId}-${Date.now()}-${idx}`,
       submission_id: subId,
@@ -684,7 +841,7 @@ export const dataService = {
       const { data, error } = await supabase.from("submissions").select("*");
       if (!error && data) return data as Submission[];
     }
-    return getStoredOr<Submission[]>("submissions", mockSubmissions);
+    return getStoredOr<Submission[]>("submissions", []);
   },
 
   async getSubmissions(assignmentId: string): Promise<Submission[]> {
@@ -697,7 +854,7 @@ export const dataService = {
       if (!error && data) return data as Submission[];
     }
 
-    const submissions = getStoredOr<Submission[]>('submissions', mockSubmissions);
+    const submissions = getStoredOr<Submission[]>('submissions', []);
     const filtered = submissions.filter((s) => s.assignment_id === assignmentId);
     return filtered.length > 0 ? filtered : submissions.filter((s) => s.assignment_id === 'assign-001');
   },
@@ -713,7 +870,7 @@ export const dataService = {
       if (!error && data) return data as SubmissionEvent[];
     }
 
-    const allEvents = getStoredOr<Record<string, SubmissionEvent[]>>('submission_events', mockSubmissionEvents);
+    const allEvents = getStoredOr<Record<string, SubmissionEvent[]>>('submission_events', {});
     return allEvents[submissionId] || [];
   },
 
@@ -822,7 +979,7 @@ export const dataService = {
 
     setStored('submission_answers', allAnswers);
 
-    const submissions = getStoredOr<Submission[]>('submissions', mockSubmissions);
+    const submissions = getStoredOr<Submission[]>('submissions', []);
     const updatedSubs = submissions.map((s) =>
       s.id === submissionId ? { ...s, total_score: Math.round(totalAwarded * 10) / 10 } : s
     );
