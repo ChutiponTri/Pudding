@@ -46,7 +46,7 @@ export const TeacherLoggedOutView: React.FC = () => {
           <div className="pt-2 flex flex-wrap items-center gap-3">
             <Link
               href="/sign-in"
-              className="px-6 py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white font-bold text-sm shadow-xl shadow-black/25 hover:shadow-2xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer"
+              className="px-3 py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white font-bold text-sm shadow-xl shadow-black/25 hover:shadow-2xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer"
             >
               <LogIn className="w-4 h-4 text-amber-400" />
               <span>{language === "th" ? "เข้าสู่ระบบครูผู้สอน (Google / LINE)" : "Teacher Sign In"}</span>
@@ -55,7 +55,7 @@ export const TeacherLoggedOutView: React.FC = () => {
 
             <Link
               href="/sign-up"
-              className="px-6 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
+              className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
             >
               <UserPlus className="w-4 h-4 text-orange-600" />
               <span>{language === "th" ? "ลงทะเบียนบัญชีใหม่" : "Create Account"}</span>
@@ -63,7 +63,7 @@ export const TeacherLoggedOutView: React.FC = () => {
 
             <Link
               href="/liff"
-              className="px-5 py-3.5 rounded-2xl bg-emerald-950/20 hover:bg-emerald-950/30 text-slate-950 font-bold text-xs shadow-md backdrop-blur-md border border-emerald-900/30 transition-all hover:scale-105 flex items-center gap-2"
+              className="px-3 py-3.5 rounded-2xl bg-emerald-950/20 hover:bg-emerald-950/30 text-slate-950 font-bold text-xs shadow-md backdrop-blur-md border border-emerald-900/30 transition-all hover:scale-105 flex items-center gap-2"
             >
               <Smartphone className="w-4 h-4 text-emerald-900" />
               <span>{language === "th" ? "เข้าสู่มุมมองนักเรียน (LINE LIFF)" : "Student LINE LIFF View"}</span>
@@ -73,7 +73,7 @@ export const TeacherLoggedOutView: React.FC = () => {
       </div>
 
       {/* Feature Highlights Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
         <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow space-y-3">
           <div className="w-12 h-12 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
             <FileCheck2 className="w-6 h-6" />
