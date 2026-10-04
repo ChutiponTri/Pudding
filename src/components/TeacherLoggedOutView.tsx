@@ -50,7 +50,6 @@ export const TeacherLoggedOutView: React.FC = () => {
             >
               <LogIn className="w-4 h-4 text-amber-400" />
               <span>{language === "th" ? "เข้าสู่ระบบครูผู้สอน" : "Teacher Sign In"}</span>
-              <ArrowRight className="w-4 h-4" />
             </Link>
 
             <Link
