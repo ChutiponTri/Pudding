@@ -49,7 +49,7 @@ export const TeacherLoggedOutView: React.FC = () => {
               className="px-3 py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white font-bold text-sm shadow-xl shadow-black/25 hover:shadow-2xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer"
             >
               <LogIn className="w-4 h-4 text-amber-400" />
-              <span>{language === "th" ? "เข้าสู่ระบบครูผู้สอน (Google / LINE)" : "Teacher Sign In"}</span>
+              <span>{language === "th" ? "เข้าสู่ระบบครูผู้สอน" : "Teacher Sign In"}</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
 
@@ -66,7 +66,7 @@ export const TeacherLoggedOutView: React.FC = () => {
               className="px-3 py-3.5 rounded-2xl bg-emerald-950/20 hover:bg-emerald-950/30 text-slate-950 font-bold text-xs shadow-md backdrop-blur-md border border-emerald-900/30 transition-all hover:scale-105 flex items-center gap-2"
             >
               <Smartphone className="w-4 h-4 text-emerald-900" />
-              <span>{language === "th" ? "เข้าสู่มุมมองนักเรียน (LINE LIFF)" : "Student LINE LIFF View"}</span>
+              <span>{language === "th" ? "เข้าสู่มุมมองนักเรียน" : "Student Sign In"}</span>
             </Link>
           </div>
         </div>
