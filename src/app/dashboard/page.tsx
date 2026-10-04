@@ -575,18 +575,16 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={handleOpenCreateCourseModal}
-            className="group px-3 py-3.5 rounded-2xl bg-white/95 hover:bg-white text-slate-950 shadow-xl shadow-black/10 hover:shadow-2xl hover:shadow-amber-900/15 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-amber-200/90 text-left"
+            className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
           >
             <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/30 group-hover:rotate-6 transition-transform">
               <BookOpen className="w-5 h-5" />
             </div>
             <div>
-              <span className="block text-xs md:text-sm font-black text-slate-950 tracking-tight leading-tight">
-                + {t('courses.create_course_modal_title') || '+ เพิ่มรายวิชาใหม่'}
+              <span>
+                {t('courses.create_course_modal_title') || '+ เพิ่มรายวิชาใหม่'}
               </span>
-              <span className="text-[10px] text-amber-800 font-semibold block mt-0.5">
-                {language === 'th' ? 'กำหนดรหัส & ตัวชี้วัด' : 'Curriculum & Indicators'}
-              </span>
+
             </div>
           </button>
 
@@ -594,17 +592,14 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={() => handleOpenCreateClassModal()}
-            className="group px-3 py-3.5 rounded-2xl bg-white/95 hover:bg-white text-slate-950 shadow-xl shadow-black/10 hover:shadow-2xl hover:shadow-amber-900/15 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-amber-200/90 text-left"
+            className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
           >
             <div className="w-10 h-10 rounded-xl bg-orange-500 text-white flex items-center justify-center font-black shadow-md shadow-orange-500/30 group-hover:rotate-6 transition-transform">
               <School className="w-5 h-5" />
             </div>
             <div>
-              <span className="block text-xs md:text-sm font-black text-slate-950 tracking-tight leading-tight">
-                + {t('dashboard.quick_actions.add_classroom')}
-              </span>
-              <span className="text-[10px] text-orange-800 font-semibold block mt-0.5">
-                {language === 'th' ? 'สร้างห้องเรียน & รหัสเข้าชั้น' : 'Add Classroom & Student Roster'}
+              <span>
+                {t('dashboard.quick_actions.add_classroom')}
               </span>
             </div>
           </button>
@@ -612,17 +607,14 @@ export default function DashboardPage() {
           {/* 3. Create Assignment / Exam CTA */}
           <Link
             href="/creation"
-            className="group px-3 py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white shadow-xl shadow-black/30 hover:shadow-2xl hover:shadow-black/40 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-slate-800 text-left"
+            className="px-3 py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white font-bold text-sm shadow-xl shadow-black/25 hover:shadow-2xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer"
           >
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <span className="block text-xs md:text-sm font-black text-white tracking-tight leading-tight">
-                + {t('dashboard.quick_actions.create_assignment')}
-              </span>
-              <span className="text-[10px] text-amber-300 font-semibold block mt-0.5">
-                {language === 'th' ? 'ระบบตรวจ AI & คุมสอบทุจริต' : 'AI Grading & Integrity Monitoring'}
+              <span>
+                {t('dashboard.quick_actions.create_assignment')}
               </span>
             </div>
           </Link>

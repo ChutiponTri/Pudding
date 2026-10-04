@@ -61,7 +61,7 @@
     "quick_actions": {
       "title": "Quick Actions",
       "add_course": "Add New Course",
-      "create_assignment": "Create Assignment / Exam",
+      "create_assignment": "New Assignment",
       "add_classroom": "Add Classroom",
       "view_all_submissions": "Review All Submissions",
       "manage_indicators": "Manage Indicators"

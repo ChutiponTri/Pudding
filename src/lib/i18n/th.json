@@ -61,7 +61,7 @@
     "quick_actions": {
       "title": "เมนูด่วน",
       "add_course": "เพิ่มรายวิชาใหม่",
-      "create_assignment": "สร้างการบ้าน / ข้อสอบใหม่",
+      "create_assignment": "เพิ่มชิ้นงาน",
       "add_classroom": "เพิ่มห้องเรียน",
       "view_all_submissions": "ตรวจสอบการส่งงานทั้งหมด",
       "manage_indicators": "จัดการตัวชี้วัด"
@@ -85,7 +85,7 @@
   "courses": {
     "title": "โครงสร้างรายวิชาและตัวชี้วัด",
     "subtitle": "จัดกลุ่มห้องเรียนและข้อสอบตามรายวิชาหลัก พร้อมรองรับครูร่วมสอนและการวิจัย",
-    "create_course_modal_title": "สร้างรายวิชาใหม่",
+    "create_course_modal_title": "เพิ่มวิชาใหม่",
     "create_course_btn": "สร้างรายวิชา",
     "delete_course": "ลบรายวิชา",
     "delete_course_confirm": "คุณแน่ใจหรือไม่ว่าต้องการลบรายวิชานี้? (ข้อมูลห้องเรียนและการบ้านทั้งหมดในวิชานี้จะถูกลบออกด้วย)",
