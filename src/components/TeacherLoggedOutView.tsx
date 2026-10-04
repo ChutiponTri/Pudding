@@ -27,7 +27,7 @@ export const TeacherLoggedOutView: React.FC = () => {
         <div className="relative z-10 max-w-3xl space-y-6">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/15 backdrop-blur-md text-xs font-black tracking-wide text-slate-950">
             <span className="text-base select-none">🍮</span>
-            <span>{language === "th" ? "พุดดิ้ง (Pudding Platform)" : "Pudding Platform"} • ครูผู้สอน</span>
+            <span>{language === "th" ? "พุดดิ้งแพลทฟอร์ม  • ครูผู้สอน" : "Pudding Platform • Teacher"}</span>
           </div>
 
           <h1 className="text-3xl md:text-5xl font-black tracking-tight leading-tight text-slate-950">
