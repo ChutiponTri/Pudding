@@ -75,7 +75,7 @@ export const Navbar: React.FC = () => {
               <span className="font-black text-lg tracking-tight text-slate-900 dark:text-white">
                 {language === 'th' ? 'พุดดิ้ง' : 'Pudding'}
               </span>
-              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
+              <span className="hidden md:block text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
                 Platform
               </span>
             </div>

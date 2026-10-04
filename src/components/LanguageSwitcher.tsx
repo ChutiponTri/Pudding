@@ -13,7 +13,7 @@ export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className =
       role="group"
       aria-label="Language Selector"
     >
-      <div className="pl-1.5 pr-0.5 text-slate-400 dark:text-slate-500">
+      <div className="hidden md:block pl-1.5 pr-0.5 text-slate-400 dark:text-slate-500">
         <Globe className="w-3.5 h-3.5" />
       </div>
       <button
@@ -27,7 +27,7 @@ export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className =
         title="ภาษาไทย (ค่าเริ่มต้น)"
       >
         <span>🇹🇭</span>
-        <span>ไทย</span>
+        <span className='hidden md:block'>ไทย</span>
       </button>
       <button
         type="button"
@@ -40,7 +40,7 @@ export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className =
         title="English"
       >
         <span>🇬🇧</span>
-        <span>EN</span>
+        <span className='hidden md:block'>EN</span>
       </button>
     </div>
   );

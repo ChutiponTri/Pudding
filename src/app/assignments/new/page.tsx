@@ -23,6 +23,9 @@ import {
   Paperclip,
   FileText,
   UploadCloud,
+  Loader2,
+  CheckCircle2,
+  ExternalLink,
   Lock,
   ArrowRight,
 } from 'lucide-react';
@@ -57,9 +60,42 @@ export default function NewAssignmentPage() {
   const [cronPreset, setCronPreset] = useState('1d');
 
   // Conditional Sample Work / Guidelines (Assignment Mode only)
-  const [sampleWorkTitle, setSampleWorkTitle] = useState('');
-  const [sampleWorkUrl, setSampleWorkUrl] = useState('');
-  const [sampleWorkDescription, setSampleWorkDescription] = useState('');
+  const [sampleWorkTitle, setSampleWorkTitle] = useState("");
+  const [sampleWorkUrl, setSampleWorkUrl] = useState("");
+  const [sampleWorkDescription, setSampleWorkDescription] = useState("");
+  const [isUploadingSample, setIsUploadingSample] = useState(false);
+  const [sampleUploadError, setSampleUploadError] = useState<string | null>(null);
+
+  const handleSampleFileUpload = async (file: File) => {
+    setIsUploadingSample(true);
+    setSampleUploadError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("assignment_id", "sample-works");
+      formData.append("student_id", "teacher-sample");
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok || !json.url) {
+        throw new Error(json.error || "Failed to upload to Cloudflare R2");
+      }
+
+      setSampleWorkUrl(json.url);
+      if (!sampleWorkTitle.trim()) {
+        const cleanName = file.name.replace(/\.[^/.]+$/, "");
+        setSampleWorkTitle(cleanName);
+      }
+    } catch (err: any) {
+      console.error("R2 sample upload error:", err);
+      setSampleUploadError(err.message || "เกิดข้อผิดพลาดในการอัปโหลดไฟล์ขึ้น Cloudflare R2");
+    } finally {
+      setIsUploadingSample(false);
+    }
+  };
 
   // Dynamic Questions
   const [questions, setQuestions] = useState<QuestionDraft[]>([
@@ -489,17 +525,78 @@ export default function NewAssignmentPage() {
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  {t('assignment_creator.sample_work.work_url_label')}
-                </label>
-                <input
-                  type="text"
-                  value={sampleWorkUrl}
-                  onChange={(e) => setSampleWorkUrl(e.target.value)}
-                  placeholder={t('assignment_creator.sample_work.work_url_placeholder')}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
-                />
+              <div className="space-y-1.5 md:col-span-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {t('assignment_creator.sample_work.work_url_label')} (หรืออัปโหลดตรงขึ้น Cloudflare R2)
+                  </label>
+                  {sampleWorkUrl && (
+                    <a
+                      href={sampleWorkUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>เปิดดูไฟล์ตัวอย่าง</span>
+                    </a>
+                  )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <input
+                    type="text"
+                    value={sampleWorkUrl}
+                    onChange={(e) => setSampleWorkUrl(e.target.value)}
+                    placeholder={t('assignment_creator.sample_work.work_url_placeholder')}
+                    className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
+                  />
+
+                  {/* Direct Cloudflare R2 Upload Button */}
+                  <label className="shrink-0 cursor-pointer px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 transition-transform active:scale-95">
+                    {isUploadingSample ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>กำลังอัปโหลดขึ้น R2...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UploadCloud className="w-4 h-4" />
+                        <span>อัปโหลดขึ้น Cloudflare R2</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="application/pdf,image/png,image/jpeg,image/webp"
+                      disabled={isUploadingSample}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleSampleFileUpload(file);
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                {sampleUploadError && (
+                  <p className="text-[11px] text-rose-500 font-semibold">{sampleUploadError}</p>
+                )}
+
+                {sampleWorkUrl && sampleWorkUrl.includes("r2.dev") && (
+                  <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 font-medium truncate">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>บันทึกไฟล์บน Cloudflare R2 เรียบร้อยแล้ว</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSampleWorkUrl("")}
+                      className="text-slate-400 hover:text-rose-500 text-xs px-1"
+                    >
+                      ลบ
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5 md:col-span-2">

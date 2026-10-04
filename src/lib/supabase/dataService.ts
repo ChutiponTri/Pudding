@@ -52,6 +52,54 @@ export const dataService = {
   // ==========================================
   // CLERK AUTH USER SYNC
   // ==========================================
+  async syncLineStudentUser(student: {
+    line_uid: string;
+    name: string;
+    avatar?: string | null;
+    student_id?: string;
+  }): Promise<User> {
+    const names = student.name.trim().split(" ");
+    const firstName = names[0] || "นักเรียน";
+    const lastName = names.slice(1).join(" ") || "";
+    const userId = student.line_uid;
+
+    const userRecord: User = {
+      id: userId,
+      first_name: firstName,
+      last_name: lastName,
+      student_id: student.student_id || userId.substring(0, 8),
+      avatar_url: student.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
+      email: `${userId.substring(0, 8)}@student.pudding.ac.th`,
+      role: "student",
+      line_uid: student.line_uid,
+      is_line_connected: true,
+    };
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase.from("users").upsert({
+          id: userRecord.id,
+          first_name: userRecord.first_name,
+          last_name: userRecord.last_name,
+          student_id: userRecord.student_id,
+          avatar_url: userRecord.avatar_url,
+          email: userRecord.email,
+          role: "student",
+          line_uid: userRecord.line_uid,
+          is_line_connected: true,
+          updated_at: new Date().toISOString(),
+        });
+        console.log("Synced real LINE student to Supabase:", userRecord.id, userRecord.first_name);
+      } catch (err) {
+        console.error("Error syncing LINE student to Supabase:", err);
+      }
+    }
+
+    setStored("line_student_" + userId, userRecord);
+    return userRecord;
+  },
+
   async syncClerkUser(clerkUser: {
     id: string;
     firstName?: string | null;
@@ -72,54 +120,34 @@ export const dataService = {
     if (isSupabaseConfigured) {
       try {
         const supabase = createClient();
-        let existing = null;
-        try {
-          const { data, error } = await supabase
-            .from("users")
-            .select("*")
-            .or(`clerk_id.eq.${clerkUser.id},email.eq.${clerkUser.email || "non-existent"}`)
-            .maybeSingle();
-          if (!error) existing = data;
-        } catch {
-          // If clerk_id column not yet migrated, fallback to email / id
-          const { data } = await supabase
-            .from("users")
-            .select("*")
-            .or(`id.eq.${clerkUser.id},email.eq.${clerkUser.email || "non-existent"}`)
-            .maybeSingle();
-          existing = data;
+        const userRecord: Record<string, any> = {
+          id: clerkUser.id,
+          first_name: defaultUser.first_name,
+          last_name: defaultUser.last_name,
+          avatar_url: defaultUser.avatar_url,
+          email: defaultUser.email,
+          role: "teacher",
+          updated_at: new Date().toISOString(),
+        };
+
+        // Try upserting with clerk_id first
+        let { data, error } = await supabase.from("users").upsert({
+          ...userRecord,
+          clerk_id: clerkUser.id,
+        }).select().single();
+
+        // Fallback without clerk_id column if not in schema cache
+        if (error && error.message.includes("clerk_id")) {
+          const fallback = await supabase.from("users").upsert(userRecord).select().single();
+          data = fallback.data;
+          error = fallback.error;
         }
 
-        if (existing) {
-          const updated = {
-            clerk_id: clerkUser.id,
-            first_name: clerkUser.firstName || existing.first_name,
-            last_name: clerkUser.lastName || existing.last_name,
-            avatar_url: clerkUser.imageUrl || existing.avatar_url,
-            email: clerkUser.email || existing.email,
-          };
-          const { data } = await supabase
-            .from("users")
-            .update(updated)
-            .eq("id", existing.id)
-            .select()
-            .single();
-          return (data as User) || { ...existing, ...updated };
-        } else {
-          const { data } = await supabase
-            .from("users")
-            .insert({
-              id: clerkUser.id,
-              clerk_id: clerkUser.id,
-              first_name: defaultUser.first_name,
-              last_name: defaultUser.last_name,
-              avatar_url: defaultUser.avatar_url,
-              email: defaultUser.email,
-              role: "teacher",
-            })
-            .select()
-            .single();
-          return (data as User) || defaultUser;
+        if (error) {
+          console.error("Supabase user sync error:", error.message);
+        } else if (data) {
+          console.log("Successfully synced Clerk user to Supabase:", data.id, data.first_name);
+          return data as User;
         }
       } catch (err) {
         console.error("Error syncing Clerk user to Supabase:", err);
@@ -319,58 +347,74 @@ export const dataService = {
 
   async addStudentToClassroom(
     classroomId: string,
-    studentData: Omit<User, 'id' | 'role'>
+    studentData: Omit<User, "id" | "role"> & { id?: string }
   ): Promise<User> {
+    const studentId = studentData.id || studentData.line_uid || `std-${Date.now()}`;
     const newStudent: User = {
       ...studentData,
-      id: `std-${Date.now()}`,
-      role: 'student',
+      id: studentId,
+      role: "student",
+      is_line_connected: Boolean(studentData.line_uid),
       avatar_url:
         studentData.avatar_url ||
         `https://images.unsplash.com/photo-${1534528741775 + Math.floor(Math.random() * 100)}?w=100`,
     };
 
     if (isSupabaseConfigured) {
-      const supabase = createClient();
-      // Upsert into users table
-      await supabase.from('users').upsert({
-        id: newStudent.id,
-        first_name: newStudent.first_name,
-        last_name: newStudent.last_name,
-        student_id: newStudent.student_id,
-        role: 'student',
-        email: newStudent.email,
-        avatar_url: newStudent.avatar_url,
-      });
+      try {
+        const supabase = createClient();
+        // 1. Upsert into users table
+        await supabase.from("users").upsert({
+          id: newStudent.id,
+          first_name: newStudent.first_name,
+          last_name: newStudent.last_name,
+          student_id: newStudent.student_id,
+          role: "student",
+          email: newStudent.email,
+          avatar_url: newStudent.avatar_url,
+          line_uid: newStudent.line_uid || null,
+          is_line_connected: Boolean(newStudent.line_uid),
+          updated_at: new Date().toISOString(),
+        });
 
-      // Insert link in classroom_students table
-      await supabase.from('classroom_students').insert({
-        classroom_id: classroomId,
-        student_id: newStudent.id,
-        joined_via: 'manual',
-      });
+        // 2. Link in classroom_students table
+        await supabase.from("classroom_students").upsert({
+          id: `cs_${classroomId}_${newStudent.id}`,
+          classroom_id: classroomId,
+          student_id: newStudent.id,
+          joined_via: newStudent.line_uid ? "line_liff" : "invite_code",
+        });
+      } catch (err) {
+        console.error("Supabase addStudentToClassroom error:", err);
+      }
     }
 
     const classrooms = await this.getClassrooms();
     const classroom = classrooms.find((c) => c.id === classroomId);
     if (classroom) {
       const currentStudents = classroom.students || [];
-      const updatedStudents = [newStudent, ...currentStudents];
+      const exists = currentStudents.some((s) => s.id === newStudent.id || (s.line_uid && s.line_uid === newStudent.line_uid));
+      const updatedStudents = exists
+        ? currentStudents.map((s) => (s.id === newStudent.id ? newStudent : s))
+        : [newStudent, ...currentStudents];
       classroom.students = updatedStudents;
       classroom.student_count = updatedStudents.length;
 
       if (isSupabaseConfigured) {
-        const supabase = createClient();
-        await supabase
-          .from('classrooms')
-          .update({
-            student_count: updatedStudents.length,
-            students: updatedStudents,
-          })
-          .eq('id', classroomId);
+        try {
+          const supabase = createClient();
+          await supabase
+            .from("classrooms")
+            .update({
+              student_count: updatedStudents.length,
+              students: updatedStudents,
+            })
+            .eq("id", classroomId);
+        } catch (err) {
+          console.error("Error updating classroom count in Supabase:", err);
+        }
       }
-
-      setStored('classrooms', classrooms);
+      setStored("classrooms", classrooms);
     }
 
     return newStudent;
@@ -632,6 +676,15 @@ export const dataService = {
     setStored("submission_events", allEvents);
 
     return submission;
+  },
+
+  async getAllSubmissions(): Promise<Submission[]> {
+    if (isSupabaseConfigured) {
+      const supabase = createClient();
+      const { data, error } = await supabase.from("submissions").select("*");
+      if (!error && data) return data as Submission[];
+    }
+    return getStoredOr<Submission[]>("submissions", mockSubmissions);
   },
 
   async getSubmissions(assignmentId: string): Promise<Submission[]> {

@@ -32,6 +32,8 @@ export default function LiffStudentPage() {
   const [liffId, setLiffId] = useState<string>("");
   const [isLiffReady, setIsLiffReady] = useState(false);
   const [isInLineClient, setIsInLineClient] = useState(false);
+  const [isRealLineUser, setIsRealLineUser] = useState(false);
+  const [liffInstance, setLiffInstance] = useState<any>(null);
   const [currentStudent, setCurrentStudent] = useState(DEMO_STUDENTS[0]);
 
   // Data State
@@ -95,15 +97,31 @@ export default function LiffStudentPage() {
         if (id) {
           const liff = (await import("@line/liff")).default;
           await liff.init({ liffId: id });
-          setIsInLineClient(liff.isInClient());
+          setLiffInstance(liff);
+          const inClient = liff.isInClient();
+          setIsInLineClient(inClient);
 
-          if (liff.isLoggedIn()) {
+          if (!liff.isLoggedIn()) {
+            if (inClient) {
+              liff.login();
+            }
+          } else {
             const profile = await liff.getProfile();
-            setCurrentStudent({
-              id: "54101",
+            const realLineStudent = {
+              id: profile.userId,
               name: profile.displayName,
               line_uid: profile.userId,
               avatar: profile.pictureUrl || DEMO_STUDENTS[0].avatar,
+            };
+            setCurrentStudent(realLineStudent);
+            setIsRealLineUser(true);
+
+            // Real sync of LINE profile into Supabase
+            await dataService.syncLineStudentUser({
+              line_uid: profile.userId,
+              name: profile.displayName,
+              avatar: profile.pictureUrl,
+              student_id: profile.userId.substring(0, 8),
             });
           }
         }
@@ -115,6 +133,21 @@ export default function LiffStudentPage() {
     }
     initLiff();
   }, []);
+
+  const handleLineLogin = () => {
+    if (liffInstance) {
+      liffInstance.login({ redirectUri: window.location.href });
+    } else {
+      alert("กรุณาเปิดลิงก์ผ่านแอปพลิเคชัน LINE เพื่อเข้าสู่ระบบ");
+    }
+  };
+
+  const handleLineLogout = () => {
+    if (liffInstance && liffInstance.isLoggedIn()) {
+      liffInstance.logout();
+      window.location.reload();
+    }
+  };
 
   // 2. Load Classrooms and Assignments
   useEffect(() => {
@@ -139,6 +172,19 @@ export default function LiffStudentPage() {
         }
 
         setSelectedClassroom(active);
+
+        // If URL contains join params and we have a student, auto-enroll in Supabase!
+        if (active && (codeParam || classIdParam)) {
+          await dataService.addStudentToClassroom(active.id, {
+            id: currentStudent.line_uid || currentStudent.id,
+            first_name: currentStudent.name.split(" ")[0] || currentStudent.name,
+            last_name: currentStudent.name.split(" ")[1] || "",
+            student_id: currentStudent.id,
+            avatar_url: currentStudent.avatar,
+            line_uid: currentStudent.line_uid,
+          });
+          setJoinMessage(`🎉 คุณได้เข้าร่วมห้องเรียน "${active.name}" เรียบร้อยแล้ว!`);
+        }
 
         // Load assignments
         const allAssigns = await dataService.getAssignments();
@@ -423,9 +469,26 @@ export default function LiffStudentPage() {
           <span className="text-base select-none">🍮</span>
           <span className="font-extrabold tracking-tight">พุดดิ้ง • LINE LIFF</span>
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] bg-black/15 px-2.5 py-0.5 rounded-full">
-          <span className="w-2 h-2 rounded-full bg-emerald-200 animate-pulse" />
-          <span>{isInLineClient ? "เชื่อมต่อ LINE แล้ว" : "LINE Simulator"}</span>
+        <div className="flex items-center gap-2">
+          {isRealLineUser ? (
+            <div className="flex items-center gap-1.5 text-[11px] bg-black/20 px-2.5 py-0.5 rounded-full">
+              <span className="w-2 h-2 rounded-full bg-emerald-200 animate-pulse" />
+              <span className="max-w-[120px] truncate">{currentStudent.name}</span>
+              <button
+                onClick={handleLineLogout}
+                className="text-[10px] text-emerald-100 hover:text-white underline ml-1 cursor-pointer"
+              >
+                ออก
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleLineLogin}
+              className="text-[11px] bg-black/25 hover:bg-black/35 px-2.5 py-0.5 rounded-full font-bold transition-colors cursor-pointer flex items-center gap-1"
+            >
+              <span>LINE Login</span>
+            </button>
+          )}
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import {
   Assignment,
+  Submission,
   Classroom,
   ClassroomTeacher,
   Course,
@@ -61,6 +62,20 @@ export default function DashboardPage() {
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [indicators, setIndicators] = useState<LearningIndicator[]>([]);
+  const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
+
+  // Automatically sync Clerk user into Supabase users table on dashboard load
+  useEffect(() => {
+    if (clerkUser) {
+      dataService.syncClerkUser({
+        id: clerkUser.id,
+        firstName: clerkUser.firstName,
+        lastName: clerkUser.lastName,
+        imageUrl: clerkUser.imageUrl,
+        email: clerkUser.primaryEmailAddress?.emailAddress,
+      }).catch((err) => console.error("Error syncing clerk user from dashboard:", err));
+    }
+  }, [clerkUser]);
   const [loading, setLoading] = useState(true);
 
   // Compute default academic period (e.g., Oct 2026 -> Semester 1 / 2026)
@@ -118,16 +133,18 @@ export default function DashboardPage() {
 
   const loadAllData = async () => {
     try {
-      const [crs, cls, as, ind] = await Promise.all([
+      const [crs, cls, as, ind, subs] = await Promise.all([
         dataService.getCourses(),
         dataService.getClassrooms(),
         dataService.getAssignments(),
         dataService.getLearningIndicators(),
+        dataService.getAllSubmissions(),
       ]);
       setCourses(crs);
       setClassrooms(cls);
       setAssignments(as);
       setIndicators(ind);
+      setAllSubmissions(subs);
 
       if (managingClassroom) {
         const refreshed = cls.find((c) => c.id === managingClassroom.id) || null;
@@ -178,8 +195,20 @@ export default function DashboardPage() {
     (acc, c) => acc + (c.students ? c.students.length : (c.student_count || 0)),
     0
   );
-  const pendingGradingCount = 6;
-  const suspiciousAlertCount = 2;
+  const pendingGradingCount = useMemo(() => {
+    return allSubmissions.filter(
+      (s) => s.status === "submitted" || s.status === "late" || !s.total_score || s.total_score === 0
+    ).length;
+  }, [allSubmissions]);
+
+  const suspiciousAlertCount = useMemo(() => {
+    return allSubmissions.filter(
+      (s) =>
+        s.is_flagged_suspicious ||
+        (s.tab_switch_count && s.tab_switch_count >= 3) ||
+        (s.total_time_away_seconds && s.total_time_away_seconds >= 30)
+    ).length;
+  }, [allSubmissions]);
 
   // Course Creation & Deletion Handlers
   const handleOpenCreateCourseModal = () => {
@@ -505,13 +534,13 @@ export default function DashboardPage() {
 
       {/* Hero Welcome Banner with High-Visibility Primary CTAs */}
       <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-3xl p-6 md:p-8 text-slate-950 shadow-xl shadow-amber-500/10 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors">
-        <div className="space-y-2">
+        <div className="space-y-2 min-w-0 md:min-w-150">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
             <span className="text-sm">🍮</span>
             <span>Pudding Learning Intelligence</span>
           </div>
           <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-950">
-            {t('dashboard.welcome')}, {clerkUser?.fullName || clerkUser?.firstName || t('nav.demo_teacher')}
+            {t('dashboard.welcome')}, <br className="md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || t('nav.demo_teacher')}
           </h1>
           <p className="text-slate-900/90 text-sm max-w-xl font-medium">
             {t('dashboard.overview_subtitle')}
@@ -524,7 +553,7 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={handleOpenCreateCourseModal}
-            className="group px-6 py-3.5 rounded-2xl bg-white/95 hover:bg-white text-slate-950 shadow-xl shadow-black/10 hover:shadow-2xl hover:shadow-amber-900/15 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-amber-200/90 text-left"
+            className="group px-3 py-3.5 rounded-2xl bg-white/95 hover:bg-white text-slate-950 shadow-xl shadow-black/10 hover:shadow-2xl hover:shadow-amber-900/15 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-amber-200/90 text-left"
           >
             <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/30 group-hover:rotate-6 transition-transform">
               <BookOpen className="w-5 h-5" />
@@ -543,7 +572,7 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={() => handleOpenCreateClassModal()}
-            className="group px-6 py-3.5 rounded-2xl bg-white/95 hover:bg-white text-slate-950 shadow-xl shadow-black/10 hover:shadow-2xl hover:shadow-amber-900/15 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-amber-200/90 text-left"
+            className="group px-3 py-3.5 rounded-2xl bg-white/95 hover:bg-white text-slate-950 shadow-xl shadow-black/10 hover:shadow-2xl hover:shadow-amber-900/15 transition-all hover:scale-[1.03] active:scale-[0.98] flex items-center gap-3.5 cursor-pointer border-2 border-amber-200/90 text-left"
           >
             <div className="w-10 h-10 rounded-xl bg-orange-500 text-white flex items-center justify-center font-black shadow-md shadow-orange-500/30 group-hover:rotate-6 transition-transform">
               <School className="w-5 h-5" />
@@ -579,7 +608,8 @@ export default function DashboardPage() {
       </div>
 
       {/* Top Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        
         {/* Classrooms count */}
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 transition-all">
           <div className="flex items-center justify-between">
