@@ -108,7 +108,7 @@ export default function LiffStudentPage() {
         const res = await fetch("/api/liff/config");
         const config = await res.json();
         const id = config.liffId || process.env.NEXT_PUBLIC_LINE_LIFF_ID || "";
-        
+
         if (!isMounted) return;
         setLiffId(id);
 
@@ -118,7 +118,7 @@ export default function LiffStudentPage() {
 
         const liff = (await import("@line/liff")).default;
         await liff.init({ liffId: id });
-        
+
         if (!isMounted) return;
         setLiffInstance(liff);
 
@@ -783,7 +783,7 @@ export default function LiffStudentPage() {
                 LINE ผู้ใช้จริง
               </span>
             </div>
-            
+
             {/* Student ID display with Edit Button */}
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
@@ -833,11 +833,10 @@ export default function LiffStudentPage() {
                 <button
                   key={cls.id}
                   onClick={() => setSelectedClassroom(cls)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                    isSelected
-                      ? "bg-[#06C755] text-white shadow-xs"
-                      : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
-                  }`}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${isSelected
+                    ? "bg-[#06C755] text-white shadow-xs"
+                    : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                    }`}
                 >
                   {cls.name}
                 </button>
@@ -916,11 +915,10 @@ export default function LiffStudentPage() {
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <span
-                                className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
-                                  a.is_exam
-                                    ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
-                                    : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                                }`}
+                                className={`text-[10px] font-black px-2 py-0.5 rounded-md ${a.is_exam
+                                  ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                                  : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                                  }`}
                               >
                                 {a.is_exam ? "📝 ข้อสอบออนไลน์" : "📋 การบ้าน / ใบงาน"}
                               </span>
@@ -1032,11 +1030,10 @@ export default function LiffStudentPage() {
 
             {/* LIVE ANTI-CHEATING STATUS PILL */}
             <div
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-bold border ${
-                tabSwitchCount > 0
-                  ? "bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800"
-                  : "bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800"
-              }`}
+              className={`flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-bold border ${tabSwitchCount > 0
+                ? "bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800"
+                : "bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800"
+                }`}
             >
               {tabSwitchCount > 0 ? (
                 <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
@@ -1231,7 +1228,10 @@ export default function LiffStudentPage() {
                 inputMode="numeric"
                 autoFocus
                 value={inputStudentId}
-                onChange={(e) => setInputStudentId(e.target.value.trim())}
+                onChange={(e) => {
+                  const value = e.target.value.replace(/\D/g, "");
+                  setInputStudentId(value);
+                }}
                 placeholder="เช่น 54101 หรือ 66010123"
                 className="w-full p-3 rounded-2xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-mono font-bold text-center text-slate-900 dark:text-white focus:ring-2 focus:ring-[#06C755] focus:outline-hidden"
               />
@@ -1250,7 +1250,10 @@ export default function LiffStudentPage() {
               )}
               <button
                 type="button"
-                disabled={isSavingStudentId || !inputStudentId.trim()}
+                disabled={
+                  isSavingStudentId ||
+                  !/^\d+$/.test(inputStudentId.trim())
+                }
                 onClick={handleSaveStudentId}
                 className="flex-1 py-2.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
               >
