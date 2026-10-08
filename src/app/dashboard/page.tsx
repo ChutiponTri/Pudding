@@ -58,6 +58,7 @@ import {
   UserCheck,
   UserX,
   Building2,
+  Loader2,
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
@@ -207,7 +208,8 @@ export default function DashboardPage() {
 
   // Real-time subscription for instant dashboard updates & notifications when students join
   useEffect(() => {
-    const unsub = dataService.subscribeToClassroomChanges((payload) => {
+    const teacherId = clerkUser?.id || 'teacher-default';
+    const unsub = dataService.subscribeToClassroomChanges(teacherId, (payload: any) => {
       loadAllData();
       if (payload?.eventType === 'LOCAL_SYNC') {
         const { student, autoAdmit } = payload.detail || {};
@@ -238,6 +240,28 @@ export default function DashboardPage() {
     return unsub;
   }, [language]);
 
+  // Dynamically collect all available semester options across current period, courses, and classrooms
+  const availableSemesterOptions = useMemo(() => {
+    const map = new Map<string, { semester: number; yearCE: number }>();
+    [1, 2, 3].forEach((s) => {
+      map.set(`${s}_${defaultPeriod.yearCE}`, { semester: s, yearCE: defaultPeriod.yearCE });
+    });
+    courses.forEach((c) => {
+      if (c.semester && c.year_ce) {
+        map.set(`${c.semester}_${c.year_ce}`, { semester: c.semester, yearCE: c.year_ce });
+      }
+    });
+    classrooms.forEach((cls) => {
+      if (cls.semester && cls.year_ce) {
+        map.set(`${cls.semester}_${cls.year_ce}`, { semester: cls.semester, yearCE: cls.year_ce });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.yearCE !== a.yearCE) return b.yearCE - a.yearCE;
+      return b.semester - a.semester;
+    });
+  }, [defaultPeriod.yearCE, courses, classrooms]);
+
   // Filter classrooms by selected semester
   const filteredClassrooms = useMemo(() => {
     if (selectedSemesterKey === 'all') return classrooms;
@@ -245,11 +269,12 @@ export default function DashboardPage() {
     const sem = Number(semStr);
     const yr = Number(yrStr);
     return classrooms.filter((cls) => {
-      const clsSem = cls.semester ?? 1;
-      const clsYr = cls.year_ce ?? 2026;
+      const parentCourse = courses.find((c) => c.id === cls.course_id);
+      const clsSem = cls.semester ?? parentCourse?.semester ?? 1;
+      const clsYr = cls.year_ce ?? parentCourse?.year_ce ?? defaultPeriod.yearCE;
       return clsSem === sem && clsYr === yr;
     });
-  }, [classrooms, selectedSemesterKey]);
+  }, [classrooms, courses, selectedSemesterKey, defaultPeriod.yearCE]);
 
   // Filter and group courses based on selected semester
   const groupedCourses = useMemo(() => {
@@ -800,7 +825,7 @@ export default function DashboardPage() {
   };
 
   const handleSelectFoundTeacher = (tchr: User) => {
-    const fullName = `${tchr.first_name || ''} ${tchr.last_name || ''}`.trim() || tchr.display_name || 'ครูผู้สอน';
+    const fullName = `${tchr.first_name || ''} ${tchr.last_name || ''}`.trim() || tchr.name || 'ครูผู้สอน';
     const newTeacher: ClassroomTeacher = {
       teacher_id: tchr.id,
       name: fullName,
@@ -1069,18 +1094,14 @@ export default function DashboardPage() {
               onChange={(e) => setSelectedSemesterKey(e.target.value)}
               className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:border-amber-500 cursor-pointer shadow-xs"
             >
-              <option value={`1_${defaultPeriod.yearCE}`}>
-                {formatAcademicPeriod(1, defaultPeriod.yearCE, language)}{' '}
-                {defaultPeriod.semester === 1 ? `(${t('classroom_mgmt.fields.active_semester')})` : ''}
-              </option>
-              <option value={`2_${defaultPeriod.yearCE}`}>
-                {formatAcademicPeriod(2, defaultPeriod.yearCE, language)}{' '}
-                {defaultPeriod.semester === 2 ? `(${t('classroom_mgmt.fields.active_semester')})` : ''}
-              </option>
-              <option value={`3_${defaultPeriod.yearCE}`}>
-                {formatAcademicPeriod(3, defaultPeriod.yearCE, language)}{' '}
-                {defaultPeriod.semester === 3 ? `(${t('classroom_mgmt.fields.active_semester')})` : ''}
-              </option>
+              {availableSemesterOptions.map((opt) => (
+                <option key={`${opt.semester}_${opt.yearCE}`} value={`${opt.semester}_${opt.yearCE}`}>
+                  {formatAcademicPeriod(opt.semester, opt.yearCE, language)}{' '}
+                  {opt.semester === defaultPeriod.semester && opt.yearCE === defaultPeriod.yearCE
+                    ? `(${t('classroom_mgmt.fields.active_semester')})`
+                    : ''}
+                </option>
+              ))}
               <option value="all">{t('classroom_mgmt.fields.all_semesters')}</option>
             </select>
           </div>
@@ -1156,26 +1177,34 @@ export default function DashboardPage() {
                     <span>{course.teachers?.length || 1} {language === 'th' ? 'ครูผู้สอน' : 'Teachers'}</span>
                   </button>
 
-                  {/* Learning Indicators Settings */}
-                  <button
-                    type="button"
-                    onClick={() => handleOpenIndicatorsModal(course)}
-                    className="px-3.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <Sliders className="w-3.5 h-3.5 text-amber-500" />
-                    <span>{t('dashboard.classrooms_section.course_settings_btn')}</span>
-                  </button>
+                  {/* Learning Indicators Settings - Only Course Owner */}
+                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenIndicatorsModal(course)}
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <Sliders className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{t('dashboard.classrooms_section.course_settings_btn')}</span>
+                      </button>
 
-                  {/* Clone to another semester */}
-                  <button
-                    type="button"
-                    onClick={() => handleCloneCourseToOtherSemester(course)}
-                    className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
-                    title={language === 'th' ? 'คัดลอกวิชานี้ไปยังเทอมอื่น' : 'Add this course to another semester'}
-                  >
-                    <Copy className="w-3.5 h-3.5 text-amber-500" />
-                    <span>{language === 'th' ? 'เพิ่มไปเทอมอื่น' : 'Add to Term'}</span>
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCloneCourseToOtherSemester(course)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title={language === 'th' ? 'คัดลอกวิชานี้ไปยังเทอมอื่น' : 'Add this course to another semester'}
+                      >
+                        <Copy className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{language === 'th' ? 'เพิ่มไปเทอมอื่น' : 'Add to Term'}</span>
+                      </button>
+                    </>
+                  ) : (
+                    <span className="px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold text-[11px] border border-blue-200/60 dark:border-blue-800/60 flex items-center gap-1">
+                      <GraduationCap className="w-3.5 h-3.5" />
+                      <span>{language === 'th' ? 'ผู้ช่วยสอน (ตรวจงานได้)' : 'TA Access'}</span>
+                    </span>
+                  )}
 
                   {/* Add Classroom Section Under This Course (Pre-fills this course & semester) */}
                   <button
@@ -1187,15 +1216,17 @@ export default function DashboardPage() {
                     <span>+ {language === 'th' ? 'เพิ่มห้องเรียน' : 'Add Classroom'}</span>
                   </button>
 
-                  {/* Delete Course Button */}
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteCourse(course)}
-                    className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-transparent hover:border-rose-200 dark:hover:border-rose-900 transition-colors cursor-pointer"
-                    title={language === 'th' ? `ลบรายวิชา ${course.code}` : `Delete Course ${course.code}`}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {/* Delete Course Button - Only Course Owner */}
+                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCourse(course)}
+                      className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-transparent hover:border-rose-200 dark:hover:border-rose-900 transition-colors cursor-pointer"
+                      title={language === 'th' ? `ลบรายวิชา ${course.code}` : `Delete Course ${course.code}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1255,10 +1286,27 @@ export default function DashboardPage() {
                                 </span>
                               )}
                             </h4>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5">
-                              <Users className="w-3.5 h-3.5" />
-                              <span>{count} {t('common.student')}</span>
-                            </p>
+                            <div className="flex items-center justify-between mt-1 gap-2 flex-wrap">
+                              <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5" />
+                                <span>{count} {t('common.student')}</span>
+                              </p>
+                              {cls.pending_students && cls.pending_students.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setManagingClassroom(cls);
+                                    setStudentTab('pending');
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse cursor-pointer shadow-xs hover:bg-rose-600 transition-colors"
+                                  title="คลิกเพื่ออนุมัตินักเรียนเข้าห้องเรียน"
+                                >
+                                  <UserPlus className="w-3 h-3" />
+                                  <span>รออนุมัติ {cls.pending_students.length} คน (Admit)</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
@@ -2079,6 +2127,23 @@ export default function DashboardPage() {
               </button>
               <button
                 type="button"
+                onClick={() => setStudentTab('pending')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  studentTab === 'pending'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>คำขอรออนุมัติ (Admit)</span>
+                {(managingClassroom.pending_students?.length || 0) > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
+                    {managingClassroom.pending_students?.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
                 onClick={() => setStudentTab('line')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
                   studentTab === 'line'
@@ -2094,6 +2159,61 @@ export default function DashboardPage() {
             {/* Student Roster Tab */}
             {studentTab === 'roster' && (
               <div className="space-y-4">
+                {/* Search existing students from institution */}
+                <div className="relative">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={studentSearchQuery}
+                      onChange={(e) => handleSearchStudents(e.target.value)}
+                      placeholder={language === 'th' ? '🔍 ค้นหานักเรียนที่มีในระบบ (ชื่อ, นามสกุล หรือรหัส นร.) เพื่อเพิ่มอย่างรวดเร็ว...' : 'Search student by name or ID...'}
+                      className="w-full pl-8 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:border-amber-500 font-medium"
+                    />
+                    {isSearchingStudents && (
+                      <Loader2 className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-amber-500 animate-spin" />
+                    )}
+                  </div>
+
+                  {studentSearchResults.length > 0 && (
+                    <div className="absolute z-20 left-0 right-0 mt-1 p-2 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 space-y-1 max-h-48 overflow-y-auto">
+                      {studentSearchResults.map((found) => (
+                        <button
+                          key={found.id}
+                          type="button"
+                          onClick={() => {
+                            setNewStudentId(found.student_id || '');
+                            setNewStudentFirst(found.first_name);
+                            setNewStudentLast(found.last_name);
+                            setStudentSearchQuery('');
+                            setStudentSearchResults([]);
+                          }}
+                          className="w-full p-2 rounded-xl text-left text-xs hover:bg-amber-50 dark:hover:bg-amber-950/60 flex items-center justify-between gap-2 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={found.avatar_url || 'https://images.unsplash.com/photo-1534528741775?w=100'}
+                              alt=""
+                              className="w-6 h-6 rounded-full object-cover"
+                            />
+                            <div>
+                              <span className="font-bold text-slate-900 dark:text-white block">
+                                {found.first_name} {found.last_name}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                ID: {found.student_id || '-'} • 🏫 {found.institution || '-'}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                            + เลือก
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Add student inline form */}
                 <form
                   onSubmit={handleAddStudent}
@@ -2169,6 +2289,88 @@ export default function DashboardPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Pending Admit Requests Tab */}
+            {studentTab === 'pending' && (
+              <div className="space-y-4">
+                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
+                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    ระบบความปลอดภัยตรวจสอบการเข้าห้องเรียน: นักเรียนที่สแกน QR Code หรือเข้าผ่านรหัสจะอยู่ในสถานะรอการอนุมัติ (Admit) ก่อน เพื่อป้องกันผู้ไม่หวังดีเข้ามาปั่นในห้องเรียน
+                  </p>
+                </div>
+
+                {(!managingClassroom.pending_students || managingClassroom.pending_students.length === 0) ? (
+                  <div className="py-12 text-center text-xs text-slate-400 space-y-2">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto text-xl">
+                      ✅
+                    </div>
+                    <p className="font-medium text-slate-600 dark:text-slate-300">
+                      ไม่มีคำขอเข้าห้องเรียนที่รอการอนุมัติในขณะนี้
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      เมื่อนักเรียนสแกน QR Code หน้าจอนี้จะอัปเดตแบบ Real-time ทันที
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {managingClassroom.pending_students.map((std) => (
+                      <div
+                        key={std.id}
+                        className="p-3.5 rounded-2xl bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-900/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={std.avatar_url || 'https://images.unsplash.com/photo-1534528741775?w=100'}
+                            alt=""
+                            className="w-10 h-10 rounded-2xl object-cover ring-2 ring-amber-400 shrink-0"
+                          />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-slate-900 dark:text-white">
+                                {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name || 'นักเรียน'}
+                              </span>
+                              {std.student_id && (
+                                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                                  ID: {std.student_id}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+                              <span>🏫 {std.institution || 'ไม่ระบุสถานศึกษา'}</span>
+                              {std.line_uid && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                  <Check className="w-3 h-3" /> LINE Verified
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleAdmitStudent(std.id)}
+                            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>อนุมัติ (Admit)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectStudent(std.id)}
+                            className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 font-semibold text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>ปฏิเสธ</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2270,6 +2472,80 @@ export default function DashboardPage() {
                 </div>
               </div>
             )}
+      {/* TEACHER INSTITUTION MODAL */}
+      {isInstitutionModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setIsInstitutionModalOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <School className="w-5 h-5 text-amber-500" />
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  {language === 'th' ? 'ระบุสถานศึกษา / โรงเรียนของคุณครู' : 'Set Educational Institution'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsInstitutionModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                {language === 'th'
+                  ? 'เลือกหรือค้นหาโรงเรียน สถาบันการศึกษา หรือมหาวิทยาลัยจากรายชื่อมาตรฐาน เพื่อป้องกันการสะกดชื่อผิด และเชื่อมโยงกับเพื่อนครูและนักเรียนในสถานศึกษาเดียวกันได้อย่างแม่นยำ'
+                  : 'Search and select your standard educational institution to ensure consistent grouping with co-teachers and students.'}
+              </p>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  {language === 'th' ? 'สถานศึกษา / สถาบัน' : 'Institution'} <span className="text-rose-500">*</span>
+                </label>
+                <InstitutionSearchSelect
+                  value={teacherInstitutionInput}
+                  onChange={setTeacherInstitutionInput}
+                  placeholder={language === 'th' ? 'พิมพ์ค้นหาชื่อโรงเรียน / วิทยาลัย / มหาวิทยาลัย...' : 'Search school name...'}
+                />
+              </div>
+
+              {teacherProfile?.institution && (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-600 dark:text-slate-400">
+                  <span>สถานศึกษาปัจจุบัน: </span>
+                  <b className="text-slate-900 dark:text-white">{teacherProfile.institution}</b>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsInstitutionModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={!teacherInstitutionInput.trim()}
+                onClick={async () => {
+                  const teacherId = clerkUser?.id || 'teacher-default';
+                  await dataService.updateUserInstitution(teacherId, teacherInstitutionInput.trim());
+                  setTeacherProfile((prev) => (prev ? { ...prev, institution: teacherInstitutionInput.trim() } : null));
+                  setIsInstitutionModalOpen(false);
+                  showToast(language === 'th' ? 'บันทึกสถานศึกษาเรียบร้อยแล้ว' : 'Institution updated successfully');
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
+              >
+                {t('common.save')}
+              </button>
+            </div>
           </div>
         </div>
       )}

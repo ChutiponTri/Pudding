@@ -86,17 +86,24 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   const availableTeachers: ClassroomTeacher[] = [
     {
       teacher_id: 'teacher-tippanan',
-      name: 'ครูธิปนรรจ์ พรายหนู (Primary)',
+      name: 'ครูธิปนรรจ์ พรายหนู',
       email: 'tippanan.p@pudding.ac.th',
       avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100',
       role: 'primary',
     },
     {
       teacher_id: 'teacher-somchai',
-      name: 'ครูสมชาย วิทยากร (Co-Teacher / IRR)',
+      name: 'ครูสมชาย วิทยากร (TA)',
       email: 'somchai.w@pudding.ac.th',
       avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100',
       role: 'assistant',
+    },
+    {
+      teacher_id: 'teacher-researcher-01',
+      name: 'ดร.พงศ์พิสุทธิ์ (ผู้วิจัย)',
+      email: 'pongpisut.research@edu.ac.th',
+      avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100',
+      role: 'researcher',
     },
   ];
 
@@ -139,18 +146,19 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       const updated: Record<string, QuestionGradeState> = {};
       for (const q of questions) {
         const ans = answers[q.id];
-        if (teacher.role === 'primary') {
+        if (teacher.role === 'researcher') {
+          const resGrade = ans?.research_grades?.[teacher.teacher_id];
           updated[q.id] = {
-            score: ans?.teacher_score ?? ans?.ai_mock_score ?? '',
-            comment: ans?.teacher_comment ?? '',
+            score: resGrade?.score ?? '',
+            comment: resGrade?.comment ?? '',
             isSaving: false,
             saveSuccess: false,
           };
         } else {
-          const coGrade = ans?.co_grades?.[teacher.teacher_id];
+          // Primary or TA: official grade
           updated[q.id] = {
-            score: coGrade?.score ?? ans?.ai_mock_score ?? '',
-            comment: coGrade?.comment ?? '',
+            score: ans?.teacher_score ?? ans?.ai_mock_score ?? '',
+            comment: ans?.teacher_comment ?? '',
             isSaving: false,
             saveSuccess: false,
           };
@@ -457,7 +465,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                     alt=""
                     className="w-4 h-4 rounded-full object-cover"
                   />
-                  <span>{tchr.role === 'primary' ? 'ครูธิปนรรจ์ (Primary)' : 'ครูสมชาย (Assistant/IRR)'}</span>
+                  <span>
+                    {tchr.name} ({tchr.role === 'primary' ? 'เจ้าของวิชา' : tchr.role === 'assistant' ? 'TA' : 'ผู้วิจัย'})
+                  </span>
                 </button>
               );
             })}
@@ -482,14 +492,32 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       </header>
 
       {/* Student Publication Notice Banner */}
-      <div className="px-6 py-2 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900/50 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-          <span>
-            {activeTeacher.role === 'primary'
-              ? '📢 ' + t('grading.workspace.primary_badge')
-              : '🔬 ' + t('grading.workspace.assistant_badge')}
-          </span>
+      <div
+        className={`px-6 py-2.5 border-b flex items-center justify-between text-xs transition-colors ${
+          activeTeacher.role === 'researcher'
+            ? 'bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-900/50 text-purple-950 dark:text-purple-200'
+            : activeTeacher.role === 'assistant'
+            ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900/50 text-blue-950 dark:text-blue-200'
+            : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200'
+        }`}
+      >
+        <div className="flex items-center gap-2 font-medium">
+          {activeTeacher.role === 'researcher' ? (
+            <>
+              <FlaskConical className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+              <span>🔬 <b>โหมดตรวจงานวิจัย (Research Mode):</b> ช่องนี้เก็บเพื่อการวิจัยเท่านั้น จะไม่แสดงต่อนักเรียน และไม่กระทบต่อคะแนนทางการของวิชา</span>
+            </>
+          ) : activeTeacher.role === 'assistant' ? (
+            <>
+              <GraduationCap className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+              <span>🎓 <b>ครูผู้ช่วยสอน (Teaching Assistant):</b> ตรวจและให้คะแนนทางการแก่นักเรียนได้จริง (ไม่มีสิทธิ์แก้ไขรายวิชา)</span>
+            </>
+          ) : (
+            <>
+              <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>👑 <b>ครูเจ้าของวิชา (Primary Owner):</b> ตรวจและให้คะแนนทางการ และจัดการเนื้อหาและโครงสร้างวิชาได้</span>
+            </>
+          )}
         </div>
 
         {irrSummary.pairCount > 0 && (

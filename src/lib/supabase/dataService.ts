@@ -882,6 +882,11 @@ export const dataService = {
           detail: { classroomId, student: newStudent, autoAdmit },
         })
       );
+      try {
+        const bc = new BroadcastChannel("pudding_classroom_sync");
+        bc.postMessage({ type: "LOCAL_SYNC", detail: { classroomId, student: newStudent, autoAdmit } });
+        bc.close();
+      } catch {}
     }
 
     return newStudent;
@@ -934,6 +939,11 @@ export const dataService = {
           detail: { classroomId, student: studentToAdmit },
         })
       );
+      try {
+        const bc = new BroadcastChannel("pudding_classroom_sync");
+        bc.postMessage({ type: "LOCAL_SYNC", detail: { classroomId, student: studentToAdmit, action: "admitted" } });
+        bc.close();
+      } catch {}
     }
     return true;
   },
@@ -966,6 +976,18 @@ export const dataService = {
     }
 
     setStored("classrooms", classrooms);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("pudding_student_rejected", {
+          detail: { classroomId, studentId },
+        })
+      );
+      try {
+        const bc = new BroadcastChannel("pudding_classroom_sync");
+        bc.postMessage({ type: "LOCAL_SYNC", detail: { classroomId, studentId, action: "rejected" } });
+        bc.close();
+      } catch {}
+    }
     return true;
   },
 
@@ -999,7 +1021,17 @@ export const dataService = {
     }
   },
 
-  async searchStudentsByInstitution(institution: string, query?: string): Promise<User[]> {
+  async searchStudentsByInstitution(queryOrInst?: string, instOrQuery?: string): Promise<User[]> {
+    let query = '';
+    let institution = '';
+
+    if (queryOrInst && instOrQuery) {
+      query = queryOrInst;
+      institution = instOrQuery;
+    } else if (queryOrInst) {
+      query = queryOrInst;
+    }
+
     if (isSupabaseConfigured) {
       try {
         const supabase = createClient();
@@ -1007,22 +1039,61 @@ export const dataService = {
         if (institution) {
           req = req.eq('institution', institution);
         }
-        const { data } = await req.limit(30);
+        const { data } = await req.limit(50);
         if (data) {
-          const q = (query || '').toLowerCase().trim();
+          const q = query.toLowerCase().trim();
           if (!q) return data as User[];
           return (data as User[]).filter(
             (u) =>
-              u.first_name.toLowerCase().includes(q) ||
-              u.last_name.toLowerCase().includes(q) ||
-              (u.student_id && u.student_id.toLowerCase().includes(q))
+              (u.first_name && u.first_name.toLowerCase().includes(q)) ||
+              (u.last_name && u.last_name.toLowerCase().includes(q)) ||
+              (u.student_id && u.student_id.toLowerCase().includes(q)) ||
+              (u.email && u.email.toLowerCase().includes(q))
           );
         }
       } catch (err) {
         console.warn('searchStudentsByInstitution error:', err);
       }
     }
-    return [];
+
+    // Local / offline fallback: search from stored users & classrooms
+    const users = getStoredOr<User[]>('users', []).filter((u) => u.role === 'student');
+    const classrooms = getStoredOr<Classroom[]>('classrooms', []);
+    const studentMap = new Map<string, User>();
+
+    users.forEach((u) => studentMap.set(u.id, u));
+    classrooms.forEach((c) => {
+      (c.students || []).forEach((s) => {
+        if (!studentMap.has(s.id)) {
+          studentMap.set(s.id, {
+            id: s.id,
+            email: s.email,
+            first_name: s.first_name || '',
+            last_name: s.last_name || '',
+            student_id: s.student_id,
+            role: 'student',
+            institution: s.institution,
+            avatar_url: s.avatar_url,
+            created_at: new Date().toISOString(),
+          });
+        }
+      });
+    });
+
+    let results = Array.from(studentMap.values());
+    if (institution) {
+      results = results.filter((s) => !s.institution || s.institution === institution);
+    }
+    const q = query.toLowerCase().trim();
+    if (q) {
+      results = results.filter(
+        (u) =>
+          u.first_name.toLowerCase().includes(q) ||
+          u.last_name.toLowerCase().includes(q) ||
+          (u.student_id && u.student_id.toLowerCase().includes(q))
+      );
+    }
+    return results;
   },
 
   async searchTeachers(query?: string, institution?: string): Promise<User[]> {
@@ -1086,10 +1157,88 @@ export const dataService = {
     }
   },
 
+  async getUserById(id: string): Promise<User | null> {
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.from('users').select('*').eq('id', id).maybeSingle();
+        if (!error && data) return data as User;
+      } catch (err) {
+        console.warn('getUserById error:', err);
+      }
+    }
+    const users = getStoredOr<User[]>('users', []);
+    const found = users.find((u) => u.id === id);
+    if (found) return found;
+
+    // Check stored profiles
+    const storedTeacher = getStoredOr<User | null>('teacher_profile_' + id, null);
+    if (storedTeacher) return storedTeacher;
+    const storedStudent = getStoredOr<User | null>('line_student_' + id, null);
+    if (storedStudent) return storedStudent;
+    return null;
+  },
+
+  async updateUserInstitution(userId: string, institution: string): Promise<boolean> {
+    const inst = institution.trim();
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase
+          .from('users')
+          .update({ institution: inst, updated_at: new Date().toISOString() })
+          .eq('id', userId);
+      } catch (err) {
+        console.error('updateUserInstitution error:', err);
+      }
+    }
+
+    const users = getStoredOr<User[]>('users', []);
+    const updatedUsers = users.map((u) => (u.id === userId ? { ...u, institution: inst } : u));
+    setStored('users', updatedUsers);
+
+    const storedTeacher = getStoredOr<User | null>('teacher_profile_' + userId, null);
+    if (storedTeacher) {
+      setStored('teacher_profile_' + userId, { ...storedTeacher, institution: inst });
+    }
+    return true;
+  },
+
+  async getRegisteredInstitutions(): Promise<string[]> {
+    const set = new Set<string>();
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.from('users').select('institution');
+        if (data && data.length > 0) {
+          data.forEach((d: { institution?: string | null }) => {
+            if (d.institution && d.institution.trim()) {
+              set.add(d.institution.trim());
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('getRegisteredInstitutions error:', e);
+      }
+    }
+
+    const users = getStoredOr<User[]>('users', []);
+    users.forEach((u) => {
+      if (u.institution && u.institution.trim()) {
+        set.add(u.institution.trim());
+      }
+    });
+
+    return Array.from(set);
+  },
+
   subscribeToClassroomChanges(
-    teacherId: string,
-    onClassroomUpdate: (payload: any) => void
+    arg1?: string | ((payload: any) => void),
+    arg2?: (payload: any) => void
   ) {
+    const teacherId = typeof arg1 === 'string' ? arg1 : 'all';
+    const onClassroomUpdate = typeof arg1 === 'function' ? arg1 : (arg2 || (() => {}));
+
     let supabaseChannel: any = null;
     if (isSupabaseConfigured) {
       try {
@@ -1113,12 +1262,21 @@ export const dataService = {
     }
 
     const handleLocalEvent = (e: any) => {
-      onClassroomUpdate({ type: 'local_event', detail: e.detail });
+      onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: e.detail });
     };
 
+    let bc: BroadcastChannel | null = null;
     if (typeof window !== 'undefined') {
       window.addEventListener('pudding_student_enrolled', handleLocalEvent);
       window.addEventListener('pudding_student_admitted', handleLocalEvent);
+      window.addEventListener('pudding_student_rejected', handleLocalEvent);
+
+      try {
+        bc = new BroadcastChannel('pudding_classroom_sync');
+        bc.onmessage = (event) => {
+          onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.data?.detail || event.data });
+        };
+      } catch {}
     }
 
     return () => {
@@ -1126,13 +1284,17 @@ export const dataService = {
         try {
           const supabase = createClient();
           supabase.removeChannel(supabaseChannel);
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
       if (typeof window !== 'undefined') {
         window.removeEventListener('pudding_student_enrolled', handleLocalEvent);
         window.removeEventListener('pudding_student_admitted', handleLocalEvent);
+        window.removeEventListener('pudding_student_rejected', handleLocalEvent);
+      }
+      if (bc) {
+        try {
+          bc.close();
+        } catch {}
       }
     };
   },

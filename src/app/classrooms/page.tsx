@@ -24,7 +24,14 @@ import {
   X,
   UserPlus,
   Send,
+  UserCheck,
+  UserX,
+  CheckCircle2,
+  Search,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
+import { notificationManager } from '@/lib/utils/notificationManager';
 
 export default function ClassroomsPage() {
   const { user: clerkUser } = useUser();
