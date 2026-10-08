@@ -22,8 +22,13 @@ import {
   mockSubmissions,
   mockSubmissionAnswers,
   mockSubmissionEvents,
+  mockStudents,
+  mockTeacher,
+  mockCoTeacher1,
+  mockCoTeacher2,
 } from './mockData';
 import { createClient, isSupabaseConfigured } from './client';
+import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 
 // Local storage key for persistent interactive testing when Supabase is not configured
 const STORAGE_PREFIX = 'pudding_';
@@ -207,18 +212,79 @@ export const dataService = {
       }
     }
 
-    // Local storage sync
+    // Local storage sync: line_student_*, users list, and enrolled classrooms
     const storedStudent = getStoredOr<User | null>("line_student_" + userId, null);
-    if (storedStudent) {
-      const updated = {
-        ...storedStudent,
+    const updatedStudentObj: User = {
+      id: userId,
+      role: 'student',
+      first_name: fn,
+      last_name: ln,
+      student_id: sid,
+      institution: inst,
+      line_uid: storedStudent?.line_uid || userId,
+      avatar_url: storedStudent?.avatar_url,
+      email: storedStudent?.email || (sid ? `${sid}@student.pudding.ac.th` : undefined),
+    };
+    setStored("line_student_" + userId, updatedStudentObj);
+
+    // Sync into local users table
+    const localUsers = getStoredOr<User[]>('users', []);
+    const existingUserIndex = localUsers.findIndex((u) => u.id === userId || u.line_uid === userId || (u.student_id && u.student_id === sid));
+    if (existingUserIndex >= 0) {
+      localUsers[existingUserIndex] = {
+        ...localUsers[existingUserIndex],
         first_name: fn,
         last_name: ln,
         student_id: sid,
         institution: inst,
       };
-      setStored("line_student_" + userId, updated);
+    } else {
+      localUsers.push(updatedStudentObj);
     }
+    setStored('users', localUsers);
+
+    // Sync into local classrooms list
+    const localClassrooms = getStoredOr<Classroom[]>('classrooms', []);
+    let localTouched = false;
+    const updatedClassrooms = localClassrooms.map((cls) => {
+      let clsUpdated = false;
+      const students = (cls.students || []).map((s) => {
+        if (s.id === userId || s.line_uid === userId || (s.student_id && s.student_id === sid)) {
+          clsUpdated = true;
+          return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst };
+        }
+        return s;
+      });
+      const pending_students = (cls.pending_students || []).map((s) => {
+        if (s.id === userId || s.line_uid === userId || (s.student_id && s.student_id === sid)) {
+          clsUpdated = true;
+          return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst };
+        }
+        return s;
+      });
+      if (clsUpdated) {
+        localTouched = true;
+        return { ...cls, students, pending_students };
+      }
+      return cls;
+    });
+    if (localTouched) {
+      setStored('classrooms', updatedClassrooms);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('pudding_student_enrolled', {
+          detail: { studentId: userId, student: updatedStudentObj },
+        })
+      );
+      try {
+        const bc = new BroadcastChannel('pudding_classroom_sync');
+        bc.postMessage({ type: 'LOCAL_SYNC', detail: { studentId: userId, student: updatedStudentObj } });
+        bc.close();
+      } catch {}
+    }
+
     return true;
   },
 
@@ -604,11 +670,13 @@ export const dataService = {
             for (const u of usersData) {
               userMap.set(u.id, u as User);
               if (u.line_uid) userMap.set(u.line_uid, u as User);
+              if (u.student_id) userMap.set(u.student_id, u as User);
+              if (u.email) userMap.set(u.email, u as User);
             }
 
             all = all.map((cls) => {
               const students = (cls.students || []).map((s) => {
-                const real = userMap.get(s.id) || (s.line_uid ? userMap.get(s.line_uid) : null);
+                const real = userMap.get(s.id) || (s.line_uid ? userMap.get(s.line_uid) : null) || (s.student_id ? userMap.get(s.student_id) : null);
                 if (real) {
                   return {
                     ...s,
@@ -623,7 +691,7 @@ export const dataService = {
               });
 
               const pending_students = (cls.pending_students || []).map((s) => {
-                const real = userMap.get(s.id) || (s.line_uid ? userMap.get(s.line_uid) : null);
+                const real = userMap.get(s.id) || (s.line_uid ? userMap.get(s.line_uid) : null) || (s.student_id ? userMap.get(s.student_id) : null);
                 if (real) {
                   return {
                     ...s,
@@ -637,13 +705,71 @@ export const dataService = {
                 return s;
               });
 
+              let sem = cls.semester;
+              let yr = cls.year_ce;
+              if (!sem || !yr) {
+                const parsed = parseAcademicPeriod(cls.academic_year);
+                if (parsed) {
+                  sem = sem ?? parsed.semester;
+                  yr = yr ?? parsed.yearCE;
+                }
+              }
+
               return {
                 ...cls,
+                semester: sem,
+                year_ce: yr,
                 students,
                 pending_students,
                 student_count: students.length,
               };
             });
+
+            // Also merge any students recorded in classroom_students relational junction table
+            try {
+              const { data: csLinks } = await supabase.from('classroom_students').select('*');
+              if (csLinks && csLinks.length > 0) {
+                const csMap = new Map<string, Array<{ student_id: string; status: string }>>();
+                for (const link of csLinks) {
+                  const list = csMap.get(link.classroom_id) || [];
+                  list.push(link);
+                  csMap.set(link.classroom_id, list);
+                }
+
+                all = all.map((cls) => {
+                  const links = csMap.get(cls.id) || [];
+                  const existingStudentIds = new Set((cls.students || []).map((s) => s.id));
+                  const existingPendingIds = new Set((cls.pending_students || []).map((s) => s.id));
+                  const extraStudents = [...(cls.students || [])];
+                  const extraPending = [...(cls.pending_students || [])];
+
+                  for (const link of links) {
+                    const u = userMap.get(link.student_id);
+                    if (u) {
+                      if (link.status === 'pending_approval') {
+                        if (!existingPendingIds.has(u.id)) {
+                          extraPending.push(u);
+                          existingPendingIds.add(u.id);
+                        }
+                      } else {
+                        if (!existingStudentIds.has(u.id)) {
+                          extraStudents.push(u);
+                          existingStudentIds.add(u.id);
+                        }
+                      }
+                    }
+                  }
+                  return {
+                    ...cls,
+                    students: extraStudents,
+                    pending_students: extraPending,
+                    student_count: extraStudents.length,
+                  };
+                });
+              }
+            } catch (csErr) {
+              console.warn('Hydrating classroom_students in getClassrooms error:', csErr);
+            }
           }
         } catch (uErr) {
           console.warn('Hydrating users in getClassrooms error:', uErr);
@@ -659,11 +785,83 @@ export const dataService = {
       }
       return [];
     }
+
+    // Local / Offline storage fallback: hydrate students from local users & classrooms
     const stored = getStoredOr<Classroom[]>('classrooms', []);
-    if (teacherId) {
-      return stored.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
+    const localUsers = getStoredOr<User[]>('users', []);
+    const localUserMap = new Map<string, User>();
+    for (const u of localUsers) {
+      localUserMap.set(u.id, u);
+      if (u.line_uid) localUserMap.set(u.line_uid, u);
+      if (u.student_id) localUserMap.set(u.student_id, u);
+      if (u.email) localUserMap.set(u.email, u);
     }
-    return stored;
+    mockStudents.forEach((ms) => {
+      if (!localUserMap.has(ms.id)) localUserMap.set(ms.id, ms);
+      if (ms.student_id && !localUserMap.has(ms.student_id)) localUserMap.set(ms.student_id, ms);
+    });
+
+    const hydrated = stored.map((cls) => {
+      const students = (cls.students || []).map((s) => {
+        const real =
+          localUserMap.get(s.id) ||
+          (s.line_uid ? localUserMap.get(s.line_uid) : null) ||
+          (s.student_id ? localUserMap.get(s.student_id) : null);
+        if (real) {
+          return {
+            ...s,
+            first_name: real.first_name || s.first_name,
+            last_name: real.last_name || s.last_name,
+            student_id: real.student_id || s.student_id,
+            institution: real.institution || s.institution,
+            avatar_url: real.avatar_url || s.avatar_url,
+          };
+        }
+        return s;
+      });
+
+      const pending_students = (cls.pending_students || []).map((s) => {
+        const real =
+          localUserMap.get(s.id) ||
+          (s.line_uid ? localUserMap.get(s.line_uid) : null) ||
+          (s.student_id ? localUserMap.get(s.student_id) : null);
+        if (real) {
+          return {
+            ...s,
+            first_name: real.first_name || s.first_name,
+            last_name: real.last_name || s.last_name,
+            student_id: real.student_id || s.student_id,
+            institution: real.institution || s.institution,
+            avatar_url: real.avatar_url || s.avatar_url,
+          };
+        }
+        return s;
+      });
+
+      let sem = cls.semester;
+      let yr = cls.year_ce;
+      if (!sem || !yr) {
+        const parsed = parseAcademicPeriod(cls.academic_year);
+        if (parsed) {
+          sem = sem ?? parsed.semester;
+          yr = yr ?? parsed.yearCE;
+        }
+      }
+
+      return {
+        ...cls,
+        semester: sem,
+        year_ce: yr,
+        students,
+        pending_students,
+        student_count: students.length,
+      };
+    });
+
+    if (teacherId) {
+      return hydrated.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
+    }
+    return hydrated;
   },
 
   async getClassroomById(id: string): Promise<Classroom | null> {
@@ -1074,7 +1272,6 @@ export const dataService = {
             role: 'student',
             institution: s.institution,
             avatar_url: s.avatar_url,
-            created_at: new Date().toISOString(),
           });
         }
       });
@@ -1101,7 +1298,7 @@ export const dataService = {
       try {
         const supabase = createClient();
         const { data } = await supabase.from('users').select('*').eq('role', 'teacher').limit(50);
-        if (data) {
+        if (data && data.length > 0) {
           const q = (query || '').toLowerCase().trim();
           let list = data as User[];
           if (q) {
@@ -1126,7 +1323,48 @@ export const dataService = {
         console.warn('searchTeachers error:', err);
       }
     }
-    return [];
+
+    // Local / Offline fallback
+    const localUsers = getStoredOr<User[]>('users', []).filter((u) => u.role === 'teacher');
+    const mockTchrs: User[] = [
+      mockTeacher,
+      { ...mockCoTeacher1, institution: 'โรงเรียนเตรียมอุดมศึกษา' },
+      { ...mockCoTeacher2, institution: 'โรงเรียนสวนกุหลาบวิทยาลัย' },
+      {
+        id: 'teacher-researcher-01',
+        first_name: 'ผศ.ดร.พงศ์พิสุทธิ์',
+        last_name: 'ภูมิวิจัย',
+        email: 'pongpisut.research@edu.ac.th',
+        avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+        role: 'teacher',
+        institution: 'มหาวิทยาลัยเชียงใหม่',
+      },
+    ];
+
+    const combined: User[] = [...mockTchrs];
+    for (const u of localUsers) {
+      if (!combined.some((t) => t.id === u.id)) combined.push(u);
+    }
+
+    const q = (query || '').toLowerCase().trim();
+    let results = combined;
+    if (q) {
+      results = results.filter(
+        (u) =>
+          u.first_name.toLowerCase().includes(q) ||
+          u.last_name.toLowerCase().includes(q) ||
+          (u.email && u.email.toLowerCase().includes(q)) ||
+          (u.institution && u.institution.toLowerCase().includes(q))
+      );
+    }
+    if (institution) {
+      results.sort((a, b) => {
+        const aMatch = a.institution === institution ? 1 : 0;
+        const bMatch = b.institution === institution ? 1 : 0;
+        return bMatch - aMatch;
+      });
+    }
+    return results;
   },
 
   async saveResearchGrade(answerId: string, grade: TeacherGradeRecord): Promise<void> {
@@ -1253,7 +1491,27 @@ export const dataService = {
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'classroom_students' },
-            (payload) => onClassroomUpdate({ type: 'classroom_students', payload })
+            async (payload: any) => {
+              // Try to hydrate student info if new row inserted
+              let studentObj: User | null = null;
+              if (payload?.new?.student_id) {
+                try {
+                  const { data: u } = await supabase.from('users').select('*').eq('id', payload.new.student_id).maybeSingle();
+                  if (u) studentObj = u as User;
+                } catch {}
+              }
+              const isAutoAdmitted = payload?.new?.status === 'active';
+              onClassroomUpdate({
+                type: 'classroom_students',
+                eventType: 'LOCAL_SYNC',
+                detail: {
+                  classroomId: payload?.new?.classroom_id,
+                  student: studentObj || { id: payload?.new?.student_id, first_name: 'นักเรียน', last_name: '' },
+                  autoAdmit: isAutoAdmitted,
+                },
+                payload,
+              });
+            }
           )
           .subscribe();
       } catch (subErr) {
@@ -1266,6 +1524,8 @@ export const dataService = {
     };
 
     let bc: BroadcastChannel | null = null;
+    let pollInterval: NodeJS.Timeout | null = null;
+
     if (typeof window !== 'undefined') {
       window.addEventListener('pudding_student_enrolled', handleLocalEvent);
       window.addEventListener('pudding_student_admitted', handleLocalEvent);
@@ -1277,6 +1537,24 @@ export const dataService = {
           onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.data?.detail || event.data });
         };
       } catch {}
+
+      // Heartbeat Polling Fallback (every 4 seconds when tab is active)
+      let lastStudentCount = -1;
+      pollInterval = setInterval(async () => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+          try {
+            const currentClasses = await this.getClassrooms();
+            const currentTotal = currentClasses.reduce(
+              (acc, c) => acc + (c.students?.length || 0) + (c.pending_students?.length || 0),
+              0
+            );
+            if (lastStudentCount !== -1 && currentTotal !== lastStudentCount) {
+              onClassroomUpdate({ eventType: 'HEARTBEAT_UPDATE', detail: { totalStudents: currentTotal } });
+            }
+            lastStudentCount = currentTotal;
+          } catch {}
+        }
+      }, 4000);
     }
 
     return () => {
@@ -1295,6 +1573,9 @@ export const dataService = {
         try {
           bc.close();
         } catch {}
+      }
+      if (pollInterval) {
+        clearInterval(pollInterval);
       }
     };
   },

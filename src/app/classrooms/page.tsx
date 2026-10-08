@@ -2,11 +2,18 @@
 
 import { useUser } from '@clerk/nextjs';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import { Classroom, User } from '@/types/database';
+import {
+  getDefaultAcademicPeriod,
+  formatAcademicPeriod,
+  getAcademicYearOptions,
+  formatSemesterLabel,
+  parseAcademicPeriod,
+} from '@/lib/utils/academicYear';
 import {
   School,
   PlusCircle,
@@ -30,6 +37,7 @@ import {
   Search,
   AlertCircle,
   Loader2,
+  ShieldCheck,
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
 
@@ -39,6 +47,9 @@ export default function ClassroomsPage() {
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Compute default academic period
+  const defaultPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
+
   // Modal states
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingClassroom, setEditingClassroom] = useState<Classroom | null>(null);
@@ -47,14 +58,23 @@ export default function ClassroomsPage() {
   // Form states for create/edit
   const [classNameInput, setClassNameInput] = useState('');
   const [subjectCodeInput, setSubjectCodeInput] = useState('');
-  const [academicYearInput, setAcademicYearInput] = useState('2567 / ภาคเรียนที่ 1');
+  const [formSemester, setFormSemester] = useState<number>(defaultPeriod.semester);
+  const [formYearCE, setFormYearCE] = useState<number>(defaultPeriod.yearCE);
+
+  // Teacher profile
+  const [teacherProfile, setTeacherProfile] = useState<User | null>(null);
 
   // Student management state
-  const [studentActiveTab, setStudentActiveTab] = useState<'roster' | 'line' | 'email'>('roster');
+  const [studentActiveTab, setStudentActiveTab] = useState<'roster' | 'pending' | 'line' | 'email'>('roster');
   const [newStudentId, setNewStudentId] = useState('');
   const [newStudentFirstName, setNewStudentFirstName] = useState('');
   const [newStudentLastName, setNewStudentLastName] = useState('');
   const [newStudentEmail, setNewStudentEmail] = useState('');
+
+  // Autocomplete search student state
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  const [studentSearchResults, setStudentSearchResults] = useState<User[]>([]);
+  const [isSearchingStudents, setIsSearchingStudents] = useState(false);
 
   // Email invitation state
   const [emailInviteList, setEmailInviteList] = useState('');
@@ -63,7 +83,7 @@ export default function ClassroomsPage() {
 
   const showNotification = (msg: string) => {
     setActionSuccessNotice(msg);
-    setTimeout(() => setActionSuccessNotice(null), 3000);
+    setTimeout(() => setActionSuccessNotice(null), 3500);
   };
 
   const loadData = async () => {
@@ -73,6 +93,10 @@ export default function ClassroomsPage() {
       if (selectedClassroomForStudents) {
         const refreshed = cls.find((c) => c.id === selectedClassroomForStudents.id) || null;
         setSelectedClassroomForStudents(refreshed);
+      }
+      if (clerkUser?.id) {
+        const profile = await dataService.getUserById(clerkUser.id);
+        if (profile) setTeacherProfile(profile);
       }
     } catch (err) {
       console.error(err);
@@ -85,11 +109,45 @@ export default function ClassroomsPage() {
     loadData();
   }, [clerkUser?.id]);
 
+  // Real-time synchronization for instant updates when students scan QR or join
+  useEffect(() => {
+    const unsub = dataService.subscribeToClassroomChanges(clerkUser?.id, (payload: any) => {
+      loadData();
+      if (payload?.eventType === 'LOCAL_SYNC') {
+        const { student, autoAdmit } = payload.detail || {};
+        const studentName = student
+          ? `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.name || 'นักเรียน'
+          : 'นักเรียน';
+
+        if (autoAdmit === false) {
+          notificationManager.add({
+            title: 'คำขอเข้าห้องเรียนใหม่',
+            message: `นักเรียน ${studentName} ได้สแกน QR ขอเข้าห้องเรียน (รอคุณครูอนุมัติ)`,
+            type: 'admission_request',
+          });
+          showNotification(`🔔 มีคำขอใหม่: ${studentName} ขอเข้าห้องเรียน (รออนุมัติ)`);
+        } else {
+          notificationManager.add({
+            title: 'นักเรียนเข้าห้องเรียนสำเร็จ',
+            message: `นักเรียน ${studentName} ได้เข้าห้องเรียนแล้ว`,
+            type: 'student_join',
+          });
+          showNotification(`🎉 ${studentName} ได้เข้าร่วมห้องเรียน`);
+        }
+      } else {
+        showNotification(language === 'th' ? '🔄 อัปเดตข้อมูลห้องเรียนแบบ Realtime' : 'Classroom updated in realtime');
+      }
+    });
+
+    return unsub;
+  }, [clerkUser?.id, language]);
+
   const handleOpenCreateModal = () => {
     setEditingClassroom(null);
     setClassNameInput('');
     setSubjectCodeInput('ท31101 การสื่อสารภาษาไทยร่วมสมัย');
-    setAcademicYearInput('2569 / ภาคเรียนที่ 1');
+    setFormSemester(defaultPeriod.semester);
+    setFormYearCE(defaultPeriod.yearCE);
     setIsCreateModalOpen(true);
   };
 
@@ -97,7 +155,8 @@ export default function ClassroomsPage() {
     setEditingClassroom(cls);
     setClassNameInput(cls.name);
     setSubjectCodeInput(cls.subject_code || '');
-    setAcademicYearInput(cls.academic_year);
+    setFormSemester(cls.semester || defaultPeriod.semester);
+    setFormYearCE(cls.year_ce || defaultPeriod.yearCE);
     setIsCreateModalOpen(true);
   };
 
@@ -105,11 +164,15 @@ export default function ClassroomsPage() {
     e.preventDefault();
     if (!classNameInput.trim()) return;
 
+    const academicYearStr = formatAcademicPeriod(formSemester, formYearCE, language);
+
     if (editingClassroom) {
       await dataService.updateClassroom(editingClassroom.id, {
         name: classNameInput.trim(),
         subject_code: subjectCodeInput.trim(),
-        academic_year: academicYearInput.trim(),
+        academic_year: academicYearStr,
+        semester: formSemester,
+        year_ce: formYearCE,
       });
       showNotification(language === 'th' ? 'แก้ไขข้อมูลห้องเรียนสำเร็จ' : 'Classroom updated successfully');
     } else {
@@ -117,7 +180,9 @@ export default function ClassroomsPage() {
         teacher_id: clerkUser?.id || 'teacher-default',
         name: classNameInput.trim(),
         subject_code: subjectCodeInput.trim(),
-        academic_year: academicYearInput.trim(),
+        academic_year: academicYearStr,
+        semester: formSemester,
+        year_ce: formYearCE,
       });
       showNotification(language === 'th' ? 'สร้างห้องเรียนใหม่สำเร็จ' : 'Classroom created successfully');
     }
@@ -137,6 +202,45 @@ export default function ClassroomsPage() {
     }
   };
 
+  // Student search autocomplete handler
+  const handleSearchStudents = async (q: string) => {
+    setStudentSearchQuery(q);
+    if (!q.trim()) {
+      setStudentSearchResults([]);
+      return;
+    }
+    setIsSearchingStudents(true);
+    try {
+      const res = await dataService.searchStudentsByInstitution(q, teacherProfile?.institution);
+      setStudentSearchResults(res);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSearchingStudents(false);
+    }
+  };
+
+  const handleSelectFoundStudent = async (std: User) => {
+    if (!selectedClassroomForStudents) return;
+    await dataService.addStudentToClassroom(
+      selectedClassroomForStudents.id,
+      {
+        id: std.id,
+        first_name: std.first_name,
+        last_name: std.last_name,
+        student_id: std.student_id,
+        email: std.email,
+        avatar_url: std.avatar_url,
+        institution: std.institution || teacherProfile?.institution,
+      },
+      { autoAdmit: true }
+    );
+    showNotification(language === 'th' ? `เพิ่ม ${std.first_name} ${std.last_name} สำเร็จ` : 'Student added');
+    setStudentSearchQuery('');
+    setStudentSearchResults([]);
+    await loadData();
+  };
+
   const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClassroomForStudents || !newStudentFirstName.trim() || !newStudentLastName.trim()) return;
@@ -146,12 +250,17 @@ export default function ClassroomsPage() {
       ? `${sid}@student.pudding.ac.th`
       : `${newStudentFirstName.toLowerCase()}@student.pudding.ac.th`;
 
-    await dataService.addStudentToClassroom(selectedClassroomForStudents.id, {
-      first_name: newStudentFirstName.trim(),
-      last_name: newStudentLastName.trim(),
-      student_id: sid || undefined,
-      email: newStudentEmail.trim() || fallbackEmail,
-    });
+    await dataService.addStudentToClassroom(
+      selectedClassroomForStudents.id,
+      {
+        first_name: newStudentFirstName.trim(),
+        last_name: newStudentLastName.trim(),
+        student_id: sid || undefined,
+        email: newStudentEmail.trim() || fallbackEmail,
+        institution: teacherProfile?.institution,
+      },
+      { autoAdmit: true }
+    );
 
     setNewStudentFirstName('');
     setNewStudentLastName('');
@@ -167,6 +276,32 @@ export default function ClassroomsPage() {
       await dataService.removeStudentFromClassroom(selectedClassroomForStudents.id, studentId);
       showNotification(language === 'th' ? 'นำนักเรียนออกจากห้องแล้ว' : 'Student removed');
       await loadData();
+    }
+  };
+
+  const handleAdmitStudent = async (studentId: string) => {
+    if (!selectedClassroomForStudents) return;
+    try {
+      await dataService.admitStudentToClassroom(selectedClassroomForStudents.id, studentId);
+      showNotification(language === 'th' ? 'อนุมัตินักเรียนเข้าห้องเรียนเรียบร้อย' : 'Student admitted successfully');
+      await loadData();
+    } catch (err) {
+      console.error(err);
+      showNotification('เกิดข้อผิดพลาดในการอนุมัติ');
+    }
+  };
+
+  const handleRejectStudent = async (studentId: string) => {
+    if (!selectedClassroomForStudents) return;
+    if (confirm(language === 'th' ? 'คุณต้องการปฏิเสธคำขอเข้าห้องเรียนนี้ใช่หรือไม่?' : 'Reject this join request?')) {
+      try {
+        await dataService.rejectStudentFromClassroom(selectedClassroomForStudents.id, studentId);
+        showNotification(language === 'th' ? 'ปฏิเสธคำขอเข้าห้องเรียนแล้ว' : 'Student request rejected');
+        await loadData();
+      } catch (err) {
+        console.error(err);
+        showNotification('เกิดข้อผิดพลาดในการปฏิเสธคำขอ');
+      }
     }
   };
 
@@ -353,37 +488,54 @@ export default function ClassroomsPage() {
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  {t('classroom_mgmt.fields.year_label')}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                  <span>{t('classroom_mgmt.fields.year_label')} *</span>
+                  <span className="text-[11px] text-amber-600 dark:text-amber-400 font-mono">
+                    {formatAcademicPeriod(formSemester, formYearCE, language)}
+                  </span>
                 </label>
-                <div className="grid grid-cols-3 gap-2 mb-2">
-                  {[
-                    { sem: 1, label: language === 'th' ? 'ภาคเรียนที่ 1' : 'Semester 1', val: '2569 / ภาคเรียนที่ 1' },
-                    { sem: 2, label: language === 'th' ? 'ภาคเรียนที่ 2' : 'Semester 2', val: '2569 / ภาคเรียนที่ 2' },
-                    { sem: 3, label: language === 'th' ? 'ภาคเรียนที่ 3 (ซัมเมอร์)' : 'Semester 3 (Summer)', val: '2569 / ภาคเรียนที่ 3 (ซัมเมอร์)' },
-                  ].map((p) => (
+
+                {/* Semester selection */}
+                <div className="grid grid-cols-3 gap-2">
+                  {[1, 2, 3].map((s) => (
                     <button
-                      key={p.sem}
+                      key={s}
                       type="button"
-                      onClick={() => setAcademicYearInput(p.val)}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                        academicYearInput.includes(`ภาคเรียนที่ ${p.sem}`) || (p.sem === 3 && academicYearInput.includes('ซัมเมอร์'))
-                          ? 'bg-amber-500 text-slate-950 border-amber-500 font-bold'
-                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                      onClick={() => setFormSemester(s)}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex flex-col items-center justify-center ${
+                        formSemester === s
+                          ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-xs'
+                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100'
                       }`}
                     >
-                      {p.label}
+                      <span>{s === 3 ? (language === 'th' ? 'ซัมเมอร์' : 'Summer') : `${language === 'th' ? 'ภาคเรียนที่' : 'Semester'} ${s}`}</span>
                     </button>
                   ))}
                 </div>
-                <input
-                  type="text"
-                  value={academicYearInput}
-                  onChange={(e) => setAcademicYearInput(e.target.value)}
-                  placeholder={t('classroom_mgmt.fields.year_placeholder')}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500"
-                />
+
+                {/* Year Selection */}
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-xs text-slate-500 font-medium shrink-0">
+                    {language === 'th' ? 'ปีการศึกษา:' : 'Academic Year:'}
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5 flex-1">
+                    {getAcademicYearOptions(defaultPeriod.yearCE).map((yr) => (
+                      <button
+                        key={yr}
+                        type="button"
+                        onClick={() => setFormYearCE(yr)}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                          formYearCE === yr
+                            ? 'bg-amber-500 text-slate-950 border-amber-500 font-black'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        {yr + 543} ({yr})
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-4">
@@ -455,6 +607,23 @@ export default function ClassroomsPage() {
               </button>
 
               <button
+                onClick={() => setStudentActiveTab('pending')}
+                className={`py-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  studentActiveTab === 'pending'
+                    ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                    : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <UserCheck className="w-4 h-4 text-amber-500" />
+                <span>{language === 'th' ? 'คำขอรออนุมัติ (Admit)' : 'Pending Admit'}</span>
+                {(selectedClassroomForStudents.pending_students?.length || 0) > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
+                    {selectedClassroomForStudents.pending_students?.length}
+                  </span>
+                )}
+              </button>
+
+              <button
                 onClick={() => setStudentActiveTab('line')}
                 className={`py-3 border-b-2 flex items-center gap-1.5 transition-colors cursor-pointer ${
                   studentActiveTab === 'line'
@@ -484,6 +653,68 @@ export default function ClassroomsPage() {
               {/* TAB 1: Roster */}
               {studentActiveTab === 'roster' && (
                 <div className="space-y-6">
+                  {/* Quick Search & Auto-complete to Add Existing Student */}
+                  <div className="p-4 rounded-2xl bg-amber-500/5 dark:bg-amber-500/10 border border-amber-200/80 dark:border-amber-800/40 space-y-2 relative">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                        <Search className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{language === 'th' ? 'ค้นหาและเพิ่มนักเรียนด่วน (จากสถานศึกษาเดียวกัน/ระบบ)' : 'Quick Search & Add Student'}</span>
+                      </span>
+                      {teacherProfile?.institution && (
+                        <span className="text-[10px] text-amber-700/80 dark:text-amber-400 font-medium">
+                          🏫 {teacherProfile.institution}
+                        </span>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={studentSearchQuery}
+                        onChange={(e) => handleSearchStudents(e.target.value)}
+                        placeholder={language === 'th' ? "พิมพ์ชื่อ นามสกุล หรือ รหัสนักเรียน เพื่อค้นหา..." : "Search by name or student ID..."}
+                        className="w-full pl-9 pr-9 py-2 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/60 text-xs font-medium focus:outline-hidden focus:border-amber-500"
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                      {isSearchingStudents && (
+                        <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin absolute right-3 top-2.5" />
+                      )}
+                    </div>
+
+                    {/* Search Results Dropdown */}
+                    {studentSearchResults.length > 0 && (
+                      <div className="absolute left-4 right-4 top-full mt-1 z-30 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl max-h-52 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                        {studentSearchResults.map((std) => (
+                          <div
+                            key={std.id}
+                            onClick={() => handleSelectFoundStudent(std)}
+                            className="p-2.5 hover:bg-amber-50 dark:hover:bg-amber-950/30 cursor-pointer flex items-center justify-between transition-colors"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src={std.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                                alt=""
+                                className="w-7 h-7 rounded-full object-cover ring-1 ring-amber-400/40"
+                              />
+                              <div>
+                                <span className="font-bold text-xs text-slate-900 dark:text-white block">
+                                  {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name}
+                                  {std.student_id ? ` (ID: ${std.student_id})` : ''}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  {std.institution || std.email}
+                                </span>
+                              </div>
+                            </div>
+                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <PlusCircle className="w-3 h-3" />
+                              <span>เพิ่มเข้าห้อง</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Add Student Form */}
                   <form
                     onSubmit={handleAddStudent}
@@ -563,7 +794,7 @@ export default function ClassroomsPage() {
                                   />
                                   <div>
                                     <span className="font-bold text-slate-900 dark:text-white block">
-                                      {std.first_name} {std.last_name}
+                                      {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name}
                                     </span>
                                     <span className="text-[11px] text-slate-400">{std.email}</span>
                                   </div>
@@ -597,6 +828,90 @@ export default function ClassroomsPage() {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {/* TAB: Pending Approval (Admit) */}
+              {studentActiveTab === 'pending' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
+                    <ShieldCheck className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                    <p className="leading-relaxed">
+                      {language === 'th'
+                        ? 'ระบบความปลอดภัยตรวจสอบการเข้าห้องเรียน: นักเรียนที่สแกน QR Code หรือเข้าผ่านรหัสจะอยู่ในสถานะรอการอนุมัติ (Admit) ก่อน เพื่อป้องกันผู้ไม่หวังดีเข้ามาปั่นในห้องเรียน'
+                        : 'Classroom Admission Gate: Students who scan QR codes or join via invite link remain in pending approval until admitted by the teacher.'}
+                    </p>
+                  </div>
+
+                  {(!selectedClassroomForStudents.pending_students || selectedClassroomForStudents.pending_students.length === 0) ? (
+                    <div className="py-12 text-center text-xs text-slate-400 space-y-2">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto text-xl">
+                        ✅
+                      </div>
+                      <p className="font-medium text-slate-600 dark:text-slate-300">
+                        {language === 'th' ? 'ไม่มีคำขอเข้าห้องเรียนที่รอการอนุมัติในขณะนี้' : 'No pending admission requests at this time.'}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        {language === 'th' ? 'เมื่อนักเรียนสแกน QR Code หน้าจอนี้จะอัปเดตแบบ Real-time ทันที' : 'When students scan the QR code, this list updates automatically in real-time.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {selectedClassroomForStudents.pending_students.map((std) => (
+                        <div
+                          key={std.id}
+                          className="p-3.5 rounded-2xl bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-900/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={std.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                              alt=""
+                              className="w-10 h-10 rounded-2xl object-cover ring-2 ring-amber-400 shrink-0"
+                            />
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-xs text-slate-900 dark:text-white">
+                                  {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name || 'นักเรียน'}
+                                </span>
+                                {std.student_id && (
+                                  <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                                    ID: {std.student_id}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+                                <span>🏫 {std.institution || 'ไม่ระบุสถานศึกษา'}</span>
+                                {std.line_uid && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                    <Check className="w-3 h-3" /> LINE Verified
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleAdmitStudent(std.id)}
+                              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>อนุมัติ (Admit)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectStudent(std.id)}
+                              className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 font-semibold text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>ปฏิเสธ</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 

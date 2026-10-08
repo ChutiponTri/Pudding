@@ -60,7 +60,20 @@ export default function LiffStudentPage() {
   const [selectedClassroom, setSelectedClassroom] = useState<Classroom | null>(null);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
+  const [registeredInstitutions, setRegisteredInstitutions] = useState<string[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
+
+  // Classroom Admission Security: Check if student is pending approval in selected classroom
+  const isSelectedClassroomPending = useMemo(() => {
+    if (!selectedClassroom || !currentStudent) return false;
+    const isEnrolled = selectedClassroom.students?.some(
+      (s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid
+    );
+    const isPending = selectedClassroom.pending_students?.some(
+      (s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid
+    );
+    return Boolean(isPending && !isEnrolled);
+  }, [selectedClassroom, currentStudent]);
 
   // Active Assignment/Exam State
   const [activeAssignment, setActiveAssignment] = useState<Assignment | null>(null);
@@ -376,10 +389,23 @@ export default function LiffStudentPage() {
     }
 
     loadData();
+
+    // Load registered institutions from teachers to show in institution picker
+    dataService.getRegisteredInstitutions().then(setRegisteredInstitutions).catch(console.error);
+
+    // Real-time synchronization: Auto-refresh when teacher admits student into classroom
+    const unsub = dataService.subscribeToClassroomChanges(undefined, () => {
+      loadData();
+    });
+    return () => unsub();
   }, [authStatus, currentStudent?.id, currentStudent?.student_id]);
 
-  // When opening an assignment, fetch questions
+  // When opening an assignment, fetch questions (Protected by admission gate)
   const handleOpenAssignment = async (a: Assignment) => {
+    if (isSelectedClassroomPending) {
+      alert("กรุณารอคุณครูอนุมัติเข้าห้องเรียน (Admit) ก่อนเริ่มต้นทำข้อสอบหรือการบ้าน");
+      return;
+    }
     setActiveAssignment(a);
     const qs = await dataService.getQuestions(a.id);
     setActiveQuestions(qs);

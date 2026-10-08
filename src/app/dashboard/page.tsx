@@ -2472,6 +2472,21 @@ export default function DashboardPage() {
                 </div>
               </div>
             )}
+
+            {/* Footer Close */}
+            <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setManagingClassroom(null)}
+                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+              >
+                {t('common.close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TEACHER INSTITUTION MODAL */}
       {isInstitutionModalOpen && (
         <div

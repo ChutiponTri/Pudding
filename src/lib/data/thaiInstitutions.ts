@@ -69,6 +69,7 @@ export const THAI_INSTITUTIONS: EducationalInstitution[] = [
   { id: 'voc-008', name: 'วิทยาลัยเทคนิคหาดใหญ่', type: 'vocational', province: 'สงขลา' },
   { id: 'voc-009', name: 'วิทยาลัยเทคนิคนครราชสีมา', type: 'vocational', province: 'นครราชสีมา' },
   { id: 'voc-010', name: 'วิทยาลัยเทคนิคชลบุรี', type: 'vocational', province: 'ชลบุรี' },
+  { id: 'voc-011', name: 'วิทยาลัยเทคนิคสุราษฎร์ธานี', type: 'vocational', province: 'สุราษฎร์ธานี' },
 
   // --- Higher Education & Universities (มหาวิทยาลัย / สถาบัน) ---
   { id: 'uni-001', name: 'จุฬาลงกรณ์มหาวิทยาลัย', type: 'university', province: 'กรุงเทพมหานคร' },

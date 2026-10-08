@@ -37,6 +37,7 @@ import {
   X,
   Compass,
   FlaskConical,
+  GraduationCap,
 } from 'lucide-react';
 
 interface GradingWorkspaceProps {
