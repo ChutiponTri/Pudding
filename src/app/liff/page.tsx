@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -930,16 +930,24 @@ export default function LiffStudentPage() {
           ) : (
             classrooms.map((cls) => {
               const isSelected = selectedClassroom?.id === cls.id;
+              const isClassPending = cls.pending_students?.some(
+                (s) => s.id === currentStudent?.id || s.line_uid === currentStudent?.line_uid
+              );
               return (
                 <button
                   key={cls.id}
                   onClick={() => setSelectedClassroom(cls)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${isSelected
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${isSelected
                     ? "bg-[#06C755] text-white shadow-xs"
                     : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
                     }`}
                 >
-                  {cls.name}
+                  <span>{cls.name}</span>
+                  {isClassPending && (
+                    <span className="px-1.5 py-0.2 rounded-md bg-amber-400 text-slate-950 text-[10px] font-black">
+                      รออนุมัติ
+                    </span>
+                  )}
                 </button>
               );
             })
@@ -988,6 +996,19 @@ export default function LiffStudentPage() {
             </div>
           ) : (
             <>
+              {/* Security Admission Gate Banner */}
+              {isSelectedClassroomPending && (
+                <div className="p-4 rounded-3xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-2">
+                  <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
+                    <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+                    <span className="font-bold text-xs">รอคุณครูอนุมัติการเข้าห้องเรียน (Admission Pending)</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                    ระบบความปลอดภัย: คุณได้ส่งคำขอเข้าร่วมห้องเรียนนี้แล้ว กรุณารอคุณครูประจำวิชากดอนุมัติ (Admit) จากหน้าจอของคุณครู เมื่อได้รับการอนุมัติ หน้าจอจะปลดล็อกให้เข้าทำข้อสอบและการบ้านโดยอัตโนมัติ
+                  </p>
+                </div>
+              )}
+
               {/* Pending Tasks Section */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -1044,9 +1065,14 @@ export default function LiffStudentPage() {
 
                           <button
                             onClick={() => handleOpenAssignment(a)}
-                            className="px-4 py-2 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                            disabled={isSelectedClassroomPending}
+                            className={`px-4 py-2 rounded-xl text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer ${
+                              isSelectedClassroomPending
+                                ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-80"
+                                : "bg-[#06C755] hover:bg-[#05b34c] active:scale-95"
+                            }`}
                           >
-                            <span>เริ่มทำข้อสอบ</span>
+                            <span>{isSelectedClassroomPending ? "รออนุมัติเข้าห้อง" : "เริ่มทำข้อสอบ"}</span>
                             <ChevronRight className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -1377,6 +1403,7 @@ export default function LiffStudentPage() {
                 <InstitutionSearchSelect
                   value={inputInstitution}
                   onChange={setInputInstitution}
+                  extraInstitutions={registeredInstitutions}
                   placeholder="ค้นหาและเลือกโรงเรียน / สถาบันของคุณ..."
                 />
                 <p className="text-[10px] text-slate-400">

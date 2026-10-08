@@ -793,10 +793,24 @@ export default function ClassroomsPage() {
                                     className="w-6 h-6 rounded-full object-cover"
                                   />
                                   <div>
-                                    <span className="font-bold text-slate-900 dark:text-white block">
-                                      {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name}
-                                    </span>
-                                    <span className="text-[11px] text-slate-400">{std.email}</span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-slate-900 dark:text-white block">
+                                        {std.first_name && std.last_name
+                                          ? `${std.first_name} ${std.last_name}`
+                                          : std.name || 'นักเรียน'}
+                                      </span>
+                                      {std.name && std.first_name && std.name.trim() !== `${std.first_name} ${std.last_name}`.trim() && (
+                                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
+                                          LINE: {std.name}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5">
+                                      <span>{std.email}</span>
+                                      {std.institution && (
+                                        <span>• 🏫 {std.institution}</span>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
                               </td>
@@ -871,11 +885,18 @@ export default function ClassroomsPage() {
                             <div>
                               <div className="flex items-center gap-2">
                                 <span className="font-bold text-xs text-slate-900 dark:text-white">
-                                  {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name || 'นักเรียน'}
+                                  {std.first_name && std.last_name
+                                    ? `${std.first_name} ${std.last_name}`
+                                    : std.name || 'นักเรียน'}
                                 </span>
                                 {std.student_id && (
                                   <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                                     ID: {std.student_id}
+                                  </span>
+                                )}
+                                {std.name && std.first_name && std.name.trim() !== `${std.first_name} ${std.last_name}`.trim() && (
+                                  <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950/60 rounded">
+                                    LINE: {std.name}
                                   </span>
                                 )}
                               </div>

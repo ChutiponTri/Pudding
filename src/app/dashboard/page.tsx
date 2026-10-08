@@ -982,6 +982,54 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Dashboard Academic Period Control Bar */}
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold shrink-0">
+            <Calendar className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-black text-slate-900 dark:text-white">
+                {language === 'th' ? 'ภาพรวมสถิติประจำภาคเรียน' : 'Semester Analytics Overview'}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px] font-bold">
+                {selectedSemesterKey === 'all'
+                  ? (language === 'th' ? 'ทุกภาคเรียนและปีการศึกษา' : 'All Semesters')
+                  : formatAcademicPeriod(Number(selectedSemesterKey.split('_')[0]), Number(selectedSemesterKey.split('_')[1]), language)}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {language === 'th'
+                ? 'สถิติด้านล่าง (ห้องเรียน นักเรียน งานรอตรวจ และแจ้งเตือนทุจริต) จะอัปเดตและคำนวณตามภาคเรียนที่เลือก'
+                : 'All metric cards below calculate and filter dynamically according to the selected academic term.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+          <span className="text-xs font-bold text-slate-600 dark:text-slate-300 hidden md:inline">
+            <Calendar className="w-3.5 h-3.5 inline mr-1 text-amber-500" />
+            {t('classroom_mgmt.fields.filter_semester_label')}:
+          </span>
+          <select
+            value={selectedSemesterKey}
+            onChange={(e) => setSelectedSemesterKey(e.target.value)}
+            className="px-3.5 py-2 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-amber-500 cursor-pointer shadow-xs"
+          >
+            {availableSemesterOptions.map((opt) => (
+              <option key={`${opt.semester}_${opt.yearCE}`} value={`${opt.semester}_${opt.yearCE}`}>
+                {formatAcademicPeriod(opt.semester, opt.yearCE, language)}{' '}
+                {opt.semester === defaultPeriod.semester && opt.yearCE === defaultPeriod.yearCE
+                  ? `(${t('classroom_mgmt.fields.active_semester')})`
+                  : ''}
+              </option>
+            ))}
+            <option value="all">{t('classroom_mgmt.fields.all_semesters')}</option>
+          </select>
+        </div>
+      </div>
+
       {/* Top Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
@@ -1593,157 +1641,334 @@ export default function DashboardPage() {
           onClick={() => setIsCoTeachersModalOpen(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-6"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-6 max-h-[92vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-amber-500" />
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  {t('courses.co_teachers')}
+                  {t('courses.co_teachers')} — {editingCourseCoTeachers.code} {editingCourseCoTeachers.name}
                 </h3>
               </div>
               <button
                 onClick={() => setIsCoTeachersModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg"
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Student Publication Notice Rule */}
-            <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
-              <ShieldCheck className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
-              <p className="leading-relaxed">
-                {t('courses.co_teaching_rule_badge')}
-              </p>
-            </div>
-
-            {/* Teachers List */}
-            <div className="space-y-2.5">
-              {coTeachersDraft.map((tchr) => (
-                <div
-                  key={tchr.teacher_id}
-                  className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={tchr.avatar_url || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100'}
-                      alt=""
-                      className="w-8 h-8 rounded-full object-cover"
-                    />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs text-slate-900 dark:text-white">
-                          {tchr.name}
-                        </span>
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                            tchr.role === 'primary'
-                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                              : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
-                          }`}
-                        >
-                          {tchr.role === 'primary' ? 'Primary Owner' : 'Assistant / IRR'}
-                        </span>
-                      </div>
-                      <span className="text-[11px] text-slate-400 font-mono">
-                        {tchr.email}
-                      </span>
-                    </div>
-                  </div>
-
-                  {tchr.role !== 'primary' && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveCoTeacher(tchr.teacher_id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-500 rounded"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
+            {/* Role Definitions & Rules Banner */}
+            <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 space-y-2 text-xs">
+              <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200">
+                <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>โครงสร้างบทบาทครูร่วมในรายวิชา (Co-Teaching Architecture)</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1 text-[11px] leading-relaxed">
+                <div className="p-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-blue-950 dark:text-blue-200">
+                  <span className="font-bold block mb-1">👨‍🏫 ครูผู้ช่วยสอน (Teaching Assistant - TA):</span>
+                  <span>ตรวจงานและให้คะแนนแก่นักเรียนได้จริง แต่<strong>ไม่สามารถแก้ไขรายวิชาหรือรายละเอียดวิชาได้</strong> (สงวนเฉพาะครูเจ้าของวิชา) และจะค้นหาจากสถาบันเดียวกัน</span>
                 </div>
-              ))}
+                <div className="p-2.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/50 text-purple-950 dark:text-purple-200">
+                  <span className="font-bold block mb-1">🔬 ครูตรวจเพื่อวิจัย (Research Evaluator):</span>
+                  <span>ตรวจเพื่อวิจัย/วัดความเที่ยงตรง (IRR) เท่านั้น <strong>จะไม่แสดงในหน้า LIFF ของนักเรียน</strong> และคะแนนจะถูกแยกเก็บเฉพาะ ไม่ปนกับคะแนนทางการของวิชา</span>
+                </div>
+              </div>
             </div>
 
-            {/* Add New Assistant Teacher Form */}
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
+            {/* Existing Teachers in this Course */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                รายชื่อครูในรายวิชานี้ ({coTeachersDraft.length} ท่าน)
+              </span>
+              <div className="space-y-2">
+                {coTeachersDraft.map((tchr) => (
+                  <div
+                    key={tchr.teacher_id}
+                    className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={tchr.avatar_url || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100'}
+                        alt=""
+                        className="w-9 h-9 rounded-full object-cover shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                            {tchr.name}
+                          </span>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                              tchr.role === 'primary'
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                                : tchr.role === 'researcher'
+                                ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border border-purple-300 dark:border-purple-800'
+                                : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-300 dark:border-blue-800'
+                            }`}
+                          >
+                            {tchr.role === 'primary'
+                              ? '👑 เจ้าของวิชา (Primary Owner)'
+                              : tchr.role === 'researcher'
+                              ? '🔬 ตรวจเพื่อวิจัย (Research Evaluator)'
+                              : '👨‍🏫 ผู้ช่วยสอน (Teaching Assistant)'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5 flex-wrap">
+                          {tchr.institution && (
+                            <span className="text-slate-600 dark:text-slate-300">
+                              🏫 {tchr.institution}
+                            </span>
+                          )}
+                          <span className="font-mono">{tchr.email}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {tchr.role !== 'primary' && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCoTeacher(tchr.teacher_id)}
+                        className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg cursor-pointer transition-colors"
+                        title="นำครูท่านนี้ออกจากรายวิชา"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Add New Teacher Form & Autocomplete Search */}
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 space-y-4">
               <div>
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                  + เพิ่มครูผู้ช่วยตรวจ (สำหรับการตรวจเพื่อทำวิจัย IRR)
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                  + เพิ่มครูร่วมสอนในรายวิชา
                 </span>
-                <p className="text-[11px] text-slate-400">
-                  กรอกชื่อ นามสกุล และอีเมลเพื่อเพิ่มเป็นผู้ตรวจร่วมในรายวิชานี้ทันที
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  เลือกบทบาทที่ต้องการเพิ่ม จากนั้นค้นหาด้วยชื่อหรืออีเมล หรือกรอกข้อมูลด้วยตนเอง
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <input
-                  type="text"
-                  value={newCoTeacherFirst}
-                  onChange={(e) => setNewCoTeacherFirst(e.target.value)}
-                  placeholder="ชื่อครูผู้ช่วย *"
-                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                />
-                <input
-                  type="text"
-                  value={newCoTeacherLast}
-                  onChange={(e) => setNewCoTeacherLast(e.target.value)}
-                  placeholder="นามสกุล *"
-                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                />
-                <input
-                  type="email"
-                  value={newCoTeacherEmail}
-                  onChange={(e) => setNewCoTeacherEmail(e.target.value)}
-                  placeholder="อีเมล (ถ้ามี)"
-                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                />
+              {/* Role Toggle Switcher */}
+              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewCoTeacherRole('assistant');
+                    if (teacherSearchQuery) handleSearchTeachers(teacherSearchQuery);
+                  }}
+                  className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    newCoTeacherRole === 'assistant'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <GraduationCap className="w-4 h-4" />
+                  <span>ครูผู้ช่วยสอน (TA)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewCoTeacherRole('researcher');
+                    if (teacherSearchQuery) handleSearchTeachers(teacherSearchQuery);
+                  }}
+                  className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    newCoTeacherRole === 'researcher'
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <FlaskConical className="w-4 h-4" />
+                  <span>ครูตรวจเพื่อวิจัย (Researcher)</span>
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={handleAddCoTeacher}
-                className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer transition-colors"
-              >
-                + บันทึกเพิ่มครูผู้ช่วยตรวจ
-              </button>
+              {/* Role Context Notification */}
+              <div className="text-[11px] px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                {newCoTeacherRole === 'assistant' ? (
+                  <>
+                    <Search className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                    <span>ระบบจะค้นหาครูที่สังกัดสถาบันเดียวกัน: <b>{teacherProfile?.institution || 'สถาบันเดียวกับคุณ'}</b></span>
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                    <span>ระบบค้นหาครูจากทุกสถาบัน (ผู้ประเมินภายนอกเพื่อการวิจัย / Inter-Rater Reliability)</span>
+                  </>
+                )}
+              </div>
+
+              {/* Autocomplete Search Input */}
+              <div className="relative">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={teacherSearchQuery}
+                    onChange={(e) => handleSearchTeachers(e.target.value)}
+                    placeholder={
+                      newCoTeacherRole === 'assistant'
+                        ? 'ค้นหาครูผู้ช่วยสอนด้วยชื่อ หรืออีเมล (สถาบันเดียวกัน)...'
+                        : 'ค้นหาครูตรวจวิจัยด้วยชื่อ หรืออีเมล (จากทุกสถาบัน)...'
+                    }
+                    className="w-full pl-9 pr-9 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                  />
+                  {isSearchingTeachers && (
+                    <Loader2 className="w-4 h-4 text-amber-500 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+                  )}
+                </div>
+
+                {/* Autocomplete Results Dropdown */}
+                {teacherSearchResults.length > 0 && (
+                  <div className="mt-2 p-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg space-y-1 max-h-48 overflow-y-auto">
+                    <span className="text-[10px] font-bold text-slate-400 px-2 block">
+                      ผลการค้นหา ({teacherSearchResults.length} ท่าน)
+                    </span>
+                    {teacherSearchResults.map((tchr) => (
+                      <div
+                        key={tchr.id}
+                        className="p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 transition-colors"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <img
+                            src={tchr.avatar_url || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100'}
+                            alt=""
+                            className="w-7 h-7 rounded-full object-cover shrink-0"
+                          />
+                          <div className="min-w-0">
+                            <span className="font-bold text-xs text-slate-900 dark:text-white block truncate">
+                              {`${tchr.first_name || ''} ${tchr.last_name || ''}`.trim() || tchr.name || 'ครูผู้สอน'}
+                            </span>
+                            <span className="text-[10px] text-slate-400 block truncate">
+                              {tchr.institution ? `🏫 ${tchr.institution} • ` : ''}{tchr.email}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectFoundTeacher(tchr)}
+                          className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-bold shrink-0 cursor-pointer"
+                        >
+                          + เพิ่ม
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Manual Entry Fallback Form */}
+              <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 space-y-2">
+                <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block">
+                  หรือกรอกข้อมูลด้วยตนเอง (หากยังไม่มีในระบบค้นหา):
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <input
+                    type="text"
+                    value={newCoTeacherFirst}
+                    onChange={(e) => setNewCoTeacherFirst(e.target.value)}
+                    placeholder="ชื่อ *"
+                    className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                  />
+                  <input
+                    type="text"
+                    value={newCoTeacherLast}
+                    onChange={(e) => setNewCoTeacherLast(e.target.value)}
+                    placeholder="นามสกุล *"
+                    className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                  />
+                  <input
+                    type="email"
+                    value={newCoTeacherEmail}
+                    onChange={(e) => setNewCoTeacherEmail(e.target.value)}
+                    placeholder="อีเมล (ถ้ามี)"
+                    className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddCoTeacher}
+                  className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer transition-colors"
+                >
+                  + บันทึกเพิ่ม{newCoTeacherRole === 'assistant' ? 'ครูผู้ช่วยสอน (TA)' : 'ครูตรวจวิจัย (Researcher)'}
+                </button>
+              </div>
             </div>
 
             {/* Teacher Web & LINE Invite Link Section */}
             {editingCourseCoTeachers && (
-              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-300 dark:border-amber-800/80 space-y-2.5">
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-300 dark:border-amber-800/80 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
                     <FlaskConical className="w-3.5 h-3.5 text-amber-600" />
-                    <span>เชิญครูผู้ช่วยผ่านลิงก์ / LINE (ไม่ชนกับ LIFF นักเรียน)</span>
+                    <span>เชิญครูร่วมสอนผ่านลิงก์ / LINE (แยกบทบาทชัดเจน)</span>
                   </span>
                 </div>
+
+                {/* Invite Link Role Tabs */}
+                <div className="flex items-center gap-2 p-1 bg-white/70 dark:bg-slate-900/70 rounded-xl border border-amber-200 dark:border-amber-900/60">
+                  <button
+                    type="button"
+                    onClick={() => setInviteRoleTab('assistant')}
+                    className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      inviteRoleTab === 'assistant'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    }`}
+                  >
+                    👨‍🏫 คำเชิญ: ครูผู้ช่วยสอน (TA)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInviteRoleTab('researcher')}
+                    className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      inviteRoleTab === 'researcher'
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    }`}
+                  >
+                    🔬 คำเชิญ: ครูตรวจวิจัย (Researcher)
+                  </button>
+                </div>
+
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  ส่งลิงก์คำเชิญนี้ให้คุณครูท่านอื่น เพื่อเปิดเข้าระบบด้วยบัญชีครู (Web Portal) โดยระบบจะแยกบทบาทครูตรวจวิจัย ไม่สับสนกับระบบนักเรียนใน LINE LIFF
+                  {inviteRoleTab === 'assistant'
+                    ? 'ลิงก์นี้สำหรับเชิญครูผู้ช่วยสอน (TA) เพื่อเข้ามาตรวจให้คะแนนจริงในห้องเรียน'
+                    : 'ลิงก์นี้สำหรับเชิญครูตรวจงานวิจัย (Research Evaluator) เพื่อเข้ามาประเมินความเที่ยงตรง (IRR) โดยไม่แสดงคะแนนหรือชื่อต่อนักเรียน'}
                 </p>
 
                 <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all select-all">
                   {typeof window !== 'undefined'
-                    ? `${window.location.origin}/teacher-invite?courseId=${editingCourseCoTeachers.id}`
-                    : `/teacher-invite?courseId=${editingCourseCoTeachers.id}`}
+                    ? `${window.location.origin}/teacher-invite?courseId=${editingCourseCoTeachers.id}&inviter=${encodeURIComponent(
+                        `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim() || 'อาจารย์'
+                      )}&role=${inviteRoleTab}`
+                    : `/teacher-invite?courseId=${editingCourseCoTeachers.id}&role=${inviteRoleTab}`}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => handleCopyTeacherInviteLink(editingCourseCoTeachers)}
+                    onClick={() => handleCopyTeacherInviteLink(editingCourseCoTeachers, inviteRoleTab)}
                     className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
                   >
                     <Copy className="w-3.5 h-3.5" />
-                    <span>{isCopiedTeacherLink ? 'คัดลอกลิงก์แล้ว!' : 'คัดลอกลิงก์คำเชิญครู'}</span>
+                    <span>{isCopiedTeacherLink ? 'คัดลอกลิงก์แล้ว!' : `คัดลอกลิงก์เชิญ (${inviteRoleTab === 'assistant' ? 'TA' : 'ผู้วิจัย'})`}</span>
                   </button>
 
                   <a
                     href={`https://line.me/R/msg/text/?${encodeURIComponent(
-                      `ขอเชิญคุณครูเข้าร่วมเป็นครูผู้ช่วยตรวจงานวิจัย (Research Co-Grader) วิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}" ที่ลิงก์: ${
+                      `ขอเชิญคุณครูเข้าร่วมเป็น${
+                        inviteRoleTab === 'assistant'
+                          ? 'ครูผู้ช่วยสอน (Teaching Assistant - TA)'
+                          : 'ครูผู้ช่วยตรวจงานวิจัย (Research Evaluator)'
+                      } วิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}" ที่ลิงก์: ${
                         typeof window !== 'undefined' ? window.location.origin : ''
-                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}`
+                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}&inviter=${encodeURIComponent(
+                        `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim() || 'อาจารย์'
+                      )}&role=${inviteRoleTab}`
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -1755,11 +1980,17 @@ export default function DashboardPage() {
 
                   <a
                     href={`mailto:?subject=${encodeURIComponent(
-                      `คำเชิญเป็นครูผู้ช่วยตรวจงานวิจัย วิชา ${editingCourseCoTeachers.code}`
+                      `คำเชิญเป็น${
+                        inviteRoleTab === 'assistant' ? 'ครูผู้ช่วยสอน' : 'ครูตรวจงานวิจัย'
+                      } วิชา ${editingCourseCoTeachers.code}`
                     )}&body=${encodeURIComponent(
-                      `เรียนคุณครู,\n\nขอเชิญเข้าร่วมเป็นครูผู้ช่วยตรวจงานวิจัย (Research Co-Grader) สำหรับรายวิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}"\n\nท่านสามารถกดยืนยันคำเชิญได้ที่ลิงก์นี้:\n${
+                      `เรียนคุณครู,\n\nขอเชิญเข้าร่วมเป็น${
+                        inviteRoleTab === 'assistant'
+                          ? 'ครูผู้ช่วยสอน (Teaching Assistant - TA)'
+                          : 'ครูผู้ช่วยตรวจงานวิจัย (Research Evaluator)'
+                      } สำหรับรายวิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}"\n\nท่านสามารถกดยืนยันคำเชิญได้ที่ลิงก์นี้:\n${
                         typeof window !== 'undefined' ? window.location.origin : ''
-                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}\n\nขอบคุณครับ/ค่ะ`
+                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}&role=${inviteRoleTab}\n\nขอบคุณครับ/ค่ะ`
                     )}`}
                     className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                   >

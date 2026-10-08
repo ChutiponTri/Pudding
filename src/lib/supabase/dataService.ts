@@ -1073,7 +1073,23 @@ export const dataService = {
       setStored("classrooms", classrooms);
     }
 
-    // Broadcast instant event across tabs/windows
+    // Broadcast instant event across tabs/windows and Supabase Realtime
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        const liveChannel = supabase.channel('pudding_realtime_broadcast');
+        liveChannel.subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            liveChannel.send({
+              type: 'broadcast',
+              event: 'student_enrolled',
+              payload: { classroomId, student: newStudent, autoAdmit },
+            });
+          }
+        });
+      } catch {}
+    }
+
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("pudding_student_enrolled", {
@@ -1125,6 +1141,17 @@ export const dataService = {
             student_count: updatedStudents.length,
           })
           .eq("id", classroomId);
+
+        const liveChannel = supabase.channel('pudding_realtime_broadcast');
+        liveChannel.subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            liveChannel.send({
+              type: 'broadcast',
+              event: 'student_admitted',
+              payload: { classroomId, student: studentToAdmit, action: 'admitted' },
+            });
+          }
+        });
       } catch (err) {
         console.error("admitStudentToClassroom error:", err);
       }
@@ -1168,6 +1195,17 @@ export const dataService = {
             pending_students: remainingPending,
           })
           .eq("id", classroomId);
+
+        const liveChannel = supabase.channel('pudding_realtime_broadcast');
+        liveChannel.subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            liveChannel.send({
+              type: 'broadcast',
+              event: 'student_rejected',
+              payload: { classroomId, studentId, action: 'rejected' },
+            });
+          }
+        });
       } catch (err) {
         console.error("rejectStudentFromClassroom error:", err);
       }
@@ -1478,9 +1516,12 @@ export const dataService = {
     const onClassroomUpdate = typeof arg1 === 'function' ? arg1 : (arg2 || (() => {}));
 
     let supabaseChannel: any = null;
+    let supabaseBroadcastChannel: any = null;
+
     if (isSupabaseConfigured) {
       try {
         const supabase = createClient();
+        // 1. Postgres changes channel
         supabaseChannel = supabase
           .channel(`teacher_${teacherId}_classrooms_${Date.now()}`)
           .on(
@@ -1492,7 +1533,6 @@ export const dataService = {
             'postgres_changes',
             { event: '*', schema: 'public', table: 'classroom_students' },
             async (payload: any) => {
-              // Try to hydrate student info if new row inserted
               let studentObj: User | null = null;
               if (payload?.new?.student_id) {
                 try {
@@ -1513,6 +1553,20 @@ export const dataService = {
               });
             }
           )
+          .subscribe();
+
+        // 2. Direct WebSockets Broadcast channel for instant cross-device delivery
+        supabaseBroadcastChannel = supabase.channel('pudding_realtime_broadcast');
+        supabaseBroadcastChannel
+          .on('broadcast', { event: 'student_enrolled' }, (event: any) => {
+            onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.payload });
+          })
+          .on('broadcast', { event: 'student_admitted' }, (event: any) => {
+            onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.payload });
+          })
+          .on('broadcast', { event: 'student_rejected' }, (event: any) => {
+            onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.payload });
+          })
           .subscribe();
       } catch (subErr) {
         console.warn('Realtime subscription error:', subErr);
@@ -1538,23 +1592,23 @@ export const dataService = {
         };
       } catch {}
 
-      // Heartbeat Polling Fallback (every 4 seconds when tab is active)
-      let lastStudentCount = -1;
+      // Fast state fingerprint comparison (runs every 2.5s for instant sync across any device)
+      let lastKnownFingerprint = '';
       pollInterval = setInterval(async () => {
         if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
           try {
             const currentClasses = await this.getClassrooms();
-            const currentTotal = currentClasses.reduce(
-              (acc, c) => acc + (c.students?.length || 0) + (c.pending_students?.length || 0),
-              0
-            );
-            if (lastStudentCount !== -1 && currentTotal !== lastStudentCount) {
-              onClassroomUpdate({ eventType: 'HEARTBEAT_UPDATE', detail: { totalStudents: currentTotal } });
+            const fingerprint = currentClasses
+              .map((c) => `${c.id}:s[${(c.students || []).map((s) => s.id).join(',')}]:p[${(c.pending_students || []).map((p) => p.id).join(',')}]`)
+              .join('|');
+
+            if (lastKnownFingerprint && fingerprint !== lastKnownFingerprint) {
+              onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: { source: 'poll' } });
             }
-            lastStudentCount = currentTotal;
+            lastKnownFingerprint = fingerprint;
           } catch {}
         }
-      }, 4000);
+      }, 2500);
     }
 
     return () => {
@@ -1562,6 +1616,9 @@ export const dataService = {
         try {
           const supabase = createClient();
           supabase.removeChannel(supabaseChannel);
+          if (supabaseBroadcastChannel) {
+            supabase.removeChannel(supabaseBroadcastChannel);
+          }
         } catch {}
       }
       if (typeof window !== 'undefined') {
