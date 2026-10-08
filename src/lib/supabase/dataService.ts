@@ -864,14 +864,160 @@ export const dataService = {
     return hydrated;
   },
 
-  async getClassroomById(id: string): Promise<Classroom | null> {
+  async getClassroomRoster(classroomId: string): Promise<{
+    classroom: Classroom | null;
+    students: User[];
+    pending_students: User[];
+  }> {
     if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase.from('classrooms').select('*').eq('id', id).single();
-      if (!error && data) return data as Classroom;
+      try {
+        const supabase = createClient();
+        const { data: clsData, error: clsErr } = await supabase
+          .from('classrooms')
+          .select('*')
+          .eq('id', classroomId)
+          .maybeSingle();
+
+        if (clsData && !clsErr) {
+          // Fetch all users to accurately map real first_name, last_name, student_id, institution
+          const { data: usersData } = await supabase.from('users').select('*');
+          const userMap = new Map<string, User>();
+          (usersData || []).forEach((u: any) => {
+            const userObj = u as User;
+            userMap.set(u.id, userObj);
+            if (u.line_uid) userMap.set(u.line_uid, userObj);
+            if (u.student_id) {
+              userMap.set(u.student_id, userObj);
+              userMap.set(`std_${u.student_id}`, userObj);
+            }
+          });
+
+          // Fetch relational records from classroom_students table
+          const { data: csLinks } = await supabase
+            .from('classroom_students')
+            .select('*')
+            .eq('classroom_id', classroomId);
+
+          const studentList: User[] = [];
+          const pendingList: User[] = [];
+          const seenActiveIds = new Set<string>();
+          const seenPendingIds = new Set<string>();
+
+          // Process active students stored in classrooms table
+          const rawStudents = (clsData.students || []) as User[];
+          const rawPending = (clsData.pending_students || []) as User[];
+
+          for (const s of rawStudents) {
+            const dbUser =
+              userMap.get(s.id) ||
+              (s.line_uid ? userMap.get(s.line_uid) : null) ||
+              (s.student_id ? userMap.get(s.student_id) : null);
+
+            const merged: User = {
+              ...s,
+              id: dbUser?.id || s.id,
+              first_name: dbUser?.first_name || s.first_name || '',
+              last_name: dbUser?.last_name || s.last_name || '',
+              name: s.name || (dbUser?.first_name ? `${dbUser.first_name} ${dbUser.last_name || ''}`.trim() : 'นักเรียน'),
+              student_id: dbUser?.student_id || s.student_id,
+              institution: dbUser?.institution || s.institution,
+              avatar_url: dbUser?.avatar_url || s.avatar_url,
+              email: dbUser?.email || s.email,
+              line_uid: dbUser?.line_uid || s.line_uid,
+              role: 'student',
+              enrollment_status: 'active',
+            };
+            if (!seenActiveIds.has(merged.id)) {
+              seenActiveIds.add(merged.id);
+              studentList.push(merged);
+            }
+          }
+
+          for (const s of rawPending) {
+            const dbUser =
+              userMap.get(s.id) ||
+              (s.line_uid ? userMap.get(s.line_uid) : null) ||
+              (s.student_id ? userMap.get(s.student_id) : null);
+
+            const merged: User = {
+              ...s,
+              id: dbUser?.id || s.id,
+              first_name: dbUser?.first_name || s.first_name || '',
+              last_name: dbUser?.last_name || s.last_name || '',
+              name: s.name || (dbUser?.first_name ? `${dbUser.first_name} ${dbUser.last_name || ''}`.trim() : 'นักเรียน'),
+              student_id: dbUser?.student_id || s.student_id,
+              institution: dbUser?.institution || s.institution,
+              avatar_url: dbUser?.avatar_url || s.avatar_url,
+              email: dbUser?.email || s.email,
+              line_uid: dbUser?.line_uid || s.line_uid,
+              role: 'student',
+              enrollment_status: 'pending_approval',
+            };
+            if (!seenActiveIds.has(merged.id) && !seenPendingIds.has(merged.id)) {
+              seenPendingIds.add(merged.id);
+              pendingList.push(merged);
+            }
+          }
+
+          // Merge any relational records from classroom_students table
+          for (const link of csLinks || []) {
+            const u = userMap.get(link.student_id);
+            if (u) {
+              if (link.status === 'pending_approval') {
+                if (!seenActiveIds.has(u.id) && !seenPendingIds.has(u.id)) {
+                  seenPendingIds.add(u.id);
+                  pendingList.push({ ...u, enrollment_status: 'pending_approval' });
+                }
+              } else {
+                if (!seenActiveIds.has(u.id)) {
+                  seenActiveIds.add(u.id);
+                  const pIdx = pendingList.findIndex((p) => p.id === u.id);
+                  if (pIdx >= 0) pendingList.splice(pIdx, 1);
+                  studentList.push({ ...u, enrollment_status: 'active' });
+                }
+              }
+            }
+          }
+
+          let sem = clsData.semester;
+          let yr = clsData.year_ce;
+          if (!sem || !yr) {
+            const parsed = parseAcademicPeriod(clsData.academic_year);
+            if (parsed) {
+              sem = sem ?? parsed.semester;
+              yr = yr ?? parsed.yearCE;
+            }
+          }
+
+          const hydratedCls: Classroom = {
+            ...clsData,
+            semester: sem,
+            year_ce: yr,
+            students: studentList,
+            pending_students: pendingList,
+            student_count: studentList.length,
+          };
+
+          return { classroom: hydratedCls, students: studentList, pending_students: pendingList };
+        }
+      } catch (err) {
+        console.warn('getClassroomRoster Supabase error:', err);
+      }
     }
+
+    // Local / Offline fallback
     const classrooms = await this.getClassrooms();
-    return classrooms.find((c) => c.id === id) || null;
+    const found = classrooms.find((c) => c.id === classroomId) || null;
+    return {
+      classroom: found,
+      students: found?.students || [],
+      pending_students: found?.pending_students || [],
+    };
+  },
+
+  async getClassroomById(id: string): Promise<Classroom | null> {
+    const roster = await this.getClassroomRoster(id);
+    return roster.classroom;
   },
 
   async createClassroom(

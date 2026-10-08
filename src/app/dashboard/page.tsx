@@ -187,18 +187,44 @@ export default function DashboardPage() {
           setTeacherProfile(profile);
           if (profile.institution) {
             setTeacherInstitutionInput(profile.institution);
+          } else {
+            // Automatically prompt teacher to set standard educational institution
+            setIsInstitutionModalOpen(true);
           }
         }
       }
 
       if (managingClassroom) {
-        const refreshed = myClassrooms.find((c) => c.id === managingClassroom.id) || null;
-        setManagingClassroom(refreshed);
+        try {
+          const roster = await dataService.getClassroomRoster(managingClassroom.id);
+          if (roster.classroom) {
+            setManagingClassroom(roster.classroom);
+          } else {
+            const refreshed = myClassrooms.find((c) => c.id === managingClassroom.id) || null;
+            setManagingClassroom(refreshed);
+          }
+        } catch {
+          const refreshed = myClassrooms.find((c) => c.id === managingClassroom.id) || null;
+          setManagingClassroom(refreshed);
+        }
       }
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenManagingClassroom = async (cls: Classroom, tab: 'roster' | 'pending' | 'line' | 'email' = 'roster') => {
+    setManagingClassroom(cls);
+    setStudentTab(tab);
+    try {
+      const roster = await dataService.getClassroomRoster(cls.id);
+      if (roster.classroom) {
+        setManagingClassroom(roster.classroom);
+      }
+    } catch (err) {
+      console.warn('Error loading fresh classroom roster in dashboard:', err);
     }
   };
 
@@ -238,7 +264,7 @@ export default function DashboardPage() {
     });
 
     return unsub;
-  }, [language]);
+  }, [clerkUser?.id, language]);
 
   // Dynamically collect all available semester options across current period, courses, and classrooms
   const availableSemesterOptions = useMemo(() => {
@@ -1254,15 +1280,17 @@ export default function DashboardPage() {
                     </span>
                   )}
 
-                  {/* Add Classroom Section Under This Course (Pre-fills this course & semester) */}
-                  <button
-                    type="button"
-                    onClick={() => handleOpenCreateClassModal(course)}
-                    className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
-                  >
-                    <PlusCircle className="w-3.5 h-3.5" />
-                    <span>+ {language === 'th' ? 'เพิ่มห้องเรียน' : 'Add Classroom'}</span>
-                  </button>
+                  {/* Add Classroom Section Under This Course - Only Course Owner */}
+                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCreateClassModal(course)}
+                      className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      <span>+ {language === 'th' ? 'เพิ่มห้องเรียน' : 'Add Classroom'}</span>
+                    </button>
+                  )}
 
                   {/* Delete Course Button - Only Course Owner */}
                   {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') && (
@@ -1306,24 +1334,33 @@ export default function DashboardPage() {
                               <span className="font-mono text-[11px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded">
                                 {cls.invite_code || 'OMU'}
                               </span>
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenEditClassModal(cls)}
-                                  className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded"
-                                  title={t('common.edit')}
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteClassroom(cls)}
-                                  className="p-1 text-slate-400 hover:text-rose-500 rounded"
-                                  title={t('common.delete')}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
+                              {/* Only Course/Classroom Owner Can Edit/Delete Section */}
+                              {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditClassModal(cls)}
+                                    className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded"
+                                    title={t('common.edit')}
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteClassroom(cls)}
+                                    className="p-1 text-slate-400 hover:text-rose-500 rounded"
+                                    title={t('common.delete')}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                                  {course.teachers?.some((t) => t.teacher_id === clerkUser?.id && t.role === 'researcher')
+                                    ? '🔬 โหมดวิจัย'
+                                    : '👨‍🏫 TA'}
+                                </span>
+                              )}
                             </div>
 
                             <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
@@ -1344,8 +1381,7 @@ export default function DashboardPage() {
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setManagingClassroom(cls);
-                                    setStudentTab('pending');
+                                    handleOpenManagingClassroom(cls, 'pending');
                                   }}
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse cursor-pointer shadow-xs hover:bg-rose-600 transition-colors"
                                   title="คลิกเพื่ออนุมัตินักเรียนเข้าห้องเรียน"
@@ -1360,10 +1396,7 @@ export default function DashboardPage() {
                           <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
                             <button
                               type="button"
-                              onClick={() => {
-                                setManagingClassroom(cls);
-                                setStudentTab('roster');
-                              }}
+                              onClick={() => handleOpenManagingClassroom(cls, 'roster')}
                               className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
                             >
                               <span>{t('dashboard.classrooms_section.view_class')}</span>
@@ -2494,19 +2527,29 @@ export default function DashboardPage() {
                           alt=""
                           className="w-7 h-7 rounded-full object-cover"
                         />
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-slate-900 dark:text-white">
-                              {std.first_name} {std.last_name}
-                            </span>
-                            <span className="font-mono text-[10px] text-slate-400">
-                              ID: {std.student_id}
-                            </span>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-xs text-slate-900 dark:text-white">
+                                {std.first_name || std.last_name
+                                  ? `${std.first_name || ''} ${std.last_name || ''}`.trim()
+                                  : std.name || 'นักเรียน'}
+                              </span>
+                              {std.name && (std.first_name || std.last_name) && std.name.trim() !== `${std.first_name || ''} ${std.last_name || ''}`.trim() && (
+                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
+                                  LINE: {std.name}
+                                </span>
+                              )}
+                              <span className="font-mono text-[10px] text-slate-400">
+                                ID: {std.student_id || '-'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono mt-0.5 flex-wrap">
+                              {std.institution && (
+                                <span className="text-slate-600 dark:text-slate-300">🏫 {std.institution}</span>
+                              )}
+                              {std.email && <span>• {std.email}</span>}
+                            </div>
                           </div>
-                          <span className="text-[11px] text-slate-400 font-mono">
-                            {std.email}
-                          </span>
-                        </div>
                       </div>
 
                       <button
@@ -2559,10 +2602,15 @@ export default function DashboardPage() {
                             className="w-10 h-10 rounded-2xl object-cover ring-2 ring-amber-400 shrink-0"
                           />
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-bold text-xs text-slate-900 dark:text-white">
                                 {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name || 'นักเรียน'}
                               </span>
+                              {std.name && (std.first_name || std.last_name) && std.name.trim() !== `${std.first_name || ''} ${std.last_name || ''}`.trim() && (
+                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
+                                  LINE: {std.name}
+                                </span>
+                              )}
                               {std.student_id && (
                                 <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                                   ID: {std.student_id}

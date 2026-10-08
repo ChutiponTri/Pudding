@@ -91,8 +91,18 @@ export default function ClassroomsPage() {
       const cls = await dataService.getClassrooms(clerkUser?.id);
       setClassrooms(cls);
       if (selectedClassroomForStudents) {
-        const refreshed = cls.find((c) => c.id === selectedClassroomForStudents.id) || null;
-        setSelectedClassroomForStudents(refreshed);
+        try {
+          const roster = await dataService.getClassroomRoster(selectedClassroomForStudents.id);
+          if (roster.classroom) {
+            setSelectedClassroomForStudents(roster.classroom);
+          } else {
+            const refreshed = cls.find((c) => c.id === selectedClassroomForStudents.id) || null;
+            setSelectedClassroomForStudents(refreshed);
+          }
+        } catch {
+          const refreshed = cls.find((c) => c.id === selectedClassroomForStudents.id) || null;
+          setSelectedClassroomForStudents(refreshed);
+        }
       }
       if (clerkUser?.id) {
         const profile = await dataService.getUserById(clerkUser.id);
@@ -102,6 +112,19 @@ export default function ClassroomsPage() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenClassroomStudents = async (cls: Classroom) => {
+    setSelectedClassroomForStudents(cls);
+    setStudentActiveTab((cls.pending_students?.length || 0) > 0 ? 'pending' : 'roster');
+    try {
+      const roster = await dataService.getClassroomRoster(cls.id);
+      if (roster.classroom) {
+        setSelectedClassroomForStudents(roster.classroom);
+      }
+    } catch (err) {
+      console.warn('Error loading fresh classroom roster:', err);
     }
   };
 
@@ -382,23 +405,37 @@ export default function ClassroomsPage() {
                   <span className="px-2.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-mono font-bold text-[11px] border border-amber-200/60 dark:border-amber-900/60">
                     {cls.invite_code || 'OMU'}
                   </span>
+                  
+                  {/* Permission Gate: Only Primary Owner can Edit or Delete Classroom */}
                   <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEditModal(cls)}
-                      className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                      title={t('common.edit')}
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteClassroom(cls)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
-                      title={t('common.delete')}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {(!cls.teacher_id || cls.teacher_id === clerkUser?.id || cls.teacher_id === 'teacher-default') ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditModal(cls)}
+                          className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                          title={t('common.edit')}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClassroom(cls)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                          title={t('common.delete')}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : cls.teachers?.some((t) => t.teacher_id === clerkUser?.id && t.role === 'researcher') ? (
+                      <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200/60 dark:border-purple-800/60">
+                        🔬 ครูตรวจวิจัย
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/60 dark:border-blue-800/60">
+                        👨‍🏫 TA ตรวจงาน
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -421,10 +458,7 @@ export default function ClassroomsPage() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setSelectedClassroomForStudents(cls);
-                    setStudentActiveTab('roster');
-                  }}
+                  onClick={() => handleOpenClassroomStudents(cls)}
                   className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <span>{t('dashboard.classrooms_section.view_class')}</span>
@@ -795,11 +829,11 @@ export default function ClassroomsPage() {
                                   <div>
                                     <div className="flex items-center gap-2">
                                       <span className="font-bold text-slate-900 dark:text-white block">
-                                        {std.first_name && std.last_name
-                                          ? `${std.first_name} ${std.last_name}`
+                                        {std.first_name || std.last_name
+                                          ? `${std.first_name || ''} ${std.last_name || ''}`.trim()
                                           : std.name || 'นักเรียน'}
                                       </span>
-                                      {std.name && std.first_name && std.name.trim() !== `${std.first_name} ${std.last_name}`.trim() && (
+                                      {std.name && (std.first_name || std.last_name) && std.name.trim() !== `${std.first_name || ''} ${std.last_name || ''}`.trim() && (
                                         <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
                                           LINE: {std.name}
                                         </span>
@@ -885,8 +919,8 @@ export default function ClassroomsPage() {
                             <div>
                               <div className="flex items-center gap-2">
                                 <span className="font-bold text-xs text-slate-900 dark:text-white">
-                                  {std.first_name && std.last_name
-                                    ? `${std.first_name} ${std.last_name}`
+                                  {std.first_name || std.last_name
+                                    ? `${std.first_name || ''} ${std.last_name || ''}`.trim()
                                     : std.name || 'นักเรียน'}
                                 </span>
                                 {std.student_id && (
@@ -894,7 +928,7 @@ export default function ClassroomsPage() {
                                     ID: {std.student_id}
                                   </span>
                                 )}
-                                {std.name && std.first_name && std.name.trim() !== `${std.first_name} ${std.last_name}`.trim() && (
+                                {std.name && (std.first_name || std.last_name) && std.name.trim() !== `${std.first_name || ''} ${std.last_name || ''}`.trim() && (
                                   <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950/60 rounded">
                                     LINE: {std.name}
                                   </span>
