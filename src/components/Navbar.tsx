@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useUser, UserButton, Show } from '@clerk/nextjs';
 import { dataService } from '@/lib/supabase/dataService';
+import { notificationManager, AppNotification } from '@/lib/utils/notificationManager';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -24,6 +25,22 @@ export const Navbar: React.FC = () => {
   const pathname = usePathname();
   const { t, language } = useLanguage();
   const { user, isSignedIn, isLoaded } = useUser();
+
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [browserPerm, setBrowserPerm] = useState<NotificationPermission>('default');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setBrowserPerm(notificationManager.getPermissionStatus());
+    }
+    const unsub = notificationManager.subscribe((items) => {
+      setNotifications(items);
+    });
+    return unsub;
+  }, []);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   useEffect(() => {
     if (isSignedIn && user) {
@@ -114,15 +131,100 @@ export const Navbar: React.FC = () => {
           {/* Language Switcher */}
           <LanguageSwitcher />
 
-          {/* Notification Button */}
-          <button
-            type="button"
-            className="relative p-2 rounded-xl text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            title={t('nav.notifications')}
-          >
-            <Bell className="w-4 h-4" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-900 animate-pulse" />
-          </button>
+          {/* Notification Button & Popover */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+              className="relative p-2 rounded-xl text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              title={t('nav.notifications')}
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 text-[10px] font-black rounded-full bg-rose-500 text-white ring-2 ring-white dark:ring-slate-900 animate-pulse">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* Notification Dropdown Popover */}
+            {isNotificationOpen && (
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2">
+                <div className="p-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-amber-500" />
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">
+                      {language === 'th' ? 'การแจ้งเตือน Realtime' : 'Real-time Notifications'}
+                    </span>
+                    {unreadCount > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
+                        {unreadCount} ใหม่
+                      </span>
+                    )}
+                  </div>
+                  {notifications.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => notificationManager.markAllAsRead()}
+                      className="text-[11px] text-amber-600 hover:text-amber-700 dark:text-amber-400 font-semibold cursor-pointer"
+                    >
+                      {language === 'th' ? 'อ่านทั้งหมด' : 'Mark all read'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Browser Native Notification Permission Prompt */}
+                {browserPerm !== 'granted' && (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200/60 dark:border-amber-900/60 flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-amber-900 dark:text-amber-200">
+                      {language === 'th' ? '🔔 เปิดแจ้งเตือนหน้าจอคอมฯ เมื่อเด็กสแกน' : '🔔 Enable desktop alerts'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const perm = await notificationManager.requestBrowserPermission();
+                        setBrowserPerm(perm);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-bold cursor-pointer shrink-0"
+                    >
+                      {language === 'th' ? 'เปิดใช้งาน' : 'Enable'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Notifications List */}
+                <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {notifications.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      {language === 'th' ? 'ยังไม่มีการแจ้งเตือน' : 'No notifications yet'}
+                    </div>
+                  ) : (
+                    notifications.map((item) => (
+                      <div
+                        key={item.id}
+                        onClick={() => notificationManager.markAsRead(item.id)}
+                        className={`p-3.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer ${
+                          !item.read ? 'bg-amber-50/40 dark:bg-amber-950/20' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-900 dark:text-white">
+                            {item.title}
+                          </p>
+                          <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                            {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5 leading-relaxed">
+                          {item.message}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Teacher Profile Avatar / Clerk Authentication */}
           <Show when={"signed-in"}>

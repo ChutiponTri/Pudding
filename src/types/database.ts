@@ -10,10 +10,12 @@ export interface User {
   role: UserRole;
   avatar_url?: string;
   email?: string;
+  institution?: string; // โรงเรียน / สถานศึกษา
+  enrollment_status?: 'active' | 'pending_approval';
   is_line_connected?: boolean;
 }
 
-export type TeacherRole = 'primary' | 'assistant';
+export type TeacherRole = 'primary' | 'assistant' | 'researcher';
 
 export interface ClassroomTeacher {
   teacher_id: string;
@@ -21,6 +23,7 @@ export interface ClassroomTeacher {
   email: string;
   avatar_url?: string;
   role: TeacherRole;
+  institution?: string;
 }
 
 export interface CourseLearningIndicator {
@@ -62,6 +65,7 @@ export interface Classroom {
   subject_code?: string;
   invite_code?: string;
   students?: User[];
+  pending_students?: User[]; // นักเรียนที่รอการอนุมัติ (Admit) จากคุณครู
   created_at?: string;
 }
 
@@ -148,9 +152,10 @@ export interface SubmissionAnswer {
   ai_mock_score?: number;
   ai_confidence?: number; // 0.0 - 1.0 (e.g. 0.94 = 94%)
   ai_feedback?: string;
-  teacher_score?: number; // Student-facing official score (from primary teacher)
-  teacher_comment?: string; // Student-facing official comment (from primary teacher)
-  co_grades?: Record<string, TeacherGradeRecord>; // teacher_id -> independent evaluation for IRR / research
+  teacher_score?: number; // Student-facing official score (from primary teacher or TA)
+  teacher_comment?: string; // Student-facing official comment
+  research_grades?: Record<string, TeacherGradeRecord>; // teacher_id -> separate evaluation for Research/IRR only (not visible to students)
+  co_grades?: Record<string, TeacherGradeRecord>; // legacy / co-grades
   graded_at?: string;
 }
 

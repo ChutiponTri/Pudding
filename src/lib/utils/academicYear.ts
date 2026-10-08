@@ -10,27 +10,36 @@ export interface AcademicPeriod {
  * - Semester 2: Late October / November - March (if Jan-Mar, academic year is CE year - 1)
  */
 export function getDefaultAcademicPeriod(refDate: Date = new Date()): AcademicPeriod {
-  const month = refDate.getMonth(); // 0 = Jan ... 9 = Oct ... 11 = Dec
+  const month = refDate.getMonth(); // 0 = Jan ... 11 = Dec
   const date = refDate.getDate();
   const yearCE = refDate.getFullYear();
 
-  let semester = 1;
-  let academicYearCE = yearCE;
+  // วันแรกของ "ครึ่งหลังเดือน" ที่ถือว่าเริ่มเทอมใหม่
+  const MID_MONTH = 16;
 
-  if (month >= 4 && month <= 8) {
-    // May to September -> Semester 1
-    semester = 1;
-    academicYearCE = yearCE;
-  } else if (month === 9) {
-    // October: mid-to-late October begins Semester 2 preparation
-    semester = date > 20 ? 2 : 1;
-    academicYearCE = yearCE;
-  } else if (month >= 10) {
-    // November to December -> Semester 2
+  // ค่าเทียบลำดับในปี เช่น 16 ต.ค. -> 916, 5 ก.พ. -> 105
+  const md = month * 100 + date;
+  const START_SEM1 = 4 * 100 + MID_MONTH; // กลาง พ.ค.
+  const START_SEM2 = 9 * 100 + MID_MONTH; // กลาง ต.ค.
+  const START_SEM3 = 1 * 100 + MID_MONTH; // กลาง ก.พ.
+
+  let semester: number;
+  let academicYearCE: number;
+
+  if (md >= START_SEM2) {
+    // กลาง ต.ค. - 31 ธ.ค. -> เทอม 2 ของปีการศึกษาปัจจุบัน
     semester = 2;
     academicYearCE = yearCE;
+  } else if (md >= START_SEM1) {
+    // กลาง พ.ค. - กลาง ต.ค. -> เทอม 1 ของปีการศึกษาปัจจุบัน
+    semester = 1;
+    academicYearCE = yearCE;
+  } else if (md >= START_SEM3) {
+    // กลาง ก.พ. - กลาง พ.ค. -> เทอม 3 (ซัมเมอร์) ของปีการศึกษาก่อนหน้า
+    semester = 3;
+    academicYearCE = yearCE - 1;
   } else {
-    // January to April -> Semester 2 of preceding academic year
+    // 1 ม.ค. - กลาง ก.พ. -> เทอม 2 ของปีการศึกษาก่อนหน้า
     semester = 2;
     academicYearCE = yearCE - 1;
   }
@@ -48,9 +57,33 @@ export function formatAcademicPeriod(
   language: 'th' | 'en'
 ): string {
   if (language === 'th') {
+    if (semester === 3) {
+      return `ภาคเรียนที่ 3 (ซัมเมอร์) / ${yearCE + 543}`;
+    }
     return `ภาคเรียนที่ ${semester} / ${yearCE + 543}`;
   }
+  if (semester === 3) {
+    return `Semester 3 (Summer) / ${yearCE}`;
+  }
   return `Semester ${semester} / ${yearCE}`;
+}
+
+export function formatSemesterLabel(semester: number, language: 'th' | 'en' = 'th'): string {
+  if (language === 'th') {
+    if (semester === 3) return 'ภาคเรียนที่ 3 (ซัมเมอร์)';
+    return `ภาคเรียนที่ ${semester}`;
+  }
+  if (semester === 3) return 'Semester 3 (Summer)';
+  return `Semester ${semester}`;
+}
+
+export function getSemesterShortLabel(semester: number, language: 'th' | 'en' = 'th'): string {
+  if (language === 'th') {
+    if (semester === 3) return 'ซัมเมอร์';
+    return `เทอม ${semester}`;
+  }
+  if (semester === 3) return 'Summer';
+  return `Term ${semester}`;
 }
 
 export function getAcademicYearOptions(currentYearCE: number = new Date().getFullYear()): number[] {

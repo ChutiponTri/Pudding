@@ -52,7 +52,15 @@ import {
   CheckCircle2,
   AlertCircle,
   FolderKanban,
+  FlaskConical,
+  Search,
+  GraduationCap,
+  UserCheck,
+  UserX,
+  Building2,
 } from 'lucide-react';
+import { notificationManager } from '@/lib/utils/notificationManager';
+import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 
 export default function DashboardPage() {
   const { t, language } = useLanguage();
@@ -86,6 +94,11 @@ export default function DashboardPage() {
     `${defaultPeriod.semester}_${defaultPeriod.yearCE}`
   );
 
+  // Teacher Institution & Profile state
+  const [teacherProfile, setTeacherProfile] = useState<User | null>(null);
+  const [isInstitutionModalOpen, setIsInstitutionModalOpen] = useState(false);
+  const [teacherInstitutionInput, setTeacherInstitutionInput] = useState('');
+
   // Classroom Modals state
   const [isClassModalOpen, setIsClassModalOpen] = useState(false);
   const [editingClassroom, setEditingClassroom] = useState<Classroom | null>(null);
@@ -97,11 +110,14 @@ export default function DashboardPage() {
 
   // Student Roster & LINE Invite Modal state
   const [managingClassroom, setManagingClassroom] = useState<Classroom | null>(null);
-  const [studentTab, setStudentTab] = useState<'roster' | 'line' | 'email'>('roster');
+  const [studentTab, setStudentTab] = useState<'roster' | 'pending' | 'line' | 'email'>('roster');
   const [newStudentId, setNewStudentId] = useState('');
   const [newStudentFirst, setNewStudentFirst] = useState('');
   const [newStudentLast, setNewStudentLast] = useState('');
   const [newStudentEmail, setNewStudentEmail] = useState('');
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  const [studentSearchResults, setStudentSearchResults] = useState<User[]>([]);
+  const [isSearchingStudents, setIsSearchingStudents] = useState(false);
   const [emailInviteList, setEmailInviteList] = useState('');
   const [isCopied, setIsCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -110,13 +126,22 @@ export default function DashboardPage() {
   const [editingCourseIndicators, setEditingCourseIndicators] = useState<Course | null>(null);
   const [indicatorListDraft, setIndicatorListDraft] = useState<CourseLearningIndicator[]>([]);
   const [isIndicatorsModalOpen, setIsIndicatorsModalOpen] = useState(false);
+  const [savedTeacherIndicators, setSavedTeacherIndicators] = useState<CourseLearningIndicator[]>([]);
+  const [isSavedLibraryOpen, setIsSavedLibraryOpen] = useState(false);
 
-  // Co-Teaching Setup Modal
+  // Co-Teaching Setup Modal (TA vs Research Evaluator)
   const [editingCourseCoTeachers, setEditingCourseCoTeachers] = useState<Course | null>(null);
   const [isCoTeachersModalOpen, setIsCoTeachersModalOpen] = useState(false);
   const [coTeachersDraft, setCoTeachersDraft] = useState<ClassroomTeacher[]>([]);
-  const [newCoTeacherName, setNewCoTeacherName] = useState('');
+  const [newCoTeacherRole, setNewCoTeacherRole] = useState<'assistant' | 'researcher'>('assistant');
+  const [newCoTeacherFirst, setNewCoTeacherFirst] = useState('');
+  const [newCoTeacherLast, setNewCoTeacherLast] = useState('');
   const [newCoTeacherEmail, setNewCoTeacherEmail] = useState('');
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
+  const [teacherSearchResults, setTeacherSearchResults] = useState<User[]>([]);
+  const [isSearchingTeachers, setIsSearchingTeachers] = useState(false);
+  const [inviteRoleTab, setInviteRoleTab] = useState<'assistant' | 'researcher'>('assistant');
+  const [isCopiedTeacherLink, setIsCopiedTeacherLink] = useState(false);
 
   // Course Creation Modal state
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
@@ -125,6 +150,7 @@ export default function DashboardPage() {
   const [courseDescInput, setCourseDescInput] = useState('');
   const [courseSemesterInput, setCourseSemesterInput] = useState<number>(defaultPeriod.semester);
   const [courseYearInput, setCourseYearInput] = useState<number>(defaultPeriod.yearCE);
+  const [courseIndicatorsDraft, setCourseIndicatorsDraft] = useState<CourseLearningIndicator[]>([]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -154,6 +180,16 @@ export default function DashboardPage() {
       setIndicators(ind);
       setAllSubmissions(mySubmissions);
 
+      if (teacherId) {
+        const profile = await dataService.getUserById(teacherId);
+        if (profile) {
+          setTeacherProfile(profile);
+          if (profile.institution) {
+            setTeacherInstitutionInput(profile.institution);
+          }
+        }
+      }
+
       if (managingClassroom) {
         const refreshed = myClassrooms.find((c) => c.id === managingClassroom.id) || null;
         setManagingClassroom(refreshed);
@@ -169,6 +205,39 @@ export default function DashboardPage() {
     loadAllData();
   }, [clerkUser?.id]);
 
+  // Real-time subscription for instant dashboard updates & notifications when students join
+  useEffect(() => {
+    const unsub = dataService.subscribeToClassroomChanges((payload) => {
+      loadAllData();
+      if (payload?.eventType === 'LOCAL_SYNC') {
+        const { student, autoAdmit } = payload.detail || {};
+        const studentName = student
+          ? `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.name || 'นักเรียน'
+          : 'นักเรียน';
+
+        if (autoAdmit === false) {
+          notificationManager.add({
+            title: 'คำขอเข้าห้องเรียนใหม่',
+            message: `นักเรียน ${studentName} ได้สแกน QR ขอเข้าห้องเรียน (รอคุณครูอนุมัติ)`,
+            type: 'admission_request',
+          });
+          showToast(`🔔 มีคำขอใหม่: ${studentName} ขอเข้าห้องเรียน (รออนุมัติ)`);
+        } else {
+          notificationManager.add({
+            title: 'นักเรียนเข้าห้องเรียนสำเร็จ',
+            message: `นักเรียน ${studentName} ได้เข้าห้องเรียนแล้ว`,
+            type: 'student_join',
+          });
+          showToast(`🎉 ${studentName} ได้เข้าร่วมห้องเรียน`);
+        }
+      } else {
+        showToast(language === 'th' ? '🔄 อัปเดตข้อมูลห้องเรียนแบบ Realtime' : 'Classroom updated in realtime');
+      }
+    });
+
+    return unsub;
+  }, [language]);
+
   // Filter classrooms by selected semester
   const filteredClassrooms = useMemo(() => {
     if (selectedSemesterKey === 'all') return classrooms;
@@ -182,9 +251,62 @@ export default function DashboardPage() {
     });
   }, [classrooms, selectedSemesterKey]);
 
-  // Group classrooms by course
+  // Filter and group courses based on selected semester
   const groupedCourses = useMemo(() => {
-    return courses.map((course) => {
+    if (selectedSemesterKey === 'all') {
+      // In "all" mode, courses with the same course code share a single card
+      const codeMap = new Map<string, Course & { sections: Classroom[]; assignments: Assignment[] }>();
+
+      for (const course of courses) {
+        const sections = classrooms.filter(
+          (cls) => cls.course_id === course.id || (cls.subject_code && cls.subject_code.startsWith(course.code))
+        );
+        const courseAssignments = assignments.filter(
+          (as) => as.course_id === course.id || sections.some((s) => s.id === as.classroom_id)
+        );
+
+        const existing = codeMap.get(course.code);
+        if (!existing) {
+          codeMap.set(course.code, {
+            ...course,
+            sections: [...sections],
+            assignments: [...courseAssignments],
+          });
+        } else {
+          // Merge sections avoiding duplicates
+          const seenIds = new Set(existing.sections.map((s) => s.id));
+          for (const s of sections) {
+            if (!seenIds.has(s.id)) {
+              existing.sections.push(s);
+              seenIds.add(s.id);
+            }
+          }
+          // Merge assignments
+          const seenAsn = new Set(existing.assignments.map((a) => a.id));
+          for (const a of courseAssignments) {
+            if (!seenAsn.has(a.id)) {
+              existing.assignments.push(a);
+              seenAsn.add(a.id);
+            }
+          }
+        }
+      }
+
+      return Array.from(codeMap.values());
+    }
+
+    // Specific semester filtered: ONLY display courses belonging to this semester and academic year!
+    const [semStr, yrStr] = selectedSemesterKey.split('_');
+    const sem = Number(semStr);
+    const yr = Number(yrStr);
+
+    const semesterCourses = courses.filter((c) => {
+      const cSem = c.semester ?? 1;
+      const cYr = c.year_ce ?? 2026;
+      return cSem === sem && cYr === yr;
+    });
+
+    return semesterCourses.map((course) => {
       const sections = filteredClassrooms.filter(
         (cls) => cls.course_id === course.id || cls.subject_code?.startsWith(course.code)
       );
@@ -197,26 +319,50 @@ export default function DashboardPage() {
         assignments: courseAssignments,
       };
     });
-  }, [courses, filteredClassrooms, assignments]);
+  }, [courses, classrooms, filteredClassrooms, assignments, selectedSemesterKey]);
 
-  const totalStudents = classrooms.reduce(
-    (acc, c) => acc + (c.students ? c.students.length : (c.student_count || 0)),
-    0
+  // Filter assignments & submissions based on filtered classrooms (for selected semester/year)
+  const filteredClassroomIds = useMemo(
+    () => new Set(filteredClassrooms.map((c) => c.id)),
+    [filteredClassrooms]
   );
+
+  const filteredAssignments = useMemo(() => {
+    if (selectedSemesterKey === 'all') return assignments;
+    return assignments.filter((a) => filteredClassroomIds.has(a.classroom_id));
+  }, [assignments, filteredClassroomIds, selectedSemesterKey]);
+
+  const filteredAssignmentIds = useMemo(
+    () => new Set(filteredAssignments.map((a) => a.id)),
+    [filteredAssignments]
+  );
+
+  const filteredSubmissions = useMemo(() => {
+    if (selectedSemesterKey === 'all') return allSubmissions;
+    return allSubmissions.filter((s) => filteredAssignmentIds.has(s.assignment_id));
+  }, [allSubmissions, filteredAssignmentIds, selectedSemesterKey]);
+
+  const totalStudents = useMemo(() => {
+    return filteredClassrooms.reduce(
+      (acc, c) => acc + (c.students ? c.students.length : (c.student_count || 0)),
+      0
+    );
+  }, [filteredClassrooms]);
+
   const pendingGradingCount = useMemo(() => {
-    return allSubmissions.filter(
+    return filteredSubmissions.filter(
       (s) => s.status === "submitted" || s.status === "late" || !s.total_score || s.total_score === 0
     ).length;
-  }, [allSubmissions]);
+  }, [filteredSubmissions]);
 
   const suspiciousAlertCount = useMemo(() => {
-    return allSubmissions.filter(
+    return filteredSubmissions.filter(
       (s) =>
         s.is_flagged_suspicious ||
         (s.tab_switch_count && s.tab_switch_count >= 3) ||
         (s.total_time_away_seconds && s.total_time_away_seconds >= 30)
     ).length;
-  }, [allSubmissions]);
+  }, [filteredSubmissions]);
 
   // Course Creation & Deletion Handlers
   const handleOpenCreateCourseModal = () => {
@@ -225,6 +371,23 @@ export default function DashboardPage() {
     setCourseDescInput('');
     setCourseSemesterInput(defaultPeriod.semester);
     setCourseYearInput(defaultPeriod.yearCE);
+    setCourseIndicatorsDraft([]);
+    setIsCourseModalOpen(true);
+  };
+
+  const handleCloneCourseToOtherSemester = (course: Course) => {
+    setCourseCodeInput(course.code);
+    setCourseNameInput(course.name);
+    setCourseDescInput(course.description || '');
+    // Next semester recommendation: if 1 -> 2, if 2 -> 3, if 3 -> 1 (next year)
+    const nextSem = course.semester === 1 ? 2 : course.semester === 2 ? 3 : 1;
+    const nextYr =
+      course.semester === 3
+        ? (course.year_ce || defaultPeriod.yearCE) + 1
+        : course.year_ce || defaultPeriod.yearCE;
+    setCourseSemesterInput(nextSem);
+    setCourseYearInput(nextYr);
+    setCourseIndicatorsDraft(course.indicators || []);
     setIsCourseModalOpen(true);
   };
 
@@ -237,6 +400,33 @@ export default function DashboardPage() {
     const currentTeacherName = `${clerkUser?.firstName || ""} ${clerkUser?.lastName || ""}`.trim() || clerkUser?.username || "คุณครู";
     const currentTeacherEmail = clerkUser?.primaryEmailAddress?.emailAddress || "teacher@pudding.ac.th";
     const currentTeacherAvatar = clerkUser?.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150";
+
+    const initialIndicators: CourseLearningIndicator[] =
+      courseIndicatorsDraft.length > 0
+        ? courseIndicatorsDraft.map((ind, i) => ({
+            ...ind,
+            id: `ind-${Date.now()}-${i + 1}`,
+            course_id: '',
+            order_index: i + 1,
+          }))
+        : [
+            {
+              id: `ind-${Date.now()}-1`,
+              course_id: '',
+              code: `${courseCodeInput.trim().toUpperCase()} ข้อ 1`,
+              title: language === 'th' ? 'การประเมินทักษะการเรียนรู้และการนำไปใช้จริง' : 'Core learning standard & practical application',
+              weight: 0,
+              order_index: 1,
+            },
+            {
+              id: `ind-${Date.now()}-2`,
+              course_id: '',
+              code: `${courseCodeInput.trim().toUpperCase()} ข้อ 2`,
+              title: language === 'th' ? 'การคิดวิเคราะห์อย่างมีวิจารณญาณและการสื่อสาร' : 'Critical analytical thinking & synthesis',
+              weight: 0,
+              order_index: 2,
+            },
+          ];
 
     await dataService.createCourse({
       code: courseCodeInput.trim().toUpperCase(),
@@ -255,29 +445,13 @@ export default function DashboardPage() {
           role: 'primary',
         },
       ],
-      indicators: [
-        {
-          id: `ind-${Date.now()}-1`,
-          course_id: '',
-          code: `${courseCodeInput.trim().toUpperCase()}`,
-          title: language === 'th' ? 'การประเมินทักษะการเรียนรู้และการนำไปใช้จริง' : 'Core learning standard & practical application',
-          weight: 50,
-          order_index: 1,
-        },
-        {
-          id: `ind-${Date.now()}-2`,
-          course_id: '',
-          code: `${courseCodeInput.trim().toUpperCase()}`,
-          title: language === 'th' ? 'การคิดวิเคราะห์อย่างมีวิจารณญาณและการสื่อสาร' : 'Critical analytical thinking & synthesis',
-          weight: 50,
-          order_index: 2,
-        },
-      ],
+      indicators: initialIndicators,
       classroom_ids: [],
     });
 
     showToast(language === 'th' ? `สร้างรายวิชา ${courseCodeInput.trim()} สำเร็จ` : `Course ${courseCodeInput.trim()} created`);
     setIsCourseModalOpen(false);
+    setCourseIndicatorsDraft([]);
     await loadAllData();
   };
 
@@ -293,14 +467,27 @@ export default function DashboardPage() {
   };
 
   // Open Create Classroom Modal
-  const handleOpenCreateClassModal = (courseId?: string) => {
+  const handleOpenCreateClassModal = (targetCourse?: Course | string) => {
     setEditingClassroom(null);
-    setSelectedCourseForClass(courseId || courses[0]?.id || 'course-thai-comm');
-    const defaultCourse = courses.find((c) => c.id === (courseId || courses[0]?.id));
     setClassNameInput('');
-    setSubjectCodeInput(defaultCourse ? `${defaultCourse.code} ${defaultCourse.name}` : 'ท31101 การสื่อสารภาษาไทยร่วมสมัย');
-    setFormSemester(defaultPeriod.semester);
-    setFormYearCE(defaultPeriod.yearCE);
+
+    if (targetCourse) {
+      // Opened from Course Card: pre-fill with that course and that course's semester
+      const courseObj = typeof targetCourse === 'string'
+        ? courses.find((c) => c.id === targetCourse)
+        : targetCourse;
+      setSelectedCourseForClass(courseObj?.id || '');
+      setSubjectCodeInput(courseObj ? `${courseObj.code} ${courseObj.name}` : '');
+      setFormSemester(courseObj?.semester || defaultPeriod.semester);
+      setFormYearCE(courseObj?.year_ce || defaultPeriod.yearCE);
+    } else {
+      // Opened from top group: unselected by default, system requires teacher to choose
+      setSelectedCourseForClass('');
+      setSubjectCodeInput('');
+      setFormSemester(defaultPeriod.semester);
+      setFormYearCE(defaultPeriod.yearCE);
+    }
+
     setIsClassModalOpen(true);
   };
 
@@ -318,6 +505,10 @@ export default function DashboardPage() {
   // Save Classroom (Create or Edit)
   const handleSaveClassroom = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedCourseForClass) {
+      alert(language === 'th' ? 'กรุณาเลือกรายวิชาสำหรับห้องเรียนนี้ก่อนบันทึก' : 'Please select a course for this classroom');
+      return;
+    }
     if (!classNameInput.trim()) return;
 
     const academicYearStr = formatAcademicPeriod(formSemester, formYearCE, language);
@@ -328,7 +519,7 @@ export default function DashboardPage() {
         course_id: selectedCourseForClass,
         course_name: parentCourse?.name,
         name: classNameInput.trim(),
-        subject_code: subjectCodeInput.trim(),
+        subject_code: subjectCodeInput.trim() || `${parentCourse?.code} ${parentCourse?.name}`,
         semester: formSemester,
         year_ce: formYearCE,
         academic_year: academicYearStr,
@@ -350,7 +541,7 @@ export default function DashboardPage() {
           }
         ],
         name: classNameInput.trim(),
-        subject_code: subjectCodeInput.trim(),
+        subject_code: subjectCodeInput.trim() || `${parentCourse?.code} ${parentCourse?.name}`,
         semester: formSemester,
         year_ce: formYearCE,
         academic_year: academicYearStr,
@@ -379,12 +570,22 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!managingClassroom || !newStudentFirst.trim() || !newStudentLast.trim()) return;
 
-    await dataService.addStudentToClassroom(managingClassroom.id, {
-      first_name: newStudentFirst.trim(),
-      last_name: newStudentLast.trim(),
-      student_id: newStudentId.trim() || `541${Math.floor(10 + Math.random() * 90)}`,
-      email: newStudentEmail.trim() || `${newStudentFirst.toLowerCase()}@student.pudding.ac.th`,
-    });
+    const sid = newStudentId.trim();
+    const fallbackEmail = sid
+      ? `${sid}@student.pudding.ac.th`
+      : `${newStudentFirst.toLowerCase()}@student.pudding.ac.th`;
+
+    await dataService.addStudentToClassroom(
+      managingClassroom.id,
+      {
+        student_id: sid || undefined,
+        first_name: newStudentFirst.trim(),
+        last_name: newStudentLast.trim(),
+        email: newStudentEmail.trim() || fallbackEmail,
+        institution: teacherProfile?.institution,
+      },
+      { autoAdmit: true }
+    );
 
     setNewStudentFirst('');
     setNewStudentLast('');
@@ -403,49 +604,115 @@ export default function DashboardPage() {
     }
   };
 
-  const getLiffUrl = (cls: Classroom) => {
-    return `https://liff.line.me/2000000000-pudding?classId=${cls.id}&code=${cls.invite_code || 'PUD'}`;
+  // Admit student join request
+  const handleAdmitStudent = async (studentId: string) => {
+    if (!managingClassroom) return;
+    try {
+      await dataService.admitStudentToClassroom(managingClassroom.id, studentId);
+      showToast(language === 'th' ? 'อนุมัตินักเรียนเข้าห้องเรียนเรียบร้อย' : 'Student admitted successfully');
+      await loadAllData();
+    } catch (err) {
+      console.error(err);
+      showToast('เกิดข้อผิดพลาดในการอนุมัติ');
+    }
+  };
+
+  // Reject student join request
+  const handleRejectStudent = async (studentId: string) => {
+    if (!managingClassroom) return;
+    if (confirm(language === 'th' ? 'คุณต้องการปฏิเสธคำขอเข้าห้องเรียนนี้ใช่หรือไม่?' : 'Reject this join request?')) {
+      try {
+        await dataService.rejectStudentFromClassroom(managingClassroom.id, studentId);
+        showToast(language === 'th' ? 'ปฏิเสธคำขอเข้าห้องเรียนแล้ว' : 'Student request rejected');
+        await loadAllData();
+      } catch (err) {
+        console.error(err);
+        showToast('เกิดข้อผิดพลาดในการปฏิเสธคำขอ');
+      }
+    }
+  };
+
+  // Quick search registered students from same school
+  const handleSearchStudents = async (q: string) => {
+    setStudentSearchQuery(q);
+    if (!q.trim()) {
+      setStudentSearchResults([]);
+      return;
+    }
+    setIsSearchingStudents(true);
+    try {
+      const res = await dataService.searchStudentsByInstitution(q, teacherProfile?.institution);
+      setStudentSearchResults(res);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSearchingStudents(false);
+    }
+  };
+
+  const handleSelectFoundStudent = async (std: User) => {
+    if (!managingClassroom) return;
+    await dataService.addStudentToClassroom(
+      managingClassroom.id,
+      {
+        id: std.id,
+        first_name: std.first_name,
+        last_name: std.last_name,
+        student_id: std.student_id,
+        email: std.email,
+        avatar_url: std.avatar_url,
+        institution: std.institution || teacherProfile?.institution,
+      },
+      { autoAdmit: true }
+    );
+    showToast(language === 'th' ? `เพิ่ม ${std.first_name} ${std.last_name} สำเร็จ` : 'Student added');
+    setStudentSearchQuery('');
+    setStudentSearchResults([]);
+    await loadAllData();
+  };
+
+  // Teacher institution saving handler
+  const handleSaveTeacherInstitution = async (inst: string) => {
+    if (!clerkUser?.id) return;
+    try {
+      await dataService.updateTeacherInstitution(clerkUser.id, inst);
+      if (teacherProfile) {
+        setTeacherProfile({ ...teacherProfile, institution: inst });
+      }
+      showToast(language === 'th' ? 'บันทึกสถานศึกษาเรียบร้อย' : 'Institution updated');
+      setIsInstitutionModalOpen(false);
+    } catch (e) {
+      console.error(e);
+      showToast('บันทึกสถานศึกษาไม่สำเร็จ');
+    }
+  };
+
+  const getRealLiffUrl = (cls: Classroom) => {
+    const liffId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || '2011818142-BznwnWyj';
+    return `https://liff.line.me/${liffId}?classId=${cls.id}&code=${cls.invite_code || ''}`;
+  };
+
+  const getWebInviteUrl = (cls: Classroom) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${origin}/liff?classId=${cls.id}&code=${cls.invite_code || ''}`;
   };
 
   const handleCopyLiff = (cls: Classroom) => {
-    navigator.clipboard.writeText(getLiffUrl(cls));
+    navigator.clipboard.writeText(getRealLiffUrl(cls));
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  const handleSimulateLiffJoin = async () => {
-    if (!managingClassroom) return;
-    const names = [
-      { first: 'นัทธมน', last: 'แก้วมณี', id: '54120', line: 'U8849a9...' },
-      { first: 'ศุภโชค', last: 'รัตนสกุล', id: '54121', line: 'U1104b2...' },
-      { first: 'อรอนงค์', last: 'บุญมี', id: '54122', line: 'U3391c7...' },
-    ];
-    const pick = names[Math.floor(Math.random() * names.length)];
-
-    await dataService.addStudentToClassroom(managingClassroom.id, {
-      first_name: pick.first,
-      last_name: pick.last,
-      student_id: pick.id,
-      email: `${pick.first.toLowerCase()}@student.pudding.ac.th`,
-      line_uid: pick.line,
-    });
-
-    showToast(
-      language === 'th'
-        ? `นักเรียน "${pick.first} ${pick.last}" เข้าร่วมห้องผ่าน LINE LIFF สำเร็จ!`
-        : `Student "${pick.first} ${pick.last}" joined via LINE LIFF!`
-    );
-    await loadAllData();
-  };
-
   // Open Learning Indicators Modal
-  const handleOpenIndicatorsModal = (course: Course) => {
+  const handleOpenIndicatorsModal = async (course: Course) => {
     setEditingCourseIndicators(course);
     setIndicatorListDraft(course.indicators || []);
     setIsIndicatorsModalOpen(true);
+    const saved = await dataService.getSavedTeacherIndicators(clerkUser?.id);
+    setSavedTeacherIndicators(saved);
   };
 
-  // Indicator reordering & weight adjustments
+  // Indicator reordering & item management
   const handleMoveIndicator = (index: number, direction: 'up' | 'down') => {
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= indicatorListDraft.length) return;
@@ -455,17 +722,8 @@ export default function DashboardPage() {
     copy[index] = copy[targetIndex];
     copy[targetIndex] = temp;
 
-    // re-assign order_index
     const reordered = copy.map((ind, i) => ({ ...ind, order_index: i + 1 }));
     setIndicatorListDraft(reordered);
-  };
-
-  const handleIndicatorWeightChange = (index: number, weightVal: number) => {
-    setIndicatorListDraft((prev) => {
-      const copy = [...prev];
-      copy[index] = { ...copy[index], weight: Math.max(0, Math.min(100, weightVal)) };
-      return copy;
-    });
   };
 
   const handleAddIndicatorDraft = () => {
@@ -473,53 +731,110 @@ export default function DashboardPage() {
     const newInd: CourseLearningIndicator = {
       id: `ind-${Date.now()}`,
       course_id: editingCourseIndicators?.id,
-      code: `${editingCourseIndicators?.code || 'ค 1.1'} ม.4/${nextNum}`,
-      title: 'ตัวชี้วัดและเกณฑ์มาตรฐานใหม่ตามประกาศกระทรวงศึกษาธิการ',
-      weight: 20,
+      code: '', // Blank by default, no mock sentence!
+      title: '', // Blank by default, no mock sentence!
+      weight: 0,
       order_index: nextNum,
     };
     setIndicatorListDraft([...indicatorListDraft, newInd]);
   };
 
-  const handleDeleteIndicatorDraft = (index: number) => {
-    if (indicatorListDraft.length <= 1) {
-      alert(language === 'th' ? 'ต้องมีตัวชี้วัดอย่างน้อย 1 รายการ' : 'Must have at least one indicator');
-      return;
-    }
-    setIndicatorListDraft(indicatorListDraft.filter((_, i) => i !== index));
+  const handleAddFromSavedLibrary = (savedInd: CourseLearningIndicator) => {
+    const nextNum = indicatorListDraft.length + 1;
+    const newInd: CourseLearningIndicator = {
+      id: `ind-${Date.now()}-${nextNum}`,
+      course_id: editingCourseIndicators?.id,
+      code: savedInd.code || '',
+      title: savedInd.title,
+      weight: 0,
+      order_index: nextNum,
+    };
+    setIndicatorListDraft([...indicatorListDraft, newInd]);
+    showToast(language === 'th' ? 'เพิ่มตัวชี้วัดจากคลังสำเร็จ' : 'Added indicator from library');
   };
 
-  const totalIndicatorsWeight = indicatorListDraft.reduce((acc, ind) => acc + (ind.weight || 0), 0);
-  const isWeightBalanced = totalIndicatorsWeight === 100;
+  const handleDeleteIndicatorDraft = (index: number) => {
+    setIndicatorListDraft(indicatorListDraft.filter((_, i) => i !== index));
+  };
 
   const handleSaveIndicators = async () => {
     if (!editingCourseIndicators) return;
     await dataService.updateCourseIndicators(editingCourseIndicators.id, indicatorListDraft);
     showToast(
-      language === 'th' ? 'บันทึกตัวชี้วัดและค่าน้ำหนักเรียบร้อยแล้ว' : 'Course indicators saved successfully'
+      language === 'th' ? 'บันทึกตัวชี้วัดเรียบร้อยแล้ว' : 'Course indicators saved successfully'
     );
     setIsIndicatorsModalOpen(false);
     await loadAllData();
   };
 
-  // Co-Teachers Setup
+  // Co-Teachers Setup (TA vs Research Grader)
   const handleOpenCoTeachersModal = (course: Course) => {
     setEditingCourseCoTeachers(course);
     setCoTeachersDraft(course.teachers || []);
+    setNewCoTeacherRole('assistant');
+    setNewCoTeacherFirst('');
+    setNewCoTeacherLast('');
+    setNewCoTeacherEmail('');
+    setTeacherSearchQuery('');
+    setTeacherSearchResults([]);
+    setIsCopiedTeacherLink(false);
     setIsCoTeachersModalOpen(true);
   };
 
+  const handleSearchTeachers = async (q: string) => {
+    setTeacherSearchQuery(q);
+    if (!q.trim()) {
+      setTeacherSearchResults([]);
+      return;
+    }
+    setIsSearchingTeachers(true);
+    try {
+      const instFilter = newCoTeacherRole === 'assistant' ? teacherProfile?.institution : undefined;
+      const res = await dataService.searchTeachers(q, instFilter);
+      setTeacherSearchResults(res);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSearchingTeachers(false);
+    }
+  };
+
+  const handleSelectFoundTeacher = (tchr: User) => {
+    const fullName = `${tchr.first_name || ''} ${tchr.last_name || ''}`.trim() || tchr.display_name || 'ครูผู้สอน';
+    const newTeacher: ClassroomTeacher = {
+      teacher_id: tchr.id,
+      name: fullName,
+      email: tchr.email || `${tchr.id}@pudding.ac.th`,
+      avatar_url: tchr.avatar_url,
+      role: newCoTeacherRole,
+      institution: tchr.institution,
+    };
+    if (coTeachersDraft.some((t) => t.teacher_id === newTeacher.teacher_id)) {
+      alert(language === 'th' ? 'ครูท่านนี้อยู่ในรายวิชาแล้ว' : 'Teacher is already added');
+      return;
+    }
+    setCoTeachersDraft([...coTeachersDraft, newTeacher]);
+    setTeacherSearchQuery('');
+    setTeacherSearchResults([]);
+  };
+
   const handleAddCoTeacher = () => {
-    if (!newCoTeacherName.trim()) return;
+    if (!newCoTeacherFirst.trim() || !newCoTeacherLast.trim()) {
+      alert(language === 'th' ? 'กรุณากรอกทั้งชื่อและนามสกุลของครู' : 'Please provide both first and last name');
+      return;
+    }
+    const fullName = `${newCoTeacherFirst.trim()} ${newCoTeacherLast.trim()}`;
     const newTeacher: ClassroomTeacher = {
       teacher_id: `teacher-${Date.now()}`,
-      name: newCoTeacherName.trim(),
-      email: newCoTeacherEmail.trim() || `${newCoTeacherName.toLowerCase()}@pudding.ac.th`,
+      name: fullName,
+      email: newCoTeacherEmail.trim() || `${newCoTeacherFirst.trim().toLowerCase()}@pudding.ac.th`,
       avatar_url: `https://images.unsplash.com/photo-${1534528741775 + Math.floor(Math.random() * 100)}?w=150`,
-      role: 'assistant',
+      role: newCoTeacherRole,
+      institution: teacherProfile?.institution,
     };
     setCoTeachersDraft([...coTeachersDraft, newTeacher]);
-    setNewCoTeacherName('');
+    setNewCoTeacherFirst('');
+    setNewCoTeacherLast('');
     setNewCoTeacherEmail('');
   };
 
@@ -540,6 +855,15 @@ export default function DashboardPage() {
     showToast(language === 'th' ? 'บันทึกครูร่วมสอนเรียบร้อย' : 'Co-teaching configuration updated');
     setIsCoTeachersModalOpen(false);
     await loadAllData();
+  };
+
+  const handleCopyTeacherInviteLink = (course: Course, role: 'assistant' | 'researcher' = 'assistant') => {
+    const teacherName = `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim() || 'อาจารย์';
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const inviteUrl = `${origin}/teacher-invite?courseId=${course.id}&inviter=${encodeURIComponent(teacherName)}&role=${role}`;
+    navigator.clipboard.writeText(inviteUrl);
+    setIsCopiedTeacherLink(true);
+    setTimeout(() => setIsCopiedTeacherLink(false), 2500);
   };
 
   const yearOptions = getAcademicYearOptions(defaultPeriod.yearCE);
@@ -567,6 +891,18 @@ export default function DashboardPage() {
           <p className="text-slate-900/90 text-sm max-w-xl font-medium">
             {t('dashboard.overview_subtitle')}
           </p>
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setIsInstitutionModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/10 hover:bg-black/20 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors cursor-pointer border border-black/10"
+              title="คลิกเพื่อเลือกหรือแก้ไขสถานศึกษา"
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>{teacherProfile?.institution || (language === 'th' ? '+ ระบุสถานศึกษา/โรงเรียนของคุณครู' : '+ Specify School')}</span>
+              <Edit2 className="w-3 h-3 opacity-70 ml-0.5" />
+            </button>
+          </div>
         </div>
 
         {/* PRIMARY CTA PROMPTS: Add Course, Add Classroom & Create Assignment/Exam */}
@@ -635,10 +971,12 @@ export default function DashboardPage() {
             </div>
           </div>
           <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
-            {classrooms.length}
+            {filteredClassrooms.length}
           </p>
           <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-1 block">
-            {formatAcademicPeriod(defaultPeriod.semester, defaultPeriod.yearCE, language)}
+            {selectedSemesterKey === 'all'
+              ? (language === 'th' ? 'ทุกภาคเรียนและปีการศึกษา' : 'All Semesters')
+              : formatAcademicPeriod(Number(selectedSemesterKey.split('_')[0]), Number(selectedSemesterKey.split('_')[1]), language)}
           </span>
         </div>
 
@@ -739,6 +1077,10 @@ export default function DashboardPage() {
                 {formatAcademicPeriod(2, defaultPeriod.yearCE, language)}{' '}
                 {defaultPeriod.semester === 2 ? `(${t('classroom_mgmt.fields.active_semester')})` : ''}
               </option>
+              <option value={`3_${defaultPeriod.yearCE}`}>
+                {formatAcademicPeriod(3, defaultPeriod.yearCE, language)}{' '}
+                {defaultPeriod.semester === 3 ? `(${t('classroom_mgmt.fields.active_semester')})` : ''}
+              </option>
               <option value="all">{t('classroom_mgmt.fields.all_semesters')}</option>
             </select>
           </div>
@@ -753,12 +1095,12 @@ export default function DashboardPage() {
               </div>
               <div className="space-y-1 max-w-sm mx-auto">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  {language === "th" ? "ยังไม่มีรายวิชาในระบบ" : "No courses yet"}
+                  {language === "th" ? "ยังไม่มีรายวิชาในระบบสำหรับภาคเรียนนี้" : "No courses for this semester"}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                   {language === "th"
-                    ? "เริ่มต้นด้วยการสร้างรายวิชาแรกของคุณเพื่อจัดกลุ่มห้องเรียนและแบบทดสอบ"
-                    : "Get started by creating your first course to group classrooms and assignments."}
+                    ? "สร้างรายวิชาใหม่ หรือคัดลอกวิชาจากภาคเรียนอื่นเข้ามาเพื่อเริ่มต้น"
+                    : "Create a new course or import from another semester to get started."}
                 </p>
               </div>
               <button
@@ -767,7 +1109,7 @@ export default function DashboardPage() {
                 className="px-5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs inline-flex items-center gap-2 shadow-sm transition-transform active:scale-95 cursor-pointer"
               >
                 <PlusCircle className="w-4 h-4" />
-                <span>+ {language === "th" ? "สร้างรายวิชาแรกของคุณ" : "Create First Course"}</span>
+                <span>+ {language === "th" ? "สร้างรายวิชาใหม่" : "Create Course"}</span>
               </button>
             </div>
           ) : (
@@ -792,7 +1134,7 @@ export default function DashboardPage() {
                   </p>
                 </div>
 
-                {/* Course Control Actions: Rubrics, Co-Teachers, Add Section & Delete Course */}
+                {/* Course Control Actions: Rubrics, Co-Teachers, Clone to other term, Add Section & Delete Course */}
                 <div className="flex flex-wrap items-center gap-2">
                   {/* Co-Teachers Avatars & Manager Button */}
                   <button
@@ -814,7 +1156,7 @@ export default function DashboardPage() {
                     <span>{course.teachers?.length || 1} {language === 'th' ? 'ครูผู้สอน' : 'Teachers'}</span>
                   </button>
 
-                  {/* Learning Indicators & Rubrics Configuration */}
+                  {/* Learning Indicators Settings */}
                   <button
                     type="button"
                     onClick={() => handleOpenIndicatorsModal(course)}
@@ -824,10 +1166,21 @@ export default function DashboardPage() {
                     <span>{t('dashboard.classrooms_section.course_settings_btn')}</span>
                   </button>
 
-                  {/* Add Classroom Section Under This Course */}
+                  {/* Clone to another semester */}
                   <button
                     type="button"
-                    onClick={() => handleOpenCreateClassModal(course.id)}
+                    onClick={() => handleCloneCourseToOtherSemester(course)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+                    title={language === 'th' ? 'คัดลอกวิชานี้ไปยังเทอมอื่น' : 'Add this course to another semester'}
+                  >
+                    <Copy className="w-3.5 h-3.5 text-amber-500" />
+                    <span>{language === 'th' ? 'เพิ่มไปเทอมอื่น' : 'Add to Term'}</span>
+                  </button>
+
+                  {/* Add Classroom Section Under This Course (Pre-fills this course & semester) */}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreateClassModal(course)}
                     className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
                   >
                     <PlusCircle className="w-3.5 h-3.5" />
@@ -894,8 +1247,13 @@ export default function DashboardPage() {
                               </div>
                             </div>
 
-                            <h4 className="font-bold text-sm text-slate-900 dark:text-white">
-                              {cls.name}
+                            <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
+                              <span>{cls.name}</span>
+                              {selectedSemesterKey === 'all' && (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-100/90 dark:bg-amber-950/80 text-amber-900 dark:text-amber-300">
+                                  {cls.semester === 3 ? 'ซัมเมอร์' : `เทอม ${cls.semester || 1}`}
+                                </span>
+                              )}
                             </h4>
                             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5">
                               <Users className="w-3.5 h-3.5" />
@@ -1016,126 +1374,139 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            {/* Total Weight Validator Progress Bar */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-slate-700 dark:text-slate-300">
-                  {t('indicators_config.total_weight')}:
+            {/* Course Read-only Banner */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-bold text-xs px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-900">
+                  {editingCourseIndicators.code}
                 </span>
-                <span
-                  className={`font-black font-mono text-sm px-2.5 py-0.5 rounded-full ${
-                    isWeightBalanced
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                      : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                  }`}
-                >
-                  {totalIndicatorsWeight}% / 100%
+                <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
+                  {editingCourseIndicators.name}
                 </span>
               </div>
-              <div className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                <div
-                  className={`h-full transition-all ${
-                    isWeightBalanced ? 'bg-emerald-500' : 'bg-rose-500'
-                  }`}
-                  style={{ width: `${Math.min(100, totalIndicatorsWeight)}%` }}
-                />
-              </div>
-              <p
-                className={`text-[11px] font-semibold ${
-                  isWeightBalanced
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-rose-600 dark:text-rose-400'
-                }`}
-              >
-                {isWeightBalanced
-                  ? '✓ ' + t('indicators_config.weight_balanced')
-                  : '⚠️ ' + t('indicators_config.weight_unbalanced').replace('{total}', String(totalIndicatorsWeight))}
-              </p>
+              <span className="text-[11px] font-semibold text-slate-400">
+                {formatAcademicPeriod(editingCourseIndicators.semester, editingCourseIndicators.year_ce, language)}
+              </span>
             </div>
 
-            {/* Indicator Items List */}
-            <div className="space-y-3">
-              {indicatorListDraft.map((ind, idx) => (
-                <div
-                  key={ind.id}
-                  className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-3"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center font-mono">
-                        {idx + 1}
-                      </span>
-                      <input
-                        type="text"
-                        value={ind.code}
-                        onChange={(e) => {
-                          const copy = [...indicatorListDraft];
-                          copy[idx].code = e.target.value;
-                          setIndicatorListDraft(copy);
-                        }}
-                        className="w-28 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white font-mono"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {/* Weight input */}
-                      <div className="flex items-center gap-1 text-xs">
-                        <span className="text-slate-400 font-semibold">{t('indicators_config.weight_label')}:</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={ind.weight}
-                          onChange={(e) => handleIndicatorWeightChange(idx, Number(e.target.value))}
-                          className="w-14 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-center font-mono text-slate-900 dark:text-white"
-                        />
-                        <span className="text-slate-400">%</span>
-                      </div>
-
-                      {/* Reorder Buttons */}
-                      <button
-                        type="button"
-                        disabled={idx === 0}
-                        onClick={() => handleMoveIndicator(idx, 'up')}
-                        className="p-1 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-100"
-                        title={t('indicators_config.move_up')}
-                      >
-                        <ArrowUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={idx === indicatorListDraft.length - 1}
-                        onClick={() => handleMoveIndicator(idx, 'down')}
-                        className="p-1 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-100"
-                        title={t('indicators_config.move_down')}
-                      >
-                        <ArrowDown className="w-3.5 h-3.5" />
-                      </button>
-
-                      {/* Delete */}
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteIndicatorDraft(idx)}
-                        className="p-1 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+            {/* Saved Indicators Library Suggestions (Reuse in other courses) */}
+            {savedTeacherIndicators.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                    <span>{t('indicators_config.saved_library_title')} ({savedTeacherIndicators.length})</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsSavedLibraryOpen(!isSavedLibraryOpen)}
+                    className="text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer"
+                  >
+                    {isSavedLibraryOpen ? 'ซ่อนคลังตัวชี้วัด' : 'แสดงคลังตัวชี้วัด (คลิกเพื่อเลือกใช้)'}
+                  </button>
+                </div>
+                {isSavedLibraryOpen && (
+                  <div className="space-y-2 pt-1 max-h-48 overflow-y-auto pr-1">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {t('indicators_config.saved_library_desc')}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {savedTeacherIndicators.map((sInd) => (
+                        <button
+                          key={sInd.id}
+                          type="button"
+                          onClick={() => handleAddFromSavedLibrary(sInd)}
+                          className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 hover:border-amber-500 text-left text-xs text-slate-800 dark:text-slate-200 transition-all hover:scale-[1.01] flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                        >
+                          {sInd.code && (
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                              {sInd.code}
+                            </span>
+                          )}
+                          <span className="line-clamp-1 max-w-[280px]">{sInd.title}</span>
+                          <PlusCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 ml-1" />
+                        </button>
+                      ))}
                     </div>
                   </div>
+                )}
+              </div>
+            )}
 
-                  <input
-                    type="text"
-                    value={ind.title}
-                    onChange={(e) => {
-                      const copy = [...indicatorListDraft];
-                      copy[idx].title = e.target.value;
-                      setIndicatorListDraft(copy);
-                    }}
-                    placeholder={t('indicators_config.title_label')}
-                    className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                  />
+            {/* Indicator Items List (Numbered items, easy to add/remove) */}
+            <div className="space-y-3">
+              {indicatorListDraft.length === 0 ? (
+                <div className="p-8 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                  ยังไม่มีตัวชี้วัดในรายวิชานี้ กดปุ่มด้านล่างเพื่อเพิ่มข้อใหม่
                 </div>
-              ))}
+              ) : (
+                indicatorListDraft.map((ind, idx) => (
+                  <div
+                    key={ind.id}
+                    className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-0.5 rounded-lg bg-amber-500 text-slate-950 font-black text-xs font-mono">
+                          {t('indicators_config.item_label')} {idx + 1}
+                        </span>
+                        <input
+                          type="text"
+                          value={ind.code}
+                          onChange={(e) => {
+                            const copy = [...indicatorListDraft];
+                            copy[idx].code = e.target.value;
+                            setIndicatorListDraft(copy);
+                          }}
+                          placeholder="รหัส เช่น ท 1.1 ม.4/1 (ถ้ามี)"
+                          className="w-40 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white font-mono"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => handleMoveIndicator(idx, 'up')}
+                          className="p-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-100 cursor-pointer"
+                          title={t('indicators_config.move_up')}
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === indicatorListDraft.length - 1}
+                          onClick={() => handleMoveIndicator(idx, 'down')}
+                          className="p-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-100 cursor-pointer"
+                          title={t('indicators_config.move_down')}
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteIndicatorDraft(idx)}
+                          className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                          title="ลบตัวชี้วัดนี้"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <textarea
+                      rows={2}
+                      value={ind.title}
+                      onChange={(e) => {
+                        const copy = [...indicatorListDraft];
+                        copy[idx].title = e.target.value;
+                        setIndicatorListDraft(copy);
+                      }}
+                      placeholder={t('indicators_config.title_label')}
+                      className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white resize-none focus:outline-hidden focus:border-amber-500"
+                    />
+                  </div>
+                ))
+              )}
             </div>
 
             <button
@@ -1144,14 +1515,14 @@ export default function DashboardPage() {
               className="w-full py-2.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <PlusCircle className="w-4 h-4 text-amber-500" />
-              <span>{t('indicators_config.add_indicator')}</span>
+              <span>+ {t('indicators_config.add_indicator')} (ข้อที่ {indicatorListDraft.length + 1})</span>
             </button>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setIsIndicatorsModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 {t('common.cancel')}
               </button>
@@ -1248,40 +1619,114 @@ export default function DashboardPage() {
             </div>
 
             {/* Add New Assistant Teacher Form */}
-            <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 space-y-2.5">
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
-                + {t('courses.add_co_teacher')}
-              </span>
-              <div className="grid grid-cols-2 gap-2">
+            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
+              <div>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                  + เพิ่มครูผู้ช่วยตรวจ (สำหรับการตรวจเพื่อทำวิจัย IRR)
+                </span>
+                <p className="text-[11px] text-slate-400">
+                  กรอกชื่อ นามสกุล และอีเมลเพื่อเพิ่มเป็นผู้ตรวจร่วมในรายวิชานี้ทันที
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <input
                   type="text"
-                  value={newCoTeacherName}
-                  onChange={(e) => setNewCoTeacherName(e.target.value)}
-                  placeholder="ชื่อ-นามสกุล ครูผู้ช่วย"
-                  className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                  value={newCoTeacherFirst}
+                  onChange={(e) => setNewCoTeacherFirst(e.target.value)}
+                  placeholder="ชื่อครูผู้ช่วย *"
+                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                />
+                <input
+                  type="text"
+                  value={newCoTeacherLast}
+                  onChange={(e) => setNewCoTeacherLast(e.target.value)}
+                  placeholder="นามสกุล *"
+                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
                 />
                 <input
                   type="email"
                   value={newCoTeacherEmail}
                   onChange={(e) => setNewCoTeacherEmail(e.target.value)}
-                  placeholder="อีเมลโรงเรียน"
-                  className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                  placeholder="อีเมล (ถ้ามี)"
+                  className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
                 />
               </div>
+
               <button
                 type="button"
                 onClick={handleAddCoTeacher}
-                className="w-full py-1.5 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-700 text-white text-xs font-bold"
+                className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer transition-colors"
               >
-                + เพิ่มครูร่วมสอน
+                + บันทึกเพิ่มครูผู้ช่วยตรวจ
               </button>
             </div>
+
+            {/* Teacher Web & LINE Invite Link Section */}
+            {editingCourseCoTeachers && (
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-300 dark:border-amber-800/80 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                    <FlaskConical className="w-3.5 h-3.5 text-amber-600" />
+                    <span>เชิญครูผู้ช่วยผ่านลิงก์ / LINE (ไม่ชนกับ LIFF นักเรียน)</span>
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  ส่งลิงก์คำเชิญนี้ให้คุณครูท่านอื่น เพื่อเปิดเข้าระบบด้วยบัญชีครู (Web Portal) โดยระบบจะแยกบทบาทครูตรวจวิจัย ไม่สับสนกับระบบนักเรียนใน LINE LIFF
+                </p>
+
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all select-all">
+                  {typeof window !== 'undefined'
+                    ? `${window.location.origin}/teacher-invite?courseId=${editingCourseCoTeachers.id}`
+                    : `/teacher-invite?courseId=${editingCourseCoTeachers.id}`}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleCopyTeacherInviteLink(editingCourseCoTeachers)}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{isCopiedTeacherLink ? 'คัดลอกลิงก์แล้ว!' : 'คัดลอกลิงก์คำเชิญครู'}</span>
+                  </button>
+
+                  <a
+                    href={`https://line.me/R/msg/text/?${encodeURIComponent(
+                      `ขอเชิญคุณครูเข้าร่วมเป็นครูผู้ช่วยตรวจงานวิจัย (Research Co-Grader) วิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}" ที่ลิงก์: ${
+                        typeof window !== 'undefined' ? window.location.origin : ''
+                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>แชร์คำเชิญไปยัง LINE</span>
+                  </a>
+
+                  <a
+                    href={`mailto:?subject=${encodeURIComponent(
+                      `คำเชิญเป็นครูผู้ช่วยตรวจงานวิจัย วิชา ${editingCourseCoTeachers.code}`
+                    )}&body=${encodeURIComponent(
+                      `เรียนคุณครู,\n\nขอเชิญเข้าร่วมเป็นครูผู้ช่วยตรวจงานวิจัย (Research Co-Grader) สำหรับรายวิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}"\n\nท่านสามารถกดยืนยันคำเชิญได้ที่ลิงก์นี้:\n${
+                        typeof window !== 'undefined' ? window.location.origin : ''
+                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}\n\nขอบคุณครับ/ค่ะ`
+                    )}`}
+                    className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>ส่งอีเมลเชิญ</span>
+                  </a>
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setIsCoTeachersModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 {t('common.cancel')}
               </button>
@@ -1328,22 +1773,38 @@ export default function DashboardPage() {
                   {t('classroom_mgmt.fields.parent_course')} *
                 </label>
                 <select
+                  required
                   value={selectedCourseForClass}
                   onChange={(e) => {
-                    setSelectedCourseForClass(e.target.value);
-                    const selCourse = courses.find((c) => c.id === e.target.value);
+                    const selId = e.target.value;
+                    setSelectedCourseForClass(selId);
+                    const selCourse = courses.find((c) => c.id === selId);
                     if (selCourse) {
                       setSubjectCodeInput(`${selCourse.code} ${selCourse.name}`);
+                      setFormSemester(selCourse.semester || defaultPeriod.semester);
+                      setFormYearCE(selCourse.year_ce || defaultPeriod.yearCE);
                     }
                   }}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
+                  className={`w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer ${
+                    !selectedCourseForClass
+                      ? 'border-amber-500/80 ring-2 ring-amber-500/20'
+                      : 'border-slate-200 dark:border-slate-700'
+                  }`}
                 >
+                  <option value="">
+                    {t('classroom_mgmt.fields.select_course_placeholder')}
+                  </option>
                   {courses.map((crs) => (
                     <option key={crs.id} value={crs.id}>
-                      {crs.code} - {crs.name}
+                      {crs.code} - {crs.name} ({formatAcademicPeriod(crs.semester, crs.year_ce, language)})
                     </option>
                   ))}
                 </select>
+                {!selectedCourseForClass && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                    ⚠️ {language === 'th' ? 'กรุณาเลือกรายวิชาก่อนบันทึก' : 'Please select a course first'}
+                  </p>
+                )}
               </div>
 
               {/* Classroom Section Name */}
@@ -1361,20 +1822,6 @@ export default function DashboardPage() {
                 />
               </div>
 
-              {/* Subject Code */}
-              {/* <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  {t('classroom_mgmt.fields.subject_label')}
-                </label>
-                <input
-                  type="text"
-                  value={subjectCodeInput}
-                  onChange={(e) => setSubjectCodeInput(e.target.value)}
-                  placeholder={t('classroom_mgmt.fields.subject_placeholder')}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500 text-slate-900 dark:text-white"
-                />
-              </div> */}
-
               {/* SELECTABLE SEMESTER AND ACADEMIC YEAR */}
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <div className="space-y-1.5">
@@ -1388,6 +1835,7 @@ export default function DashboardPage() {
                   >
                     <option value={1}>{t('classroom_mgmt.fields.semester_1')}</option>
                     <option value={2}>{t('classroom_mgmt.fields.semester_2')}</option>
+                    <option value={3}>{t('classroom_mgmt.fields.semester_3')}</option>
                   </select>
                 </div>
 
@@ -1458,6 +1906,38 @@ export default function DashboardPage() {
             </div>
 
             <form onSubmit={handleSaveCourse} className="space-y-4">
+              {/* Optional: Import/Clone from Existing Course */}
+              {courses.length > 0 && (
+                <div className="p-3 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/60 space-y-1.5">
+                  <label className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                    <Copy className="w-3.5 h-3.5 text-amber-600" />
+                    <span>{language === 'th' ? 'คัดลอกข้อมูลจากวิชาเดิม (ตัวเลือก)' : 'Import from existing course (Optional)'}</span>
+                  </label>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const selId = e.target.value;
+                      if (!selId) return;
+                      const sel = courses.find((c) => c.id === selId);
+                      if (sel) {
+                        setCourseCodeInput(sel.code);
+                        setCourseNameInput(sel.name);
+                        setCourseDescInput(sel.description || '');
+                        setCourseIndicatorsDraft(sel.indicators || []);
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-hidden cursor-pointer"
+                  >
+                    <option value="">{language === 'th' ? '-- สร้างวิชาใหม่จากศูนย์ --' : '-- Start from scratch --'}</option>
+                    {courses.map((crs) => (
+                      <option key={crs.id} value={crs.id}>
+                        {crs.code} - {crs.name} ({formatAcademicPeriod(crs.semester, crs.year_ce, language)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Course Code */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -1515,6 +1995,7 @@ export default function DashboardPage() {
                   >
                     <option value={1}>{t('classroom_mgmt.fields.semester_1')}</option>
                     <option value={2}>{t('classroom_mgmt.fields.semester_2')}</option>
+                    <option value={3}>{t('classroom_mgmt.fields.semester_3')}</option>
                   </select>
                 </div>
 
@@ -1693,22 +2174,66 @@ export default function DashboardPage() {
 
             {/* LINE LIFF Invite Tab */}
             {studentTab === 'line' && (
-              <div className="space-y-4 text-center p-4">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
+              <div className="space-y-5 text-center p-3 sm:p-5">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto shadow-xs">
                   <MessageCircle className="w-6 h-6" />
                 </div>
-                <h4 className="font-bold text-sm text-slate-900 dark:text-white">
-                  {t('classroom_mgmt.invite_line_title')}
-                </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                  {t('classroom_mgmt.invite_line_desc')}
-                </p>
-
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono text-xs text-slate-700 dark:text-slate-300 break-all select-all">
-                  {getLiffUrl(managingClassroom)}
+                <div>
+                  <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                    {t('classroom_mgmt.invite_line_title')}
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1">
+                    {t('classroom_mgmt.invite_line_desc')}
+                  </p>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-center gap-2">
+                {/* Invite Code Highlight */}
+                {managingClassroom.invite_code && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 max-w-sm mx-auto flex items-center justify-between">
+                    <div className="text-left">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                        {language === 'th' ? 'รหัสเข้าห้องเรียน' : 'Classroom Code'}
+                      </div>
+                      <div className="text-xl font-black font-mono tracking-widest text-slate-900 dark:text-white">
+                        {managingClassroom.invite_code}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(managingClassroom.invite_code || '');
+                        setIsCopied(true);
+                        setTimeout(() => setIsCopied(false), 2000);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{isCopied ? t('classroom_mgmt.copied') : (language === 'th' ? 'คัดลอกรหัส' : 'Copy')}</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* QR Code */}
+                <div className="flex flex-col items-center justify-center gap-2">
+                  <div className="p-2.5 bg-white rounded-2xl shadow-sm border border-slate-200 inline-block">
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(getRealLiffUrl(managingClassroom))}`}
+                      alt="LINE LIFF QR Code"
+                      className="w-40 h-40 object-contain rounded-lg"
+                    />
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-medium">
+                    {language === 'th' ? 'สแกน QR ด้วยแอป LINE เพื่อเข้าห้องเรียนทันที' : 'Scan with LINE to join instantly'}
+                  </span>
+                </div>
+
+                {/* Real LIFF URL Display */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all select-all max-w-lg mx-auto">
+                  {getRealLiffUrl(managingClassroom)}
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-wrap items-center justify-center gap-2.5">
                   <button
                     type="button"
                     onClick={() => handleCopyLiff(managingClassroom)}
@@ -1718,13 +2243,29 @@ export default function DashboardPage() {
                     <span>{isCopied ? t('classroom_mgmt.copied') : t('classroom_mgmt.copy_liff_link')}</span>
                   </button>
 
+                  <a
+                    href={`https://line.me/R/msg/text/?${encodeURIComponent(
+                      `${language === 'th' ? 'เข้าร่วมห้องเรียน Pudding' : 'Join Pudding Classroom'}: ${managingClassroom.name} (${courses.find((c) => c.id === managingClassroom.course_id)?.name || managingClassroom.subject_code || ''})\n\nกดลิงก์นี้ใน LINE: ${getRealLiffUrl(managingClassroom)}\nรหัสห้องเรียน: ${managingClassroom.invite_code || ''}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs inline-flex"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>{language === 'th' ? 'แชร์เข้าแชท LINE' : 'Share to LINE'}</span>
+                  </a>
+
                   <button
                     type="button"
-                    onClick={handleSimulateLiffJoin}
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    onClick={() => {
+                      navigator.clipboard.writeText(getWebInviteUrl(managingClassroom));
+                      setIsCopied(true);
+                      setTimeout(() => setIsCopied(false), 2000);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>{t('classroom_mgmt.simulate_liff_join')}</span>
+                    <Copy className="w-3 h-3" />
+                    <span>{language === 'th' ? 'คัดลอกลิงก์เว็บตรง' : 'Copy Web Link'}</span>
                   </button>
                 </div>
               </div>

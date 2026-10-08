@@ -55,28 +55,39 @@ export const dataService = {
   async syncLineStudentUser(student: {
     line_uid: string;
     name: string;
+    first_name?: string;
+    last_name?: string;
     avatar?: string | null;
     student_id?: string;
+    institution?: string;
   }): Promise<User> {
-    const names = student.name.trim().split(" ");
-    const firstName = names[0] || "นักเรียน";
-    const lastName = names.slice(1).join(" ") || "";
     const userId = student.line_uid;
+    let firstName = student.first_name?.trim() || "";
+    let lastName = student.last_name?.trim() || "";
+    let finalStudentId: string | null = student.student_id?.trim() || null;
+    let finalInstitution: string | null = student.institution?.trim() || null;
 
-    let finalStudentId: string | null = student.student_id || null;
+    if (!firstName) {
+      const names = student.name.trim().split(" ");
+      firstName = names[0] || "นักเรียน";
+      lastName = names.slice(1).join(" ") || "";
+    }
 
     if (isSupabaseConfigured) {
       try {
         const supabase = createClient();
-        // Check if student already exists and has a real student_id
+        // Check if student already exists and preserve real first_name, last_name, student_id, institution
         const { data: existingUser } = await supabase
           .from("users")
           .select("*")
           .eq("id", userId)
           .maybeSingle();
 
-        if (existingUser && existingUser.student_id && !student.student_id) {
-          finalStudentId = existingUser.student_id;
+        if (existingUser) {
+          if (existingUser.first_name && !student.first_name) firstName = existingUser.first_name;
+          if (existingUser.last_name && !student.last_name) lastName = existingUser.last_name;
+          if (existingUser.student_id && !student.student_id) finalStudentId = existingUser.student_id;
+          if (existingUser.institution && !student.institution) finalInstitution = existingUser.institution;
         }
 
         const userPayload: Record<string, any> = {
@@ -94,6 +105,9 @@ export const dataService = {
         if (finalStudentId) {
           userPayload.student_id = finalStudentId;
         }
+        if (finalInstitution) {
+          userPayload.institution = finalInstitution;
+        }
 
         await supabase.from("users").upsert(userPayload);
         console.log("Synced real LINE student to Supabase:", userId, firstName, "student_id:", finalStudentId);
@@ -103,6 +117,7 @@ export const dataService = {
           first_name: firstName,
           last_name: lastName,
           student_id: finalStudentId || undefined,
+          institution: finalInstitution || undefined,
           avatar_url: userPayload.avatar_url,
           email: userPayload.email,
           role: "student",
@@ -121,6 +136,7 @@ export const dataService = {
       first_name: firstName,
       last_name: lastName,
       student_id: finalStudentId || undefined,
+      institution: finalInstitution || undefined,
       avatar_url: student.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
       email: `${userId.substring(0, 8)}@student.pudding.ac.th`,
       role: "student",
@@ -129,6 +145,81 @@ export const dataService = {
     };
     setStored("line_student_" + userId, userRecord);
     return userRecord;
+  },
+
+  async updateStudentProfile(
+    userId: string,
+    data: {
+      first_name: string;
+      last_name: string;
+      student_id: string;
+      institution: string;
+    }
+  ): Promise<boolean> {
+    const fn = data.first_name.trim();
+    const ln = data.last_name.trim();
+    const sid = data.student_id.trim();
+    const inst = data.institution.trim();
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase
+          .from("users")
+          .update({
+            first_name: fn,
+            last_name: ln,
+            student_id: sid,
+            institution: inst,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", userId);
+
+        // Also update any enrolled classrooms with updated student info
+        const { data: classrooms } = await supabase.from("classrooms").select("id, students, pending_students");
+        if (classrooms) {
+          for (const cls of classrooms) {
+            let touched = false;
+            const updatedStudents = ((cls.students || []) as any[]).map((s) => {
+              if (s.id === userId || s.line_uid === userId) {
+                touched = true;
+                return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst };
+              }
+              return s;
+            });
+            const updatedPending = ((cls.pending_students || []) as any[]).map((s) => {
+              if (s.id === userId || s.line_uid === userId) {
+                touched = true;
+                return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst };
+              }
+              return s;
+            });
+            if (touched) {
+              await supabase
+                .from("classrooms")
+                .update({ students: updatedStudents, pending_students: updatedPending })
+                .eq("id", cls.id);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error in updateStudentProfile:", err);
+      }
+    }
+
+    // Local storage sync
+    const storedStudent = getStoredOr<User | null>("line_student_" + userId, null);
+    if (storedStudent) {
+      const updated = {
+        ...storedStudent,
+        first_name: fn,
+        last_name: ln,
+        student_id: sid,
+        institution: inst,
+      };
+      setStored("line_student_" + userId, updated);
+    }
+    return true;
   },
 
   async updateStudentId(userId: string, newStudentId: string): Promise<boolean> {
@@ -178,12 +269,39 @@ export const dataService = {
     return true;
   },
 
+  async updateTeacherInstitution(userId: string, institution: string): Promise<boolean> {
+    const trimmed = institution.trim();
+    if (!trimmed) return false;
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase
+          .from("users")
+          .update({
+            institution: trimmed,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", userId);
+      } catch (err) {
+        console.error("Error updating teacher institution:", err);
+      }
+    }
+
+    const storedUser = getStoredOr<User | null>("clerk_user_" + userId, null);
+    if (storedUser) {
+      setStored("clerk_user_" + userId, { ...storedUser, institution: trimmed });
+    }
+    return true;
+  },
+
   async syncClerkUser(clerkUser: {
     id: string;
     firstName?: string | null;
     lastName?: string | null;
     imageUrl?: string | null;
     email?: string | null;
+    institution?: string | null;
   }): Promise<User> {
     const defaultUser: User = {
       id: clerkUser.id,
@@ -192,12 +310,19 @@ export const dataService = {
       last_name: clerkUser.lastName || "",
       avatar_url: clerkUser.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150",
       email: clerkUser.email || "",
+      institution: clerkUser.institution || undefined,
       role: "teacher",
     };
 
     if (isSupabaseConfigured) {
       try {
         const supabase = createClient();
+        const { data: existingUser } = await supabase
+          .from("users")
+          .select("*")
+          .eq("id", clerkUser.id)
+          .maybeSingle();
+
         const userRecord: Record<string, any> = {
           id: clerkUser.id,
           first_name: defaultUser.first_name,
@@ -205,6 +330,7 @@ export const dataService = {
           avatar_url: defaultUser.avatar_url,
           email: defaultUser.email,
           role: "teacher",
+          institution: clerkUser.institution || existingUser?.institution || null,
           updated_at: new Date().toISOString(),
         };
 
@@ -338,6 +464,20 @@ export const dataService = {
     const updatedCourse = { ...courses[index], ...data };
     courses[index] = updatedCourse;
     setStored('courses', courses);
+
+    // If teachers are updated, sync to all classrooms under this course
+    if (data.teachers) {
+      try {
+        const classrooms = await this.getClassrooms();
+        const related = classrooms.filter((cls) => cls.course_id === id);
+        for (const cls of related) {
+          await this.updateClassroom(cls.id, { teachers: data.teachers });
+        }
+      } catch (err) {
+        console.warn('Sync teachers to classrooms error:', err);
+      }
+    }
+
     return updatedCourse;
   },
 
@@ -353,6 +493,62 @@ export const dataService = {
     setStored('courses', updated);
   },
 
+  async getSavedTeacherIndicators(teacherId?: string): Promise<CourseLearningIndicator[]> {
+    const key = `saved_indicators_${teacherId || 'default'}`;
+    const stored = getStoredOr<CourseLearningIndicator[]>(key, []);
+    if (stored.length > 0) return stored;
+
+    // Collect from existing courses as initial default if available
+    const courses = await this.getCourses(teacherId);
+    const collected: CourseLearningIndicator[] = [];
+    const seen = new Set<string>();
+
+    for (const c of courses) {
+      for (const ind of c.indicators || []) {
+        if (ind.title && !seen.has(ind.title.trim())) {
+          seen.add(ind.title.trim());
+          collected.push(ind);
+        }
+      }
+    }
+    if (collected.length > 0) {
+      setStored(key, collected);
+      return collected;
+    }
+
+    // Default indicators bank for quick selection
+    const defaultBank: CourseLearningIndicator[] = [
+      { id: 'lib-1', code: 'ท 1.1 ม.4/1', title: 'อ่านออกเสียงบทร้อยแก้วและบทร้อยกรองได้อย่างถูกต้อง ไพเราะ และเหมาะสมกับเรื่องที่อ่าน', weight: 0, order_index: 1 },
+      { id: 'lib-2', code: 'ท 1.1 ม.4/2', title: 'ตีความ แปลความ และขยายความเรื่องที่อ่านได้อย่างมีวิจารณญาณ', weight: 0, order_index: 2 },
+      { id: 'lib-3', code: 'ท 2.1 ม.4/1', title: 'เขียนสื่อสารในรูปแบบต่างๆ เช่น บรรยาย พรรณนา อธิบาย ได้ตรงตามวัตถุประสงค์', weight: 0, order_index: 3 },
+      { id: 'lib-4', code: 'ท 3.1 ม.4/1', title: 'สรุปแนวคิดและแสดงความคิดเห็นจากเรื่องที่ฟังและดูอย่างมีเหตุผล', weight: 0, order_index: 4 },
+      { id: 'lib-5', code: 'ค 1.1 ม.4/1', title: 'เข้าใจและใช้ความรู้เกี่ยวกับเซตและความน่าจะเป็นในการสื่อสารและแก้ปัญหา', weight: 0, order_index: 5 },
+    ];
+    setStored(key, defaultBank);
+    return defaultBank;
+  },
+
+  async saveTeacherIndicators(newIndicators: CourseLearningIndicator[], teacherId?: string): Promise<void> {
+    const key = `saved_indicators_${teacherId || 'default'}`;
+    const existing = await this.getSavedTeacherIndicators(teacherId);
+    const merged = [...existing];
+    const seen = new Set(existing.map((e) => (e.title || '').trim().toLowerCase()));
+
+    for (const ind of newIndicators) {
+      if (ind.title && ind.title.trim() && !seen.has(ind.title.trim().toLowerCase())) {
+        seen.add(ind.title.trim().toLowerCase());
+        merged.push({
+          id: `saved-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          code: ind.code || '',
+          title: ind.title.trim(),
+          weight: ind.weight || 0,
+          order_index: merged.length + 1,
+        });
+      }
+    }
+    setStored(key, merged);
+  },
+
   async updateCourseIndicators(courseId: string, indicators: CourseLearningIndicator[]): Promise<Course | null> {
     if (isSupabaseConfigured) {
       const supabase = createClient();
@@ -366,6 +562,12 @@ export const dataService = {
     courses[index].indicators = indicators;
     setStored('courses', courses);
 
+    // Save non-empty indicators to library for reuse in other courses
+    const validIndicators = indicators.filter((i) => i.title && i.title.trim());
+    if (validIndicators.length > 0) {
+      await this.saveTeacherIndicators(validIndicators, courses[index].primary_teacher_id);
+    }
+
     // Also sync flat learning indicators for questions builder
     const flatIndicators: LearningIndicator[] = indicators.map((ind) => ({
       id: ind.id,
@@ -373,7 +575,7 @@ export const dataService = {
       title: ind.title,
       subject: courses[index].name,
       teacher_id: courses[index].primary_teacher_id,
-      weight: ind.weight,
+      weight: ind.weight || 0,
       order_index: ind.order_index,
     }));
     setStored('learning_indicators', flatIndicators);
@@ -384,12 +586,69 @@ export const dataService = {
   // ==============================================================================
   // CLASSROOMS
   // ==============================================================================
+  // ==============================================================================
+  // CLASSROOMS
+  // ==============================================================================
   async getClassrooms(teacherId?: string): Promise<Classroom[]> {
     if (isSupabaseConfigured) {
       const supabase = createClient();
       const { data, error } = await supabase.from('classrooms').select('*').order('created_at', { ascending: false });
       if (!error && data) {
-        const all = data as Classroom[];
+        let all = data as Classroom[];
+
+        // Hydrate all students with real names, student IDs, and institutions from `users` table
+        try {
+          const { data: usersData } = await supabase.from('users').select('*');
+          if (usersData && usersData.length > 0) {
+            const userMap = new Map<string, User>();
+            for (const u of usersData) {
+              userMap.set(u.id, u as User);
+              if (u.line_uid) userMap.set(u.line_uid, u as User);
+            }
+
+            all = all.map((cls) => {
+              const students = (cls.students || []).map((s) => {
+                const real = userMap.get(s.id) || (s.line_uid ? userMap.get(s.line_uid) : null);
+                if (real) {
+                  return {
+                    ...s,
+                    first_name: real.first_name || s.first_name,
+                    last_name: real.last_name || s.last_name,
+                    student_id: real.student_id || s.student_id,
+                    institution: real.institution || s.institution,
+                    avatar_url: real.avatar_url || s.avatar_url,
+                  };
+                }
+                return s;
+              });
+
+              const pending_students = (cls.pending_students || []).map((s) => {
+                const real = userMap.get(s.id) || (s.line_uid ? userMap.get(s.line_uid) : null);
+                if (real) {
+                  return {
+                    ...s,
+                    first_name: real.first_name || s.first_name,
+                    last_name: real.last_name || s.last_name,
+                    student_id: real.student_id || s.student_id,
+                    institution: real.institution || s.institution,
+                    avatar_url: real.avatar_url || s.avatar_url,
+                  };
+                }
+                return s;
+              });
+
+              return {
+                ...cls,
+                students,
+                pending_students,
+                student_count: students.length,
+              };
+            });
+          }
+        } catch (uErr) {
+          console.warn('Hydrating users in getClassrooms error:', uErr);
+        }
+
         if (teacherId) {
           return all.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
         }
@@ -427,6 +686,7 @@ export const dataService = {
       id,
       student_count: 0,
       students: [],
+      pending_students: [],
       invite_code: `OMU-${codeNum}`,
       created_at: new Date().toISOString(),
     };
@@ -504,13 +764,20 @@ export const dataService = {
 
   async addStudentToClassroom(
     classroomId: string,
-    studentData: Omit<User, "id" | "role"> & { id?: string }
+    studentData: Omit<User, "id" | "role"> & { id?: string },
+    options: { autoAdmit?: boolean } = {}
   ): Promise<User> {
-    const studentId = studentData.id || studentData.line_uid || `std-${Date.now()}`;
+    const autoAdmit = options.autoAdmit ?? true;
+    const studentId =
+      studentData.id ||
+      studentData.line_uid ||
+      (studentData.student_id ? `std_${studentData.student_id.trim()}` : `std-${Date.now()}`);
+
     const newStudent: User = {
       ...studentData,
       id: studentId,
       role: "student",
+      enrollment_status: autoAdmit ? 'active' : 'pending_approval',
       is_line_connected: Boolean(studentData.line_uid),
       avatar_url:
         studentData.avatar_url ||
@@ -526,6 +793,7 @@ export const dataService = {
           first_name: newStudent.first_name,
           last_name: newStudent.last_name,
           student_id: newStudent.student_id,
+          institution: newStudent.institution,
           role: "student",
           email: newStudent.email,
           avatar_url: newStudent.avatar_url,
@@ -539,6 +807,7 @@ export const dataService = {
           id: `cs_${classroomId}_${newStudent.id}`,
           classroom_id: classroomId,
           student_id: newStudent.id,
+          status: autoAdmit ? "active" : "pending_approval",
           joined_via: newStudent.line_uid ? "line_liff" : "invite_code",
         });
       } catch (err) {
@@ -550,12 +819,43 @@ export const dataService = {
     const classroom = classrooms.find((c) => c.id === classroomId);
     if (classroom) {
       const currentStudents = classroom.students || [];
-      const exists = currentStudents.some((s) => s.id === newStudent.id || (s.line_uid && s.line_uid === newStudent.line_uid));
-      const updatedStudents = exists
-        ? currentStudents.map((s) => (s.id === newStudent.id ? newStudent : s))
-        : [newStudent, ...currentStudents];
-      classroom.students = updatedStudents;
-      classroom.student_count = updatedStudents.length;
+      const currentPending = classroom.pending_students || [];
+
+      if (autoAdmit) {
+        // Direct Active Enrollment
+        const exists = currentStudents.some(
+          (s) =>
+            s.id === newStudent.id ||
+            (s.line_uid && s.line_uid === newStudent.line_uid) ||
+            (s.student_id && newStudent.student_id && s.student_id.trim() === newStudent.student_id.trim())
+        );
+        const updatedStudents = exists
+          ? currentStudents.map((s) =>
+              s.id === newStudent.id ||
+              (s.line_uid && s.line_uid === newStudent.line_uid) ||
+              (s.student_id && newStudent.student_id && s.student_id.trim() === newStudent.student_id.trim())
+                ? newStudent
+                : s
+            )
+          : [newStudent, ...currentStudents];
+        
+        classroom.students = updatedStudents;
+        classroom.pending_students = currentPending.filter((p) => p.id !== newStudent.id && p.line_uid !== newStudent.line_uid);
+        classroom.student_count = updatedStudents.length;
+      } else {
+        // Pending Teacher Admission (Admit Required)
+        const alreadyActive = currentStudents.some(
+          (s) => s.id === newStudent.id || (s.line_uid && s.line_uid === newStudent.line_uid)
+        );
+        if (!alreadyActive) {
+          const pendingExists = currentPending.some(
+            (p) => p.id === newStudent.id || (p.line_uid && p.line_uid === newStudent.line_uid)
+          );
+          classroom.pending_students = pendingExists
+            ? currentPending.map((p) => (p.id === newStudent.id ? newStudent : p))
+            : [newStudent, ...currentPending];
+        }
+      }
 
       if (isSupabaseConfigured) {
         try {
@@ -563,8 +863,9 @@ export const dataService = {
           await supabase
             .from("classrooms")
             .update({
-              student_count: updatedStudents.length,
-              students: updatedStudents,
+              student_count: classroom.students?.length || 0,
+              students: classroom.students || [],
+              pending_students: classroom.pending_students || [],
             })
             .eq("id", classroomId);
         } catch (err) {
@@ -574,7 +875,98 @@ export const dataService = {
       setStored("classrooms", classrooms);
     }
 
+    // Broadcast instant event across tabs/windows
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("pudding_student_enrolled", {
+          detail: { classroomId, student: newStudent, autoAdmit },
+        })
+      );
+    }
+
     return newStudent;
+  },
+
+  async admitStudentToClassroom(classroomId: string, studentId: string): Promise<boolean> {
+    const classrooms = await this.getClassrooms();
+    const classroom = classrooms.find((c) => c.id === classroomId);
+    if (!classroom) return false;
+
+    const currentPending = classroom.pending_students || [];
+    const studentToAdmit = currentPending.find((s) => s.id === studentId || s.line_uid === studentId);
+    if (!studentToAdmit) return false;
+
+    const remainingPending = currentPending.filter((s) => s.id !== studentId && s.line_uid !== studentId);
+    const existingStudents = classroom.students || [];
+    const updatedStudents = existingStudents.some((s) => s.id === studentToAdmit.id || s.line_uid === studentToAdmit.line_uid)
+      ? existingStudents
+      : [studentToAdmit, ...existingStudents];
+
+    classroom.students = updatedStudents;
+    classroom.pending_students = remainingPending;
+    classroom.student_count = updatedStudents.length;
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase
+          .from("classroom_students")
+          .update({ status: "active" })
+          .match({ classroom_id: classroomId, student_id: studentToAdmit.id });
+
+        await supabase
+          .from("classrooms")
+          .update({
+            students: updatedStudents,
+            pending_students: remainingPending,
+            student_count: updatedStudents.length,
+          })
+          .eq("id", classroomId);
+      } catch (err) {
+        console.error("admitStudentToClassroom error:", err);
+      }
+    }
+
+    setStored("classrooms", classrooms);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("pudding_student_admitted", {
+          detail: { classroomId, student: studentToAdmit },
+        })
+      );
+    }
+    return true;
+  },
+
+  async rejectStudentFromClassroom(classroomId: string, studentId: string): Promise<boolean> {
+    const classrooms = await this.getClassrooms();
+    const classroom = classrooms.find((c) => c.id === classroomId);
+    if (!classroom) return false;
+
+    const remainingPending = (classroom.pending_students || []).filter((s) => s.id !== studentId && s.line_uid !== studentId);
+    classroom.pending_students = remainingPending;
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase
+          .from("classroom_students")
+          .delete()
+          .match({ classroom_id: classroomId, student_id: studentId });
+
+        await supabase
+          .from("classrooms")
+          .update({
+            pending_students: remainingPending,
+          })
+          .eq("id", classroomId);
+      } catch (err) {
+        console.error("rejectStudentFromClassroom error:", err);
+      }
+    }
+
+    setStored("classrooms", classrooms);
+    return true;
   },
 
   async removeStudentFromClassroom(classroomId: string, studentId: string): Promise<void> {
@@ -605,6 +997,144 @@ export const dataService = {
 
       setStored('classrooms', classrooms);
     }
+  },
+
+  async searchStudentsByInstitution(institution: string, query?: string): Promise<User[]> {
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        let req = supabase.from('users').select('*').eq('role', 'student');
+        if (institution) {
+          req = req.eq('institution', institution);
+        }
+        const { data } = await req.limit(30);
+        if (data) {
+          const q = (query || '').toLowerCase().trim();
+          if (!q) return data as User[];
+          return (data as User[]).filter(
+            (u) =>
+              u.first_name.toLowerCase().includes(q) ||
+              u.last_name.toLowerCase().includes(q) ||
+              (u.student_id && u.student_id.toLowerCase().includes(q))
+          );
+        }
+      } catch (err) {
+        console.warn('searchStudentsByInstitution error:', err);
+      }
+    }
+    return [];
+  },
+
+  async searchTeachers(query?: string, institution?: string): Promise<User[]> {
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.from('users').select('*').eq('role', 'teacher').limit(50);
+        if (data) {
+          const q = (query || '').toLowerCase().trim();
+          let list = data as User[];
+          if (q) {
+            list = list.filter(
+              (u) =>
+                u.first_name.toLowerCase().includes(q) ||
+                u.last_name.toLowerCase().includes(q) ||
+                (u.email && u.email.toLowerCase().includes(q)) ||
+                (u.institution && u.institution.toLowerCase().includes(q))
+            );
+          }
+          if (institution) {
+            list.sort((a, b) => {
+              const aMatch = a.institution === institution ? 1 : 0;
+              const bMatch = b.institution === institution ? 1 : 0;
+              return bMatch - aMatch;
+            });
+          }
+          return list;
+        }
+      } catch (err) {
+        console.warn('searchTeachers error:', err);
+      }
+    }
+    return [];
+  },
+
+  async saveResearchGrade(answerId: string, grade: TeacherGradeRecord): Promise<void> {
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        const { data: existing } = await supabase
+          .from('submission_answers')
+          .select('research_grades')
+          .eq('id', answerId)
+          .maybeSingle();
+
+        const currentMap = existing?.research_grades || {};
+        const updatedMap = {
+          ...currentMap,
+          [grade.teacher_id]: grade,
+        };
+
+        await supabase
+          .from('submission_answers')
+          .update({
+            research_grades: updatedMap,
+          })
+          .eq('id', answerId);
+      } catch (err) {
+        console.error('saveResearchGrade error:', err);
+      }
+    }
+  },
+
+  subscribeToClassroomChanges(
+    teacherId: string,
+    onClassroomUpdate: (payload: any) => void
+  ) {
+    let supabaseChannel: any = null;
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        supabaseChannel = supabase
+          .channel(`teacher_${teacherId}_classrooms_${Date.now()}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'classrooms' },
+            (payload) => onClassroomUpdate({ type: 'classrooms', payload })
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'classroom_students' },
+            (payload) => onClassroomUpdate({ type: 'classroom_students', payload })
+          )
+          .subscribe();
+      } catch (subErr) {
+        console.warn('Realtime subscription error:', subErr);
+      }
+    }
+
+    const handleLocalEvent = (e: any) => {
+      onClassroomUpdate({ type: 'local_event', detail: e.detail });
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pudding_student_enrolled', handleLocalEvent);
+      window.addEventListener('pudding_student_admitted', handleLocalEvent);
+    }
+
+    return () => {
+      if (supabaseChannel && isSupabaseConfigured) {
+        try {
+          const supabase = createClient();
+          supabase.removeChannel(supabaseChannel);
+        } catch {
+          // ignore
+        }
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pudding_student_enrolled', handleLocalEvent);
+        window.removeEventListener('pudding_student_admitted', handleLocalEvent);
+      }
+    };
   },
 
   // ==============================================================================
@@ -933,19 +1463,28 @@ export const dataService = {
       graded_at: new Date().toISOString(),
     };
 
-    // Co-teachers grade independently, but student-facing grade renders ONLY from primary teacher
+    const isOfficial = teacherRole === 'primary' || teacherRole === 'assistant';
+    const isResearcher = teacherRole === 'researcher';
+
+    // TA or Primary can award official scores; Researcher saves to research_grades without altering student score
+    const currentResearchGrades = existing.research_grades || {};
+    const updatedResearchGrades = isResearcher
+      ? { ...currentResearchGrades, [teacherId]: newGradeRecord }
+      : currentResearchGrades;
+
     allAnswers[submissionId][questionId] = {
       ...existing,
-      teacher_score: isPrimary ? teacherScore : existing.teacher_score,
-      teacher_comment: isPrimary ? teacherComment : existing.teacher_comment,
-      graded_at: isPrimary ? new Date().toISOString() : existing.graded_at,
+      teacher_score: isOfficial ? teacherScore : existing.teacher_score,
+      teacher_comment: isOfficial ? teacherComment : existing.teacher_comment,
+      graded_at: isOfficial ? new Date().toISOString() : existing.graded_at,
       co_grades: {
         ...currentCoGrades,
         [teacherId]: newGradeRecord,
       },
+      research_grades: updatedResearchGrades,
     };
 
-    // Calculate total awarded score
+    // Calculate total awarded score from official scores (Primary or TA)
     const studentAnswers = allAnswers[submissionId];
     const totalAwarded = Object.values(studentAnswers).reduce(
       (acc, ans) => acc + (ans.teacher_score ?? ans.ai_mock_score ?? 0),
@@ -960,29 +1499,34 @@ export const dataService = {
           id: existing.id || `ans-${submissionId}-${questionId}`,
           submission_id: submissionId,
           question_id: questionId,
-          teacher_score: isPrimary ? teacherScore : existing.teacher_score,
-          teacher_comment: isPrimary ? teacherComment : existing.teacher_comment,
+          teacher_score: isOfficial ? teacherScore : existing.teacher_score,
+          teacher_comment: isOfficial ? teacherComment : existing.teacher_comment,
           co_grades: {
             ...currentCoGrades,
             [teacherId]: newGradeRecord,
           },
-          graded_at: isPrimary ? new Date().toISOString() : existing.graded_at,
+          research_grades: updatedResearchGrades,
+          graded_at: isOfficial ? new Date().toISOString() : existing.graded_at,
         });
 
-      await supabase
-        .from('submissions')
-        .update({
-          total_score: Math.round(totalAwarded * 10) / 10,
-        })
-        .eq('id', submissionId);
+      if (isOfficial) {
+        await supabase
+          .from('submissions')
+          .update({
+            total_score: Math.round(totalAwarded * 10) / 10,
+          })
+          .eq('id', submissionId);
+      }
     }
 
     setStored('submission_answers', allAnswers);
 
-    const submissions = getStoredOr<Submission[]>('submissions', []);
-    const updatedSubs = submissions.map((s) =>
-      s.id === submissionId ? { ...s, total_score: Math.round(totalAwarded * 10) / 10 } : s
-    );
-    setStored('submissions', updatedSubs);
+    if (isOfficial) {
+      const submissions = getStoredOr<Submission[]>('submissions', []);
+      const updatedSubs = submissions.map((s) =>
+        s.id === submissionId ? { ...s, total_score: Math.round(totalAwarded * 10) / 10 } : s
+      );
+      setStored('submissions', updatedSubs);
+    }
   },
 };

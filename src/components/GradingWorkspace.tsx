@@ -36,6 +36,7 @@ import {
   MessageSquare,
   X,
   Compass,
+  FlaskConical,
 } from 'lucide-react';
 
 interface GradingWorkspaceProps {
@@ -271,8 +272,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
         activeTeacher.role
       );
 
-      // update local answers cache
-      const isPrimary = activeTeacher.role === 'primary';
+      // update local answers cache: TA can award official scores, Researcher stores into research_grades only
+      const isOfficial = activeTeacher.role === 'primary' || activeTeacher.role === 'assistant';
+      const isResearcher = activeTeacher.role === 'researcher';
       const existing = answers[q.id] || {
         id: `ans-${Date.now()}`,
         submission_id: submission.id,
@@ -289,13 +291,28 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
         graded_at: new Date().toISOString(),
       };
 
+      const updatedResearchGrades = isResearcher
+        ? {
+            ...(existing.research_grades || {}),
+            [activeTeacher.teacher_id]: {
+              teacher_id: activeTeacher.teacher_id,
+              teacher_name: activeTeacher.name,
+              teacher_role: activeTeacher.role,
+              score: numScore,
+              comment: gradeState.comment,
+              graded_at: new Date().toISOString(),
+            },
+          }
+        : existing.research_grades;
+
       setAnswers((prev) => ({
         ...prev,
         [q.id]: {
           ...existing,
-          teacher_score: isPrimary ? numScore : existing.teacher_score,
-          teacher_comment: isPrimary ? gradeState.comment : existing.teacher_comment,
+          teacher_score: isOfficial ? numScore : existing.teacher_score,
+          teacher_comment: isOfficial ? gradeState.comment : existing.teacher_comment,
           co_grades: newCoGrades,
+          research_grades: updatedResearchGrades,
         },
       }));
 
@@ -736,10 +753,29 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
 
                   {/* IN-LINE SCORE INPUT & TEACHER FEEDBACK COMPONENT */}
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-4">
+                    {/* Research Grader Banner if activeTeacher is researcher */}
+                    {activeTeacher.role === 'researcher' && (
+                      <div className="p-3 rounded-2xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-xs text-purple-900 dark:text-purple-200 flex items-start gap-2.5">
+                        <FlaskConical className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold block">
+                            🔬 ช่องคะแนนสำหรับครูตรวจงานวิจัย (Research Mode - IRR)
+                          </span>
+                          <span className="text-[11px] text-purple-700 dark:text-purple-300 leading-relaxed block mt-0.5">
+                            คะแนนในช่องนี้จะถูกเก็บไว้เฉพาะเพื่อการศึกษาวิจัยความเที่ยงตรง (IRR) จะไม่แสดงในฝั่งนักเรียน และไม่ทับซ้อนกับคะแนนจริงของครูผู้สอนหลักหรือ TA
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                          {t('grading.workspace.teacher_score_label')}:
+                          {activeTeacher.role === 'researcher'
+                            ? (language === 'th' ? 'คะแนนการวิจัย (Research Score):' : 'Research Score:')
+                            : activeTeacher.role === 'assistant'
+                            ? (language === 'th' ? 'คะแนนที่ให้ (โดย TA):' : 'Assigned Score (by TA):')
+                            : t('grading.workspace.teacher_score_label') + ':'}
                         </span>
                         <div className="flex items-center gap-2">
                           <input
