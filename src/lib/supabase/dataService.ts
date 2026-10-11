@@ -426,8 +426,9 @@ export const dataService = {
 
         const userRecord: Record<string, any> = {
           id: clerkUser.id,
-          first_name: defaultUser.first_name,
-          last_name: defaultUser.last_name,
+          // Preserve names already set in DB — don't overwrite with Clerk's stale data
+          first_name: existingUser?.first_name || defaultUser.first_name,
+          last_name: existingUser?.last_name || defaultUser.last_name,
           avatar_url: defaultUser.avatar_url,
           email: defaultUser.email,
           role: "teacher",

@@ -737,7 +737,10 @@ export default function DashboardPage() {
     const inst = teacherInstitutionInput.trim();
     if (!fn || !ln || !inst) return;
     try {
+      // 1. Save to Supabase
       await dataService.updateTeacherProfile(clerkUser.id, { first_name: fn, last_name: ln, institution: inst });
+      // 2. Also update Clerk so syncClerkUser never reverts these on reload
+      await clerkUser.update({ firstName: fn, lastName: ln });
       setTeacherProfile((prev) => prev ? { ...prev, first_name: fn, last_name: ln, institution: inst } : null);
       showToast(language === 'th' ? 'บันทึกข้อมูลคุณครูเรียบร้อยแล้ว' : 'Profile updated successfully');
       setIsInstitutionModalOpen(false);
