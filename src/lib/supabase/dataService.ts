@@ -1343,7 +1343,7 @@ export const dataService = {
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("pudding_student_admitted", {
-          detail: { classroomId, student: studentToAdmit },
+          detail: { classroomId, student: studentToAdmit, action: "admitted" },
         })
       );
       try {
@@ -1397,7 +1397,7 @@ export const dataService = {
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("pudding_student_rejected", {
-          detail: { classroomId, studentId },
+          detail: { classroomId, studentId, action: "rejected" },
         })
       );
       try {
@@ -1723,6 +1723,7 @@ export const dataService = {
                 } catch {}
               }
               const isAutoAdmitted = payload?.new?.status === 'active';
+              const action = payload?.eventType === 'UPDATE' && isAutoAdmitted ? 'admitted' : undefined;
               onClassroomUpdate({
                 type: 'classroom_students',
                 eventType: 'LOCAL_SYNC',
@@ -1730,6 +1731,7 @@ export const dataService = {
                   classroomId: payload?.new?.classroom_id,
                   student: studentObj || { id: payload?.new?.student_id, first_name: 'นักเรียน', last_name: '' },
                   autoAdmit: isAutoAdmitted,
+                  action,
                 },
                 payload,
               });

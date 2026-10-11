@@ -137,10 +137,20 @@ export default function ClassroomsPage() {
     const unsub = dataService.subscribeToClassroomChanges(clerkUser?.id, (payload: any) => {
       loadData();
       if (payload?.eventType === 'LOCAL_SYNC') {
-        const { student, autoAdmit } = payload.detail || {};
-        const studentName = student
-          ? `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.name || 'นักเรียน'
-          : 'นักเรียน';
+        const { student, autoAdmit, action, source } = payload.detail || {};
+
+        // Skip background poll updates or events with no student detail
+        if (source === 'poll' || !student || !student.id) {
+          return;
+        }
+
+        // When a teacher admits/rejects a student, the action is already confirmed by handleAdmitStudent/handleRejectStudent
+        if (action === 'admitted' || action === 'rejected') {
+          return;
+        }
+
+        const studentName =
+          `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.name || 'นักเรียน';
 
         if (autoAdmit === false) {
           notificationManager.add({
@@ -157,8 +167,6 @@ export default function ClassroomsPage() {
           });
           showNotification(`🎉 ${studentName} ได้เข้าร่วมห้องเรียน`);
         }
-      } else {
-        showNotification(language === 'th' ? '🔄 อัปเดตข้อมูลห้องเรียนแบบ Realtime' : 'Classroom updated in realtime');
       }
     });
 

@@ -108,6 +108,7 @@ export default function LiffStudentPage() {
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
   const [joinInviteCode, setJoinInviteCode] = useState("");
   const [joinMessage, setJoinMessage] = useState<string | null>(null);
+  const processedEnrollRef = useRef<string | null>(null);
 
   // Graded Detail Modal
   const [viewingGradedSub, setViewingGradedSub] = useState<{
@@ -322,43 +323,61 @@ export default function LiffStudentPage() {
 
         let active = enrolled[0] || null;
 
-        // Auto-enroll if arrived via invite code or classId link
+        // Auto-enroll if arrived via invite code or classId link (deduplicated)
         if (codeParam || classIdParam) {
-          const matched = allClasses.find(
-            (c) =>
-              (classIdParam && c.id === classIdParam) ||
-              (codeParam && c.invite_code?.toLowerCase() === codeParam.toLowerCase())
-          );
-          if (matched) {
-            const firstName = currentStudent.first_name || currentStudent.name.split(" ")[0] || "นักเรียน";
-            const lastName = currentStudent.last_name || currentStudent.name.split(" ").slice(1).join(" ") || "";
-            const isAlreadyActive = matched.students?.some(
-              (s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid
-            );
+          const enrollKey = `${currentStudent.line_uid || currentStudent.id}_${codeParam || classIdParam}`;
+          if (processedEnrollRef.current !== enrollKey) {
+            processedEnrollRef.current = enrollKey;
 
-            await dataService.addStudentToClassroom(
-              matched.id,
-              {
-                id: currentStudent.line_uid,
-                first_name: firstName,
-                last_name: lastName,
-                student_id: currentStudent.student_id,
-                institution: currentStudent.institution,
-                avatar_url: currentStudent.avatar,
-                line_uid: currentStudent.line_uid,
-              },
-              { autoAdmit: isAlreadyActive }
+            const matched = allClasses.find(
+              (c) =>
+                (classIdParam && c.id === classIdParam) ||
+                (codeParam && c.invite_code?.toLowerCase() === codeParam.toLowerCase())
             );
+            if (matched) {
+              const firstName = currentStudent.first_name || currentStudent.name.split(" ")[0] || "นักเรียน";
+              const lastName = currentStudent.last_name || currentStudent.name.split(" ").slice(1).join(" ") || "";
+              const isAlreadyActive = matched.students?.some(
+                (s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid
+              );
+              const isAlreadyPending = matched.pending_students?.some(
+                (s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid
+              );
 
-            if (isAlreadyActive) {
-              setJoinMessage(`🎉 คุณอยู่ในห้องเรียน "${matched.name}" เรียบร้อยแล้ว!`);
-            } else {
-              setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+              if (isAlreadyActive) {
+                setJoinMessage(`🎉 คุณอยู่ในห้องเรียน "${matched.name}" เรียบร้อยแล้ว!`);
+              } else if (isAlreadyPending) {
+                setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+              } else {
+                await dataService.addStudentToClassroom(
+                  matched.id,
+                  {
+                    id: currentStudent.line_uid,
+                    first_name: firstName,
+                    last_name: lastName,
+                    student_id: currentStudent.student_id,
+                    institution: currentStudent.institution,
+                    avatar_url: currentStudent.avatar,
+                    line_uid: currentStudent.line_uid,
+                  },
+                  { autoAdmit: false }
+                );
+                setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+              }
+
+              active = matched;
+              if (!enrolled.some((c) => c.id === matched.id)) {
+                enrolled = [matched, ...enrolled];
+              }
             }
-            active = matched;
-            if (!enrolled.some((c) => c.id === matched.id)) {
-              enrolled = [matched, ...enrolled];
-            }
+
+            // Clean up URL parameters so subsequent sync events or reloads don't loop
+            try {
+              const cleanUrl = new URL(window.location.href);
+              cleanUrl.searchParams.delete("code");
+              cleanUrl.searchParams.delete("classId");
+              window.history.replaceState({}, "", cleanUrl.pathname + (cleanUrl.search ? cleanUrl.search : ""));
+            } catch {}
           }
         }
 
@@ -633,6 +652,17 @@ export default function LiffStudentPage() {
       const isAlreadyActive = matched.students?.some(
         (s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid
       );
+      const isAlreadyPending = matched.pending_students?.some(
+        (s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid
+      );
+
+      if (isAlreadyPending) {
+        setIsJoinModalOpen(false);
+        setJoinInviteCode("");
+        setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+        setTimeout(() => setJoinMessage(null), 3500);
+        return;
+      }
 
       await dataService.addStudentToClassroom(
         matched.id,

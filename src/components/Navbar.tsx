@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useUser, UserButton, Show } from '@clerk/nextjs';
 import { dataService } from '@/lib/supabase/dataService';
 import { notificationManager, AppNotification } from '@/lib/utils/notificationManager';
@@ -29,6 +29,7 @@ export const Navbar: React.FC = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [browserPerm, setBrowserPerm] = useState<NotificationPermission>('default');
+  const notificationRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -39,6 +40,22 @@ export const Navbar: React.FC = () => {
     });
     return unsub;
   }, []);
+
+  // Close notification popover when clicking anywhere outside
+  useEffect(() => {
+    if (!isNotificationOpen) return;
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setIsNotificationOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [isNotificationOpen]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -132,7 +149,7 @@ export const Navbar: React.FC = () => {
           <LanguageSwitcher />
 
           {/* Notification Button & Popover */}
-          <div className="relative">
+          <div className="relative" ref={notificationRef}>
             <button
               type="button"
               onClick={() => setIsNotificationOpen(!isNotificationOpen)}

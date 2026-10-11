@@ -53,6 +53,8 @@ function playNotificationChime() {
   } catch {}
 }
 
+const recentNotifications = new Map<string, number>();
+
 export const notificationManager = {
   getAll(): AppNotification[] {
     return getStoredNotifications();
@@ -63,6 +65,22 @@ export const notificationManager = {
   },
 
   add(notif: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) {
+    // Deduplicate rapid duplicate notifications (e.g. from multiple realtime transports)
+    const dedupeKey = `${notif.type || ''}:${notif.title || ''}:${notif.message || ''}`;
+    const now = Date.now();
+    const lastAdded = recentNotifications.get(dedupeKey);
+    if (lastAdded && now - lastAdded < 5000) {
+      return null;
+    }
+    recentNotifications.set(dedupeKey, now);
+
+    // Evict old cache entries
+    if (recentNotifications.size > 50) {
+      for (const [k, t] of recentNotifications.entries()) {
+        if (now - t > 10000) recentNotifications.delete(k);
+      }
+    }
+
     const current = getStoredNotifications();
     const newEntry: AppNotification = {
       ...notif,
