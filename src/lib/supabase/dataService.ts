@@ -361,6 +361,41 @@ export const dataService = {
     return true;
   },
 
+  async updateTeacherProfile(
+    userId: string,
+    profile: { first_name: string; last_name: string; institution: string }
+  ): Promise<boolean> {
+    const fn = profile.first_name.trim();
+    const ln = profile.last_name.trim();
+    const inst = profile.institution.trim();
+    if (!fn || !inst) return false;
+
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase
+          .from('users')
+          .update({ first_name: fn, last_name: ln, institution: inst, updated_at: new Date().toISOString() })
+          .eq('id', userId);
+      } catch (err) {
+        console.error('Error updating teacher profile:', err);
+      }
+    }
+
+    // Update local cache
+    const storedUser = getStoredOr<User | null>('clerk_user_' + userId, null);
+    if (storedUser) {
+      setStored('clerk_user_' + userId, { ...storedUser, first_name: fn, last_name: ln, institution: inst });
+    }
+    const storedTeacher = getStoredOr<User | null>('teacher_profile_' + userId, null);
+    if (storedTeacher) {
+      setStored('teacher_profile_' + userId, { ...storedTeacher, first_name: fn, last_name: ln, institution: inst });
+    }
+    const users = getStoredOr<User[]>('users', []);
+    setStored('users', users.map((u) => u.id === userId ? { ...u, first_name: fn, last_name: ln, institution: inst } : u));
+    return true;
+  },
+
   async syncClerkUser(clerkUser: {
     id: string;
     firstName?: string | null;

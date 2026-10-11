@@ -99,6 +99,8 @@ export default function DashboardPage() {
   const [teacherProfile, setTeacherProfile] = useState<User | null>(null);
   const [isInstitutionModalOpen, setIsInstitutionModalOpen] = useState(false);
   const [teacherInstitutionInput, setTeacherInstitutionInput] = useState('');
+  const [teacherFirstNameInput, setTeacherFirstNameInput] = useState('');
+  const [teacherLastNameInput, setTeacherLastNameInput] = useState('');
 
   // Classroom Modals state
   const [isClassModalOpen, setIsClassModalOpen] = useState(false);
@@ -185,10 +187,12 @@ export default function DashboardPage() {
         const profile = await dataService.getUserById(teacherId);
         if (profile) {
           setTeacherProfile(profile);
-          if (profile.institution) {
-            setTeacherInstitutionInput(profile.institution);
-          } else {
-            // Automatically prompt teacher to set standard educational institution
+          setTeacherInstitutionInput(profile.institution || '');
+          // Pre-fill name from profile or fall back to Clerk data
+          setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
+          setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
+          if (!profile.institution || !profile.first_name) {
+            // Prompt teacher to complete their profile on first visit
             setIsInstitutionModalOpen(true);
           }
         }
@@ -722,19 +726,21 @@ export default function DashboardPage() {
     await loadAllData();
   };
 
-  // Teacher institution saving handler
-  const handleSaveTeacherInstitution = async (inst: string) => {
+  // Teacher profile saving handler (name + institution)
+  const handleSaveTeacherProfile = async () => {
     if (!clerkUser?.id) return;
+    const fn = teacherFirstNameInput.trim();
+    const ln = teacherLastNameInput.trim();
+    const inst = teacherInstitutionInput.trim();
+    if (!fn || !inst) return;
     try {
-      await dataService.updateTeacherInstitution(clerkUser.id, inst);
-      if (teacherProfile) {
-        setTeacherProfile({ ...teacherProfile, institution: inst });
-      }
-      showToast(language === 'th' ? 'บันทึกสถานศึกษาเรียบร้อย' : 'Institution updated');
+      await dataService.updateTeacherProfile(clerkUser.id, { first_name: fn, last_name: ln, institution: inst });
+      setTeacherProfile((prev) => prev ? { ...prev, first_name: fn, last_name: ln, institution: inst } : null);
+      showToast(language === 'th' ? 'บันทึกข้อมูลคุณครูเรียบร้อยแล้ว' : 'Profile updated successfully');
       setIsInstitutionModalOpen(false);
     } catch (e) {
       console.error(e);
-      showToast('บันทึกสถานศึกษาไม่สำเร็จ');
+      showToast(language === 'th' ? 'บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง' : 'Save failed, please try again');
     }
   };
 
@@ -2728,11 +2734,12 @@ export default function DashboardPage() {
             className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <School className="w-5 h-5 text-amber-500" />
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  {language === 'th' ? 'ระบุสถานศึกษา / โรงเรียนของคุณครู' : 'Set Educational Institution'}
+                  {language === 'th' ? 'ข้อมูลคุณครู' : 'Teacher Profile'}
                 </h3>
               </div>
               <button
@@ -2743,13 +2750,42 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-4">
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                 {language === 'th'
-                  ? 'เลือกหรือค้นหาโรงเรียน สถาบันการศึกษา หรือมหาวิทยาลัยจากรายชื่อมาตรฐาน เพื่อป้องกันการสะกดชื่อผิด และเชื่อมโยงกับเพื่อนครูและนักเรียนในสถานศึกษาเดียวกันได้อย่างแม่นยำ'
-                  : 'Search and select your standard educational institution to ensure consistent grouping with co-teachers and students.'}
+                  ? 'กรุณากรอกชื่อ–นามสกุล และเลือกสถานศึกษาของคุณครู เพื่อเชื่อมโยงกับเพื่อนครูและนักเรียนได้อย่างถูกต้อง'
+                  : 'Please fill in your name and select your institution so students and co-teachers can find you.'}
               </p>
 
+              {/* Name row */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {language === 'th' ? 'ชื่อ' : 'First Name'} <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={teacherFirstNameInput}
+                    onChange={(e) => setTeacherFirstNameInput(e.target.value)}
+                    placeholder={language === 'th' ? 'เช่น สมหญิง' : 'e.g. Jane'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {language === 'th' ? 'นามสกุล' : 'Last Name'}
+                  </label>
+                  <input
+                    type="text"
+                    value={teacherLastNameInput}
+                    onChange={(e) => setTeacherLastNameInput(e.target.value)}
+                    placeholder={language === 'th' ? 'เช่น ใจดี' : 'e.g. Smith'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                </div>
+              </div>
+
+              {/* Institution */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                   {language === 'th' ? 'สถานศึกษา / สถาบัน' : 'Institution'} <span className="text-rose-500">*</span>
@@ -2763,12 +2799,13 @@ export default function DashboardPage() {
 
               {teacherProfile?.institution && (
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-600 dark:text-slate-400">
-                  <span>สถานศึกษาปัจจุบัน: </span>
+                  <span>{language === 'th' ? 'สถานศึกษาปัจจุบัน: ' : 'Current institution: '}</span>
                   <b className="text-slate-900 dark:text-white">{teacherProfile.institution}</b>
                 </div>
               )}
             </div>
 
+            {/* Footer */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
@@ -2779,14 +2816,8 @@ export default function DashboardPage() {
               </button>
               <button
                 type="button"
-                disabled={!teacherInstitutionInput.trim()}
-                onClick={async () => {
-                  const teacherId = clerkUser?.id || 'teacher-default';
-                  await dataService.updateUserInstitution(teacherId, teacherInstitutionInput.trim());
-                  setTeacherProfile((prev) => (prev ? { ...prev, institution: teacherInstitutionInput.trim() } : null));
-                  setIsInstitutionModalOpen(false);
-                  showToast(language === 'th' ? 'บันทึกสถานศึกษาเรียบร้อยแล้ว' : 'Institution updated successfully');
-                }}
+                disabled={!teacherFirstNameInput.trim() || !teacherInstitutionInput.trim()}
+                onClick={handleSaveTeacherProfile}
                 className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
               >
                 {t('common.save')}
