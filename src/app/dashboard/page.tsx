@@ -98,6 +98,7 @@ export default function DashboardPage() {
   // Teacher Institution & Profile state
   const [teacherProfile, setTeacherProfile] = useState<User | null>(null);
   const [isInstitutionModalOpen, setIsInstitutionModalOpen] = useState(false);
+  const [isProfileRequired, setIsProfileRequired] = useState(false);
   const [teacherInstitutionInput, setTeacherInstitutionInput] = useState('');
   const [teacherFirstNameInput, setTeacherFirstNameInput] = useState('');
   const [teacherLastNameInput, setTeacherLastNameInput] = useState('');
@@ -187,12 +188,14 @@ export default function DashboardPage() {
         const profile = await dataService.getUserById(teacherId);
         if (profile) {
           setTeacherProfile(profile);
-          setTeacherInstitutionInput(profile.institution || '');
           // Pre-fill name from profile or fall back to Clerk data
           setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
           setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
-          if (!profile.institution || !profile.first_name) {
+          // Do NOT pre-fill institution — teacher must actively choose/confirm it
+          setTeacherInstitutionInput('');
+          if (!profile.institution || !profile.first_name || !profile.last_name) {
             // Prompt teacher to complete their profile on first visit
+            setIsProfileRequired(true);
             setIsInstitutionModalOpen(true);
           }
         }
@@ -732,7 +735,7 @@ export default function DashboardPage() {
     const fn = teacherFirstNameInput.trim();
     const ln = teacherLastNameInput.trim();
     const inst = teacherInstitutionInput.trim();
-    if (!fn || !inst) return;
+    if (!fn || !ln || !inst) return;
     try {
       await dataService.updateTeacherProfile(clerkUser.id, { first_name: fn, last_name: ln, institution: inst });
       setTeacherProfile((prev) => prev ? { ...prev, first_name: fn, last_name: ln, institution: inst } : null);
@@ -951,7 +954,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2 pt-1">
             <button
               type="button"
-              onClick={() => setIsInstitutionModalOpen(true)}
+              onClick={() => { setIsProfileRequired(false); setIsInstitutionModalOpen(true); }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/10 hover:bg-black/20 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors cursor-pointer border border-black/10"
               title="คลิกเพื่อเลือกหรือแก้ไขสถานศึกษา"
             >
@@ -2728,7 +2731,7 @@ export default function DashboardPage() {
       {isInstitutionModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setIsInstitutionModalOpen(false)}
+          onClick={() => { if (!isProfileRequired) setIsInstitutionModalOpen(false); }}
         >
           <div
             className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5"
@@ -2742,12 +2745,14 @@ export default function DashboardPage() {
                   {language === 'th' ? 'ข้อมูลคุณครู' : 'Teacher Profile'}
                 </h3>
               </div>
-              <button
-                onClick={() => setIsInstitutionModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              {!isProfileRequired && (
+                <button
+                  onClick={() => setIsInstitutionModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
             </div>
 
             <div className="space-y-4">
@@ -2773,7 +2778,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {language === 'th' ? 'นามสกุล' : 'Last Name'}
+                    {language === 'th' ? 'นามสกุล' : 'Last Name'} <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -2807,16 +2812,18 @@ export default function DashboardPage() {
 
             {/* Footer */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              {!isProfileRequired && (
+                <button
+                  type="button"
+                  onClick={() => setIsInstitutionModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+                >
+                  {t('common.cancel')}
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => setIsInstitutionModalOpen(false)}
-                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                disabled={!teacherFirstNameInput.trim() || !teacherInstitutionInput.trim()}
+                disabled={!teacherFirstNameInput.trim() || !teacherLastNameInput.trim() || !teacherInstitutionInput.trim()}
                 onClick={handleSaveTeacherProfile}
                 className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
               >

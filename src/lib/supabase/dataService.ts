@@ -368,7 +368,7 @@ export const dataService = {
     const fn = profile.first_name.trim();
     const ln = profile.last_name.trim();
     const inst = profile.institution.trim();
-    if (!fn || !inst) return false;
+    if (!fn || !ln || !inst) return false;
 
     if (isSupabaseConfigured) {
       try {
