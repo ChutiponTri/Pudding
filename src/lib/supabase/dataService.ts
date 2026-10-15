@@ -1977,6 +1977,21 @@ export const dataService = {
     const questions = getStoredOr<Question[]>('questions', []);
     setStored('questions', [...questions, ...newQuestions]);
 
+    // Record the creation in the classroom timeline and notify the LINE group.
+    // This is intentionally best-effort so assignment creation is not blocked by an optional timeline table.
+    if (typeof window !== 'undefined' && assignmentData.classroom_id) {
+      fetch('/api/classrooms/posts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          classroomId: assignmentData.classroom_id,
+          activityType: assignmentData.is_exam ? 'exam' : 'assignment',
+          body: `${assignmentData.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${assignmentData.title}`,
+          metadata: { assignmentId: id, dueDate: assignmentData.due_date, groupName: assignmentData.group_name || (assignmentData.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
+        }),
+      }).catch((error) => console.warn('Unable to publish assignment activity:', error));
+    }
+
     return { assignment: newAssignment, questions: newQuestions };
   },
 

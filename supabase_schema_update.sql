@@ -105,8 +105,14 @@ CREATE TABLE IF NOT EXISTS public.classroom_posts (
   classroom_id TEXT NOT NULL REFERENCES public.classrooms(id) ON DELETE CASCADE,
   author_id TEXT NOT NULL REFERENCES public.users(id),
   body TEXT NOT NULL,
+  activity_type TEXT NOT NULL DEFAULT 'announcement',
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE IF EXISTS public.classroom_posts
+  ADD COLUMN IF NOT EXISTS activity_type TEXT NOT NULL DEFAULT 'announcement',
+  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_classroom_posts_classroom ON public.classroom_posts(classroom_id, created_at DESC);
 

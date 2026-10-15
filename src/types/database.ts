@@ -121,6 +121,8 @@ export interface Assignment {
   sample_work_title?: string;
   sample_work_description?: string;
   created_at?: string;
+  /** Optional teacher-managed grouping label shown in classroom timelines. */
+  group_name?: string;
 }
 
 export type QuestionType = 'multiple_choice' | 'short_answer' | 'file_upload' | 'true_false';

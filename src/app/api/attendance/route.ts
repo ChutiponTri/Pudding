@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
+import { pushLineGroupText } from '@/lib/line/messaging';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,7 @@ async function getTeacherContext(classroomId: string) {
   const supabase = createServiceSupabaseClient();
   const { data: classroom } = await supabase
     .from('classrooms')
-    .select('id, name, teacher_id, teachers, students')
+    .select('id, name, teacher_id, teachers, students, line_group_id')
     .eq('id', classroomId)
     .maybeSingle();
   const isTeacher = classroom?.teacher_id === userId
@@ -25,8 +26,25 @@ async function getTeacherContext(classroomId: string) {
 export async function GET(request: NextRequest) {
   const classroomId = request.nextUrl.searchParams.get('classroomId');
   const sessionId = request.nextUrl.searchParams.get('sessionId');
+  const lineUid = request.nextUrl.searchParams.get('lineUid');
   if (!classroomId) return NextResponse.json({ error: 'classroomId is required' }, { status: 400 });
   const context = await getTeacherContext(classroomId);
+  if (!context.userId && lineUid) {
+    const supabase = createServiceSupabaseClient();
+    const [{ data: classroom }, { data: student }] = await Promise.all([
+      supabase.from('classrooms').select('id, students, pending_students').eq('id', classroomId).maybeSingle(),
+      supabase.from('users').select('id, line_uid').eq('line_uid', lineUid).eq('role', 'student').maybeSingle(),
+    ]);
+    const enrolled = Boolean(classroom && student && [...(classroom.students || []), ...(classroom.pending_students || [])].some((item: { id?: string; line_uid?: string }) => item.id === student.id || item.line_uid === lineUid));
+    if (!enrolled) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
+    let sessionQuery = supabase.from('attendance_sessions').select('id, title, starts_at, on_time_until_minutes, late_until_minutes, status').eq('classroom_id', classroomId).order('starts_at', { ascending: false });
+    if (sessionId) sessionQuery = sessionQuery.eq('id', sessionId);
+    const { data: sessions, error } = await sessionQuery;
+    if (error) return NextResponse.json({ error: 'Attendance schema is not installed' }, { status: 503 });
+    const selectedSession = sessions?.[0] || null;
+    const { data: records } = selectedSession ? await supabase.from('attendance_records').select('id, session_id, student_id, status, checked_at').eq('session_id', selectedSession.id).eq('student_id', student.id) : { data: [] };
+    return NextResponse.json({ sessions: sessions || [], session: selectedSession, records: records || [] });
+  }
   if (!context.userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!context.classroom || !context.supabase) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
 
@@ -83,6 +101,13 @@ export async function POST(request: NextRequest) {
       id: randomUUID(), session_id: created.id, classroom_id: classroomId, student_id: studentId, status: 'absent',
     }));
     if (records.length) await context.supabase.from('attendance_records').insert(records);
+    if (context.classroom.line_group_id) {
+      try {
+        await pushLineGroupText(context.classroom.line_group_id, `📝 เปิดคาบเช็คชื่อ\nห้อง: ${context.classroom.name}\nคาบ: ${session.title}`);
+      } catch (lineError) {
+        console.error('Attendance LINE push failed:', lineError);
+      }
+    }
     return NextResponse.json({ session: created }, { status: 201 });
   }
 

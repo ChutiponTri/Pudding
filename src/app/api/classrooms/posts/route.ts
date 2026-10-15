@@ -39,15 +39,22 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
   const postBody = typeof body.body === 'string' ? body.body.trim() : '';
+  const activityType = typeof body.activityType === 'string' ? body.activityType : 'announcement';
+  const metadata = body.metadata && typeof body.metadata === 'object' ? body.metadata : {};
   if (!classroomId || !postBody) return NextResponse.json({ error: 'classroomId and body are required' }, { status: 400 });
   const context = await getContext(classroomId);
   if (!context.userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!context.classroom || !context.supabase) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
-  const { data, error } = await context.supabase.from('classroom_posts').insert({ id: randomUUID(), classroom_id: classroomId, author_id: context.userId, body: postBody }).select('*').single();
+  const post = { id: randomUUID(), classroom_id: classroomId, author_id: context.userId, body: postBody, activity_type: activityType, metadata };
+  let { data, error } = await context.supabase.from('classroom_posts').insert(post).select('*').single();
+  // Keep older deployments usable until the optional timeline columns are migrated.
+  if (error) {
+    ({ data, error } = await context.supabase.from('classroom_posts').insert({ id: post.id, classroom_id: classroomId, author_id: context.userId, body: postBody }).select('*').single());
+  }
   if (error) return NextResponse.json({ error: 'บันทึกประกาศไม่สำเร็จ กรุณารัน migration ล่าสุด' }, { status: 503 });
   if (context.classroom.line_group_id) {
     try {
-      await pushLineGroupText(context.classroom.line_group_id, `📢 ประกาศจากครู\nห้อง: ${context.classroom.name}\n\n${postBody}`);
+      await pushLineGroupText(context.classroom.line_group_id, `📢 ${activityType === 'announcement' ? 'ประกาศจากครู' : 'กิจกรรมใหม่ในห้องเรียน'}\nห้อง: ${context.classroom.name}\n\n${postBody}`);
     } catch (lineError) {
       console.error('Classroom announcement LINE push failed:', lineError);
     }

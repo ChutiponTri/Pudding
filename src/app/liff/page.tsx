@@ -45,7 +45,11 @@ interface ClassroomPost {
   id: string;
   body: string;
   created_at: string;
+  activity_type?: "announcement" | "assignment" | "exam" | "attendance";
+  metadata?: { assignmentId?: string; groupName?: string };
 }
+type AttendanceStatus = "on_time" | "late" | "absent" | "excused";
+const statusLabels: Record<AttendanceStatus, string> = { on_time: "มาตรงเวลา", late: "มาสาย", absent: "ขาด", excused: "ลา" };
 
 export default function LiffStudentPage() {
   // LINE LIFF & Auth State
@@ -76,16 +80,27 @@ export default function LiffStudentPage() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const currentAcademicPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
   const [studentPortalTab, setStudentPortalTab] = useState<"overview" | "courses" | "course">("overview");
+  const [courseTab, setCourseTab] = useState<"timeline" | "work" | "attendance">("timeline");
+  const [courseAttendance, setCourseAttendance] = useState<{ id: string; title: string; starts_at: string; status: string }[]>([]);
+  const [courseAttendanceRecords, setCourseAttendanceRecords] = useState<Record<string, string>>({});
   const [selectedTermKey, setSelectedTermKey] = useState("current");
 
   const loadClassroomPosts = async (classroom: Classroom | null, lineUid: string) => {
     if (!classroom) {
       setClassroomPosts([]);
+      setCourseAttendance([]);
+      setCourseAttendanceRecords({});
       return;
     }
     try {
       const response = await fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroom.id)}&lineUid=${encodeURIComponent(lineUid)}`, { cache: "no-store" });
       if (response.ok) setClassroomPosts((await response.json()).posts || []);
+      const attendanceResponse = await fetch(`/api/attendance?classroomId=${encodeURIComponent(classroom.id)}&lineUid=${encodeURIComponent(lineUid)}`, { cache: "no-store" });
+      if (attendanceResponse.ok) {
+        const attendance = await attendanceResponse.json();
+        setCourseAttendance(attendance.sessions || []);
+        setCourseAttendanceRecords(Object.fromEntries((attendance.records || []).map((record: { session_id: string; status: string }) => [record.session_id, record.status])));
+      }
     } catch (error) {
       console.warn("Failed to load classroom posts:", error);
     }
@@ -939,6 +954,11 @@ export default function LiffStudentPage() {
   );
 
   const minutesUntil = (dueDate: string) => Math.ceil((new Date(dueDate).getTime() - Date.now()) / 60000);
+  const studentTimeline = [
+    ...classroomPosts.map((post) => ({ id: `post-${post.id}`, label: post.activity_type === 'exam' ? 'ข้อสอบใหม่' : post.activity_type === 'assignment' ? 'งานใหม่' : 'ประกาศจากครู', body: post.body, created_at: post.created_at })),
+    ...filteredAssignments.map((assignment) => ({ id: `assignment-${assignment.id}`, label: assignment.is_exam ? 'ข้อสอบ' : 'งาน', body: assignment.title, created_at: assignment.created_at || assignment.due_date })),
+    ...courseAttendance.map((attendance) => ({ id: `attendance-${attendance.id}`, label: 'คาบเช็คชื่อ', body: attendance.title, created_at: attendance.starts_at })),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   return (
     <div className="flex-1 flex flex-col pb-12 font-sans bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
@@ -986,7 +1006,7 @@ export default function LiffStudentPage() {
                 {currentStudent.name}
               </span>
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
-                LINE ผู้ใช้จริง
+                LINE
               </span>
             </div>
 
@@ -1072,7 +1092,8 @@ export default function LiffStudentPage() {
         </button>
       </div>
 
-      {!activeAssignment && classrooms.length > 0 && (
+      {/* Overview intentionally has no secondary menubar. Course navigation appears only after a course is selected. */}
+      {false && !activeAssignment && classrooms.length > 0 && (
         <div className="px-4 pt-3 space-y-3">
           <div className="flex items-center gap-1 p-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
             {[
@@ -1320,6 +1341,11 @@ export default function LiffStudentPage() {
         </div>
         {studentPortalTab !== "overview" && (
           <div className="p-4 space-y-4">
+            <div className="flex items-center gap-1 p-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              {([['timeline', 'ประวัติ'], ['work', 'งาน / ข้อสอบ'], ['attendance', 'เช็คชื่อ']] as const).map(([id, label]) => (
+                <button key={id} onClick={() => setCourseTab(id)} className={`flex-1 py-2 rounded-xl text-xs font-black cursor-pointer ${courseTab === id ? 'bg-[#06C755] text-white' : 'text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800'}`}>{label}</button>
+              ))}
+            </div>
             <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div>
@@ -1328,7 +1354,7 @@ export default function LiffStudentPage() {
                 </div>
                 {studentPortalTab === "course" && <button onClick={() => setStudentPortalTab("courses")} className="text-xs font-bold text-[#06C755]">ดูทุกรายวิชา</button>}
               </div>
-              {studentPortalTab === "courses" ? (
+              {courseTab === "timeline" && studentPortalTab === "courses" ? (
                 <div className="space-y-2">
                   {Array.from(courseGroups.values()).filter((group) => group.classrooms.some((item) => visibleClassrooms.some((visible) => visible.id === item.id))).map((group) => (
                     <button key={`${group.label}-${group.term}-detail`} onClick={() => { setSelectedClassroom(group.classrooms[0]); setStudentPortalTab("course"); }} className="w-full text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-amber-50 border border-slate-200 dark:border-slate-700">
@@ -1337,11 +1363,17 @@ export default function LiffStudentPage() {
                     </button>
                   ))}
                 </div>
-              ) : (
+              ) : courseTab === "timeline" ? (
                 <div className="space-y-4">
-                  {classroomPosts.length > 0 && <div className="space-y-2"><h3 className="text-xs font-black flex items-center gap-1"><Megaphone className="w-3.5 h-3.5 text-amber-500" />โพสประกาศ</h3>{classroomPosts.map((post) => <article key={post.id} className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/20"><p className="text-xs whitespace-pre-wrap">{post.body}</p><p className="text-[10px] text-slate-400 mt-1">{new Date(post.created_at).toLocaleString("th-TH")}</p></article>)}</div>}
-                  <div><h3 className="text-xs font-black mb-2">งานในวิชานี้</h3><div className="space-y-2">{pendingAssignments.map((assignment) => <button key={assignment.id} onClick={() => handleOpenAssignment(assignment)} className="w-full text-left p-3 rounded-2xl border border-slate-200 dark:border-slate-700"><div className="flex justify-between gap-2"><span className="text-xs font-bold">{assignment.is_exam ? "📝 " : "📋 "}{assignment.title}</span><span className="text-[10px] font-bold text-rose-600">{minutesUntil(assignment.due_date)} นาที</span></div><p className="text-[10px] text-slate-500 mt-1">ยังไม่ส่ง · {new Date(assignment.due_date).toLocaleString("th-TH")}</p></button>)}{completedAssignments.map((assignment) => <button key={assignment.id} onClick={() => submissions[assignment.id] && handleOpenGradedDetail(assignment, submissions[assignment.id])} className="w-full text-left p-3 rounded-2xl border border-emerald-200 bg-emerald-50/50"><div className="flex justify-between gap-2"><span className="text-xs font-bold">✓ {assignment.title}</span><span className="text-[10px] font-bold text-emerald-600">{submissions[assignment.id]?.total_score !== undefined ? `${submissions[assignment.id].total_score}/${assignment.total_points || 20}` : "รอตรวจ"}</span></div><p className="text-[10px] text-slate-500 mt-1">ส่งแล้ว</p></button>)}{pendingAssignments.length === 0 && completedAssignments.length === 0 && <p className="text-xs text-slate-400">ยังไม่มีงานในวิชานี้</p>}</div></div>
+                  <div className="space-y-2"><h3 className="text-xs font-black flex items-center gap-1"><Megaphone className="w-3.5 h-3.5 text-amber-500" />ไทม์ไลน์วิชา</h3>{studentTimeline.map((item) => <article key={item.id} className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/20"><p className="text-[10px] font-black text-amber-700 dark:text-amber-300">{item.label}</p><p className="text-xs whitespace-pre-wrap">{item.body}</p><p className="text-[10px] text-slate-400 mt-1">{new Date(item.created_at).toLocaleString("th-TH")}</p></article>)}{!studentTimeline.length && <p className="text-xs text-slate-400">ยังไม่มีกิจกรรม</p>}</div>
                 </div>
+              ) : courseTab === "work" ? (
+                <div className="space-y-3">
+                  {Object.entries(pendingAssignments.concat(completedAssignments).reduce<Record<string, Assignment[]>>((groups, assignment) => { const key = assignment.group_name || (assignment.is_exam ? "ข้อสอบ" : "งานทั่วไป"); (groups[key] ||= []).push(assignment); return groups; }, {})).map(([group, items]) => <div key={group}><h3 className="text-xs font-black mb-2">{group}</h3><div className="space-y-2">{items.map((assignment) => { const submission = submissions[assignment.id]; return <button key={assignment.id} onClick={() => submission ? handleOpenGradedDetail(assignment, submission) : handleOpenAssignment(assignment)} className="w-full text-left p-3 rounded-2xl border border-slate-200 dark:border-slate-700 hover:border-[#06C755] cursor-pointer"><div className="flex justify-between gap-2"><span className="text-xs font-bold">{assignment.is_exam ? "📝 " : "📋 "}{assignment.title}</span><span className="text-[10px] font-bold text-rose-600">{submission ? (submission.total_score !== undefined ? `${submission.total_score}/${assignment.total_points || 20}` : "ส่งแล้ว รอตรวจ") : `${minutesUntil(assignment.due_date)} นาที`}</span></div><p className="text-[10px] text-slate-500 mt-1">{submission ? `ส่งเมื่อ ${new Date(submission.submitted_at || submission.started_at).toLocaleDateString("th-TH")}` : `ยังไม่ส่ง · ${new Date(assignment.due_date).toLocaleString("th-TH")}`}</p></button>; })}</div></div>)}
+                  {!pendingAssignments.length && !completedAssignments.length && <p className="text-xs text-slate-400">ยังไม่มีงานหรือข้อสอบ</p>}
+                </div>
+              ) : (
+                <div className="space-y-2"><h3 className="text-xs font-black">ประวัติการเช็คชื่อ</h3>{courseAttendance.map((attendance) => <div key={attendance.id} className="p-3 rounded-2xl border border-slate-200 dark:border-slate-700"><div className="flex justify-between gap-2"><p className="text-xs font-bold">{attendance.title}</p><span className="text-[10px] font-bold text-emerald-600">{courseAttendanceRecords[attendance.id] ? statusLabels[courseAttendanceRecords[attendance.id] as AttendanceStatus] : 'ยังไม่เช็คชื่อ'}</span></div><p className="text-[10px] text-slate-500 mt-1">{new Date(attendance.starts_at).toLocaleString("th-TH")}</p></div>)}{!courseAttendance.length && <p className="text-xs text-slate-400">ยังไม่มีคาบเช็คชื่อ</p>}</div>
               )}
             </section>
           </div>

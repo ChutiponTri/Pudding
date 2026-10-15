@@ -59,6 +59,7 @@ export default function NewAssignmentPage() {
   // Form fields
   const [isExam, setIsExam] = useState(false);
   const [title, setTitle] = useState('');
+  const [groupName, setGroupName] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
   const reminderCron = 'relative_due_date';
@@ -257,6 +258,7 @@ export default function NewAssignmentPage() {
           classroom_id: primaryClassId,
           classroom_name: targetClass?.name || 'Classroom',
           title,
+          group_name: groupName.trim() || undefined,
           description,
           is_exam: isExam,
           due_date: dueDate || new Date(Date.now() + 7 * 86400000).toISOString(),
@@ -305,7 +307,7 @@ export default function NewAssignmentPage() {
           : 'Assignment created successfully! LINE Reminder scheduled.'
       );
 
-      router.push(`/assignments/${created.assignment.id}/grading`);
+      router.push(`/classrooms/${primaryClassId}?tab=classwork`);
     } catch (err) {
       console.error(err);
       alert('Error creating assignment');
@@ -451,6 +453,11 @@ export default function NewAssignmentPage() {
                 placeholder={t('assignment_creator.fields.title_placeholder')}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-hidden focus:border-amber-500"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">หมวดหมู่การแสดงผล</label>
+              <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={isExam ? 'เช่น สอบกลางภาค' : 'เช่น ใบงานบทที่ 1'} className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500" />
             </div>
 
             {/* Description */}

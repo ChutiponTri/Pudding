@@ -103,6 +103,46 @@ CREATE TABLE IF NOT EXISTS public.classrooms (
 CREATE INDEX IF NOT EXISTS idx_classrooms_course ON public.classrooms(course_id);
 CREATE INDEX IF NOT EXISTS idx_classrooms_invite_code ON public.classrooms(invite_code);
 
+CREATE TABLE IF NOT EXISTS public.classroom_posts (
+  id TEXT PRIMARY KEY,
+  classroom_id TEXT NOT NULL REFERENCES public.classrooms(id) ON DELETE CASCADE,
+  author_id TEXT NOT NULL REFERENCES public.users(id),
+  body TEXT NOT NULL,
+  activity_type TEXT NOT NULL DEFAULT 'announcement',
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_classroom_posts_classroom ON public.classroom_posts(classroom_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.attendance_sessions (
+  id TEXT PRIMARY KEY,
+  classroom_id TEXT NOT NULL REFERENCES public.classrooms(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT 'เช็คชื่อ',
+  starts_at TIMESTAMPTZ NOT NULL,
+  on_time_until_minutes INTEGER NOT NULL DEFAULT 10,
+  late_until_minutes INTEGER NOT NULL DEFAULT 30,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('scheduled', 'open', 'closed')),
+  closed_at TIMESTAMPTZ,
+  created_by TEXT NOT NULL REFERENCES public.users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (on_time_until_minutes >= 0 AND late_until_minutes >= on_time_until_minutes)
+);
+CREATE TABLE IF NOT EXISTS public.attendance_records (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES public.attendance_sessions(id) ON DELETE CASCADE,
+  classroom_id TEXT NOT NULL REFERENCES public.classrooms(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'absent' CHECK (status IN ('on_time', 'late', 'absent', 'excused')),
+  checked_at TIMESTAMPTZ,
+  adjusted_at TIMESTAMPTZ,
+  adjusted_by TEXT REFERENCES public.users(id),
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_id, student_id)
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_classroom ON public.attendance_sessions(classroom_id, starts_at DESC);
+CREATE INDEX IF NOT EXISTS idx_attendance_records_session ON public.attendance_records(session_id);
+
 -- ==============================================================================
 -- 6. CLASSROOM_STUDENTS (Join Table for Student Enrollment & LINE LIFF)
 -- Tracks how each student enrolled in the classroom
