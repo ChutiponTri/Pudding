@@ -18,11 +18,19 @@ async function getContext(classroomId: string) {
 
 export async function GET(request: NextRequest) {
   const classroomId = request.nextUrl.searchParams.get('classroomId');
+  const lineUid = request.nextUrl.searchParams.get('lineUid');
   if (!classroomId) return NextResponse.json({ error: 'classroomId is required' }, { status: 400 });
   const context = await getContext(classroomId);
-  if (!context.userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!context.classroom || !context.supabase) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
-  const { data, error } = await context.supabase.from('classroom_posts').select('*').eq('classroom_id', classroomId).order('created_at', { ascending: false });
+  let supabase = context.supabase;
+  let allowed = Boolean(context.userId && context.classroom);
+  if (!allowed && lineUid) {
+    supabase = supabase || createServiceSupabaseClient();
+    const { data: classroom } = await supabase.from('classrooms').select('id, students, pending_students').eq('id', classroomId).maybeSingle();
+    const { data: student } = await supabase.from('users').select('id, line_uid, role').eq('line_uid', lineUid).eq('role', 'student').maybeSingle();
+    allowed = Boolean(classroom && student && [...(classroom.students || []), ...(classroom.pending_students || [])].some((item: { id?: string; line_uid?: string }) => item.id === student.id || item.line_uid === lineUid));
+  }
+  if (!allowed || !supabase) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
+  const { data, error } = await supabase.from('classroom_posts').select('*').eq('classroom_id', classroomId).order('created_at', { ascending: false });
   if (error) return NextResponse.json({ error: 'Announcement schema is not installed' }, { status: 503 });
   return NextResponse.json({ posts: data || [] });
 }

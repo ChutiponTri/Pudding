@@ -21,6 +21,8 @@ import {
   Sparkles,
   Edit2,
   School,
+  Megaphone,
+  CalendarDays,
 } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
@@ -36,6 +38,12 @@ interface RealLineStudent {
   student_id?: string;
   institution?: string;
   email?: string;
+}
+
+interface ClassroomPost {
+  id: string;
+  body: string;
+  created_at: string;
 }
 
 export default function LiffStudentPage() {
@@ -63,7 +71,21 @@ export default function LiffStudentPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
   const [registeredInstitutions, setRegisteredInstitutions] = useState<string[]>([]);
+  const [classroomPosts, setClassroomPosts] = useState<ClassroomPost[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
+
+  const loadClassroomPosts = async (classroom: Classroom | null, lineUid: string) => {
+    if (!classroom) {
+      setClassroomPosts([]);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroom.id)}&lineUid=${encodeURIComponent(lineUid)}`, { cache: "no-store" });
+      if (response.ok) setClassroomPosts((await response.json()).posts || []);
+    } catch (error) {
+      console.warn("Failed to load classroom posts:", error);
+    }
+  };
 
   // Classroom Admission Security: Check if student is pending approval in selected classroom
   const isSelectedClassroomPending = useMemo(() => {
@@ -435,6 +457,10 @@ export default function LiffStudentPage() {
     return () => unsub();
   }, [authStatus, currentStudent?.id, currentStudent?.student_id]);
 
+  useEffect(() => {
+    if (currentStudent?.line_uid) loadClassroomPosts(selectedClassroom, currentStudent.line_uid);
+  }, [selectedClassroom?.id, currentStudent?.line_uid]);
+
   // When opening an assignment, fetch questions (Protected by admission gate)
   const handleOpenAssignment = async (a: Assignment) => {
     if (isSelectedClassroomPending) {
@@ -483,7 +509,7 @@ export default function LiffStudentPage() {
           });
 
           setAwayWarningToast(
-            `⚠️ ตรวจพบการออกจากหน้าจอเป็นเวลา ${durationSec} วินาที (ครั้งที่ ${tabSwitchCount + 1}) — ข้อมูลนี้ถูกบันทึกและส่งให้อาจารย์ผู้สอนแล้ว`
+            `⚠️ ตรวจพบการออกจากหน้าจอเป็นเวลา ${durationSec} วินาที (ครั้งที่ ${tabSwitchCount + 1}) — ระบบจะแนบรายงานให้อาจารย์เมื่อส่งคำตอบ`
           );
           setTimeout(() => setAwayWarningToast(null), 5000);
           awayStartRef.current = null;
@@ -627,6 +653,9 @@ export default function LiffStudentPage() {
 
     setIsSubmitting(true);
     try {
+      const currentAwaySeconds = awayStartRef.current
+        ? Math.max(1, Math.round((Date.now() - awayStartRef.current) / 1000))
+        : 0;
       const answersPayload = activeQuestions.map((q) => ({
         question_id: q.id,
         answer_text: studentAnswers[q.id]?.text || "",
@@ -640,7 +669,7 @@ export default function LiffStudentPage() {
         answers: answersPayload,
         antiCheating: {
           tab_switch_count: tabSwitchCount,
-          away_time_seconds: totalAwaySeconds,
+          away_time_seconds: totalAwaySeconds + currentAwaySeconds,
           events: auditEvents,
         },
       });
@@ -878,8 +907,19 @@ export default function LiffStudentPage() {
     return a.classroom_id === selectedClassroom.id;
   });
 
-  const pendingAssignments = filteredAssignments.filter((a) => !submissions[a.id]);
+  const pendingAssignments = filteredAssignments
+    .filter((a) => !submissions[a.id])
+    .sort((a, b) => Number(b.is_exam) - Number(a.is_exam) || new Date(a.due_date).getTime() - new Date(b.due_date).getTime());
   const completedAssignments = filteredAssignments.filter((a) => Boolean(submissions[a.id]));
+  const courseGroups = classrooms.reduce((groups, classroom) => {
+    const key = `${classroom.course_id || classroom.subject_code || classroom.name}-${classroom.semester || ''}-${classroom.year_ce || classroom.academic_year || ''}`;
+    const current = groups.get(key) || { label: classroom.course_name || classroom.subject_code || classroom.name, term: classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year, classrooms: [] as Classroom[] };
+    current.classrooms.push(classroom);
+    groups.set(key, current);
+    return groups;
+  }, new Map<string, { label: string; term?: string; classrooms: Classroom[] }>());
+
+  const minutesUntil = (dueDate: string) => Math.ceil((new Date(dueDate).getTime() - Date.now()) / 60000);
 
   return (
     <div className="flex-1 flex flex-col pb-12 font-sans bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
@@ -1013,6 +1053,46 @@ export default function LiffStudentPage() {
         </button>
       </div>
 
+      {/* Lightweight student classroom overview */}
+      {!activeAssignment && classrooms.length > 0 && (
+        <div className="px-4 pt-4 space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <p className="text-[10px] text-slate-500">งานที่ต้องทำ</p>
+              <p className="text-xl font-black text-amber-600">{pendingAssignments.length}</p>
+            </div>
+            <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <p className="text-[10px] text-slate-500">ส่งแล้ว</p>
+              <p className="text-xl font-black text-emerald-600">{completedAssignments.length}</p>
+            </div>
+          </div>
+
+          <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+            <h2 className="text-sm font-black flex items-center gap-1.5"><CalendarDays className="w-4 h-4 text-blue-500" />รายวิชาและภาคเรียน</h2>
+            <div className="grid gap-2">
+              {Array.from(courseGroups.values()).map((group) => (
+                <button key={`${group.label}-${group.term}`} onClick={() => setSelectedClassroom(group.classrooms[0])} className="text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-amber-950/30 border border-transparent hover:border-amber-200">
+                  <p className="text-xs font-black">{group.label}</p>
+                  <p className="text-[10px] text-slate-500 mt-1">{group.term || 'ไม่ระบุภาคเรียน'} · {group.classrooms.length} ห้อง</p>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {classroomPosts.length > 0 && (
+            <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+              <h2 className="text-sm font-black flex items-center gap-1.5"><Megaphone className="w-4 h-4 text-amber-500" />ประกาศล่าสุด</h2>
+              {classroomPosts.slice(0, 3).map((post) => (
+                <article key={post.id} className="p-3 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20">
+                  <p className="text-xs whitespace-pre-wrap leading-relaxed">{post.body}</p>
+                  <p className="text-[10px] text-slate-400 mt-1">{new Date(post.created_at).toLocaleString("th-TH")}</p>
+                </article>
+              ))}
+            </section>
+          )}
+        </div>
+      )}
+
       {/* MAIN CONTENT AREA */}
       {!activeAssignment ? (
         <div className="p-4 space-y-5">
@@ -1110,7 +1190,13 @@ export default function LiffStudentPage() {
                         <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between border-t border-slate-100 dark:border-slate-800/80 pt-2.5">
                           <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-medium">
                             <Clock className="w-3.5 h-3.5" />
-                            <span>กำหนดส่ง: {new Date(a.due_date).toLocaleDateString("th-TH")}</span>
+                            <span>
+                              {minutesUntil(a.due_date) <= 0
+                                ? "เลยกำหนดส่งแล้ว"
+                                : a.is_exam
+                                  ? `เหลือ ${minutesUntil(a.due_date)} นาที`
+                                  : `กำหนดส่ง: ${new Date(a.due_date).toLocaleString("th-TH")}`}
+                            </span>
                           </div>
 
                           <button
