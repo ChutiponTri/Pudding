@@ -2127,7 +2127,7 @@ export const dataService = {
 
     // 1. Post to Server API (Uses Supabase service role + file persistence)
     try {
-      await fetch('/api/submissions', {
+      const res = await fetch('/api/submissions', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -2142,9 +2142,16 @@ export const dataService = {
           antiCheating: payload.antiCheating,
         }),
       });
+      const resData = await res.json().catch(() => ({}));
+      console.log('[submitStudentWork] /api/submissions response:', res.status, resData);
+      if (res.ok && resData?.submission) {
+        submission.total_score = resData.submission.total_score;
+        submission.max_total_score = resData.submission.max_total_score;
+      }
     } catch (apiErr) {
       console.warn('submitStudentWork /api/submissions call notice:', apiErr);
     }
+
 
     // 2. Direct Supabase write as additional fallback
     if (isSupabaseConfigured) {

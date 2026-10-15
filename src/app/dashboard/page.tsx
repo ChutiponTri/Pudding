@@ -2791,41 +2791,90 @@ export default function DashboardPage() {
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => setLineConnectionClassroom(null)}
         >
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <h3 className="text-base font-black text-slate-900 dark:text-white">เชื่อมต่อ LINE Group</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{lineConnectionClassroom.name}</p>
+          <div
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold">
+                  <MessageCircle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white">เชื่อมต่อ LINE Group</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">{lineConnectionClassroom.name}</p>
+                </div>
               </div>
-              <button type="button" onClick={() => setLineConnectionClassroom(null)} className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg"><X className="w-5 h-5" /></button>
+              <button
+                type="button"
+                onClick={() => setLineConnectionClassroom(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-slate-500 dark:text-slate-400">สถานะการแจ้งเตือนการบ้าน</span>
-              <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${lineConnection.status === 'connected' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : lineConnection.status === 'waiting' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300'}`}>
-                {lineConnection.status === 'connected' ? 'เชื่อมต่อแล้ว พร้อมแจ้งเตือน' : lineConnection.status === 'waiting' ? 'รอการยืนยันจากกลุ่ม' : 'ยังไม่เชื่อมต่อ'}
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs">
+              <span className="text-slate-500 font-bold">สถานะการเชื่อมต่อ:</span>
+              <span
+                className={`px-2.5 py-1 rounded-full text-[11px] font-black ${
+                  lineConnection.status === 'connected'
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                    : lineConnection.status === 'waiting'
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 animate-pulse'
+                    : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                }`}
+              >
+                {lineConnection.status === 'connected'
+                  ? '🟢 เชื่อมต่อแล้ว พร้อมแจ้งเตือน'
+                  : lineConnection.status === 'waiting'
+                  ? '🟡 รอการยืนยันจากกลุ่ม'
+                  : '⚪ ยังไม่เชื่อมต่อ'}
               </span>
             </div>
 
             {lineConnection.status === 'connected' ? (
-              <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-200">
-                กลุ่ม LINE นี้พร้อมรับแจ้งเตือนรายชื่อนักเรียนที่ยังไม่ส่งงานตามเวลาที่ตั้งไว้<br />
-                นักเรียนพิมพ์ <b>ขอรหัสเข้าห้อง</b> ในกลุ่ม เพื่อรับรหัสและลิงก์เข้าห้องเรียนได้ทันที
+              <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-200 space-y-1">
+                <p className="font-bold">กลุ่ม LINE นี้พร้อมรับแจ้งเตือนรายชื่อนักเรียนที่ยังไม่ส่งงานตามเวลาที่ตั้งไว้</p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">นักเรียนพิมพ์ <b>ขอรหัสเข้าห้อง</b> ในกลุ่ม เพื่อรับรหัสและลิงก์เข้าห้องเรียนได้ทันที</p>
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  1. เพิ่ม Pudding Official Account เข้า LINE Group<br />
-                  2. กดสร้างรหัส แล้วส่งข้อความ <b>#pudding รหัส</b> ในกลุ่ม<br />
-                  3. ระบบจะตอบกลับในกลุ่มเมื่อเชื่อมต่อสำเร็จ
+                <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+                  <div className="flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-black text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                      1
+                    </span>
+                    <span>เชิญ <strong>Pudding Official Account</strong> เข้ากลุ่ม LINE ของห้องเรียน</span>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-black text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                      2
+                    </span>
+                    <span>กดปุ่ม &quot;สร้างรหัสเชื่อมต่อ&quot; ด้านล่าง แล้วพิมพ์คำสั่งลงในกลุ่ม LINE ดังนี้:</span>
+                  </div>
                 </div>
+
                 {lineConnection.status === 'waiting' && lineConnection.token && (
-                  <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 text-center">
-                    <div className="text-[11px] text-amber-800 dark:text-amber-200">รหัสเชื่อมต่อ ใช้ครั้งเดียวภายใน 10 นาที</div>
-                    <div className="flex items-center justify-center gap-2 mt-2">
-                      <code className="text-xl font-black tracking-widest text-amber-700 dark:text-amber-300">#pudding {lineConnection.token}</code>
-                      <button type="button" onClick={() => { navigator.clipboard.writeText(`#pudding ${lineConnection.token}`); setIsLineCodeCopied(true); setTimeout(() => setIsLineCodeCopied(false), 2000); }} className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 text-[11px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/50">
-                        {isLineCodeCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                  <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-2">
+                    <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 block">
+                      พิมพ์ข้อความนี้ในแชทกลุ่ม LINE:
+                    </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <code className="text-sm font-black font-mono text-amber-950 dark:text-amber-100">
+                        #pudding {lineConnection.token}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(`#pudding ${lineConnection.token}`);
+                          setIsLineCodeCopied(true);
+                          setTimeout(() => setIsLineCodeCopied(false), 2000);
+                        }}
+                        className="px-3 py-1 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer flex items-center gap-1"
+                      >
+                        {isLineCodeCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        <span>{isLineCodeCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
                       </button>
                     </div>
                   </div>
@@ -2833,13 +2882,45 @@ export default function DashboardPage() {
               </div>
             )}
 
-            <div className="flex flex-wrap justify-end gap-2">
-              {lineConnection.status !== 'connected' && <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black disabled:opacity-50">{lineConnection.status === 'waiting' ? 'สร้างรหัสใหม่' : 'สร้างรหัสเชื่อมต่อ'}</button>}
-              {lineConnection.status === 'connected' && <>
-                <button type="button" onClick={() => handleLineConnection('test')} disabled={isLineConnectionLoading} className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50">ทดสอบส่งข้อความ</button>
-                <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold disabled:opacity-50">เปลี่ยนกลุ่ม</button>
-                <button type="button" onClick={() => handleLineConnection('disconnect')} disabled={isLineConnectionLoading} className="px-3.5 py-2 rounded-xl bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold disabled:opacity-50">ยกเลิก</button>
-              </>}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap justify-end gap-2">
+              {lineConnection.status !== 'connected' && (
+                <button
+                  type="button"
+                  onClick={() => handleLineConnection('create')}
+                  disabled={isLineConnectionLoading}
+                  className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {isLineConnectionLoading ? 'กำลังสร้างรหัส...' : lineConnection.status === 'waiting' ? 'สร้างรหัสใหม่' : 'สร้างรหัสเชื่อมต่อ'}
+                </button>
+              )}
+              {lineConnection.status === 'connected' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleLineConnection('test')}
+                    disabled={isLineConnectionLoading}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-xs hover:bg-emerald-100 cursor-pointer"
+                  >
+                    ทดสอบส่งข้อความ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleLineConnection('create')}
+                    disabled={isLineConnectionLoading}
+                    className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer"
+                  >
+                    เปลี่ยนกลุ่ม
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleLineConnection('disconnect')}
+                    disabled={isLineConnectionLoading}
+                    className="px-3.5 py-2 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs hover:bg-rose-100 cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -54,7 +54,16 @@ export async function POST(request: NextRequest) {
       antiCheating = {},
     } = body;
 
+    console.log('[POST /api/submissions] Received payload:', {
+      assignment_id,
+      student_id,
+      line_uid,
+      student_name: student_name || `${student_first_name} ${student_last_name}`,
+      answers_count: answers?.length,
+    });
+
     if (!assignment_id || (!student_id && !line_uid)) {
+      console.warn('[POST /api/submissions] Missing required fields');
       return NextResponse.json(
         { error: 'assignment_id and student identification are required' },
         { status: 400 }
@@ -137,7 +146,9 @@ export async function POST(request: NextRequest) {
           calculatedTotalScore = runningScore;
         }
       }
-    } catch {}
+    } catch (calcErr) {
+      console.warn('[POST /api/submissions] Objective scoring check warning:', calcErr);
+    }
 
     const submissionRecord = {
       id: subId,
@@ -158,14 +169,29 @@ export async function POST(request: NextRequest) {
 
     // 1. Save to File Fallback Store (Guarantees local persistence and immediate availability)
     fallbackStore.saveSubmission(submissionRecord);
+    console.log('[POST /api/submissions] Saved to local fallback store:', subId);
 
     // 2. Try Supabase Service Role (bypasses RLS)
     try {
       const supabase = createServiceSupabaseClient();
-      // Ensure user row exists so submissions foreign key constraint succeeds
+
+      // Check if user already exists by line_uid or id
+      let targetUserDbId = effectiveStudentId;
+      if (line_uid) {
+        const { data: existingUser } = await supabase
+          .from('users')
+          .select('id')
+          .eq('line_uid', line_uid)
+          .maybeSingle();
+        if (existingUser?.id) {
+          targetUserDbId = existingUser.id;
+        }
+      }
+
+      // Upsert user row so foreign key constraint users(id) succeeds
       await supabase.from('users').upsert(
         {
-          id: effectiveStudentId,
+          id: targetUserDbId,
           role: 'student',
           first_name: firstName,
           last_name: lastName,
@@ -173,13 +199,32 @@ export async function POST(request: NextRequest) {
           line_uid: line_uid || undefined,
           avatar_url: student_avatar || undefined,
         },
-        { onConflict: 'id', ignoreDuplicates: true }
+        { onConflict: 'id', ignoreDuplicates: false }
       );
 
-      await supabase.from('submissions').upsert({
+      // Ensure assignment row exists so foreign key constraint assignments(id) succeeds
+      const { data: existingAssignment } = await supabase
+        .from('assignments')
+        .select('id')
+        .eq('id', assignment_id)
+        .maybeSingle();
+
+      if (!existingAssignment) {
+        console.log('[POST /api/submissions] Assignment not found in Supabase, inserting stub:', assignment_id);
+        await supabase.from('assignments').insert({
+          id: assignment_id,
+          title: 'การบ้าน/ข้อสอบ',
+          classroom_id: 'classroom',
+          due_date: new Date(Date.now() + 7 * 86400000).toISOString(),
+          total_points: assignmentMaxScore,
+        });
+      }
+
+      // Upsert submission record
+      const { error: subErr } = await supabase.from('submissions').upsert({
         id: submissionRecord.id,
         assignment_id: submissionRecord.assignment_id,
-        student_id: submissionRecord.student_id,
+        student_id: targetUserDbId,
         status: submissionRecord.status,
         started_at: submissionRecord.started_at,
         submitted_at: submissionRecord.submitted_at,
@@ -191,9 +236,32 @@ export async function POST(request: NextRequest) {
         max_total_score: assignmentMaxScore,
       });
 
+      if (subErr) {
+        console.error('[POST /api/submissions] Supabase submissions upsert error:', subErr);
+      } else {
+        console.log('[POST /api/submissions] Supabase submissions upsert succeeded:', subId);
+      }
+
+      // Upsert submission answers (and ensure question exists)
       const answersToSave = scoredAnswers.length > 0 ? scoredAnswers : answers;
       for (const ans of answersToSave) {
         if (ans.question_id) {
+          const { data: existingQ } = await supabase
+            .from('questions')
+            .select('id')
+            .eq('id', ans.question_id)
+            .maybeSingle();
+
+          if (!existingQ) {
+            await supabase.from('questions').insert({
+              id: ans.question_id,
+              assignment_id,
+              question_text: 'คำถามข้อนี้',
+              type: 'essay',
+              max_score: 5,
+            });
+          }
+
           await supabase.from('submission_answers').upsert({
             id: `ans-${subId}-${ans.question_id}`,
             submission_id: subId,
@@ -218,12 +286,13 @@ export async function POST(request: NextRequest) {
         });
       }
     } catch (dbErr) {
-      console.warn('POST /api/submissions Supabase service write notice:', dbErr);
+      console.error('[POST /api/submissions] Supabase service write error:', dbErr);
     }
 
     return NextResponse.json({ success: true, submission: submissionRecord });
   } catch (error: any) {
-    console.error('POST /api/submissions error:', error);
+    console.error('[POST /api/submissions] Fatal error:', error);
     return NextResponse.json({ error: error?.message || 'Internal Server Error' }, { status: 500 });
   }
 }
+

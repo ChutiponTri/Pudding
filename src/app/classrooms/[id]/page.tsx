@@ -9,26 +9,34 @@ import { defaultTeachersList } from '@/lib/supabase/mockData';
 import { Assignment, Classroom, ClassroomTeacher, Submission } from '@/types/database';
 import {
   ArrowLeft,
+  AlertCircle,
   BookOpen,
   CalendarCheck,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   ClipboardList,
   Clock,
+  Copy,
   Download,
   Edit2,
   ExternalLink,
   FileText,
+  Filter,
   FolderPlus,
   Layers,
   Megaphone,
   Menu,
+  MessageSquare,
   Pencil,
   Plus,
+  QrCode,
   RefreshCw,
   Search,
   Send,
+  Share2,
   Sparkles,
   Tag,
   Trash2,
@@ -36,7 +44,10 @@ import {
   UserPlus,
   Users,
   X,
+  Loader2,
+  MessageCircle,
 } from 'lucide-react';
+
 
 type Tab = 'overview' | 'classwork' | 'attendance' | 'people' | 'grades';
 type AttendanceStatus = 'on_time' | 'late' | 'absent' | 'excused';
@@ -150,12 +161,107 @@ export default function ClassroomWorkspacePage() {
   const [newTeacherName, setNewTeacherName] = useState('');
   const [newTeacherEmail, setNewTeacherEmail] = useState('');
   const [newTeacherRole, setNewTeacherRole] = useState<'primary' | 'assistant' | 'researcher'>('assistant');
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
+  const [teacherSearchResults, setTeacherSearchResults] = useState<any[]>([]);
+  const [isSearchingTeachers, setIsSearchingTeachers] = useState(false);
 
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteTab, setInviteTab] = useState<'search' | 'link' | 'pending'>('search');
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  const [studentSearchResults, setStudentSearchResults] = useState<any[]>([]);
+  const [isSearchingStudents, setIsSearchingStudents] = useState(false);
+  const [isCopiedLiff, setIsCopiedLiff] = useState(false);
+  const [isCopiedCode, setIsCopiedCode] = useState(false);
+
   const [newStudentFirst, setNewStudentFirst] = useState('');
   const [newStudentLast, setNewStudentLast] = useState('');
   const [newStudentId, setNewStudentId] = useState('');
   const [newStudentEmail, setNewStudentEmail] = useState('');
+
+  // LINE Group Connection Modal state
+  const [showLineConnectModal, setShowLineConnectModal] = useState(false);
+  const [lineConnection, setLineConnection] = useState<{
+    status: 'disconnected' | 'waiting' | 'connected';
+    token?: string;
+    expiresAt?: string;
+    connectedAt?: string;
+  }>({ status: 'disconnected' });
+  const [isLineLoading, setIsLineLoading] = useState(false);
+  const [isLineCodeCopied, setIsLineCodeCopied] = useState(false);
+
+  const getRealLiffUrl = (cls?: Classroom | null) => {
+    if (!cls) return '';
+    const liffId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || '2011818142-BznwnWyj';
+    return `https://liff.line.me/${liffId}?classId=${cls.id}&code=${cls.invite_code || ''}`;
+  };
+
+  const getWebInviteUrl = (cls?: Classroom | null) => {
+    if (!cls) return '';
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${origin}/liff?classId=${cls.id}&code=${cls.invite_code || ''}`;
+  };
+
+  const handleLineConnection = async (action: 'create' | 'test' | 'disconnect') => {
+    if (!classroom) return;
+    setIsLineLoading(true);
+    try {
+      const response = await fetch('/api/line/connections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classroomId: classroom.id, action }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'LINE connection failed');
+      setLineConnection(result);
+      setClassroom((prev) => (prev ? { ...prev, line_connection_status: result.status } : null));
+      setNotice(
+        action === 'disconnect'
+          ? 'ยกเลิกการเชื่อมต่อ LINE Group แล้ว'
+          : action === 'test'
+          ? 'ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว'
+          : 'สร้างรหัสเชื่อมต่อกลุ่ม LINE สำเร็จ'
+      );
+    } catch (error: any) {
+      setNotice(error?.message || 'ไม่สามารถเชื่อมต่อ LINE Group ได้');
+    } finally {
+      setIsLineLoading(false);
+    }
+  };
+
+  const handleSearchStudents = async (q: string) => {
+    setStudentSearchQuery(q);
+    if (!q.trim()) {
+      setStudentSearchResults([]);
+      return;
+    }
+    setIsSearchingStudents(true);
+    try {
+      const res = await dataService.searchStudentsByInstitution(q);
+      setStudentSearchResults(res);
+    } catch (e) {
+      console.error('Search students error:', e);
+    } finally {
+      setIsSearchingStudents(false);
+    }
+  };
+
+  const handleSearchTeachers = async (q: string) => {
+    setTeacherSearchQuery(q);
+    if (!q.trim()) {
+      setTeacherSearchResults([]);
+      return;
+    }
+    setIsSearchingTeachers(true);
+    try {
+      const res = await dataService.searchTeachers(q);
+      setTeacherSearchResults(res);
+    } catch (e) {
+      console.error('Search teachers error:', e);
+    } finally {
+      setIsSearchingTeachers(false);
+    }
+  };
 
   // ----------------------------------------------------
   // HIGH-SPEED OPTIMIZED PARALLEL DATA LOADER
@@ -304,40 +410,74 @@ export default function ClassroomWorkspacePage() {
   // UNIFIED TIMELINE BUILDER (Feed of Announcements, Work, Exams, Attendance)
   // ----------------------------------------------------
   const timeline = useMemo<TimelineItem[]>(() => {
-    const list: TimelineItem[] = [
-      ...posts.map((post) => {
-        let title = 'ประกาศ';
-        let badgeLabel = 'ประกาศ';
-        let badgeColor = 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300';
+    const list: TimelineItem[] = [];
+    const seenAssignmentIds = new Set<string>();
+    const seenSessionIds = new Set<string>();
+    const seenContentKeys = new Set<string>();
 
-        if (post.activity_type === 'assignment') {
-          title = 'มอบหมายงานใหม่';
-          badgeLabel = 'งาน';
-          badgeColor = 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300';
-        } else if (post.activity_type === 'exam') {
-          title = 'สร้างข้อสอบใหม่';
-          badgeLabel = 'ข้อสอบ';
-          badgeColor = 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300';
-        } else if (post.activity_type === 'attendance') {
-          title = 'เปิดคาบเช็คชื่อ';
-          badgeLabel = 'เช็คชื่อ';
-          badgeColor = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300';
-        }
+    // 1. Process posts first
+    for (const post of posts) {
+      const aId = post.metadata?.assignmentId;
+      const sId = (post.metadata as any)?.sessionId;
 
-        return {
-          id: `post-${post.id}`,
-          rawId: post.id,
-          isPost: true,
-          title,
-          body: post.body,
-          type: post.activity_type || 'announcement',
-          created_at: post.created_at,
-          badgeLabel,
-          badgeColor,
-          href: post.metadata?.assignmentId ? `/assignments/${post.metadata.assignmentId}/grading` : undefined,
-        };
-      }),
-      ...assignments.map((item) => ({
+      if (aId) {
+        if (seenAssignmentIds.has(aId)) continue;
+        seenAssignmentIds.add(aId);
+      }
+      if (sId) {
+        if (seenSessionIds.has(sId)) continue;
+        seenSessionIds.add(sId);
+      }
+
+      let title = 'ประกาศ';
+      let badgeLabel = 'ประกาศ';
+      let badgeColor = 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300';
+
+      if (post.activity_type === 'assignment') {
+        title = 'มอบหมายงานใหม่';
+        badgeLabel = 'งาน';
+        badgeColor = 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300';
+      } else if (post.activity_type === 'exam') {
+        title = 'สร้างข้อสอบใหม่';
+        badgeLabel = 'ข้อสอบ';
+        badgeColor = 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300';
+      } else if (post.activity_type === 'attendance') {
+        title = 'เปิดคาบเช็คชื่อ';
+        badgeLabel = 'เช็คชื่อ';
+        badgeColor = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300';
+      }
+
+      // Check content key to avoid duplicate identical messages
+      const normalizedBody = post.body.replace(/^(ข้อสอบใหม่:|งานใหม่:|เปิดคาบเช็คชื่อ:)\s*/, '').trim().toLowerCase();
+      const contentKey = `${post.activity_type || 'announcement'}-${normalizedBody.slice(0, 40)}`;
+      if (seenContentKeys.has(contentKey)) continue;
+      seenContentKeys.add(contentKey);
+
+      list.push({
+        id: `post-${post.id}`,
+        rawId: post.id,
+        isPost: true,
+        title,
+        body: post.body,
+        type: post.activity_type || 'announcement',
+        created_at: post.created_at,
+        badgeLabel,
+        badgeColor,
+        href: aId ? `/assignments/${aId}/grading` : undefined,
+      });
+    }
+
+    // 2. Add assignments that do NOT already have a timeline post
+    for (const item of assignments) {
+      if (seenAssignmentIds.has(item.id)) continue;
+      const normalizedTitle = item.title.trim().toLowerCase();
+      const contentKey = `${item.is_exam ? 'exam' : 'assignment'}-${normalizedTitle.slice(0, 40)}`;
+      if (seenContentKeys.has(contentKey)) continue;
+
+      seenAssignmentIds.add(item.id);
+      seenContentKeys.add(contentKey);
+
+      list.push({
         id: `assignment-${item.id}`,
         rawId: item.id,
         isPost: false,
@@ -350,8 +490,20 @@ export default function ClassroomWorkspacePage() {
           : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
         created_at: item.created_at || item.due_date,
         href: `/assignments/${item.id}/grading`,
-      })),
-      ...sessions.map((item) => ({
+      });
+    }
+
+    // 3. Add sessions that do NOT already have a timeline post
+    for (const item of sessions) {
+      if (seenSessionIds.has(item.id)) continue;
+      const normalizedTitle = item.title.trim().toLowerCase();
+      const contentKey = `attendance-${normalizedTitle.slice(0, 40)}`;
+      if (seenContentKeys.has(contentKey)) continue;
+
+      seenSessionIds.add(item.id);
+      seenContentKeys.add(contentKey);
+
+      list.push({
         id: `attendance-${item.id}`,
         rawId: item.id,
         isPost: false,
@@ -361,22 +513,12 @@ export default function ClassroomWorkspacePage() {
         badgeLabel: 'เช็คชื่อ',
         badgeColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
         created_at: item.starts_at,
-      })),
-    ];
-
-    // Deduplicate posts that mirror the exact same assignment or session
-    const seen = new Set<string>();
-    const filtered: TimelineItem[] = [];
-    for (const item of list) {
-      const key = `${item.type}-${item.body.trim().slice(0, 30)}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        filtered.push(item);
-      }
+      });
     }
 
-    return filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [posts, assignments, sessions]);
+
 
   // Existing group names across assignments
   const existingGroupNames = useMemo(() => {
@@ -689,6 +831,82 @@ export default function ClassroomWorkspacePage() {
     setNotice('นำครูผู้สอนออกจากห้องเรียนเรียบร้อย');
   };
 
+  const handleSelectFoundStudent = async (std: any) => {
+    if (!classroom) return;
+    const alreadyEnrolled = [...(classroom.students || []), ...(classroom.pending_students || [])]
+      .some((student) => student.id === std.id || (student.student_id && std.student_id && student.student_id === std.student_id));
+    if (alreadyEnrolled) {
+      setNotice('นักเรียนคนนี้อยู่ในห้องเรียนแล้ว');
+      return;
+    }
+    await dataService.addStudentToClassroom(
+      classroom.id,
+      {
+        id: std.id,
+        first_name: std.first_name,
+        last_name: std.last_name,
+        student_id: std.student_id,
+        email: std.email,
+        avatar_url: std.avatar_url,
+        institution: std.institution,
+      },
+      { autoAdmit: true }
+    );
+    setNotice(`เพิ่ม ${std.first_name} ${std.last_name} สำเร็จ`);
+    setStudentSearchQuery('');
+    setStudentSearchResults([]);
+    await loadWorkspace();
+  };
+
+  const handleAdmitStudent = async (studentId: string) => {
+    if (!classroom) return;
+    try {
+      await dataService.admitStudentToClassroom(classroom.id, studentId);
+      setNotice('อนุมัตินักเรียนเข้าห้องเรียนสำเร็จ');
+      await loadWorkspace();
+    } catch (e) {
+      console.error(e);
+      setNotice('เกิดข้อผิดพลาดในการอนุมัติ');
+    }
+  };
+
+  const handleRejectStudent = async (studentId: string) => {
+    if (!classroom) return;
+    if (!confirm('ต้องการปฏิเสธคำขอนี้หรือไม่?')) return;
+    try {
+      await dataService.rejectStudentFromClassroom(classroom.id, studentId);
+      setNotice('ปฏิเสธคำขอเข้าห้องเรียนแล้ว');
+      await loadWorkspace();
+    } catch (e) {
+      console.error(e);
+      setNotice('เกิดข้อผิดพลาดในการปฏิเสธ');
+    }
+  };
+
+  const handleSelectFoundTeacher = async (foundTeacher: any, role: 'primary' | 'assistant' | 'researcher' = 'assistant') => {
+    if (!classroom) return;
+    const currentTeachers = teachersList;
+    if (currentTeachers.some((t) => t.teacher_id === foundTeacher.id)) {
+      setNotice('ครูท่านนี้อยู่ในห้องเรียนแล้ว');
+      return;
+    }
+    const updated = [
+      ...currentTeachers,
+      {
+        teacher_id: foundTeacher.id,
+        role,
+        name: `${foundTeacher.first_name || ''} ${foundTeacher.last_name || ''}`.trim() || foundTeacher.email || 'อาจารย์',
+        email: foundTeacher.email || '',
+      },
+    ];
+    await dataService.updateClassroom(classroom.id, { teachers: updated });
+    setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
+    setNotice('เพิ่มผู้สอนเรียบร้อยแล้ว');
+    setTeacherSearchQuery('');
+    setTeacherSearchResults([]);
+    setShowAddTeacherModal(false);
+  };
+
   const handleAddStudent = async (first_name: string, last_name: string, student_id: string, email: string) => {
     if (!first_name.trim() || !classroom) return;
     const newS = {
@@ -714,11 +932,15 @@ export default function ClassroomWorkspacePage() {
   const handleRemoveStudent = async (studentId: string) => {
     if (!classroom) return;
     if (!confirm('ต้องการนำผู้เรียนคนนี้ออกจากห้องเรียนหรือไม่?')) return;
-    const currentStudents = classroom.students || [];
-    const updated = currentStudents.filter((s) => s.id !== studentId);
-    await dataService.updateClassroom(classroom.id, { students: updated, student_count: updated.length });
-    setClassroom((prev) => (prev ? { ...prev, students: updated, student_count: updated.length } : prev));
-    setNotice('นำผู้เรียนออกจากห้องเรียนเรียบร้อย');
+    try {
+      await dataService.removeStudentFromClassroom(classroom.id, studentId);
+      const currentStudents = classroom.students || [];
+      const updated = currentStudents.filter((s) => s.id !== studentId);
+      setClassroom((prev) => (prev ? { ...prev, students: updated, student_count: updated.length } : prev));
+      setNotice('นำผู้เรียนออกจากห้องเรียนเรียบร้อย');
+    } catch {
+      setNotice('เกิดข้อผิดพลาดในการลบผู้เรียน');
+    }
   };
 
   const attendanceCounts = useMemo(() => {
@@ -790,14 +1012,6 @@ export default function ClassroomWorkspacePage() {
           {/* Header Row */}
           <div className="hidden lg:flex items-center justify-between gap-4 mb-6">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('toggle-classroom-sidebar'))}
-                className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 text-xs font-bold shadow-xs cursor-pointer"
-                title="เปิดแถบวิชาและห้องเรียน"
-              >
-                <Layers className="w-4 h-4 text-amber-500" />
-                <span>สลับห้องเรียน</span>
-              </button>
               <div>
                 <div className="flex items-center gap-2 text-xs font-bold text-amber-600 mb-1">
                   <span>{classroom.subject_code || 'CLASSROOM'}</span>
@@ -808,7 +1022,48 @@ export default function ClassroomWorkspacePage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Secondary: Invite Students Modal Trigger */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowInviteModal(true);
+                  setInviteTab('search');
+                }}
+                className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5 text-amber-500" />
+                <span>เชิญนักเรียน</span>
+                {(classroom.pending_students?.length || 0) > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                )}
+              </button>
+
+              {/* Secondary: Connect LINE Bot Modal Trigger */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLineConnectModal(true);
+                  fetch(`/api/line/connections?classroomId=${classroom.id}`)
+                    .then((r) => r.json())
+                    .then((d) => setLineConnection(d))
+                    .catch(() => {});
+                }}
+                className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    classroom.line_connection_status === 'connected' || classroom.line_group_id
+                      ? 'bg-emerald-500'
+                      : classroom.line_connection_status === 'waiting'
+                      ? 'bg-amber-500 animate-pulse'
+                      : 'bg-slate-400'
+                  }`}
+                />
+                <span>เชื่อมบอท LINE</span>
+              </button>
+
+              {/* Primary: Create Assignment or Exam */}
               <Link
                 href={`/assignments/new?classroomId=${classroom.id}`}
                 className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 shadow-sm transition-all"
@@ -818,6 +1073,7 @@ export default function ClassroomWorkspacePage() {
               </Link>
             </div>
           </div>
+
 
           {/* Toast Notification Notice */}
           {notice && (
@@ -858,48 +1114,7 @@ export default function ClassroomWorkspacePage() {
           {/* TAB 1: OVERVIEW (ภาพรวม & Facebook-style Teacher Timeline) */}
           {/* ============================================================ */}
           {tab === 'overview' && (
-            <div className="grid lg:grid-cols-3 gap-6">
-              {/* Left Column (Meta & Quick Info Cards) */}
-              <div className="space-y-4">
-                {/* Classroom Invite Code Card */}
-                <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-xs space-y-3">
-                  <span className="text-[10px] font-black uppercase text-amber-600">รหัสเข้าร่วมห้องเรียน (LIFF Code)</span>
-                  <div className="flex items-center justify-between p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
-                    <span className="font-mono text-lg font-black text-slate-900 dark:text-white tracking-wider">
-                      {classroom.invite_code || 'THAI-401'}
-                    </span>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(classroom.invite_code || '');
-                        setNotice('คัดลอกรหัสเข้าห้องเรียนแล้ว');
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold cursor-pointer"
-                    >
-                      คัดลอก
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    นักเรียนสามารถนำรหัสนี้ไปกรอกใน LINE LIFF เพื่อผูกบัญชีเข้าห้องเรียนได้ทันที
-                  </p>
-                </div>
-
-                {/* LINE Group Status */}
-                <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-xs space-y-2">
-                  <span className="text-[10px] font-black uppercase text-slate-400">การเชื่อมต่อ LINE Group</span>
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      {classroom.line_connection_status === 'connected' ? 'เชื่อมต่อ LINE Group แล้ว' : 'พร้อมส่งแจ้งเตือน'}
-                    </p>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    เมื่อโพสต์ประกาศ สั่งงาน หรือเปิดคาบเช็คชื่อ ระบบจะส่ง Push Notification เข้ากลุ่มทันที
-                  </p>
-                </div>
-              </div>
-
-              {/* Right Column: Facebook-style Posting & Full Activity Feed */}
-              <div className="lg:col-span-2 space-y-4">
+            <div className="max-w-3xl mx-auto space-y-6">
                 {/* 1. Facebook-style Teacher Post Composer */}
                 <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 shadow-xs space-y-3">
                   <div className="flex items-center gap-3">
@@ -1069,7 +1284,6 @@ export default function ClassroomWorkspacePage() {
                     ยังไม่มีโพสต์หรือประกาศในห้องนี้ เริ่มต้นแชร์ข้อความแรกของคุณได้เลย
                   </div>
                 )}
-              </div>
             </div>
           )}
 
@@ -1397,10 +1611,40 @@ export default function ClassroomWorkspacePage() {
                 </div>
               </div>
 
+              {/* Pending Approvals Notice Banner */}
+              {(classroom.pending_students?.length || 0) > 0 && (
+                <div className="p-4 rounded-3xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
+                    <div>
+                      <p className="text-xs font-black text-amber-950 dark:text-amber-100">
+                        มีคำขอเข้าร่วมห้องเรียนรอการอนุมัติ ({classroom.pending_students?.length} คน)
+                      </p>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+                        นักเรียนลงทะเบียนผ่านลิงก์ LINE หรือระบบแล้ว รอคุณครูอนุมัติเข้าห้องเรียน
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowInviteModal(true);
+                      setInviteTab('pending');
+                    }}
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
+                  >
+                    ตรวจสอบและอนุมัติ (Admit)
+                  </button>
+                </div>
+              )}
+
               {/* 2. Students Section (แสดงผู้เรียน พร้อมปุ่มเพิ่มและลบ) */}
               <StudentList
                 classroom={classroom}
-                onOpenAddStudent={() => setShowAddStudentModal(true)}
+                onOpenAddStudent={() => {
+                  setShowInviteModal(true);
+                  setInviteTab('search');
+                }}
                 onRemoveStudent={handleRemoveStudent}
               />
             </section>
@@ -1615,9 +1859,12 @@ export default function ClassroomWorkspacePage() {
       {/* ============================================================== */}
       {/* MODAL: ADD TEACHER */}
       {/* ============================================================== */}
+      {/* ============================================================== */}
+      {/* MODAL: ADD TEACHER (Search existing + Manual Fallback) */}
+      {/* ============================================================== */}
       {showAddTeacherModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-sm w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
                 <UserPlus className="w-4 h-4 text-amber-500" />
@@ -1628,32 +1875,75 @@ export default function ClassroomWorkspacePage() {
               </button>
             </div>
 
-            <div className="space-y-3">
+            {/* Quick Search Teachers */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-bold text-slate-400 block">ค้นหาอาจารย์/ผู้สอนที่มีในระบบ</label>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
+                <input
+                  value={teacherSearchQuery}
+                  onChange={(e) => handleSearchTeachers(e.target.value)}
+                  placeholder="ค้นหาชื่อหรืออีเมลผู้สอน..."
+                  className="w-full pl-8 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+                {isSearchingTeachers && (
+                  <Loader2 className="w-3.5 h-3.5 absolute right-3 top-3 text-amber-500 animate-spin" />
+                )}
+              </div>
+
+              {teacherSearchResults.length > 0 && (
+                <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 space-y-1.5 max-h-40 overflow-y-auto">
+                  {teacherSearchResults.map((t) => (
+                    <div
+                      key={t.id}
+                      className="p-2 rounded-lg bg-white dark:bg-slate-900 flex items-center justify-between gap-2 text-xs border border-slate-100 dark:border-slate-800"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-900 dark:text-white truncate">
+                          {t.first_name} {t.last_name}
+                        </p>
+                        <p className="text-[10px] text-slate-400 truncate">{t.email}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectFoundTeacher(t, newTeacherRole)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
+                      >
+                        + เพิ่ม
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">
+              <p className="text-[11px] font-bold text-slate-400">หรือ กรอกข้อมูลผู้สอนด้วยตนเอง</p>
               <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">ชื่อ-นามสกุลครูผู้สอน *</label>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">ชื่อ-นามสกุลครูผู้สอน *</label>
                 <input
                   value={newTeacherName}
                   onChange={(e) => setNewTeacherName(e.target.value)}
                   placeholder="เช่น ครูอัญชลี รัตนโชติ"
-                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
+                  className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
                 />
               </div>
               <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">อีเมลผู้สอน</label>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">อีเมลผู้สอน</label>
                 <input
                   type="email"
                   value={newTeacherEmail}
                   onChange={(e) => setNewTeacherEmail(e.target.value)}
                   placeholder="anchalee.r@school.ac.th"
-                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-slate-50 dark:bg-slate-800"
+                  className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-slate-50 dark:bg-slate-800"
                 />
               </div>
               <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">หน้าที่ / บทบาท</label>
+                <label className="text-[10px] font-bold text-slate-400 block mb-1">หน้าที่ / บทบาท</label>
                 <select
                   value={newTeacherRole}
                   onChange={(e) => setNewTeacherRole(e.target.value as any)}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
+                  className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
                 >
                   <option value="primary">ครูประจำวิชา (Primary)</option>
                   <option value="assistant">TA (ผู้ช่วยสอน)</option>
@@ -1666,7 +1956,7 @@ export default function ClassroomWorkspacePage() {
               <button
                 type="button"
                 onClick={() => setShowAddTeacherModal(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300"
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
               >
                 ยกเลิก
               </button>
@@ -1674,7 +1964,7 @@ export default function ClassroomWorkspacePage() {
                 type="button"
                 disabled={!newTeacherName.trim()}
                 onClick={() => handleAddTeacher(newTeacherName, newTeacherEmail, newTeacherRole)}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer disabled:opacity-40"
               >
                 เพิ่มผู้สอน
               </button>
@@ -1684,79 +1974,478 @@ export default function ClassroomWorkspacePage() {
       )}
 
       {/* ============================================================== */}
-      {/* MODAL: ADD STUDENT */}
+      {/* MODAL: INVITE & MANAGE STUDENTS (Liff Link, QR, Search, Pending) */}
       {/* ============================================================== */}
-      {showAddStudentModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-sm w-full space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                <UserPlus className="w-4 h-4 text-amber-500" />
-                <span>เพิ่มผู้เรียนในห้องเรียน</span>
-              </h3>
-              <button onClick={() => setShowAddStudentModal(false)} className="p-1 text-slate-400 hover:text-slate-600">
+      {showInviteModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setShowInviteModal(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-xl w-full space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-amber-500" />
+                  <span>เชิญและเพิ่มนักเรียนเข้าห้องเรียน</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {classroom.name} • {classroom.subject_code}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowInviteModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Navigation Tabs */}
+            <div className="flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-2">
+              <button
+                type="button"
+                onClick={() => setInviteTab('search')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  inviteTab === 'search'
+                    ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>ค้นหาและเพิ่มด่วน</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setInviteTab('link')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  inviteTab === 'link'
+                    ? 'bg-emerald-600 text-white font-black shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <QrCode className="w-3.5 h-3.5" />
+                <span>ลิงก์เชิญ & QR Code</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setInviteTab('pending')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  inviteTab === 'pending'
+                    ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>คำขอรออนุมัติ</span>
+                {(classroom.pending_students?.length || 0) > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
+                    {classroom.pending_students?.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* TAB 1: Search & Quick Add */}
+            {inviteTab === 'search' && (
+              <div className="space-y-4">
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                  <input
+                    value={studentSearchQuery}
+                    onChange={(e) => handleSearchStudents(e.target.value)}
+                    placeholder="🔍 ค้นหานักเรียนในระบบ (ชื่อ, นามสกุล หรือรหัสนักเรียน)..."
+                    className="w-full pl-9 pr-8 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
+                  />
+                  {isSearchingStudents && (
+                    <Loader2 className="w-4 h-4 absolute right-3 top-3 text-amber-500 animate-spin" />
+                  )}
+                </div>
+
+                {studentSearchResults.length > 0 && (
+                  <div className="p-2 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 space-y-1.5 max-h-56 overflow-y-auto">
+                    {studentSearchResults.map((found) => (
+                      <div
+                        key={found.id}
+                        className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 dark:text-white truncate">
+                            {found.first_name} {found.last_name}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            รหัส: {found.student_id || '-'} • {found.email || 'ไม่มีอีเมล'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectFoundStudent(found)}
+                          className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs cursor-pointer shadow-xs whitespace-nowrap"
+                        >
+                          + เพิ่มเข้าห้อง
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Collapsible Manual Addition Form */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <p className="text-[11px] font-bold text-slate-400 mb-2.5">
+                    หรือ กรอกข้อมูลนักเรียนด้วยตนเอง (สำหรับนักเรียนที่ยังไม่เคยลงทะเบียน)
+                  </p>
+                  <div className="space-y-2.5 bg-slate-50 dark:bg-slate-850 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        value={newStudentFirst}
+                        onChange={(e) => setNewStudentFirst(e.target.value)}
+                        placeholder="ชื่อ *"
+                        className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      />
+                      <input
+                        value={newStudentLast}
+                        onChange={(e) => setNewStudentLast(e.target.value)}
+                        placeholder="นามสกุล *"
+                        className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        value={newStudentId}
+                        onChange={(e) => setNewStudentId(e.target.value)}
+                        placeholder="รหัสนักเรียน (เช่น 65001)"
+                        className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-mono outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      />
+                      <input
+                        type="email"
+                        value={newStudentEmail}
+                        onChange={(e) => setNewStudentEmail(e.target.value)}
+                        placeholder="อีเมลผู้เรียน"
+                        className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!newStudentFirst.trim()}
+                      onClick={() => handleAddStudent(newStudentFirst, newStudentLast, newStudentId, newStudentEmail)}
+                      className="w-full py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black hover:opacity-90 transition-all cursor-pointer shadow-xs disabled:opacity-40"
+                    >
+                      + บันทึกและเพิ่มเข้าห้องเรียน
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: Invite Link & QR Code */}
+            {inviteTab === 'link' && (
+              <div className="space-y-4">
+                {/* Classroom Invite Code */}
+                {classroom.invite_code && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 block">
+                        รหัสห้องเรียน (Invite Code)
+                      </span>
+                      <span className="text-xl font-black tracking-widest text-amber-950 dark:text-amber-100 font-mono">
+                        {classroom.invite_code}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(classroom.invite_code || '');
+                        setIsCopiedCode(true);
+                        setTimeout(() => setIsCopiedCode(false), 2000);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-700 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      {isCopiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{isCopiedCode ? 'คัดลอกแล้ว' : 'คัดลอกรหัส'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* QR Code and LIFF Link */}
+                <div className="flex flex-col sm:flex-row items-center gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
+                      getRealLiffUrl(classroom)
+                    )}`}
+                    alt="Classroom QR Code"
+                    className="w-32 h-32 rounded-2xl bg-white p-2 shadow-sm border border-slate-200 shrink-0"
+                  />
+                  <div className="space-y-2 text-center sm:text-left min-w-0 flex-1">
+                    <p className="text-xs font-black text-slate-900 dark:text-white">
+                      สแกนด้วย LINE เพื่อเข้าร่วมห้องเรียน
+                    </p>
+                    <p className="text-[11px] text-slate-400 break-all font-mono">
+                      {getRealLiffUrl(classroom)}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(getRealLiffUrl(classroom));
+                          setIsCopiedLiff(true);
+                          setTimeout(() => setIsCopiedLiff(false), 2000);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                      >
+                        {isCopiedLiff ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{isCopiedLiff ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์ LINE LIFF'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const message = `เข้าร่วมห้องเรียน Pudding: ${classroom.name}\n\nกดลิงก์นี้ใน LINE: ${getRealLiffUrl(
+                            classroom
+                          )}\nรหัสห้องเรียน: ${classroom.invite_code || ''}`;
+                          navigator.clipboard.writeText(message);
+                          setNotice('คัดลอกข้อความสำหรับส่งเข้า LINE เรียบร้อยแล้ว');
+                        }}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-100 cursor-pointer shadow-xs"
+                      >
+                        <Share2 className="w-3.5 h-3.5 text-amber-500" />
+                        <span>คัดลอกข้อความเชิญ</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Direct Web Invite URL */}
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-slate-400 block">ลิงก์เว็บตรง (สำหรับเบราว์เซอร์ทั่วไป):</span>
+                    <span className="text-slate-700 dark:text-slate-300 font-mono text-[11px] truncate block">
+                      {getWebInviteUrl(classroom)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(getWebInviteUrl(classroom));
+                      setNotice('คัดลอกลิงก์เว็บตรงเรียบร้อย');
+                    }}
+                    className="p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 cursor-pointer"
+                    title="คัดลอกลิงก์เว็บ"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: Pending Students */}
+            {inviteTab === 'pending' && (
+              <div className="space-y-3">
+                {(!classroom.pending_students || classroom.pending_students.length === 0) ? (
+                  <div className="py-10 text-center space-y-2">
+                    <UserCheck className="w-8 h-8 text-slate-300 mx-auto" />
+                    <p className="text-xs font-bold text-slate-400">ไม่มีคำขอเข้าร่วมห้องเรียนที่รอการอนุมัติ</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    <div className="flex items-center justify-between pb-1">
+                      <span className="text-xs font-bold text-slate-500">
+                        รอการอนุมัติ {classroom.pending_students.length} คน
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          for (const p of classroom.pending_students || []) {
+                            await dataService.admitStudentToClassroom(classroom.id, p.id);
+                          }
+                          setNotice('อนุมัติคำขอทั้งหมดเรียบร้อยแล้ว');
+                          await loadWorkspace();
+                        }}
+                        className="text-xs font-black text-emerald-600 hover:underline cursor-pointer"
+                      >
+                        อนุมัติทั้งหมด (Admit All)
+                      </button>
+                    </div>
+
+                    {classroom.pending_students.map((p) => (
+                      <div
+                        key={p.id}
+                        className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div>
+                          <p className="font-bold text-slate-900 dark:text-white">
+                            {p.first_name} {p.last_name}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            รหัส: {p.student_id || '-'} • {p.email || 'LINE Login'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleAdmitStudent(p.id)}
+                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs cursor-pointer"
+                          >
+                            อนุมัติ
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectStudent(p.id)}
+                            className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs shadow-xs cursor-pointer"
+                          >
+                            ปฏิเสธ
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: CONNECT LINE BOT (Dashboard Logic Mirrored) */}
+      {/* ============================================================== */}
+      {showLineConnectModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setShowLineConnectModal(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full space-y-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold">
+                  <MessageCircle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                    เชื่อมต่อ LINE Official Bot เข้ากลุ่ม
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {classroom.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowLineConnectModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer"
+              >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-400 block mb-1">ชื่อ *</label>
-                  <input
-                    value={newStudentFirst}
-                    onChange={(e) => setNewStudentFirst(e.target.value)}
-                    placeholder="ชลสิทธิ์"
-                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-400 block mb-1">นามสกุล *</label>
-                  <input
-                    value={newStudentLast}
-                    onChange={(e) => setNewStudentLast(e.target.value)}
-                    placeholder="วงศ์สว่าง"
-                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">รหัสนักเรียน</label>
-                <input
-                  value={newStudentId}
-                  onChange={(e) => setNewStudentId(e.target.value)}
-                  placeholder="54107"
-                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-mono outline-none bg-slate-50 dark:bg-slate-800"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">อีเมลผู้เรียน</label>
-                <input
-                  type="email"
-                  value={newStudentEmail}
-                  onChange={(e) => setNewStudentEmail(e.target.value)}
-                  placeholder="student@school.ac.th"
-                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-slate-50 dark:bg-slate-800"
-                />
-              </div>
+            {/* Connection Status Badge */}
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs">
+              <span className="text-slate-500 font-bold">สถานะการเชื่อมต่อ:</span>
+              <span
+                className={`font-black px-2.5 py-1 rounded-full text-[11px] ${
+                  classroom.line_connection_status === 'connected' || classroom.line_group_id
+                    ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
+                    : classroom.line_connection_status === 'waiting'
+                    ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 animate-pulse'
+                    : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                {classroom.line_connection_status === 'connected' || classroom.line_group_id
+                  ? '🟢 เชื่อมต่อกับกลุ่ม LINE แล้ว'
+                  : classroom.line_connection_status === 'waiting'
+                  ? '🟡 กำลังรอการพิมพ์คำสั่งในกลุ่ม'
+                  : '⚪ ยังไม่ได้เชื่อมต่อ'}
+              </span>
             </div>
 
-            <div className="flex gap-2 pt-2">
+            {/* Instruction Steps */}
+            <div className="space-y-3">
+              <p className="text-xs font-black text-slate-900 dark:text-white">
+                ขั้นตอนการเชื่อมต่อ:
+              </p>
+              <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+                <div className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-black text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                    1
+                  </span>
+                  <span>เชิญ <strong>Pudding LINE Official Bot</strong> เข้ากลุ่ม LINE ของห้องเรียน</span>
+                </div>
+                <div className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-black text-[11px] flex items-center justify-center shrink-0 mt-0.5">
+                    2
+                  </span>
+                  <span>กดปุ่ม &quot;สร้างรหัสเชื่อมต่อ&quot; ด้านล่าง แล้วพิมพ์คำสั่งลงในกลุ่ม LINE ดังนี้:</span>
+                </div>
+              </div>
+
+              {/* Token Command Box */}
+              {lineConnection?.token && (
+                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-2">
+                  <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 block">
+                    พิมพ์ข้อความนี้ในแชทกลุ่ม LINE:
+                  </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <code className="text-sm font-black font-mono text-amber-950 dark:text-amber-100">
+                      #pudding {lineConnection.token}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(`#pudding ${lineConnection.token}`);
+                        setIsLineCodeCopied(true);
+                        setTimeout(() => setIsLineCodeCopied(false), 2000);
+                      }}
+                      className="px-3 py-1 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer flex items-center gap-1"
+                    >
+                      {isLineCodeCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3 text-slate-950" />}
+                      <span>{isLineCodeCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
+                    </button>
+                  </div>
+                  {lineConnection.expiresAt && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                      หมดอายุเวลา: {new Date(lineConnection.expiresAt).toLocaleTimeString('th-TH')}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setShowAddStudentModal(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300"
+                disabled={isLineLoading}
+                onClick={() => handleLineConnection('create')}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs cursor-pointer disabled:opacity-50"
               >
-                ยกเลิก
+                {isLineLoading ? 'กำลังสร้างรหัส...' : 'สร้างรหัสเชื่อมต่อกลุ่ม LINE'}
               </button>
-              <button
-                type="button"
-                disabled={!newStudentFirst.trim()}
-                onClick={() => handleAddStudent(newStudentFirst, newStudentLast, newStudentId, newStudentEmail)}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
-              >
-                เพิ่มผู้เรียน
-              </button>
+
+              {(classroom.line_connection_status === 'connected' || classroom.line_group_id) && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isLineLoading}
+                    onClick={() => handleLineConnection('test')}
+                    className="px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-xs hover:bg-emerald-100 cursor-pointer"
+                  >
+                    ทดสอบส่งข้อความ
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isLineLoading}
+                    onClick={() => handleLineConnection('disconnect')}
+                    className="px-3 py-2.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs hover:bg-rose-100 cursor-pointer"
+                  >
+                    ยกเลิกเชื่อมต่อ
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1891,411 +2580,502 @@ function AttendancePanel({
   onDeleteSession?: (id: string) => void;
   isUpdatingSession?: boolean;
 }) {
+  // Collapsible session state: which session is expanded
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(
+    session?.id || sessions.find((s) => s.status === 'open')?.id || sessions[0]?.id || null
+  );
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingTitle, setEditingTitle] = useState('');
-  const [editingStartsAt, setEditingStartsAt] = useState('');
-  const [editingOnTime, setEditingOnTime] = useState(10);
-  const [editingLate, setEditingLate] = useState(30);
   const [isEditingTitleActive, setIsEditingTitleActive] = useState(false);
+  const [rosterSearch, setRosterSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'on_time' | 'late' | 'absent' | 'excused'>('all');
 
-  // Sync editing title and config when selected session changes
+  // Keep expanded session in sync with parent session
   useEffect(() => {
-    if (session) {
+    if (session?.id) {
+      setExpandedSessionId(session.id);
       setEditingTitle(session.title);
-      setEditingStartsAt(session.starts_at ? new Date(session.starts_at).toISOString().slice(0, 16) : '');
-      setEditingOnTime(session.on_time_until_minutes || 10);
-      setEditingLate(session.late_until_minutes || 30);
       setIsEditingTitleActive(false);
     }
   }, [session?.id]);
 
   const activeOpenSession = sessions.find((s) => s.status === 'open');
 
+  const toggleSession = (sessionId: string) => {
+    if (expandedSessionId === sessionId) {
+      setExpandedSessionId(null);
+    } else {
+      setExpandedSessionId(sessionId);
+      selectSession(sessionId);
+    }
+  };
+
+  // Filter students for the currently selected session
+  const filteredStudents = useMemo(() => {
+    const list = classroom.students || [];
+    return list.filter((student) => {
+      const matchQuery =
+        !rosterSearch.trim() ||
+        `${student.first_name} ${student.last_name}`.toLowerCase().includes(rosterSearch.toLowerCase()) ||
+        (student.student_id && student.student_id.includes(rosterSearch));
+
+      if (!matchQuery) return false;
+      if (statusFilter === 'all') return true;
+
+      const record = records.find(
+        (r) =>
+          (student.id && r.student_id === student.id) ||
+          (student.line_uid && r.student_id === student.line_uid) ||
+          (student.student_id && r.student_id === student.student_id)
+      );
+      const studentStatus = record?.status || 'absent';
+      return studentStatus === statusFilter;
+    });
+  }, [classroom.students, records, rosterSearch, statusFilter]);
+
   return (
     <section className="max-w-4xl mx-auto space-y-6">
-      {/* Header and Statistics Cards */}
+      {/* 1. Top Header Bar with Open-Form Toggle */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-black text-slate-900 dark:text-white">เช็คชื่อรายคาบ</h2>
-          <p className="text-xs text-slate-500 mt-0.5">เปิดคาบเช็คชื่อ ตรวจสอบสถานะผู้เรียน แก้ไข หรือลบประวัติ</p>
+          <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+            <CalendarCheck className="w-5 h-5 text-emerald-500" />
+            <span>เช็คชื่อรายคาบ</span>
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            จัดการคาบเรียน เช็คชื่อแบบเรียลไทม์ และสลับสถานะรายคนได้ตลอดเวลา
+          </p>
         </div>
-        {session && (
+
+        <div className="flex items-center gap-2">
+          {session && (
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              <span>ส่งออก CSV</span>
+            </button>
+          )}
+
           <button
-            onClick={exportCsv}
-            className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-slate-100 cursor-pointer shadow-xs"
+            type="button"
+            onClick={() => setShowCreateForm((prev) => !prev)}
+            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
           >
-            <Download className="w-3.5 h-3.5 text-emerald-600" />
-            <span>ส่งออก CSV ({session.title})</span>
+            <Plus className="w-4 h-4" />
+            <span>{showCreateForm ? 'ปิดแบบฟอร์ม' : 'เปิดคาบเช็คชื่อใหม่'}</span>
           </button>
-        )}
+        </div>
       </div>
 
+      {/* 2. Active Session Live Banner (Prominently featured when open) */}
+      {activeOpenSession && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-linear-to-r from-emerald-500/10 via-emerald-500/5 to-teal-500/10 border border-emerald-300 dark:border-emerald-800 shadow-sm flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-black text-[10px]">
+                  กำลังเปิดรับเช็คชื่อ 🟢
+                </span>
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                  {activeOpenSession.title}
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                เริ่มเมื่อ {new Date(activeOpenSession.starts_at).toLocaleTimeString('th-TH')} • ตรงเวลาภายใน {activeOpenSession.on_time_until_minutes} นาที • สายได้ถึง {activeOpenSession.late_until_minutes} นาที
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                selectSession(activeOpenSession.id);
+                action('extend');
+              }}
+              className="px-3.5 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-50 cursor-pointer shadow-xs"
+            >
+              +10 นาที
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                selectSession(activeOpenSession.id);
+                action('close');
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold cursor-pointer shadow-xs"
+            >
+              ปิดรับเช็คชื่อ
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleSession(activeOpenSession.id)}
+              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer shadow-xs"
+            >
+              {expandedSessionId === activeOpenSession.id ? 'ซ่อนรายชื่อ' : 'ดูรายชื่อนักเรียน'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Collapsible New Session Creation Form */}
+      {showCreateForm && (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-emerald-300 dark:border-emerald-800 p-5 shadow-md space-y-4 animate-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+            <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
+              <CalendarCheck className="w-4 h-4 text-emerald-600" />
+              <span>กำหนดรายละเอียดคาบเช็คชื่อใหม่</span>
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowCreateForm(false)}
+              className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="sm:col-span-2">
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">ชื่อคาบเรียน *</label>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">เวลาเริ่ม (เว้นว่าง = ทันที)</label>
+              <input
+                type="datetime-local"
+                value={startsAt}
+                onChange={(e) => setStartsAt(e.target.value)}
+                className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs outline-none"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 block mb-1">ตรงเวลา (น.)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={onTime}
+                  onChange={(e) => setOnTime(Math.max(1, Number(e.target.value)))}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs outline-none text-center font-bold"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 block mb-1">สายถึง (น.)</label>
+                <input
+                  type="number"
+                  min={onTime}
+                  value={late}
+                  onChange={(e) => setLate(Math.max(onTime, Number(e.target.value)))}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs outline-none text-center font-bold"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setShowCreateForm(false)}
+              className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold"
+            >
+              ยกเลิก
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                create();
+                setShowCreateForm(false);
+              }}
+              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <Plus className="w-4 h-4" />
+              <span>เริ่มเปิดเช็คชื่อและส่งแจ้งเตือน LINE</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 4. Statistics Summary Bento Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          ['on_time', 'ตรงเวลา', 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40'],
-          ['late', 'มาสาย', 'text-amber-600 bg-amber-50 dark:bg-amber-950/40'],
-          ['absent', 'ขาด', 'text-rose-600 bg-rose-50 dark:bg-rose-950/40'],
-          ['excused', 'ลา', 'text-blue-600 bg-blue-50 dark:bg-blue-950/40'],
-        ].map(([key, label, colorCls]) => (
-          <div key={key} className={`p-4 rounded-3xl border border-slate-200 dark:border-slate-800 ${colorCls}`}>
-            <p className="text-3xl font-black">{counts[key] || 0}</p>
-            <p className="text-xs font-bold mt-1">{label}</p>
+          ['on_time', 'ตรงเวลา', counts['on_time'] || 0, 'text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60'],
+          ['late', 'มาสาย', counts['late'] || 0, 'text-amber-700 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60'],
+          ['absent', 'ขาด / ยังไม่เช็ค', counts['absent'] || 0, 'text-rose-700 bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60'],
+          ['excused', 'ลา', counts['excused'] || 0, 'text-blue-700 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800/60'],
+        ].map(([key, label, count, colorCls]) => (
+          <div key={key} className={`p-4 rounded-3xl border ${colorCls} shadow-xs`}>
+            <p className="text-3xl font-black">{count}</p>
+            <p className="text-xs font-bold mt-1 opacity-90">{label}</p>
           </div>
         ))}
       </div>
 
-      {/* ============================================================== */}
-      {/* 1. เปิดคาบเช็คชื่อขึ้นก่อน (Top Section: Open Session Form) */}
-      {/* ============================================================== */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+      {/* 5. Sessions Accordion List */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between px-1">
           <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
-            <CalendarCheck className="w-4 h-4 text-emerald-600" />
-            <span>เปิดคาบเช็คชื่อใหม่</span>
-          </h3>
-          {activeOpenSession && (
-            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 animate-pulse">
-              มีคาบที่กำลังเปิดรับอยู่ 🟢
-            </span>
-          )}
-        </div>
-
-        {/* Live Active Session Banner if one is already open */}
-        {activeOpenSession && (
-          <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-black text-slate-900 dark:text-white">
-                กำลังเปิดรับ: {activeOpenSession.title}
-              </p>
-              <p className="text-[10px] text-slate-500 mt-0.5">
-                เริ่มเมื่อ {new Date(activeOpenSession.starts_at).toLocaleTimeString('th-TH')} • ตรงเวลา {activeOpenSession.on_time_until_minutes}m / สายได้ถึง {activeOpenSession.late_until_minutes}m
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  selectSession(activeOpenSession.id);
-                  action('extend');
-                }}
-                className="px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-900 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 cursor-pointer shadow-xs"
-              >
-                +10 นาที
-              </button>
-              <button
-                onClick={() => {
-                  selectSession(activeOpenSession.id);
-                  action('close');
-                }}
-                className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 cursor-pointer shadow-xs"
-              >
-                ปิดรับเช็คชื่อ
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Create Session Form */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="sm:col-span-2">
-            <label className="text-[11px] font-bold text-slate-400 block mb-1">ชื่อคาบเรียน</label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="เช่น คาบที่ 1 ฟิสิกส์พื้นฐาน"
-            />
-          </div>
-          <div>
-            <label className="text-[11px] font-bold text-slate-400 block mb-1">เวลาเริ่ม (เว้นว่าง = ทันที)</label>
-            <input
-              type="datetime-local"
-              value={startsAt}
-              onChange={(e) => setStartsAt(e.target.value)}
-              className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs outline-none"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">ตรงเวลา (น.)</label>
-              <input
-                type="number"
-                min="1"
-                value={onTime}
-                onChange={(e) => setOnTime(Math.max(1, Number(e.target.value)))}
-                className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs outline-none text-center font-bold"
-              />
-            </div>
-            <div>
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">สายถึง (น.)</label>
-              <input
-                type="number"
-                min={onTime}
-                value={late}
-                onChange={(e) => setLate(Math.max(onTime, Number(e.target.value)))}
-                className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs outline-none text-center font-bold"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-end pt-1">
-          <button
-            onClick={create}
-            className="px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs inline-flex items-center gap-2 cursor-pointer shadow-md transition-all"
-          >
-            <Plus className="w-4 h-4" />
-            <span>เริ่มเปิดเช็คชื่อและส่งแจ้งเตือน LINE</span>
-          </button>
-        </div>
-      </div>
-
-      {/* ============================================================== */}
-      {/* 2. ประวัติคาบเช็คชื่อ & ตัวสลับ/แก้ไขสถานะรายคน */}
-      {/* ============================================================== */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
-            <span>ประวัติและคาบที่เปิดไว้ทั้งหมด</span>
+            <span>ประวัติและคาบเรียนทั้งหมด</span>
             <span className="text-slate-400 font-normal">({sessions.length} คาบ)</span>
           </h3>
-          <span className="text-[10px] text-slate-400">
-            คลิกที่คาบเพื่อดูสถานะหรือแก้ไขรายละเอียด
-          </span>
+          <span className="text-[11px] text-slate-400">คลิกที่คาบเพื่อ ย่อ/ขยาย ดูรายชื่อ</span>
         </div>
 
-        <div className="space-y-3">
-          {sessions.map((item) => {
-            const isSelected = session?.id === item.id;
-            const isOpen = item.status === 'open';
+        {sessions.map((item) => {
+          const isExpanded = expandedSessionId === item.id;
+          const isOpen = item.status === 'open';
 
-            return (
+          return (
+            <div
+              key={item.id}
+              className={`rounded-3xl border transition-all overflow-hidden ${
+                isExpanded
+                  ? 'border-emerald-400 dark:border-emerald-700 shadow-md bg-white dark:bg-slate-900'
+                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
+              }`}
+            >
+              {/* Session Header Card (Always visible, click to toggle collapse) */}
               <div
-                key={item.id}
-                className={`rounded-3xl border transition-all overflow-hidden ${
-                  isSelected
-                    ? 'border-emerald-500 shadow-md bg-white dark:bg-slate-900 ring-2 ring-emerald-500/10'
-                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
-                }`}
+                onClick={() => toggleSession(item.id)}
+                className="p-4 flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none"
               >
-                {/* Session Card Header */}
-                <div className="p-4 flex flex-wrap items-center justify-between gap-3">
-                  <div
-                    onClick={() => selectSession(item.id)}
-                    className="flex-1 min-w-56 cursor-pointer"
+                <div className="flex items-center gap-3 min-w-48">
+                  <span
+                    className={`text-[10px] font-black px-2.5 py-0.5 rounded-full shrink-0 ${
+                      isOpen
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                    }`}
                   >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span
-                        className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                          isOpen
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                            : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                        }`}
-                      >
-                        {isOpen ? '🟢 เปิดรับเช็คชื่อ' : '⚪ ปิดแล้ว'}
-                      </span>
-                      <h4 className="text-sm font-black text-slate-900 dark:text-white">{item.title}</h4>
-                    </div>
-                    <p className="text-[11px] text-slate-400">
-                      เริ่ม {new Date(item.starts_at).toLocaleString('th-TH')} • ตรงเวลา {item.on_time_until_minutes} นาที / สาย {item.late_until_minutes} นาที
+                    {isOpen ? '🟢 เปิดรับอยู่' : '⚪ ปิดแล้ว'}
+                  </span>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <span>{item.title}</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {new Date(item.starts_at).toLocaleString('th-TH')} • ตรงเวลา {item.on_time_until_minutes}m / สาย {item.late_until_minutes}m
                     </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {isOpen && (
-                      <>
-                        <button
-                          onClick={() => {
-                            selectSession(item.id);
-                            action('extend');
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-100 cursor-pointer shadow-xs"
-                        >
-                          +10 นาที
-                        </button>
-                        <button
-                          onClick={() => {
-                            selectSession(item.id);
-                            action('close');
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 cursor-pointer shadow-xs"
-                        >
-                          ปิดรับ
-                        </button>
-                      </>
-                    )}
-
-                    <button
-                      onClick={() => selectSession(item.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs ${
-                        isSelected
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-emerald-500'
-                      }`}
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>{isSelected ? 'กำลังดู/แก้ไข' : 'ดูและแก้ไข ✏️'}</span>
-                    </button>
-
-                    {onDeleteSession && (
-                      <button
-                        onClick={() => onDeleteSession(item.id)}
-                        className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                        title="ลบคาบเช็คชื่อนี้"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
                   </div>
                 </div>
 
-                {/* Expanded Session Detail & Student Attendance Editor */}
-                {isSelected && (
-                  <div className="p-4 bg-white dark:bg-slate-900 border-t border-emerald-200 dark:border-emerald-800/60 space-y-4">
-                    {/* Edit Session Title & Config Box */}
-                    <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex-1 min-w-48 flex items-center gap-2">
-                          <label className="text-xs font-bold text-slate-500 whitespace-nowrap">แก้ไขชื่อคาบ:</label>
-                          <input
-                            value={editingTitle}
-                            onChange={(e) => {
-                              setEditingTitle(e.target.value);
-                              setIsEditingTitleActive(true);
-                            }}
-                            className="flex-1 p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-white dark:bg-slate-900"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {isEditingTitleActive && (
-                            <button
-                              type="button"
-                              disabled={isUpdatingSession}
-                              onClick={() => {
-                                if (onUpdateSession && editingTitle.trim()) {
-                                  onUpdateSession(
-                                    item.id,
-                                    editingTitle.trim(),
-                                    undefined,
-                                    editingStartsAt ? new Date(editingStartsAt).toISOString() : undefined,
-                                    editingOnTime,
-                                    editingLate
-                                  );
-                                  setIsEditingTitleActive(false);
-                                }
-                              }}
-                              className="px-3 py-1.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black cursor-pointer shadow-xs"
-                            >
-                              บันทึกการแก้ไขคาบ
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={exportCsv}
-                            className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>CSV</span>
-                          </button>
-                          {onDeleteSession && (
-                            <button
-                              type="button"
-                              onClick={() => onDeleteSession(item.id)}
-                              className="px-2.5 py-1.5 rounded-xl border border-rose-200 dark:border-rose-900/60 text-xs font-bold text-rose-600 hover:bg-rose-50 flex items-center gap-1 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>ลบคาบ</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  {isOpen && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          selectSession(item.id);
+                          action('extend');
+                        }}
+                        className="px-2.5 py-1 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-100 cursor-pointer shadow-xs"
+                      >
+                        +10 นาที
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          selectSession(item.id);
+                          action('close');
+                        }}
+                        className="px-2.5 py-1 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 cursor-pointer shadow-xs"
+                      >
+                        ปิดรับ
+                      </button>
+                    </>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => toggleSession(item.id)}
+                    className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>{isExpanded ? 'ย่อกลับ' : 'ดูรายชื่อ'}</span>
+                    {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+
+                  {onDeleteSession && (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteSession(item.id)}
+                      className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      title="ลบคาบเช็คชื่อนี้"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded Detail & Interactive Student Roster */}
+              {isExpanded && (
+                <div className="p-4 sm:p-5 bg-slate-50/50 dark:bg-slate-850/50 border-t border-slate-200 dark:border-slate-800 space-y-4">
+                  {/* Inline Edit Header & CSV Export */}
+                  <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                    <div className="flex-1 min-w-56 flex items-center gap-2">
+                      <label className="text-xs font-bold text-slate-400 whitespace-nowrap">ชื่อคาบ:</label>
+                      <input
+                        value={editingTitle}
+                        onChange={(e) => {
+                          setEditingTitle(e.target.value);
+                          setIsEditingTitleActive(true);
+                        }}
+                        className="flex-1 p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
+                      />
+                      {isEditingTitleActive && (
+                        <button
+                          type="button"
+                          disabled={isUpdatingSession}
+                          onClick={() => {
+                            if (onUpdateSession && editingTitle.trim()) {
+                              onUpdateSession(item.id, editingTitle.trim());
+                              setIsEditingTitleActive(false);
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black cursor-pointer shadow-xs"
+                        >
+                          บันทึกชื่อ
+                        </button>
+                      )}
                     </div>
 
-                    {/* Student Roster in this Session with Interactive Status Switcher */}
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-xs font-black text-slate-800 dark:text-slate-200">
-                          รายชื่อผู้เรียนและสถานะเช็คชื่อ (คลิกเพื่อแก้ไขสถานะได้ตลอดเวลา):
-                        </h4>
-                        <span className="text-[10px] text-slate-400">
-                          ทั้งหมด {classroom.students?.length || 0} คน
-                        </span>
-                      </div>
-
-                      <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-                        {(classroom.students || []).map((student) => {
-                          const record = records.find(
-                            (r) =>
-                              (student.id && r.student_id === student.id) ||
-                              (student.line_uid && r.student_id === student.line_uid) ||
-                              (student.student_id && r.student_id === student.student_id)
-                          );
-                          const currentStatus = record?.status || 'absent';
-
-                          return (
-                            <div
-                              key={student.id}
-                              className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700/60 flex flex-wrap items-center justify-between gap-2 text-xs"
-                            >
-                              <div className="min-w-44">
-                                <span className="font-bold text-slate-900 dark:text-white block">
-                                  {student.first_name} {student.last_name}
-                                </span>
-                                <span className="text-[10px] text-slate-400 font-mono">
-                                  รหัส: {student.student_id || '-'}
-                                  {record?.checked_at && ` • เช็คเมื่อ ${new Date(record.checked_at).toLocaleTimeString('th-TH')}`}
-                                </span>
-                              </div>
-
-                              {/* Interactive Quick Status Buttons (แก้ไขได้ตลอดเวลา แม้คาบจะปิดแล้ว) */}
-                              <div className="flex items-center gap-1">
-                                {(
-                                  [
-                                    ['on_time', 'ตรงเวลา 🟢', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
-                                    ['late', 'มาสาย 🟡', 'bg-amber-100 text-amber-800 border-amber-300'],
-                                    ['excused', 'ลา 🔵', 'bg-blue-100 text-blue-800 border-blue-300'],
-                                    ['absent', 'ขาด 🔴', 'bg-rose-100 text-rose-800 border-rose-300'],
-                                  ] as const
-                                ).map(([stKey, stLabel, activeCls]) => {
-                                  const isActive = currentStatus === stKey;
-                                  return (
-                                    <button
-                                      key={stKey}
-                                      type="button"
-                                      onClick={() => update(student.id, stKey as AttendanceStatus)}
-                                      className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
-                                        isActive
-                                          ? `${activeCls} font-black shadow-xs ring-1 ring-current`
-                                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-700 hover:border-slate-400'
-                                      }`}
-                                    >
-                                      {stLabel}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-
-                        {!classroom.students?.length && (
-                          <p className="text-xs text-slate-400 text-center py-6">
-                            ยังไม่มีนักเรียนในห้องเรียนนี้
-                          </p>
-                        )}
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={exportCsv}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>CSV คาบนี้</span>
+                      </button>
                     </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
 
-          {!sessions.length && (
-            <div className="p-8 text-center bg-slate-50 dark:bg-slate-800 rounded-2xl text-xs text-slate-400">
-              ยังไม่มีประวัติคาบเช็คชื่อ เริ่มเปิดคาบแรกจากด้านบนได้เลย
+                  {/* Student Search & Status Filter Tabs */}
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {(
+                        [
+                          ['all', 'ทั้งหมด'],
+                          ['on_time', 'ตรงเวลา 🟢'],
+                          ['late', 'มาสาย 🟡'],
+                          ['absent', 'ขาด 🔴'],
+                          ['excused', 'ลา 🔵'],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setStatusFilter(key)}
+                          className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            statusFilter === key
+                              ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black shadow-xs'
+                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="relative min-w-44 flex-1 sm:max-w-xs">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                      <input
+                        value={rosterSearch}
+                        onChange={(e) => setRosterSearch(e.target.value)}
+                        placeholder="ค้นหาชื่อหรือรหัสนักเรียน..."
+                        className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Student Roster Table/Cards */}
+                  <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
+                    {filteredStudents.map((student) => {
+                      const record = records.find(
+                        (r) =>
+                          (student.id && r.student_id === student.id) ||
+                          (student.line_uid && r.student_id === student.line_uid) ||
+                          (student.student_id && r.student_id === student.student_id)
+                      );
+                      const currentStatus = record?.status || 'absent';
+
+                      return (
+                        <div
+                          key={student.id}
+                          className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs shadow-xs"
+                        >
+                          <div className="min-w-44">
+                            <span className="font-bold text-slate-900 dark:text-white block">
+                              {student.first_name} {student.last_name}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              รหัส: {student.student_id || '-'}
+                              {record?.checked_at && ` • เช็คเมื่อ ${new Date(record.checked_at).toLocaleTimeString('th-TH')}`}
+                            </span>
+                          </div>
+
+                          {/* 1-Click Status Switcher Buttons */}
+                          <div className="flex items-center gap-1">
+                            {(
+                              [
+                                ['on_time', 'ตรงเวลา', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
+                                ['late', 'มาสาย', 'bg-amber-100 text-amber-800 border-amber-300'],
+                                ['excused', 'ลา', 'bg-blue-100 text-blue-800 border-blue-300'],
+                                ['absent', 'ขาด', 'bg-rose-100 text-rose-800 border-rose-300'],
+                              ] as const
+                            ).map(([stKey, stLabel, activeCls]) => {
+                              const isActive = currentStatus === stKey;
+                              return (
+                                <button
+                                  key={stKey}
+                                  type="button"
+                                  onClick={() => update(student.id, stKey as AttendanceStatus)}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                    isActive
+                                      ? `${activeCls} font-black shadow-xs ring-1 ring-current`
+                                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-700 hover:border-slate-400'
+                                  }`}
+                                >
+                                  {stLabel}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {!filteredStudents.length && (
+                      <p className="text-xs text-slate-400 text-center py-6">
+                        ไม่พบรายชื่อนักเรียนที่ตรงกับเงื่อนไข
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          );
+        })}
+
+        {!sessions.length && (
+          <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400 space-y-2">
+            <CalendarCheck className="w-8 h-8 text-slate-300 mx-auto" />
+            <p className="font-bold">ยังไม่มีประวัติคาบเช็คชื่อ</p>
+            <p className="text-[11px]">กดปุ่ม &quot;เปิดคาบเช็คชื่อใหม่&quot; ด้านบนเพื่อเริ่มต้นคาบแรก</p>
+          </div>
+        )}
       </div>
     </section>
   );
 }
+

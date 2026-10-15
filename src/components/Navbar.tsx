@@ -7,6 +7,7 @@ import { notificationManager, AppNotification } from '@/lib/utils/notificationMa
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { useSidebar } from '@/components/SidebarContext';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeToggle } from './ThemeToggle';
 import {
@@ -19,6 +20,7 @@ export const Navbar: React.FC = () => {
   const pathname = usePathname();
   const { t, language } = useLanguage();
   const { user, isSignedIn, isLoaded } = useUser();
+  const { toggleSidebar } = useSidebar();
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
@@ -76,7 +78,7 @@ export const Navbar: React.FC = () => {
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
             type="button"
-            onClick={() => window.dispatchEvent(new CustomEvent('toggle-classroom-sidebar'))}
+            onClick={toggleSidebar}
             className="p-2 -ml-2 rounded-xl text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
             title="เปิด/ปิดแถบเมนูห้องเรียนและวิชา"
             aria-label="Toggle classroom sidebar"

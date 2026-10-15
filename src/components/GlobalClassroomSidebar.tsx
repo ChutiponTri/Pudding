@@ -8,21 +8,19 @@ import {
   BookOpen,
   Plus,
   LayoutDashboard,
-  Layers,
   GraduationCap,
   Sparkles,
-  ChevronRight,
-  Filter,
+  Users,
 } from 'lucide-react';
 import { dataService } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
+import { useSidebar } from '@/components/SidebarContext';
 
 export const GlobalClassroomSidebar: React.FC = () => {
   const pathname = usePathname();
-  const [isOpen, setIsOpen] = useState(false);
+  const { isOpen, setIsOpen, closeSidebar } = useSidebar();
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedSemester, setSelectedSemester] = useState<string>('all');
 
   // Do not render on LIFF student portal
   if (pathname.startsWith('/liff')) {
@@ -43,222 +41,168 @@ export const GlobalClassroomSidebar: React.FC = () => {
   };
 
   useEffect(() => {
-    const handleToggle = () => {
-      setIsOpen((prev) => !prev);
-    };
-    window.addEventListener('toggle-classroom-sidebar', handleToggle);
-    return () => window.removeEventListener('toggle-classroom-sidebar', handleToggle);
-  }, []);
-
-  useEffect(() => {
     if (isOpen && classrooms.length === 0) {
       loadClassrooms();
     }
   }, [isOpen]);
 
-  // Close sidebar on page change ONLY on mobile screens (< 1024px)
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
-      setIsOpen(false);
-    }
-  }, [pathname]);
-
-  const handleLinkClick = () => {
-    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
-      setIsOpen(false);
-    }
-  };
-
-  // Extract available semesters
-  const availableSemesters = useMemo(() => {
-    const set = new Set<string>();
-    classrooms.forEach((c) => {
-      if (c.academic_year && c.academic_year.trim()) {
-        set.add(c.academic_year.trim());
-      }
+  // Sort classrooms from newest to oldest
+  const sortedClassrooms = useMemo(() => {
+    return [...classrooms].sort((a, b) => {
+      const timeA = new Date(a.created_at || 0).getTime();
+      const timeB = new Date(b.created_at || 0).getTime();
+      return timeB - timeA;
     });
-    return Array.from(set).sort().reverse();
   }, [classrooms]);
 
-  // Filter classrooms by semester
-  const filteredClassrooms = useMemo(() => {
-    if (selectedSemester === 'all') return classrooms;
-    return classrooms.filter((c) => (c.academic_year || 'ปัจจุบัน') === selectedSemester);
-  }, [classrooms, selectedSemester]);
-
-  // Group by Course / Subject
-  const coursesMap = useMemo(() => {
-    const map = new Map<string, { label: string; items: Classroom[] }>();
-    for (const cls of filteredClassrooms) {
+  // Group classrooms by Course / Subject while maintaining newest-to-oldest order
+  const groupedCourses = useMemo(() => {
+    const map = new Map<string, { label: string; subjectCode?: string; items: Classroom[] }>();
+    for (const cls of sortedClassrooms) {
       const key = cls.course_name || cls.subject_code || 'รายวิชาทั่วไป';
       if (!map.has(key)) {
-        map.set(key, { label: key, items: [] });
+        map.set(key, { label: key, subjectCode: cls.subject_code, items: [] });
       }
       map.get(key)!.items.push(cls);
     }
-    return map;
-  }, [filteredClassrooms]);
+    return Array.from(map.values());
+  }, [sortedClassrooms]);
+
+  const handleItemClick = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      closeSidebar();
+    }
+  };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-40 pointer-events-none overflow-hidden">
-      {/* Mobile Backdrop ONLY: Dark backdrop blur is hidden on desktop (computer) so user can work uninterrupted */}
+    <>
+      {/* Mobile Drawer Backdrop (ONLY visible on mobile < 768px; iPad and desktop do not blur/cover the page) */}
       <div
-        className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200 pointer-events-auto lg:hidden"
-        onClick={() => setIsOpen(false)}
+        className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 md:hidden animate-in fade-in duration-200"
+        onClick={closeSidebar}
         aria-hidden="true"
       />
 
-      {/* Slide-over Drawer Panel */}
-      <div className="fixed inset-y-0 left-0 max-w-full flex pointer-events-none">
-        <aside className="w-80 sm:w-88 max-w-sm bg-white dark:bg-slate-900 shadow-2xl border-r border-slate-200 dark:border-slate-800 flex flex-col h-full animate-in slide-in-from-left duration-250 ease-out pointer-events-auto">
-          {/* Header */}
-          <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850/60">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-600 flex items-center justify-center font-bold text-sm">
-                🍮
-              </div>
-              <div>
-                <h2 className="text-sm font-black text-slate-900 dark:text-white">ห้องเรียนและรายวิชา</h2>
-                <p className="text-[10px] text-slate-500 font-medium">สลับห้องเรียนหรือเปิดค้างไว้เพื่อทำงานได้ตลอด</p>
-              </div>
+      {/* Sidebar Container: Fixed on left (w-80) */}
+      <aside className="fixed inset-y-0 left-0 w-80 max-w-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-2xl md:shadow-lg flex flex-col z-50 animate-in slide-in-from-left duration-250 ease-out select-none overflow-hidden">
+        {/* Header */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850/60 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
+              🍮
             </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1.5 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer"
-              aria-label="Close sidebar"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Quick Actions Shortcuts */}
-          <div className="p-3 border-b border-slate-200 dark:border-slate-800 grid grid-cols-2 gap-2 bg-white dark:bg-slate-900">
-            <Link
-              href="/dashboard"
-              onClick={handleLinkClick}
-              className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-2 transition-all cursor-pointer"
-            >
-              <LayoutDashboard className="w-3.5 h-3.5 text-amber-600" />
-              <span>แดชบอร์ด</span>
-            </Link>
-            <Link
-              href="/assignments/new"
-              onClick={handleLinkClick}
-              className="p-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>สร้างงาน/สอบ</span>
-            </Link>
-          </div>
-
-          {/* Semester / Academic Year Filter */}
-          {availableSemesters.length > 0 && (
-            <div className="p-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-850/40 space-y-1.5">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] font-black uppercase text-slate-400 flex items-center gap-1">
-                  <Filter className="w-3 h-3 text-amber-500" />
-                  <span>กรองตามภาคเรียน / ปีการศึกษา</span>
-                </span>
-                {selectedSemester !== 'all' && (
-                  <button
-                    onClick={() => setSelectedSemester('all')}
-                    className="text-[10px] text-amber-600 font-bold hover:underline cursor-pointer"
-                  >
-                    รีเซ็ต
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                <button
-                  type="button"
-                  onClick={() => setSelectedSemester('all')}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all cursor-pointer ${
-                    selectedSemester === 'all'
-                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
-                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 border border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  ทั้งหมด
-                </button>
-                {availableSemesters.map((sem) => (
-                  <button
-                    key={sem}
-                    type="button"
-                    onClick={() => setSelectedSemester(sem)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all cursor-pointer ${
-                      selectedSemester === sem
-                        ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
-                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 border border-slate-200 dark:border-slate-700'
-                    }`}
-                  >
-                    {sem}
-                  </button>
-                ))}
-              </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-black text-slate-900 dark:text-white truncate">ห้องเรียนและรายวิชา</h2>
+              <p className="text-[10px] text-slate-500 font-medium truncate">รายวิชาทั้งหมด (ใหม่ไปเก่า)</p>
             </div>
-          )}
+          </div>
+          <button
+            onClick={closeSidebar}
+            className="p-1.5 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer shrink-0"
+            aria-label="Close sidebar"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
-          {/* Grouped Classrooms List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-4">
-            {loading ? (
-              <div className="p-8 text-center text-xs text-slate-400 space-y-2">
-                <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
-                <p>กำลังโหลดห้องเรียน...</p>
-              </div>
-            ) : filteredClassrooms.length === 0 ? (
-              <div className="p-8 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs text-slate-400 space-y-2">
-                <GraduationCap className="w-8 h-8 text-slate-300 mx-auto" />
-                <p>ไม่พบห้องเรียนในภาคเรียนนี้</p>
-              </div>
-            ) : (
-              Array.from(coursesMap.entries()).map(([courseTitle, group]) => (
-                <div key={courseTitle} className="space-y-1">
-                  <div className="px-2 py-1 flex items-center justify-between">
-                    <p className="text-xs font-black text-slate-800 dark:text-slate-200 truncate flex items-center gap-1.5">
-                      <BookOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <span className="truncate">{courseTitle}</span>
-                    </p>
-                    <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                      ({group.items.length})
-                    </span>
-                  </div>
-                  <div className="space-y-1 pl-2">
-                    {group.items.map((cls) => {
-                      const isActive = pathname.startsWith(`/classrooms/${cls.id}`);
-                      return (
-                        <Link
-                          key={cls.id}
-                          href={`/classrooms/${cls.id}`}
-                          onClick={handleLinkClick}
-                          className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                            isActive
-                              ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-900 dark:text-amber-200 font-black border border-amber-300 dark:border-amber-700'
-                              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
-                          }`}
-                        >
-                          <span className="truncate">{cls.name}</span>
-                          <span className="text-[10px] text-slate-400 font-normal shrink-0 ml-1">
-                            {cls.student_count || cls.students?.length || 0} คน
-                          </span>
-                        </Link>
-                      );
-                    })}
-                  </div>
+        {/* Quick Actions Shortcuts */}
+        <div className="p-3 border-b border-slate-200 dark:border-slate-800 grid grid-cols-2 gap-2 bg-white dark:bg-slate-900 shrink-0">
+          <Link
+            href="/dashboard"
+            onClick={handleItemClick}
+            className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer truncate"
+          >
+            <LayoutDashboard className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span className="truncate">แดชบอร์ด</span>
+          </Link>
+          <Link
+            href="/assignments/new"
+            onClick={handleItemClick}
+            className="p-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs truncate"
+          >
+            <Plus className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">สร้างงาน/สอบ</span>
+          </Link>
+        </div>
+
+        {/* Total Count Subtitle Banner */}
+        <div className="px-4 py-2 bg-slate-50/50 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
+          <span className="font-bold flex items-center gap-1">
+            <GraduationCap className="w-3.5 h-3.5 text-amber-500" />
+            <span>ทั้งหมด {sortedClassrooms.length} ห้องเรียน</span>
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono">
+            {groupedCourses.length} รายวิชา
+          </span>
+        </div>
+
+        {/* Classrooms List: Smooth Scroll with no horizontal overflow */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-4 overflow-x-hidden min-w-0">
+          {loading ? (
+            <div className="p-8 text-center text-xs text-slate-400 space-y-2">
+              <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p>กำลังโหลดห้องเรียน...</p>
+            </div>
+          ) : sortedClassrooms.length === 0 ? (
+            <div className="p-8 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs text-slate-400 space-y-2">
+              <GraduationCap className="w-8 h-8 text-slate-300 mx-auto" />
+              <p>ยังไม่มีห้องเรียนในระบบ</p>
+            </div>
+          ) : (
+            groupedCourses.map((group) => (
+              <div key={group.label} className="space-y-1.5 min-w-0">
+                <div className="px-2 py-1 flex items-center justify-between gap-1 min-w-0">
+                  <p className="text-xs font-black text-slate-800 dark:text-slate-200 truncate flex items-center gap-1.5 min-w-0">
+                    <BookOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <span className="truncate">{group.label}</span>
+                  </p>
+                  <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                    ({group.items.length})
+                  </span>
                 </div>
-              ))
-            )}
-          </div>
 
-          {/* Footer */}
-          <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850/40 text-center">
-            <span className="text-[10px] text-slate-400 font-medium">
-              Pudding Assessment Platform
-            </span>
-          </div>
-        </aside>
-      </div>
-    </div>
+                <div className="space-y-1 pl-1 min-w-0">
+                  {group.items.map((cls) => {
+                    const isActive = pathname.startsWith(`/classrooms/${cls.id}`);
+                    const studentCount = cls.student_count || cls.students?.length || 0;
+
+                    return (
+                      <Link
+                        key={cls.id}
+                        href={`/classrooms/${cls.id}`}
+                        onClick={handleItemClick}
+                        className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer min-w-0 ${
+                          isActive
+                            ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-950 dark:text-amber-200 font-black border border-amber-300 dark:border-amber-700 shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                          <span className="truncate">{cls.name}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-normal shrink-0 ml-2 flex items-center gap-0.5">
+                          <Users className="w-2.5 h-2.5" />
+                          <span>{studentCount}</span>
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850/40 text-center shrink-0">
+          <span className="text-[10px] text-slate-400 font-medium">
+            Pudding Assessment Platform
+          </span>
+        </div>
+      </aside>
+    </>
   );
 };
