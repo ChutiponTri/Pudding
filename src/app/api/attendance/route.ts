@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       supabase.from('users').select('id, line_uid').eq('line_uid', lineUid).eq('role', 'student').maybeSingle(),
     ]);
     const enrolled = Boolean(classroom && student && [...(classroom.students || []), ...(classroom.pending_students || [])].some((item: { id?: string; line_uid?: string }) => item.id === student.id || item.line_uid === lineUid));
-    if (!enrolled) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
+    if (!classroom || !student || !enrolled) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
     let sessionQuery = supabase.from('attendance_sessions').select('id, title, starts_at, on_time_until_minutes, late_until_minutes, status').eq('classroom_id', classroomId).order('starts_at', { ascending: false });
     if (sessionId) sessionQuery = sessionQuery.eq('id', sessionId);
     const { data: sessions, error } = await sessionQuery;
