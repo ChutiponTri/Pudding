@@ -101,6 +101,7 @@ export default function ClassroomWorkspacePage() {
   const [notice, setNotice] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [selectedSemesterFilter, setSelectedSemesterFilter] = useState('all');
 
   // Overview Facebook-style post form state
   const [isPostExpanded, setIsPostExpanded] = useState(false);
@@ -194,13 +195,72 @@ export default function ClassroomWorkspacePage() {
     loadWorkspace();
   }, [user?.id, classroomId]);
 
+  // Listen to Navbar Sidebar Toggle Button
   useEffect(() => {
-    if (tab !== 'grades' || !assignments.length || submissions.length || gradesLoading) return;
+    const handleToggle = () => {
+      if (window.innerWidth >= 1024) {
+        setIsSidebarCollapsed((prev) => !prev);
+      } else {
+        setSidebarOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('toggle-classroom-sidebar', handleToggle);
+    return () => window.removeEventListener('toggle-classroom-sidebar', handleToggle);
+  }, []);
+
+  // Fetch Grades when switching to Grades tab
+  useEffect(() => {
+    if (tab !== 'grades' || !assignments.length) return;
     setGradesLoading(true);
     Promise.all(assignments.map((item) => dataService.getSubmissions(item.id)))
       .then((results) => setSubmissions(results.flat()))
       .finally(() => setGradesLoading(false));
   }, [tab, assignments]);
+
+  // Realtime Polling & Broadcast listener (Every 3.5s when teacher is viewing)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        const hasOpenSession = sessions.some((s) => s.status === 'open');
+        if (tab === 'attendance' || hasOpenSession) {
+          loadAttendance();
+        }
+        if (tab === 'grades' && assignments.length > 0) {
+          Promise.all(assignments.map((item) => dataService.getSubmissions(item.id)))
+            .then((results) => setSubmissions(results.flat()))
+            .catch(() => {});
+        }
+      }
+    }, 3500);
+
+    const handleRealtimeEvent = () => {
+      loadAttendance();
+      if (assignments.length > 0) {
+        Promise.all(assignments.map((item) => dataService.getSubmissions(item.id)))
+          .then((results) => setSubmissions(results.flat()))
+          .catch(() => {});
+      }
+    };
+
+    window.addEventListener('pudding-submission-created', handleRealtimeEvent);
+    window.addEventListener('pudding-attendance-checked', handleRealtimeEvent);
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      bc = new BroadcastChannel('pudding-realtime');
+      bc.onmessage = (event) => {
+        if (event.data?.type === 'submission_created' || event.data?.type === 'attendance_checked') {
+          handleRealtimeEvent();
+        }
+      };
+    }
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('pudding-submission-created', handleRealtimeEvent);
+      window.removeEventListener('pudding-attendance-checked', handleRealtimeEvent);
+      if (bc) bc.close();
+    };
+  }, [tab, assignments, sessions]);
 
   const setActiveTab = (next: Tab) => {
     setTab(next);
@@ -288,10 +348,26 @@ export default function ClassroomWorkspacePage() {
     return filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [posts, assignments, sessions]);
 
-  // Group Classrooms by Subject / Course for Sidebar
+  // Available Academic Years / Semesters for filter
+  const availableSemesters = useMemo(() => {
+    const set = new Set<string>();
+    classrooms.forEach((cls) => {
+      if (cls.academic_year && cls.academic_year.trim()) {
+        set.add(cls.academic_year.trim());
+      }
+    });
+    return Array.from(set).sort().reverse();
+  }, [classrooms]);
+
+  // Group Classrooms by Subject / Course for Sidebar (filtered by Semester)
   const coursesMap = useMemo(() => {
     const map = new Map<string, { label: string; classrooms: Classroom[] }>();
-    for (const cls of classrooms) {
+    const filteredList =
+      selectedSemesterFilter === 'all'
+        ? classrooms
+        : classrooms.filter((cls) => (cls.academic_year || 'ปัจจุบัน') === selectedSemesterFilter);
+
+    for (const cls of filteredList) {
       const key = cls.course_name || cls.subject_code || 'รายวิชาทั่วไป';
       if (!map.has(key)) {
         map.set(key, { label: key, classrooms: [] });
@@ -299,7 +375,7 @@ export default function ClassroomWorkspacePage() {
       map.get(key)!.classrooms.push(cls);
     }
     return map;
-  }, [classrooms]);
+  }, [classrooms, selectedSemesterFilter]);
 
   // Existing group names across assignments
   const existingGroupNames = useMemo(() => {
@@ -439,7 +515,12 @@ export default function ClassroomWorkspacePage() {
     const rows = [
       ['นักเรียน', 'รหัสนักเรียน', 'สถานะ', 'เวลาที่เช็ค'],
       ...(classroom.students || []).map((student) => {
-        const record = records.find((item) => item.student_id === student.id || item.student_id === student.line_uid);
+        const record = records.find(
+          (item) =>
+            item.student_id === student.id ||
+            (student.line_uid && item.student_id === student.line_uid) ||
+            (student.student_id && item.student_id === student.student_id)
+        );
         return [
           `${student.first_name} ${student.last_name}`,
           student.student_id || '',
@@ -564,6 +645,50 @@ export default function ClassroomWorkspacePage() {
               {classroom.course_name || classroom.subject_code} · {classroom.student_count || classroom.students?.length || 0} ผู้เรียน
             </p>
           </div>
+
+          {/* Semester / Academic Year Filter */}
+          {availableSemesters.length > 0 && (
+            <div className="px-3.5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-850/60">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] font-black uppercase text-slate-400">ภาคเรียน / ปีการศึกษา</span>
+                {selectedSemesterFilter !== 'all' && (
+                  <button
+                    onClick={() => setSelectedSemesterFilter('all')}
+                    className="text-[10px] text-amber-600 font-bold hover:underline cursor-pointer"
+                  >
+                    รีเซ็ต
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSemesterFilter('all')}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition-all cursor-pointer ${
+                    selectedSemesterFilter === 'all'
+                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 border border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  ทั้งหมด
+                </button>
+                {availableSemesters.map((sem) => (
+                  <button
+                    key={sem}
+                    type="button"
+                    onClick={() => setSelectedSemesterFilter(sem)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition-all cursor-pointer ${
+                      selectedSemesterFilter === sem
+                        ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 border border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    {sem}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Grouped Subjects and Classrooms List */}
           <div className="flex-1 overflow-y-auto p-3 space-y-4">
@@ -1183,7 +1308,11 @@ export default function ClassroomWorkspacePage() {
                         <td className="p-3 text-slate-500 font-mono">{student.student_id || '-'}</td>
                         {assignments.map((item) => {
                           const sub = submissions.find(
-                            (s) => s.assignment_id === item.id && (s.student_id === student.id || s.student_id === student.line_uid)
+                            (s) =>
+                              s.assignment_id === item.id &&
+                              (s.student_id === student.id ||
+                                (student.line_uid && s.student_id === student.line_uid) ||
+                                (student.student_id && s.student_id === student.student_id))
                           );
                           return (
                             <td key={item.id} className="p-3 text-center font-bold">
@@ -1597,7 +1726,10 @@ function AttendancePanel({
                       <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
                         {(classroom.students || []).map((student) => {
                           const record = records.find(
-                            (r) => r.student_id === student.id || r.student_id === student.line_uid
+                            (r) =>
+                              r.student_id === student.id ||
+                              (student.line_uid && r.student_id === student.line_uid) ||
+                              (student.student_id && r.student_id === student.student_id)
                           );
                           const currentStatus = record?.status || 'absent';
 

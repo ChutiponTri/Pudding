@@ -12,6 +12,7 @@ import { ThemeToggle } from './ThemeToggle';
 import {
   Bell,
   LogIn,
+  Menu,
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -70,26 +71,39 @@ export const Navbar: React.FC = () => {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Brand Logo - Pudding (พุดดิ้ง) */}
-        <Link href="/dashboard" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/25 ring-2 ring-amber-400/30 group-hover:scale-105 group-hover:-rotate-3 transition-all duration-300">
-            <span className="text-2xl select-none group-hover:scale-110 transition-transform">🍮</span>
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-black text-lg tracking-tight text-slate-900 dark:text-white">
-                {language === 'th' ? 'พุดดิ้ง' : 'Pudding'}
-              </span>
-              <span className="hidden md:block text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
-                Platform
-              </span>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
+        {/* Left Section: Sidebar Toggle Button + Brand Logo */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('toggle-classroom-sidebar'))}
+            className="p-2 -ml-2 rounded-xl text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+            title="เปิด/ปิดแถบเมนูห้องเรียนและวิชา"
+            aria-label="Toggle classroom sidebar"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+
+          {/* Brand Logo - Pudding (พุดดิ้ง) */}
+          <Link href="/dashboard" className="flex items-center gap-2.5 sm:gap-3 group min-w-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-md shadow-amber-500/25 ring-2 ring-amber-400/30 group-hover:scale-105 group-hover:-rotate-3 transition-all duration-300 shrink-0">
+              <span className="text-xl sm:text-2xl select-none group-hover:scale-110 transition-transform">🍮</span>
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium line-clamp-1">
-              {t('brand.subtitle')}
-            </p>
-          </div>
-        </Link>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="font-black text-base sm:text-lg tracking-tight text-slate-900 dark:text-white truncate">
+                  {language === 'th' ? 'พุดดิ้ง' : 'Pudding'}
+                </span>
+                <span className="hidden sm:inline-block text-[10px] sm:text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
+                  Platform
+                </span>
+              </div>
+              <p className="hidden md:block text-[11px] text-slate-500 dark:text-slate-400 font-medium line-clamp-1">
+                {t('brand.subtitle')}
+              </p>
+            </div>
+          </Link>
+        </div>
 
         {/* Right Section: Theme Toggle, Language Switcher, Alerts & Profile */}
         <div className="flex items-center gap-2 sm:gap-3">

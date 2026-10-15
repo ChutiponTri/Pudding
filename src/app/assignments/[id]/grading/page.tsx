@@ -101,7 +101,40 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   useEffect(() => {
     loadAllData();
-  }, [assignmentId]);
+
+    // 1. Polling interval every 3.5 seconds when active
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible' && !isGradingWorkspaceOpen && !isAuditModalOpen) {
+        dataService.getSubmissions(assignmentId).then((subs) => {
+          setSubmissions(subs);
+        });
+      }
+    }, 3500);
+
+    // 2. Broadcast Channel & window events for instant sync
+    const handleSubmissionEvent = () => {
+      dataService.getSubmissions(assignmentId).then((subs) => {
+        setSubmissions(subs);
+      });
+    };
+
+    window.addEventListener('pudding-submission-created', handleSubmissionEvent);
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      bc = new BroadcastChannel('pudding-realtime');
+      bc.onmessage = (event) => {
+        if (event.data?.type === 'submission_created') {
+          handleSubmissionEvent();
+        }
+      };
+    }
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('pudding-submission-created', handleSubmissionEvent);
+      if (bc) bc.close();
+    };
+  }, [assignmentId, isGradingWorkspaceOpen, isAuditModalOpen]);
 
   // Handle Manual Override
   const handleSetOverride = async (newStatus: SubmissionOverrideStatus, newExtendedUntil?: string) => {
@@ -548,7 +581,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                             className="w-7 h-7 rounded-full object-cover"
                           />
                           <span className="font-bold text-slate-900 dark:text-white">
-                            {student?.first_name} {student?.last_name}
+                            {student?.first_name ? `${student.first_name} ${student.last_name || ''}` : sub.student_id || 'ผู้เรียน'}
                           </span>
                         </div>
                       </td>

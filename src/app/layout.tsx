@@ -4,6 +4,7 @@ import './globals.css';
 import { LanguageProvider } from '@/lib/i18n/LanguageContext';
 import { ThemeProvider } from '@/lib/theme/ThemeContext';
 import { Navbar } from '@/components/Navbar';
+import { GlobalClassroomSidebar } from '@/components/GlobalClassroomSidebar';
 import { ClerkProvider } from '@clerk/nextjs';
 
 const inter = Inter({
@@ -34,6 +35,7 @@ export default function RootLayout({
         <ClerkProvider>
           <ThemeProvider>
             <LanguageProvider>
+              <GlobalClassroomSidebar />
               <Navbar />
               <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 {children}

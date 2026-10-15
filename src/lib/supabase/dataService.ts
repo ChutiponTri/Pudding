@@ -2057,6 +2057,10 @@ export const dataService = {
     assignment_id: string;
     student_id: string;
     student_name: string;
+    student_first_name?: string;
+    student_last_name?: string;
+    student_avatar?: string;
+    line_uid?: string;
     answers: Array<{
       question_id: string;
       answer_text?: string;
@@ -2076,10 +2080,23 @@ export const dataService = {
     const subId = `sub-${payload.assignment_id}-${payload.student_id}`;
     const isSuspicious = payload.antiCheating.tab_switch_count >= 3 || payload.antiCheating.away_time_seconds >= 30;
 
+    const firstName = payload.student_first_name || (payload.student_name ? payload.student_name.split(' ')[0] : 'นักเรียน');
+    const lastName = payload.student_last_name || (payload.student_name ? payload.student_name.split(' ').slice(1).join(' ') : '');
+
     const submission: Submission = {
       id: subId,
       assignment_id: payload.assignment_id,
       student_id: payload.student_id,
+      student: {
+        id: payload.student_id,
+        first_name: firstName,
+        last_name: lastName,
+        student_id: payload.student_id,
+        line_uid: payload.line_uid || payload.student_id,
+        role: 'student',
+        email: '',
+        avatar_url: payload.student_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100',
+      },
       status: "submitted",
       started_at: new Date(Date.now() - (payload.antiCheating.away_time_seconds * 1000 + 120000)).toISOString(),
       submitted_at: new Date().toISOString(),
@@ -2087,9 +2104,31 @@ export const dataService = {
       tab_switch_count: payload.antiCheating.tab_switch_count,
       total_time_away_seconds: payload.antiCheating.away_time_seconds,
       is_flagged_suspicious: isSuspicious,
-      total_score: 0,
+      total_score: undefined,
     };
 
+    // 1. Post to Server API (Uses Supabase service role + file persistence)
+    try {
+      await fetch('/api/submissions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          assignment_id: payload.assignment_id,
+          student_id: payload.student_id,
+          student_name: payload.student_name,
+          student_first_name: firstName,
+          student_last_name: lastName,
+          student_avatar: payload.student_avatar,
+          line_uid: payload.line_uid,
+          answers: payload.answers,
+          antiCheating: payload.antiCheating,
+        }),
+      });
+    } catch (apiErr) {
+      console.warn('submitStudentWork /api/submissions call notice:', apiErr);
+    }
+
+    // 2. Direct Supabase write as additional fallback
     if (isSupabaseConfigured) {
       try {
         const supabase = createClient();
@@ -2104,7 +2143,6 @@ export const dataService = {
           tab_switch_count: submission.tab_switch_count,
           total_time_away_seconds: submission.total_time_away_seconds,
           is_flagged_suspicious: submission.is_flagged_suspicious,
-          total_score: submission.total_score,
         });
 
         for (const ans of payload.answers) {
@@ -2116,23 +2154,12 @@ export const dataService = {
             file_url: ans.file_url || null,
           });
         }
-
-        for (let i = 0; i < payload.antiCheating.events.length; i++) {
-          const evt = payload.antiCheating.events[i];
-          await supabase.from("submission_events").insert({
-            id: `evt-${subId}-${Date.now()}-${i}`,
-            submission_id: subId,
-            event_type: evt.event_type,
-            away_duration_seconds: evt.duration_seconds,
-            created_at: evt.timestamp,
-            details: evt.details || null,
-          });
-        }
       } catch (err) {
-        console.error("Error submitting to Supabase:", err);
+        console.warn("Client Supabase write notice in submitStudentWork:", err);
       }
     }
 
+    // 3. Local state fallback
     const submissions = getStoredOr<Submission[]>("submissions", []);
     const existingIdx = submissions.findIndex((s) => s.id === subId);
     if (existingIdx !== -1) {
@@ -2155,16 +2182,17 @@ export const dataService = {
     }
     setStored("submission_answers", allAnswers);
 
-    const allEvents = getStoredOr<Record<string, SubmissionEvent[]>>("submission_events", {});
-    allEvents[subId] = payload.antiCheating.events.map((evt, idx) => ({
-      id: `evt-${subId}-${Date.now()}-${idx}`,
-      submission_id: subId,
-      event_type: evt.event_type,
-      away_duration_seconds: evt.duration_seconds,
-      created_at: evt.timestamp,
-      details: evt.details,
-    }));
-    setStored("submission_events", allEvents);
+    // 4. Trigger Realtime Broadcast across browser windows
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('pudding-submission-created', { detail: { submission } }));
+        if ('BroadcastChannel' in window) {
+          const bc = new BroadcastChannel('pudding-realtime');
+          bc.postMessage({ type: 'submission_created', submission });
+          bc.close();
+        }
+      } catch {}
+    }
 
     return submission;
   },
@@ -2179,18 +2207,47 @@ export const dataService = {
   },
 
   async getSubmissions(assignmentId: string): Promise<Submission[]> {
+    let serverSubmissions: Submission[] = [];
+    try {
+      const res = await fetch(`/api/submissions?assignmentId=${encodeURIComponent(assignmentId)}`, {
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.submissions && Array.isArray(json.submissions)) {
+          serverSubmissions = json.submissions;
+        }
+      }
+    } catch {}
+
+    let directDbSubmissions: Submission[] = [];
     if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('submissions')
-        .select('*')
-        .eq('assignment_id', assignmentId);
-      if (!error && data) return data as Submission[];
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('submissions')
+          .select('*')
+          .eq('assignment_id', assignmentId);
+        if (!error && data) directDbSubmissions = data as Submission[];
+      } catch {}
     }
 
-    const submissions = getStoredOr<Submission[]>('submissions', []);
-    const filtered = submissions.filter((s) => s.assignment_id === assignmentId);
-    return filtered.length > 0 ? filtered : submissions.filter((s) => s.assignment_id === 'assign-001');
+    const localStored = getStoredOr<Submission[]>('submissions', []).filter((s) => s.assignment_id === assignmentId);
+
+    // Merge all unique by id
+    const seen = new Set<string>();
+    const merged: Submission[] = [];
+    for (const s of [...serverSubmissions, ...directDbSubmissions, ...localStored]) {
+      if (!seen.has(s.id)) {
+        seen.add(s.id);
+        merged.push(s);
+      }
+    }
+
+    if (merged.length > 0) return merged;
+
+    // Fallback to mockSubmissions if sample assignment
+    return mockSubmissions.filter((s) => s.assignment_id === assignmentId);
   },
 
   async getSubmissionEvents(submissionId: string): Promise<SubmissionEvent[]> {

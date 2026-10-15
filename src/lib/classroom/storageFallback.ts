@@ -39,6 +39,8 @@ export interface FallbackAttendanceRecord {
 const FALLBACK_DIR = path.resolve(process.cwd(), '.codex');
 const POSTS_FILE = path.join(FALLBACK_DIR, 'fallback_posts.json');
 const ATTENDANCE_FILE = path.join(FALLBACK_DIR, 'fallback_attendance.json');
+const RECORDS_FILE = path.join(FALLBACK_DIR, 'fallback_records.json');
+const SUBMISSIONS_FILE = path.join(FALLBACK_DIR, 'fallback_submissions.json');
 
 function ensureDir() {
   try {
@@ -67,7 +69,8 @@ function writeJson(filePath: string, data: any) {
 
 let postsCache: FallbackPost[] = readJson(POSTS_FILE, []);
 let attendanceSessionsCache: FallbackAttendanceSession[] = readJson(ATTENDANCE_FILE, []);
-let attendanceRecordsCache: FallbackAttendanceRecord[] = [];
+let attendanceRecordsCache: FallbackAttendanceRecord[] = readJson(RECORDS_FILE, []);
+let submissionsCache: any[] = readJson(SUBMISSIONS_FILE, []);
 
 export const fallbackStore = {
   getPosts(classroomId: string): FallbackPost[] {
@@ -111,6 +114,21 @@ export const fallbackStore = {
     } else {
       attendanceRecordsCache.push(record);
     }
+    writeJson(RECORDS_FILE, attendanceRecordsCache);
     return record;
+  },
+  getSubmissions(assignmentId?: string): any[] {
+    if (!assignmentId) return submissionsCache;
+    return submissionsCache.filter((s) => s.assignment_id === assignmentId);
+  },
+  saveSubmission(submission: any) {
+    const existingIdx = submissionsCache.findIndex((s) => s.id === submission.id);
+    if (existingIdx >= 0) {
+      submissionsCache[existingIdx] = { ...submissionsCache[existingIdx], ...submission };
+    } else {
+      submissionsCache.unshift(submission);
+    }
+    writeJson(SUBMISSIONS_FILE, submissionsCache);
+    return submission;
   },
 };

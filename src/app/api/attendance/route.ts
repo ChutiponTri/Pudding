@@ -159,22 +159,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Student identity (studentId or lineUid) is required' }, { status: 400 });
     }
 
-    const sb = createAnonServerSupabaseClient();
+    let sb = createServiceSupabaseClient();
     // Find active session
     let session: FallbackAttendanceSession | null = null;
     if (targetSessionId) {
       const local = fallbackStore.getAttendanceSessions(classroomId).find((s) => s.id === targetSessionId);
       if (local) session = local;
       else {
-        const { data } = await sb.from('attendance_sessions').select('*').eq('id', targetSessionId).maybeSingle();
-        if (data) session = data as FallbackAttendanceSession;
+        try {
+          const { data } = await sb.from('attendance_sessions').select('*').eq('id', targetSessionId).maybeSingle();
+          if (data) session = data as FallbackAttendanceSession;
+        } catch {}
       }
     } else {
       const all = fallbackStore.getAttendanceSessions(classroomId);
       session = all.find((s) => s.status === 'open') || null;
       if (!session) {
-        const { data } = await sb.from('attendance_sessions').select('*').eq('classroom_id', classroomId).eq('status', 'open').order('starts_at', { ascending: false }).maybeSingle();
-        if (data) session = data as FallbackAttendanceSession;
+        try {
+          const { data } = await sb.from('attendance_sessions').select('*').eq('classroom_id', classroomId).eq('status', 'open').order('starts_at', { ascending: false }).maybeSingle();
+          if (data) session = data as FallbackAttendanceSession;
+        } catch {}
       }
     }
 
@@ -194,22 +198,42 @@ export async function POST(request: NextRequest) {
       computedStatus = 'late';
     }
 
+    const checkInTime = new Date().toISOString();
     const record: FallbackAttendanceRecord = {
       id: `att-rec-${Date.now()}-${randomUUID().slice(0, 6)}`,
       session_id: session.id,
       classroom_id: classroomId,
       student_id: studentId || lineUid,
       status: computedStatus,
-      checked_at: new Date().toISOString(),
+      checked_at: checkInTime,
     };
 
-    // Save to fallback store
+    // Save to fallback store for primary studentId
     fallbackStore.saveAttendanceRecord(record);
-    if (lineUid && lineUid !== studentId) {
-      fallbackStore.saveAttendanceRecord({ ...record, student_id: lineUid });
+    if (lineUid) {
+      fallbackStore.saveAttendanceRecord({ ...record, id: `att-rec-uid-${Date.now()}`, student_id: lineUid });
     }
 
-    // Try Supabase update
+    // Try finding matching student in classroom to cross-bind student_id and id
+    try {
+      const { data: clsData } = await sb.from('classrooms').select('students').eq('id', classroomId).maybeSingle();
+      const studentsList: any[] = clsData?.students || [];
+      const matchedStudent = studentsList.find(
+        (st: any) =>
+          st.id === studentId ||
+          st.id === lineUid ||
+          st.line_uid === lineUid ||
+          st.line_uid === studentId ||
+          (st.student_id && (st.student_id === studentId || st.student_id === lineUid))
+      );
+      if (matchedStudent) {
+        if (matchedStudent.id) fallbackStore.saveAttendanceRecord({ ...record, student_id: matchedStudent.id });
+        if (matchedStudent.line_uid) fallbackStore.saveAttendanceRecord({ ...record, student_id: matchedStudent.line_uid });
+        if (matchedStudent.student_id) fallbackStore.saveAttendanceRecord({ ...record, student_id: matchedStudent.student_id });
+      }
+    } catch {}
+
+    // Try Supabase update with service role client
     try {
       await sb.from('attendance_records').upsert({
         session_id: session.id,
@@ -218,7 +242,9 @@ export async function POST(request: NextRequest) {
         status: computedStatus,
         checked_at: record.checked_at,
       });
-    } catch {}
+    } catch (dbErr) {
+      console.warn('Supabase attendance record upsert note:', dbErr);
+    }
 
     return NextResponse.json({ success: true, status: computedStatus, record, session });
   }
