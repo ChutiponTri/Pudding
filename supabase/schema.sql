@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS public.classrooms (
   line_group_id TEXT,                         -- LINE group where reminders are posted
   line_connection_status TEXT DEFAULT 'disconnected',
   line_connection_token_hash TEXT,
+  line_connection_token TEXT,
   line_connection_token_expires_at TIMESTAMPTZ,
   line_connected_at TIMESTAMPTZ,
   students JSONB DEFAULT '[]'::JSONB,         -- Cached roster snapshot

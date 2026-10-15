@@ -35,8 +35,17 @@ export async function GET(request: NextRequest) {
   const isExpired = classroom.line_connection_status === 'waiting'
     && classroom.line_connection_token_expires_at
     && new Date(classroom.line_connection_token_expires_at).getTime() <= Date.now();
+  if (isExpired) {
+    await (await createServerSupabaseClient()).from('classrooms').update({
+      line_connection_status: 'disconnected',
+      line_connection_token_hash: null,
+      line_connection_token: null,
+      line_connection_token_expires_at: null,
+    }).eq('id', classroomId);
+  }
   return NextResponse.json({
     status: isExpired ? 'disconnected' : (classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected')),
+    token: isExpired ? undefined : classroom.line_connection_token,
     connectedAt: classroom.line_connected_at,
     expiresAt: classroom.line_connection_token_expires_at,
   });
@@ -58,6 +67,7 @@ export async function POST(request: NextRequest) {
       line_group_id: null,
       line_connection_status: 'disconnected',
       line_connection_token_hash: null,
+      line_connection_token: null,
       line_connection_token_expires_at: null,
       line_connected_at: null,
     }).eq('id', classroomId);
@@ -76,6 +86,7 @@ export async function POST(request: NextRequest) {
   const { error } = await supabase.from('classrooms').update({
     line_connection_status: 'waiting',
     line_connection_token_hash: hashToken(token),
+    line_connection_token: token,
     line_connection_token_expires_at: expiresAt,
   }).eq('id', classroomId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

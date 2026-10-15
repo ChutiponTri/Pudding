@@ -31,6 +31,7 @@ ALTER TABLE IF EXISTS public.classrooms
 ADD COLUMN IF NOT EXISTS line_group_id TEXT,
 ADD COLUMN IF NOT EXISTS line_connection_status TEXT DEFAULT 'disconnected',
 ADD COLUMN IF NOT EXISTS line_connection_token_hash TEXT,
+ADD COLUMN IF NOT EXISTS line_connection_token TEXT,
 ADD COLUMN IF NOT EXISTS line_connection_token_expires_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS line_connected_at TIMESTAMPTZ;
 
@@ -103,5 +104,5 @@ SELECT
   data_type
 FROM information_schema.columns
 WHERE table_name IN ('users', 'classrooms', 'courses', 'classroom_students', 'submission_answers')
-  AND column_name IN ('first_name', 'last_name', 'student_id', 'institution', 'pending_students', 'teachers', 'status', 'research_grades')
+  AND column_name IN ('first_name', 'last_name', 'student_id', 'institution', 'pending_students', 'teachers', 'status', 'research_grades', 'line_group_id', 'line_connection_status', 'line_connection_token_hash', 'line_connection_token', 'line_connection_token_expires_at', 'line_connected_at')
 ORDER BY table_name, column_name;

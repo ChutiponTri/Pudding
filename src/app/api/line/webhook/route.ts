@@ -54,16 +54,27 @@ export async function POST(request: NextRequest) {
     if (lookupError) {
       console.error('LINE connection token lookup failed:', lookupError);
       const isMissingLineSchema = lookupError.code === '42703' || /column .*line_connection|schema cache/i.test(lookupError.message || '');
+      const isSupabaseAuthError = /invalid api key|jwt|permission denied|unauthorized/i.test(lookupError.message || '');
       await replySafely(
         event.replyToken,
         isMissingLineSchema
           ? 'ระบบยังไม่ได้ติดตั้งโครงสร้าง LINE ในฐานข้อมูล กรุณาให้ผู้ดูแลรัน supabase_schema_update.sql ก่อน'
+          : isSupabaseAuthError
+            ? 'ระบบเชื่อมต่อฐานข้อมูลไม่ได้ กรุณาตรวจ SUPABASE_SERVICE_ROLE_KEY บนระบบที่ deploy'
           : 'ระบบเชื่อมต่อ LINE ยังไม่พร้อม กรุณาติดต่อผู้ดูแลระบบ'
       );
       continue;
     }
     const classroom = classrooms?.[0];
     if (!classroom || !classroom.line_connection_token_expires_at || new Date(classroom.line_connection_token_expires_at).getTime() < Date.now()) {
+      if (classroom?.id) {
+        await supabase.from('classrooms').update({
+          line_connection_status: 'disconnected',
+          line_connection_token_hash: null,
+          line_connection_token: null,
+          line_connection_token_expires_at: null,
+        }).eq('id', classroom.id);
+      }
       await replySafely(event.replyToken, 'ไม่พบรหัสเชื่อมต่อ หรือรหัสหมดอายุแล้ว กรุณาสร้างรหัสใหม่จากหน้าเว็บ');
       continue;
     }
@@ -71,6 +82,7 @@ export async function POST(request: NextRequest) {
       line_group_id: groupId,
       line_connection_status: 'connected',
       line_connection_token_hash: null,
+      line_connection_token: null,
       line_connection_token_expires_at: null,
       line_connected_at: new Date().toISOString(),
     }).eq('id', classroom.id);
