@@ -79,6 +79,66 @@ export async function POST(request: NextRequest) {
       avatar_url: student_avatar || '',
     };
 
+    // Calculate score for objective questions and determine total score
+    let calculatedTotalScore: number | undefined = undefined;
+    let assignmentMaxScore = 20;
+    const scoredAnswers: any[] = [];
+
+    try {
+      const supabase = createServiceSupabaseClient();
+      const { data: questions } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('assignment_id', assignment_id);
+
+      const qsList: any[] = questions || [];
+      if (qsList.length > 0) {
+        let totalMax = 0;
+        let runningScore = 0;
+        let allGraded = true;
+
+        for (const q of qsList) {
+          totalMax += Number(q.max_score || 0);
+          const studentAns = (answers || []).find((a: any) => a.question_id === q.id);
+          const studentText = (studentAns?.answer_text || '').trim();
+
+          let questionScore: number | undefined = undefined;
+          let aiScore: number | undefined = undefined;
+
+          if (q.type === 'multiple_choice' || q.type === 'true_false') {
+            const ideal = (q.ideal_answer || '').trim();
+            if (ideal && studentText) {
+              const isMatch = studentText.toLowerCase() === ideal.toLowerCase() ||
+                studentText.startsWith(ideal) || ideal.startsWith(studentText);
+              questionScore = isMatch ? Number(q.max_score) : 0;
+              runningScore += questionScore;
+            } else {
+              questionScore = 0;
+            }
+          } else {
+            // Subjective / file upload question: provide initial evaluation score or mark as pending
+            allGraded = false;
+            aiScore = Math.max(1, Math.round(Number(q.max_score || 5) * 0.8));
+          }
+
+          scoredAnswers.push({
+            question_id: q.id,
+            answer_text: studentText,
+            file_url: studentAns?.file_url || null,
+            teacher_score: questionScore,
+            ai_mock_score: aiScore,
+          });
+        }
+
+        if (totalMax > 0) assignmentMaxScore = totalMax;
+        if (allGraded) {
+          calculatedTotalScore = runningScore;
+        } else if (runningScore > 0) {
+          calculatedTotalScore = runningScore;
+        }
+      }
+    } catch {}
+
     const submissionRecord = {
       id: subId,
       assignment_id,
@@ -91,7 +151,9 @@ export async function POST(request: NextRequest) {
       tab_switch_count: tabSwitchCount,
       total_time_away_seconds: awaySeconds,
       is_flagged_suspicious: isSuspicious,
-      total_score: undefined,
+      total_score: calculatedTotalScore,
+      max_total_score: assignmentMaxScore,
+      answers: scoredAnswers.length > 0 ? scoredAnswers : answers,
     };
 
     // 1. Save to File Fallback Store (Guarantees local persistence and immediate availability)
@@ -100,6 +162,20 @@ export async function POST(request: NextRequest) {
     // 2. Try Supabase Service Role (bypasses RLS)
     try {
       const supabase = createServiceSupabaseClient();
+      // Ensure user row exists so submissions foreign key constraint succeeds
+      await supabase.from('users').upsert(
+        {
+          id: effectiveStudentId,
+          role: 'student',
+          first_name: firstName,
+          last_name: lastName,
+          student_id: student_id || undefined,
+          line_uid: line_uid || undefined,
+          avatar_url: student_avatar || undefined,
+        },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+
       await supabase.from('submissions').upsert({
         id: submissionRecord.id,
         assignment_id: submissionRecord.assignment_id,
@@ -111,9 +187,12 @@ export async function POST(request: NextRequest) {
         tab_switch_count: submissionRecord.tab_switch_count,
         total_time_away_seconds: submissionRecord.total_time_away_seconds,
         is_flagged_suspicious: submissionRecord.is_flagged_suspicious,
+        total_score: calculatedTotalScore !== undefined ? calculatedTotalScore : null,
+        max_total_score: assignmentMaxScore,
       });
 
-      for (const ans of answers) {
+      const answersToSave = scoredAnswers.length > 0 ? scoredAnswers : answers;
+      for (const ans of answersToSave) {
         if (ans.question_id) {
           await supabase.from('submission_answers').upsert({
             id: `ans-${subId}-${ans.question_id}`,
@@ -121,6 +200,7 @@ export async function POST(request: NextRequest) {
             question_id: ans.question_id,
             text_answer: ans.answer_text || '',
             file_url: ans.file_url || null,
+            teacher_score: ans.teacher_score !== undefined ? ans.teacher_score : null,
           });
         }
       }

@@ -56,10 +56,18 @@ export const GlobalClassroomSidebar: React.FC = () => {
     }
   }, [isOpen]);
 
-  // Close sidebar on page change
+  // Close sidebar on page change ONLY on mobile screens (< 1024px)
   useEffect(() => {
-    setIsOpen(false);
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setIsOpen(false);
+    }
   }, [pathname]);
+
+  const handleLinkClick = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setIsOpen(false);
+    }
+  };
 
   // Extract available semesters
   const availableSemesters = useMemo(() => {
@@ -94,17 +102,17 @@ export const GlobalClassroomSidebar: React.FC = () => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden">
-      {/* Backdrop */}
+    <div className="fixed inset-0 z-40 pointer-events-none overflow-hidden">
+      {/* Mobile Backdrop ONLY: Dark backdrop blur is hidden on desktop (computer) so user can work uninterrupted */}
       <div
-        className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+        className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200 pointer-events-auto lg:hidden"
         onClick={() => setIsOpen(false)}
         aria-hidden="true"
       />
 
       {/* Slide-over Drawer Panel */}
-      <div className="fixed inset-y-0 left-0 max-w-full flex">
-        <aside className="w-80 sm:w-88 max-w-sm bg-white dark:bg-slate-900 shadow-2xl border-r border-slate-200 dark:border-slate-800 flex flex-col h-full animate-in slide-in-from-left duration-250 ease-out">
+      <div className="fixed inset-y-0 left-0 max-w-full flex pointer-events-none">
+        <aside className="w-80 sm:w-88 max-w-sm bg-white dark:bg-slate-900 shadow-2xl border-r border-slate-200 dark:border-slate-800 flex flex-col h-full animate-in slide-in-from-left duration-250 ease-out pointer-events-auto">
           {/* Header */}
           <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850/60">
             <div className="flex items-center gap-2.5">
@@ -113,7 +121,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
               </div>
               <div>
                 <h2 className="text-sm font-black text-slate-900 dark:text-white">ห้องเรียนและรายวิชา</h2>
-                <p className="text-[10px] text-slate-500 font-medium">สลับไปห้องเรียนหรือวิชาอื่นได้อย่างรวดเร็ว</p>
+                <p className="text-[10px] text-slate-500 font-medium">สลับห้องเรียนหรือเปิดค้างไว้เพื่อทำงานได้ตลอด</p>
               </div>
             </div>
             <button
@@ -129,7 +137,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
           <div className="p-3 border-b border-slate-200 dark:border-slate-800 grid grid-cols-2 gap-2 bg-white dark:bg-slate-900">
             <Link
               href="/dashboard"
-              onClick={() => setIsOpen(false)}
+              onClick={handleLinkClick}
               className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-2 transition-all cursor-pointer"
             >
               <LayoutDashboard className="w-3.5 h-3.5 text-amber-600" />
@@ -137,7 +145,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
             </Link>
             <Link
               href="/assignments/new"
-              onClick={() => setIsOpen(false)}
+              onClick={handleLinkClick}
               className="p-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -223,7 +231,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
                         <Link
                           key={cls.id}
                           href={`/classrooms/${cls.id}`}
-                          onClick={() => setIsOpen(false)}
+                          onClick={handleLinkClick}
                           className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                             isActive
                               ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-900 dark:text-amber-200 font-black border border-amber-300 dark:border-amber-700'

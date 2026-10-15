@@ -2027,6 +2027,24 @@ export const dataService = {
     return assignments[index];
   },
 
+  async deleteAssignment(id: string): Promise<boolean> {
+    if (isSupabaseConfigured) {
+      try {
+        const supabase = createClient();
+        await supabase.from('questions').delete().eq('assignment_id', id);
+        await supabase.from('submissions').delete().eq('assignment_id', id);
+        await supabase.from('assignments').delete().eq('id', id);
+      } catch (err) {
+        console.warn('deleteAssignment Supabase error:', err);
+      }
+    }
+    const assignments = getStoredOr<Assignment[]>('assignments', []);
+    setStored('assignments', assignments.filter((a) => a.id !== id));
+    const questions = getStoredOr<Question[]>('questions', []);
+    setStored('questions', questions.filter((q) => q.assignment_id !== id));
+    return true;
+  },
+
   async updateAssignmentDeadlineOverride(
     assignmentId: string,
     override: { status_override: SubmissionOverrideStatus; extended_until?: string }

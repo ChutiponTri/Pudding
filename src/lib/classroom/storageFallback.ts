@@ -9,6 +9,7 @@ export interface FallbackPost {
   activity_type: 'announcement' | 'assignment' | 'exam' | 'attendance';
   metadata?: Record<string, any>;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface FallbackAttendanceSession {
@@ -35,7 +36,7 @@ export interface FallbackAttendanceRecord {
   adjusted_by?: string | null;
 }
 
-// In-memory + lightweight file persistence fallback
+// In-memory + fresh file persistence fallback
 const FALLBACK_DIR = path.resolve(process.cwd(), '.codex');
 const POSTS_FILE = path.join(FALLBACK_DIR, 'fallback_posts.json');
 const ATTENDANCE_FILE = path.join(FALLBACK_DIR, 'fallback_attendance.json');
@@ -67,68 +68,126 @@ function writeJson(filePath: string, data: any) {
   } catch {}
 }
 
-let postsCache: FallbackPost[] = readJson(POSTS_FILE, []);
-let attendanceSessionsCache: FallbackAttendanceSession[] = readJson(ATTENDANCE_FILE, []);
-let attendanceRecordsCache: FallbackAttendanceRecord[] = readJson(RECORDS_FILE, []);
-let submissionsCache: any[] = readJson(SUBMISSIONS_FILE, []);
-
 export const fallbackStore = {
+  // ----------------------------------------------------
+  // POSTS
+  // ----------------------------------------------------
   getPosts(classroomId: string): FallbackPost[] {
-    return postsCache.filter((p) => p.classroom_id === classroomId);
+    const posts: FallbackPost[] = readJson(POSTS_FILE, []);
+    return posts.filter((p) => p.classroom_id === classroomId);
   },
   savePost(post: FallbackPost) {
-    const existingIdx = postsCache.findIndex((p) => p.id === post.id);
+    const posts: FallbackPost[] = readJson(POSTS_FILE, []);
+    const existingIdx = posts.findIndex((p) => p.id === post.id);
     if (existingIdx >= 0) {
-      postsCache[existingIdx] = post;
+      posts[existingIdx] = { ...posts[existingIdx], ...post };
     } else {
-      postsCache.unshift(post);
+      posts.unshift(post);
     }
-    writeJson(POSTS_FILE, postsCache);
+    writeJson(POSTS_FILE, posts);
     return post;
   },
+  updatePost(id: string, body: string) {
+    const posts: FallbackPost[] = readJson(POSTS_FILE, []);
+    const idx = posts.findIndex((p) => p.id === id);
+    if (idx >= 0) {
+      posts[idx].body = body;
+      posts[idx].updated_at = new Date().toISOString();
+      writeJson(POSTS_FILE, posts);
+      return posts[idx];
+    }
+    return null;
+  },
+  deletePost(id: string) {
+    const posts: FallbackPost[] = readJson(POSTS_FILE, []);
+    const filtered = posts.filter((p) => p.id !== id);
+    writeJson(POSTS_FILE, filtered);
+    return true;
+  },
+
+  // ----------------------------------------------------
+  // ATTENDANCE SESSIONS
+  // ----------------------------------------------------
   getAttendanceSessions(classroomId: string): FallbackAttendanceSession[] {
-    return attendanceSessionsCache.filter((s) => s.classroom_id === classroomId);
+    const sessions: FallbackAttendanceSession[] = readJson(ATTENDANCE_FILE, []);
+    return sessions.filter((s) => s.classroom_id === classroomId);
   },
   saveAttendanceSession(session: FallbackAttendanceSession) {
-    const existingIdx = attendanceSessionsCache.findIndex((s) => s.id === session.id);
+    const sessions: FallbackAttendanceSession[] = readJson(ATTENDANCE_FILE, []);
+    const existingIdx = sessions.findIndex((s) => s.id === session.id);
     if (existingIdx >= 0) {
-      attendanceSessionsCache[existingIdx] = session;
+      sessions[existingIdx] = { ...sessions[existingIdx], ...session };
     } else {
-      attendanceSessionsCache.unshift(session);
+      sessions.unshift(session);
     }
-    writeJson(ATTENDANCE_FILE, attendanceSessionsCache);
+    writeJson(ATTENDANCE_FILE, sessions);
     return session;
   },
+  deleteAttendanceSession(sessionId: string) {
+    const sessions: FallbackAttendanceSession[] = readJson(ATTENDANCE_FILE, []);
+    writeJson(ATTENDANCE_FILE, sessions.filter((s) => s.id !== sessionId));
+
+    // Also remove associated records
+    const records: FallbackAttendanceRecord[] = readJson(RECORDS_FILE, []);
+    writeJson(RECORDS_FILE, records.filter((r) => r.session_id !== sessionId));
+    return true;
+  },
+
+  // ----------------------------------------------------
+  // ATTENDANCE RECORDS
+  // ----------------------------------------------------
   getAttendanceRecords(sessionId: string): FallbackAttendanceRecord[] {
-    return attendanceRecordsCache.filter((r) => r.session_id === sessionId);
+    const records: FallbackAttendanceRecord[] = readJson(RECORDS_FILE, []);
+    return records.filter((r) => r.session_id === sessionId);
   },
   getStudentRecords(classroomId: string, studentId: string): FallbackAttendanceRecord[] {
-    return attendanceRecordsCache.filter((r) => r.classroom_id === classroomId && r.student_id === studentId);
+    if (!studentId || !studentId.trim()) return [];
+    const records: FallbackAttendanceRecord[] = readJson(RECORDS_FILE, []);
+    return records.filter((r) => r.classroom_id === classroomId && r.student_id === studentId);
   },
   saveAttendanceRecord(record: FallbackAttendanceRecord) {
-    const existingIdx = attendanceRecordsCache.findIndex(
-      (r) => r.session_id === record.session_id && r.student_id === record.student_id
+    if (!record.student_id || !record.student_id.trim() || !record.session_id) {
+      return record;
+    }
+    const cleanStudentId = record.student_id.trim();
+    const cleanRecord = { ...record, student_id: cleanStudentId };
+
+    const records: FallbackAttendanceRecord[] = readJson(RECORDS_FILE, []);
+    const existingIdx = records.findIndex(
+      (r) => r.session_id === cleanRecord.session_id && r.student_id === cleanStudentId
     );
     if (existingIdx >= 0) {
-      attendanceRecordsCache[existingIdx] = { ...attendanceRecordsCache[existingIdx], ...record };
+      records[existingIdx] = { ...records[existingIdx], ...cleanRecord };
     } else {
-      attendanceRecordsCache.push(record);
+      records.push(cleanRecord);
     }
-    writeJson(RECORDS_FILE, attendanceRecordsCache);
-    return record;
+    writeJson(RECORDS_FILE, records);
+    return cleanRecord;
   },
+
+  // ----------------------------------------------------
+  // SUBMISSIONS
+  // ----------------------------------------------------
   getSubmissions(assignmentId?: string): any[] {
-    if (!assignmentId) return submissionsCache;
-    return submissionsCache.filter((s) => s.assignment_id === assignmentId);
+    const submissions: any[] = readJson(SUBMISSIONS_FILE, []);
+    if (!assignmentId) return submissions;
+    return submissions.filter((s) => s.assignment_id === assignmentId);
   },
   saveSubmission(submission: any) {
-    const existingIdx = submissionsCache.findIndex((s) => s.id === submission.id);
+    const submissions: any[] = readJson(SUBMISSIONS_FILE, []);
+    const existingIdx = submissions.findIndex((s) => s.id === submission.id);
     if (existingIdx >= 0) {
-      submissionsCache[existingIdx] = { ...submissionsCache[existingIdx], ...submission };
+      submissions[existingIdx] = { ...submissions[existingIdx], ...submission };
     } else {
-      submissionsCache.unshift(submission);
+      submissions.unshift(submission);
     }
-    writeJson(SUBMISSIONS_FILE, submissionsCache);
+    writeJson(SUBMISSIONS_FILE, submissions);
     return submission;
+  },
+  deleteSubmission(id: string) {
+    const submissions: any[] = readJson(SUBMISSIONS_FILE, []);
+    const filtered = submissions.filter((s) => s.id !== id);
+    writeJson(SUBMISSIONS_FILE, filtered);
+    return true;
   },
 };

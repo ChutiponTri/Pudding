@@ -162,3 +162,37 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ post: savedPost }, { status: 201 });
 }
 
+export async function PATCH(request: NextRequest) {
+  const body = await request.json().catch(() => ({}));
+  const id = typeof body.id === 'string' ? body.id : '';
+  const postBody = typeof body.body === 'string' ? body.body.trim() : '';
+  if (!id || !postBody) {
+    return NextResponse.json({ error: 'id and body are required' }, { status: 400 });
+  }
+
+  const updatedPost = fallbackStore.updatePost(id, postBody);
+  try {
+    const supabase = createServiceSupabaseClient();
+    await supabase.from('classroom_posts').update({ body: postBody }).eq('id', id);
+  } catch {}
+
+  return NextResponse.json({ success: true, post: updatedPost });
+}
+
+export async function DELETE(request: NextRequest) {
+  const urlId = request.nextUrl.searchParams.get('id');
+  const body = await request.json().catch(() => ({}));
+  const id = urlId || (typeof body.id === 'string' ? body.id : '');
+  if (!id) {
+    return NextResponse.json({ error: 'id is required' }, { status: 400 });
+  }
+
+  fallbackStore.deletePost(id);
+  try {
+    const supabase = createServiceSupabaseClient();
+    await supabase.from('classroom_posts').delete().eq('id', id);
+  } catch {}
+
+  return NextResponse.json({ success: true, deletedPostId: id });
+}
+

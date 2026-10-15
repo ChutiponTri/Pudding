@@ -21,7 +21,7 @@ export type TeacherRole = 'primary' | 'assistant' | 'researcher';
 export interface ClassroomTeacher {
   teacher_id: string;
   name: string;
-  email: string;
+  email?: string;
   avatar_url?: string;
   role: TeacherRole;
   institution?: string;

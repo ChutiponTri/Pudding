@@ -199,46 +199,69 @@ export async function POST(request: NextRequest) {
     }
 
     const checkInTime = new Date().toISOString();
+    const cleanStudentId = studentId.trim();
+    const cleanLineUid = lineUid.trim();
+    const primaryId = cleanStudentId || cleanLineUid;
+
     const record: FallbackAttendanceRecord = {
       id: `att-rec-${Date.now()}-${randomUUID().slice(0, 6)}`,
       session_id: session.id,
       classroom_id: classroomId,
-      student_id: studentId || lineUid,
+      student_id: primaryId,
       status: computedStatus,
       checked_at: checkInTime,
     };
 
     // Save to fallback store for primary studentId
     fallbackStore.saveAttendanceRecord(record);
-    if (lineUid) {
-      fallbackStore.saveAttendanceRecord({ ...record, id: `att-rec-uid-${Date.now()}`, student_id: lineUid });
+    if (cleanLineUid && cleanLineUid !== primaryId) {
+      fallbackStore.saveAttendanceRecord({ ...record, id: `att-rec-uid-${Date.now()}`, student_id: cleanLineUid });
     }
 
-    // Try finding matching student in classroom to cross-bind student_id and id
+    // Try finding matching student in classroom to cross-bind student_id, id, and line_uid
+    let canonicalUserId = primaryId;
     try {
       const { data: clsData } = await sb.from('classrooms').select('students').eq('id', classroomId).maybeSingle();
       const studentsList: any[] = clsData?.students || [];
-      const matchedStudent = studentsList.find(
-        (st: any) =>
-          st.id === studentId ||
-          st.id === lineUid ||
-          st.line_uid === lineUid ||
-          st.line_uid === studentId ||
-          (st.student_id && (st.student_id === studentId || st.student_id === lineUid))
-      );
+      const matchedStudent = studentsList.find((st: any) => {
+        if (!st) return false;
+        if (cleanStudentId && st.id && String(st.id).trim() === cleanStudentId) return true;
+        if (cleanLineUid && st.id && String(st.id).trim() === cleanLineUid) return true;
+        if (cleanLineUid && st.line_uid && String(st.line_uid).trim() === cleanLineUid) return true;
+        if (cleanStudentId && st.line_uid && String(st.line_uid).trim() === cleanStudentId) return true;
+        if (cleanStudentId && st.student_id && String(st.student_id).trim() === cleanStudentId) return true;
+        if (cleanLineUid && st.student_id && String(st.student_id).trim() === cleanLineUid) return true;
+        return false;
+      });
+
       if (matchedStudent) {
-        if (matchedStudent.id) fallbackStore.saveAttendanceRecord({ ...record, student_id: matchedStudent.id });
-        if (matchedStudent.line_uid) fallbackStore.saveAttendanceRecord({ ...record, student_id: matchedStudent.line_uid });
-        if (matchedStudent.student_id) fallbackStore.saveAttendanceRecord({ ...record, student_id: matchedStudent.student_id });
+        if (matchedStudent.id && String(matchedStudent.id).trim()) {
+          const mId = String(matchedStudent.id).trim();
+          canonicalUserId = mId;
+          fallbackStore.saveAttendanceRecord({ ...record, student_id: mId });
+        }
+        if (matchedStudent.line_uid && String(matchedStudent.line_uid).trim()) {
+          fallbackStore.saveAttendanceRecord({ ...record, student_id: String(matchedStudent.line_uid).trim() });
+        }
+        if (matchedStudent.student_id && String(matchedStudent.student_id).trim()) {
+          fallbackStore.saveAttendanceRecord({ ...record, student_id: String(matchedStudent.student_id).trim() });
+        }
       }
     } catch {}
 
-    // Try Supabase update with service role client
+    // Ensure user row exists in Supabase users table before attendance_records upsert
     try {
+      await sb.from('users').upsert({
+        id: canonicalUserId,
+        role: 'student',
+        line_uid: cleanLineUid || undefined,
+        first_name: 'นักเรียน',
+      }, { onConflict: 'id', ignoreDuplicates: true });
+
       await sb.from('attendance_records').upsert({
         session_id: session.id,
         classroom_id: classroomId,
-        student_id: studentId || lineUid,
+        student_id: canonicalUserId,
         status: computedStatus,
         checked_at: record.checked_at,
       });
@@ -328,9 +351,16 @@ export async function POST(request: NextRequest) {
   if (action === 'update_session') {
     const newTitle = typeof body.title === 'string' ? body.title.trim() : '';
     const newStatus = body.status === 'open' || body.status === 'closed' ? body.status : undefined;
+    const onTimeMinutes = body.onTimeUntilMinutes !== undefined ? Number(body.onTimeUntilMinutes) : undefined;
+    const lateMinutes = body.lateUntilMinutes !== undefined ? Number(body.lateUntilMinutes) : undefined;
+    const startsAt = typeof body.startsAt === 'string' ? body.startsAt : undefined;
+
     const existing = fallbackStore.getAttendanceSessions(classroomId).find((s) => s.id === sessionId);
     if (existing) {
       if (newTitle) existing.title = newTitle;
+      if (onTimeMinutes !== undefined && !isNaN(onTimeMinutes)) existing.on_time_until_minutes = onTimeMinutes;
+      if (lateMinutes !== undefined && !isNaN(lateMinutes)) existing.late_until_minutes = lateMinutes;
+      if (startsAt) existing.starts_at = startsAt;
       if (newStatus) {
         existing.status = newStatus;
         if (newStatus === 'open') existing.closed_at = null;
@@ -342,9 +372,24 @@ export async function POST(request: NextRequest) {
       const updateData: Record<string, any> = {};
       if (newTitle) updateData.title = newTitle;
       if (newStatus) updateData.status = newStatus;
+      if (onTimeMinutes !== undefined && !isNaN(onTimeMinutes)) updateData.on_time_until_minutes = onTimeMinutes;
+      if (lateMinutes !== undefined && !isNaN(lateMinutes)) updateData.late_until_minutes = lateMinutes;
+      if (startsAt) updateData.starts_at = startsAt;
       await supabase.from('attendance_sessions').update(updateData).eq('id', sessionId);
     } catch {}
     return NextResponse.json({ success: true, sessionId });
+  }
+
+  if (action === 'delete_session') {
+    if (!sessionId) {
+      return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
+    }
+    fallbackStore.deleteAttendanceSession(sessionId);
+    try {
+      await supabase.from('attendance_records').delete().eq('session_id', sessionId);
+      await supabase.from('attendance_sessions').delete().eq('id', sessionId);
+    } catch {}
+    return NextResponse.json({ success: true, deletedSessionId: sessionId });
   }
 
   if (action === 'extend') {
@@ -395,4 +440,24 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ error: 'Unsupported action' }, { status: 400 });
 }
+
+export async function DELETE(request: NextRequest) {
+  const sessionId = request.nextUrl.searchParams.get('sessionId');
+  const classroomId = request.nextUrl.searchParams.get('classroomId');
+  if (!sessionId) {
+    return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
+  }
+
+  const context = classroomId ? await getTeacherContext(classroomId) : { supabase: null };
+  const supabase = context.supabase || createAnonServerSupabaseClient();
+
+  fallbackStore.deleteAttendanceSession(sessionId);
+  try {
+    await supabase.from('attendance_records').delete().eq('session_id', sessionId);
+    await supabase.from('attendance_sessions').delete().eq('id', sessionId);
+  } catch {}
+
+  return NextResponse.json({ success: true, deletedSessionId: sessionId });
+}
+
 
