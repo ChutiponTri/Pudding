@@ -1131,7 +1131,7 @@ export default function DashboardPage() {
 
           {/* 3. Create Assignment / Exam CTA */}
           <Link
-            href="/creation"
+            href="/assignments/new?from=dashboard"
             className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
           >
             <div className="w-10 h-10 rounded-xl bg-linear-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
@@ -1496,15 +1496,30 @@ export default function DashboardPage() {
                               <ArrowRight className="w-3 h-3" />
                             </Link>
 
-                            <button
-                              type="button"
-                              onClick={() => handleOpenLineConnectionPopup(cls)}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-xs cursor-pointer ${lineConnectionStatuses[cls.id] === 'connected' ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-200 hover:bg-emerald-100 dark:bg-slate-700 dark:hover:bg-emerald-950/50 text-slate-700 dark:text-slate-200'}`}
-                              title="จัดการ LINE Group"
-                            >
-                              <MessageCircle className="w-3 h-3" />
-                              <span>{lineConnectionStatuses[cls.id] === 'connected' ? 'LINE Group' : 'เชื่อม LINE Group'}</span>
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenManagingClassroom(cls, 'roster');
+                                }}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:border-amber-300 flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
+                                title="เพิ่ม / จัดการนักเรียนในห้องนี้"
+                              >
+                                <UserPlus className="w-3 h-3 text-amber-500" />
+                                <span>+ เพิ่มนักเรียน</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenLineConnectionPopup(cls)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-xs cursor-pointer ${lineConnectionStatuses[cls.id] === 'connected' ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-200 hover:bg-emerald-100 dark:bg-slate-700 dark:hover:bg-emerald-950/50 text-slate-700 dark:text-slate-200'}`}
+                                title="จัดการ LINE Group"
+                              >
+                                <MessageCircle className="w-3 h-3" />
+                                <span>{lineConnectionStatuses[cls.id] === 'connected' ? 'LINE Group' : 'เชื่อม LINE Group'}</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );

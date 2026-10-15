@@ -46,6 +46,8 @@ function NewAssignmentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlClassroomId = searchParams.get('classroomId');
+  const urlFrom = searchParams.get('from');
+  const isFromDashboard = urlFrom === 'dashboard' || (!urlClassroomId && urlFrom !== 'classroom');
   const { user: clerkUser } = useUser();
   const { t, language } = useLanguage();
 
@@ -322,7 +324,12 @@ function NewAssignmentContent() {
           : 'Assignment created successfully! LINE Reminder scheduled.'
       );
 
-      router.push(`/classrooms/${primaryClassId}?tab=classwork`);
+      const targetClassId = primaryClassId || urlClassroomId || selectedClassroomIds[0];
+      if (targetClassId) {
+        router.push(`/classrooms/${targetClassId}?tab=classwork`);
+      } else {
+        router.push('/dashboard');
+      }
     } catch (err) {
       console.error(err);
       alert('Error creating assignment');
@@ -339,22 +346,26 @@ function NewAssignmentContent() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-24">
-      {/* Back to Classroom Button */}
+      {/* Dynamic Back Button based on entry source */}
       <div>
         <button
           type="button"
           onClick={() => {
-            const targetId = urlClassroomId || selectedClassroomIds[0];
-            if (targetId) {
-              router.push(`/classrooms/${targetId}?tab=classwork`);
+            if (isFromDashboard) {
+              router.push('/dashboard');
             } else {
-              router.back();
+              const targetId = urlClassroomId || selectedClassroomIds[0];
+              if (targetId) {
+                router.push(`/classrooms/${targetId}?tab=classwork`);
+              } else {
+                router.push('/dashboard');
+              }
             }
           }}
           className="inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>กลับไปหน้าห้องเรียน (งานและเนื้อหา)</span>
+          <span>{isFromDashboard ? 'กลับสู่แดชบอร์ด (Dashboard)' : 'กลับไปหน้าห้องเรียน (งานและเนื้อหา)'}</span>
         </button>
       </div>
 

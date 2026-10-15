@@ -1065,7 +1065,7 @@ export default function ClassroomWorkspacePage() {
 
               {/* Primary: Create Assignment or Exam */}
               <Link
-                href={`/assignments/new?classroomId=${classroom.id}`}
+                href={`/assignments/new?classroomId=${classroom.id}&from=classroom`}
                 className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 shadow-sm transition-all"
               >
                 <Plus className="w-4 h-4" />
@@ -1309,7 +1309,7 @@ export default function ClassroomWorkspacePage() {
                     <span>+ สร้างกลุ่มหมวดหมู่ใหม่</span>
                   </button>
                   <Link
-                    href={`/assignments/new?classroomId=${classroom.id}`}
+                    href={`/assignments/new?classroomId=${classroom.id}&from=classroom`}
                     className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
                   >
                     <Plus className="w-4 h-4" />
@@ -3007,7 +3007,8 @@ function AttendancePanel({
                           (student.line_uid && r.student_id === student.line_uid) ||
                           (student.student_id && r.student_id === student.student_id)
                       );
-                      const currentStatus = record?.status || 'absent';
+                      const isSessionOpen = item.status === 'open';
+                      const currentStatus = record?.status || (isSessionOpen ? 'idle' : 'absent');
 
                       return (
                         <div
@@ -3015,9 +3016,16 @@ function AttendancePanel({
                           className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs shadow-xs"
                         >
                           <div className="min-w-44">
-                            <span className="font-bold text-slate-900 dark:text-white block">
-                              {student.first_name} {student.last_name}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-900 dark:text-white block">
+                                {student.first_name} {student.last_name}
+                              </span>
+                              {currentStatus === 'idle' && (
+                                <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                                  รอเช็คชื่อ (IDLE) ⚪
+                                </span>
+                              )}
+                            </div>
                             <span className="text-[10px] text-slate-400 font-mono">
                               รหัส: {student.student_id || '-'}
                               {record?.checked_at && ` • เช็คเมื่อ ${new Date(record.checked_at).toLocaleTimeString('th-TH')}`}
