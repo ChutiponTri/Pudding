@@ -152,8 +152,10 @@ export default function DashboardPage() {
   const [courseSemesterInput, setCourseSemesterInput] = useState<number>(defaultPeriod.semester);
   const [courseYearInput, setCourseYearInput] = useState<number>(defaultPeriod.yearCE);
   const [courseIndicatorsDraft, setCourseIndicatorsDraft] = useState<CourseLearningIndicator[]>([]);
+  const [courseLessonPlanDraft, setCourseLessonPlanDraft] = useState<CourseLessonPlan[]>([]);
   const [courseCreationMode, setCourseCreationMode] = useState<'indicator' | 'competency'>('indicator');
   const [courseCreationStep, setCourseCreationStep] = useState<1 | 2>(1);
+  const [isCourseCloneFlow, setIsCourseCloneFlow] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -437,8 +439,10 @@ export default function DashboardPage() {
     setCourseSemesterInput(defaultPeriod.semester);
     setCourseYearInput(defaultPeriod.yearCE);
     setCourseIndicatorsDraft([]);
+    setCourseLessonPlanDraft([]);
     setCourseCreationMode('indicator');
     setCourseCreationStep(1);
+    setIsCourseCloneFlow(false);
     setIsCourseModalOpen(true);
   };
 
@@ -455,8 +459,10 @@ export default function DashboardPage() {
     setCourseSemesterInput(nextSem);
     setCourseYearInput(nextYr);
     setCourseIndicatorsDraft(course.indicators || []);
+    setCourseLessonPlanDraft(course.lesson_plans || []);
     setCourseCreationMode(course.indicator_mode || 'indicator');
     setCourseCreationStep(1);
+    setIsCourseCloneFlow(true);
     setIsCourseModalOpen(true);
   };
 
@@ -474,7 +480,7 @@ export default function DashboardPage() {
     ]);
   };
 
-  const handleUpdateCourseFrameworkItem = (index: number, field: 'code' | 'title', value: string) => {
+  const handleUpdateCourseFrameworkItem = (index: number, field: 'title', value: string) => {
     setCourseIndicatorsDraft((current) => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, [field]: value } : item
     )));
@@ -496,19 +502,35 @@ export default function DashboardPage() {
     const currentTeacherEmail = clerkUser?.primaryEmailAddress?.emailAddress || "teacher@pudding.ac.th";
     const currentTeacherAvatar = clerkUser?.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150";
 
-    if (courseIndicatorsDraft.length === 0 || courseIndicatorsDraft.some((indicator) => !indicator.code.trim() || !indicator.title.trim())) {
+    if (courseIndicatorsDraft.length === 0 || courseIndicatorsDraft.some((indicator) => !indicator.title.trim())) {
       alert(language === 'th'
         ? 'กรุณาเพิ่มและกรอกข้อมูลตัวชี้วัด/สมรรถนะให้ครบอย่างน้อย 1 รายการก่อนยืนยัน'
         : 'Add and complete at least one indicator/competency before confirming the course');
       return;
     }
 
+    if (courseCreationMode === 'competency') {
+      const mappedIds = new Set(
+        courseLessonPlanDraft.flatMap((plan) => plan.mapped_indicator_ids || [])
+      );
+      const hasInvalidPlan = courseLessonPlanDraft.some((plan) => !plan.title.trim() || (plan.mapped_indicator_ids || []).length === 0);
+      const hasUnmappedCompetency = courseIndicatorsDraft.some((indicator) => !mappedIds.has(indicator.id));
+      if (courseLessonPlanDraft.length === 0 || hasInvalidPlan || hasUnmappedCompetency) {
+        alert(language === 'th'
+          ? 'กรุณาเพิ่มแผนการสอน กรอกชื่อแผน และ map ให้ครบทุกสมรรถนะก่อนยืนยัน'
+          : 'Add lesson plans, enter each plan name, and map every competency before confirming');
+        return;
+      }
+    }
+
     const initialIndicators: CourseLearningIndicator[] = courseIndicatorsDraft.map((ind, i) => ({
       ...ind,
       id: `ind-${Date.now()}-${i + 1}`,
       course_id: '',
+      code: `ข้อ ${i + 1}`,
       order_index: i + 1,
     }));
+    const indicatorIdMap = new Map(courseIndicatorsDraft.map((indicator, index) => [indicator.id, initialIndicators[index].id]));
 
     await dataService.createCourse({
       code: courseCodeInput.trim().toUpperCase(),
@@ -530,11 +552,13 @@ export default function DashboardPage() {
       ],
       indicators: initialIndicators,
       lesson_plans: courseCreationMode === 'competency'
-        ? initialIndicators.map((indicator, index) => ({
+        ? courseLessonPlanDraft.map((plan, index) => ({
+            ...plan,
             id: `plan-${Date.now()}-${index + 1}`,
-            title: indicator.title,
             order_index: index + 1,
-            mapped_indicator_ids: [indicator.id],
+            mapped_indicator_ids: (plan.mapped_indicator_ids || [])
+              .map((indicatorId) => indicatorIdMap.get(indicatorId))
+              .filter((indicatorId): indicatorId is string => Boolean(indicatorId)),
           }))
         : [],
       classroom_ids: [],
@@ -543,6 +567,8 @@ export default function DashboardPage() {
     showToast(language === 'th' ? `สร้างรายวิชา ${courseCodeInput.trim()} สำเร็จ` : `Course ${courseCodeInput.trim()} created`);
     setIsCourseModalOpen(false);
     setCourseIndicatorsDraft([]);
+    setCourseLessonPlanDraft([]);
+    setIsCourseCloneFlow(false);
     await loadAllData();
   };
 
@@ -838,6 +864,21 @@ export default function DashboardPage() {
 
   const handleSaveIndicators = async () => {
     if (!editingCourseIndicators) return;
+    if (indicatorListDraft.length === 0 || indicatorListDraft.some((indicator) => !indicator.title.trim())) {
+      alert(language === 'th' ? 'กรุณาเพิ่มและกรอกกรอบการวัดผลให้ครบอย่างน้อย 1 รายการ' : 'Add and complete at least one assessment framework item');
+      return;
+    }
+    if (indicatorMode === 'competency') {
+      const mappedIds = new Set(lessonPlanDraft.flatMap((plan) => plan.mapped_indicator_ids || []));
+      const hasInvalidPlan = lessonPlanDraft.some((plan) => !plan.title.trim() || (plan.mapped_indicator_ids || []).length === 0);
+      const hasUnmappedCompetency = indicatorListDraft.some((indicator) => !mappedIds.has(indicator.id));
+      if (lessonPlanDraft.length === 0 || hasInvalidPlan || hasUnmappedCompetency) {
+        alert(language === 'th'
+          ? 'กรุณาเพิ่มแผนการสอน กรอกชื่อแผน และ map ให้ครบทุกสมรรถนะก่อนบันทึก'
+          : 'Add lesson plans, enter each plan name, and map every competency before saving');
+        return;
+      }
+    }
     await dataService.updateCourseIndicators(editingCourseIndicators.id, indicatorListDraft);
     // Also persist mode and lesson plans
     await dataService.updateCourse(editingCourseIndicators.id, {
@@ -2334,7 +2375,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Optional: Import/Clone from Existing Course */}
-              {courses.length > 0 && (
+              {courses.length > 0 && !isCourseCloneFlow && (
                 <div className={`${courseCreationStep === 1 ? '' : 'hidden'} p-3 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/60 space-y-1.5`}>
                   <label className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
                     <Copy className="w-3.5 h-3.5 text-amber-600" />
@@ -2351,6 +2392,7 @@ export default function DashboardPage() {
                         setCourseSemesterInput(defaultPeriod.semester);
                         setCourseYearInput(defaultPeriod.yearCE);
                         setCourseIndicatorsDraft([]);
+                        setCourseLessonPlanDraft([]);
                         setCourseCreationMode('indicator');
                         setCourseCreationStep(1);
                         return;
@@ -2361,6 +2403,7 @@ export default function DashboardPage() {
                         setCourseNameInput(sel.name);
                         setCourseDescInput(sel.description || '');
                         setCourseIndicatorsDraft(sel.indicators || []);
+                        setCourseLessonPlanDraft(sel.lesson_plans || []);
                         setCourseCreationMode(sel.indicator_mode || 'indicator');
                         setCourseCreationStep(1);
                       }
@@ -2454,13 +2497,10 @@ export default function DashboardPage() {
 
                 <div className="space-y-2">
                   {courseIndicatorsDraft.map((item, index) => (
-                    <div key={item.id} className="grid grid-cols-[minmax(0,0.35fr)_minmax(0,1fr)_auto] gap-2 items-center">
-                      <input
-                        value={item.code}
-                        onChange={(event) => handleUpdateCourseFrameworkItem(index, 'code', event.target.value)}
-                        placeholder={courseCreationMode === 'indicator' ? 'รหัส เช่น ท 1.1' : 'รหัสสมรรถนะ'}
-                        className="min-w-0 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white"
-                      />
+                    <div key={item.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2 items-center">
+                      <span className={`px-3 py-2 rounded-xl text-xs font-black ${courseCreationMode === 'competency' ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+                        ข้อ {index + 1}
+                      </span>
                       <input
                         value={item.title}
                         onChange={(event) => handleUpdateCourseFrameworkItem(index, 'title', event.target.value)}
@@ -2485,6 +2525,62 @@ export default function DashboardPage() {
                     + เพิ่ม{courseCreationMode === 'indicator' ? 'ตัวชี้วัด' : 'สมรรถนะ'}
                   </button>
                 </div>
+
+                {courseCreationMode === 'competency' && (
+                  <div className="space-y-3 pt-3 border-t border-amber-200 dark:border-amber-900/60">
+                    <div>
+                      <div className="text-xs font-black text-slate-900 dark:text-white">แผนการสอน / กิจกรรมที่ map กับสมรรถนะ</div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">ทุกสมรรถนะต้องมีแผนการสอนอย่างน้อย 1 แผนก่อนบันทึก</p>
+                    </div>
+                    {courseLessonPlanDraft.map((plan, planIndex) => (
+                      <div key={plan.id} className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-black text-slate-500">แผน {planIndex + 1}</span>
+                          <input
+                            value={plan.title}
+                            onChange={(event) => setCourseLessonPlanDraft((current) => current.map((item, index) => index === planIndex ? { ...item, title: event.target.value } : item))}
+                            placeholder="ชื่อแผนการสอน / กิจกรรม"
+                            className="flex-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setCourseLessonPlanDraft((current) => current.filter((_, index) => index !== planIndex).map((item, index) => ({ ...item, order_index: index + 1 })))}
+                            className="p-2 text-slate-400 hover:text-rose-500 rounded-lg"
+                            aria-label="ลบแผนการสอน"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {courseIndicatorsDraft.map((indicator, indicatorIndex) => {
+                            const isMapped = (plan.mapped_indicator_ids || []).includes(indicator.id);
+                            return (
+                              <button
+                                key={indicator.id}
+                                type="button"
+                                onClick={() => setCourseLessonPlanDraft((current) => current.map((item, index) => {
+                                  if (index !== planIndex) return item;
+                                  const ids = item.mapped_indicator_ids || [];
+                                  return { ...item, mapped_indicator_ids: isMapped ? ids.filter((id) => id !== indicator.id) : [...ids, indicator.id] };
+                                }))}
+                                className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold ${isMapped ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}
+                              >
+                                สมรรถนะ {indicatorIndex + 1}{isMapped ? ' ✓' : ''}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setCourseLessonPlanDraft((current) => [...current, { id: `draft-plan-${Date.now()}`, title: '', order_index: current.length + 1, mapped_indicator_ids: [] }])}
+                      className="w-full py-2 rounded-xl border border-dashed border-violet-300 dark:border-violet-800 text-xs font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/30"
+                    >
+                      + เพิ่มแผนการสอน
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Semester & Year */}
