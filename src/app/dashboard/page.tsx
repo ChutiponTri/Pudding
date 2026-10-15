@@ -258,36 +258,14 @@ export default function DashboardPage() {
   const handleOpenLineConnectionPopup = (cls: Classroom) => {
     setManagingClassroom(null);
     setLineConnectionClassroom(cls);
-    setLineConnection({ status: 'disconnected' });
+    const status = lineConnectionStatuses[cls.id] || cls.line_connection_status || (cls.line_group_id ? 'connected' : 'disconnected');
+    setLineConnection({
+      status,
+      token: status === 'waiting' ? cls.line_connection_token : undefined,
+      expiresAt: cls.line_connection_token_expires_at,
+      connectedAt: cls.line_connected_at,
+    });
   };
-
-  useEffect(() => {
-    const activeClassroom = lineConnectionClassroom || managingClassroom;
-    if (!activeClassroom) return;
-    let active = true;
-  const loadLineConnection = async () => {
-      try {
-        const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(activeClassroom.id)}`, { cache: 'no-store' });
-        if (response.ok && active) {
-          const result = await response.json();
-          setLineConnection((current) => ({
-            ...result,
-            // GET intentionally never returns the raw one-time token. Keep it visible
-            // while waiting so polling does not erase the code from the UI.
-            token: result.status === 'waiting' ? (result.token || current.token) : undefined,
-          }));
-        }
-      } catch (error) {
-        console.warn('Unable to load LINE group status:', error);
-      }
-    };
-    loadLineConnection();
-    const timer = window.setInterval(loadLineConnection, 5000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [managingClassroom?.id, lineConnectionClassroom?.id]);
 
   const handleLineConnection = async (action: 'create' | 'test' | 'disconnect') => {
     const activeClassroom = lineConnectionClassroom || managingClassroom;
