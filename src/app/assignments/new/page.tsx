@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useUser } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
@@ -42,6 +43,7 @@ interface QuestionDraft {
 
 export default function NewAssignmentPage() {
   const router = useRouter();
+  const { user: clerkUser } = useUser();
   const { t, language } = useLanguage();
 
   const [courses, setCourses] = useState<Course[]>([]);
@@ -64,39 +66,22 @@ export default function NewAssignmentPage() {
   // Conditional Sample Work / Guidelines (Assignment Mode only)
   const [sampleWorkTitle, setSampleWorkTitle] = useState("");
   const [sampleWorkUrl, setSampleWorkUrl] = useState("");
+  const [sampleWorkFile, setSampleWorkFile] = useState<File | null>(null);
+  const [sampleWorkPreviewUrl, setSampleWorkPreviewUrl] = useState("");
   const [sampleWorkDescription, setSampleWorkDescription] = useState("");
   const [isUploadingSample, setIsUploadingSample] = useState(false);
   const [sampleUploadError, setSampleUploadError] = useState<string | null>(null);
 
-  const handleSampleFileUpload = async (file: File) => {
-    setIsUploadingSample(true);
+  const handleSampleFileSelect = (file: File) => {
     setSampleUploadError(null);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("assignment_id", "sample-works");
-      formData.append("student_id", "teacher-sample");
-
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      const json = await res.json();
-      if (!res.ok || !json.url) {
-        throw new Error(json.error || "Failed to upload to Cloudflare R2");
-      }
-
-      setSampleWorkUrl(json.url);
-      if (!sampleWorkTitle.trim()) {
-        const cleanName = file.name.replace(/\.[^/.]+$/, "");
-        setSampleWorkTitle(cleanName);
-      }
-    } catch (err: any) {
-      console.error("R2 sample upload error:", err);
-      setSampleUploadError(err.message || "เกิดข้อผิดพลาดในการอัปโหลดไฟล์ขึ้น Cloudflare R2");
-    } finally {
-      setIsUploadingSample(false);
+    if (file.size > 25 * 1024 * 1024) {
+      setSampleUploadError("ไฟล์ต้องมีขนาดไม่เกิน 25MB");
+      return;
     }
+    setSampleWorkFile(file);
+    setSampleWorkUrl("");
+    setSampleWorkPreviewUrl(URL.createObjectURL(file));
+    if (!sampleWorkTitle.trim()) setSampleWorkTitle(file.name.replace(/\.[^/.]+$/, ""));
   };
 
   // Dynamic Questions
@@ -254,6 +239,11 @@ export default function NewAssignmentPage() {
     try {
       const primaryClassId = selectedClassroomIds[0] || classrooms[0]?.id || 'class-401';
       const targetClass = classrooms.find((c) => c.id === primaryClassId);
+      const selectedCourse = courses.find((course) => course.id === selectedCourseId);
+      if (selectedCourse?.indicator_mode === 'competency' && (selectedCourse.lesson_plans || []).length === 0) {
+        alert(language === 'th' ? 'กรุณากำหนดแผนการสอน/สมรรถนะก่อนสร้างงาน' : 'Please configure competency lesson plans before creating an assignment');
+        return;
+      }
       const totalPoints = questions.reduce((acc, q) => acc + Number(q.max_score || 0), 0);
 
       const created = await dataService.createAssignment(
@@ -269,7 +259,7 @@ export default function NewAssignmentPage() {
           total_points: totalPoints,
           status_override: 'auto',
           sample_work_title: !isExam ? sampleWorkTitle : undefined,
-          sample_work_url: !isExam ? sampleWorkUrl : undefined,
+          sample_work_url: undefined,
           sample_work_description: !isExam ? sampleWorkDescription : undefined,
         },
         questions.map((q) => ({
@@ -282,6 +272,26 @@ export default function NewAssignmentPage() {
           max_score: Number(q.max_score) || 5,
         }))
       );
+
+      if (!isExam && sampleWorkFile) {
+        setIsUploadingSample(true);
+        try {
+          const formData = new FormData();
+          formData.append("file", sampleWorkFile);
+          formData.append("assignment_id", created.assignment.id);
+          formData.append("student_id", clerkUser?.id || "teacher");
+          formData.append("purpose", "sample");
+          const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+          const uploadJson = await uploadRes.json();
+          if (!uploadRes.ok || !uploadJson.url) throw new Error(uploadJson.error || "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ");
+          await dataService.updateAssignment(created.assignment.id, { sample_work_url: uploadJson.url });
+        } catch (uploadError) {
+          console.error("Sample work upload error:", uploadError);
+          setSampleUploadError(uploadError instanceof Error ? uploadError.message : "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ");
+        } finally {
+          setIsUploadingSample(false);
+        }
+      }
 
       alert(
         language === 'th'
@@ -548,11 +558,11 @@ export default function NewAssignmentPage() {
               <div className="space-y-1.5 md:col-span-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {t('assignment_creator.sample_work.work_url_label')} (หรืออัปโหลดตรงขึ้น Cloudflare R2)
+                    {t('assignment_creator.sample_work.work_url_label')} (หรือแนบไฟล์ไว้ชั่วคราว)
                   </label>
-                  {sampleWorkUrl && (
+                  {(sampleWorkPreviewUrl || sampleWorkUrl) && (
                     <a
-                      href={sampleWorkUrl}
+                      href={sampleWorkPreviewUrl || sampleWorkUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
@@ -572,17 +582,17 @@ export default function NewAssignmentPage() {
                     className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
                   />
 
-                  {/* Direct Cloudflare R2 Upload Button */}
+                  {/* Keep the file in browser memory until the assignment is confirmed. */}
                   <label className="shrink-0 cursor-pointer px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 transition-transform active:scale-95">
                     {isUploadingSample ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>กำลังอัปโหลดขึ้น R2...</span>
+                        <span>กำลังเตรียมไฟล์...</span>
                       </>
                     ) : (
                       <>
                         <UploadCloud className="w-4 h-4" />
-                        <span>อัปโหลดขึ้น Cloudflare R2</span>
+                        <span>เลือกไฟล์ตัวอย่าง</span>
                       </>
                     )}
                     <input
@@ -591,7 +601,7 @@ export default function NewAssignmentPage() {
                       disabled={isUploadingSample}
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        if (file) handleSampleFileUpload(file);
+                        if (file) handleSampleFileSelect(file);
                       }}
                       className="hidden"
                     />
@@ -602,15 +612,19 @@ export default function NewAssignmentPage() {
                   <p className="text-[11px] text-rose-500 font-semibold">{sampleUploadError}</p>
                 )}
 
-                {sampleWorkUrl && sampleWorkUrl.includes("r2.dev") && (
+                {sampleWorkFile && (
                   <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 font-medium truncate">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>บันทึกไฟล์บน Cloudflare R2 เรียบร้อยแล้ว</span>
+                      <span>แนบไฟล์ไว้ชั่วคราว — จะอัปโหลดขึ้น R2 หลังยืนยันสร้างงาน</span>
                     </span>
                     <button
                       type="button"
-                      onClick={() => setSampleWorkUrl("")}
+                      onClick={() => {
+                        setSampleWorkFile(null);
+                        setSampleWorkUrl("");
+                        setSampleWorkPreviewUrl("");
+                      }}
                       className="text-slate-400 hover:text-rose-500 text-xs px-1"
                     >
                       ลบ
@@ -754,7 +768,7 @@ export default function NewAssignmentPage() {
                       const isCompetency = selectedCourse?.indicator_mode === 'competency';
                       const lessonPlans = selectedCourse?.lesson_plans || [];
 
-                      if (isCompetency && lessonPlans.length > 0) {
+                      if (isCompetency) {
                         // Competency mode: choose a lesson plan entry (which maps to competency items)
                         return (
                           <>

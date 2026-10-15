@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     const file = formData.get('file') as File | null;
     const assignmentId = (formData.get('assignment_id') as string) || 'general';
     const studentId = (formData.get('student_id') as string) || 'student_anonymous';
+    const purpose = (formData.get('purpose') as string) || 'submission';
 
     if (!file) {
       return NextResponse.json(
@@ -51,7 +52,8 @@ export async function POST(req: NextRequest) {
     // Clean and sanitize filename
     const originalName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const timestamp = Date.now();
-    const uniqueKey = `submissions/${assignmentId}/${studentId}/${timestamp}_${originalName}`;
+    const root = purpose === 'sample' ? 'assignment-samples' : 'submissions';
+    const uniqueKey = `${root}/${assignmentId}/${studentId}/${timestamp}_${originalName}`;
 
     const buffer = Buffer.from(await file.arrayBuffer());
 

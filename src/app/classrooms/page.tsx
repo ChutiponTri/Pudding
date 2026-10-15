@@ -29,7 +29,6 @@ import {
   QrCode,
   ArrowLeft,
   X,
-  UserPlus,
   Send,
   UserCheck,
   UserX,
@@ -66,10 +65,6 @@ export default function ClassroomsPage() {
 
   // Student management state
   const [studentActiveTab, setStudentActiveTab] = useState<'roster' | 'pending' | 'line' | 'email'>('roster');
-  const [newStudentId, setNewStudentId] = useState('');
-  const [newStudentFirstName, setNewStudentFirstName] = useState('');
-  const [newStudentLastName, setNewStudentLastName] = useState('');
-  const [newStudentEmail, setNewStudentEmail] = useState('');
 
   // Autocomplete search student state
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
@@ -240,6 +235,10 @@ export default function ClassroomsPage() {
       setStudentSearchResults([]);
       return;
     }
+    if (!teacherProfile?.institution) {
+      setStudentSearchResults([]);
+      return;
+    }
     setIsSearchingStudents(true);
     try {
       const res = await dataService.searchStudentsByInstitution(q, teacherProfile?.institution);
@@ -253,6 +252,12 @@ export default function ClassroomsPage() {
 
   const handleSelectFoundStudent = async (std: User) => {
     if (!selectedClassroomForStudents) return;
+    const alreadyEnrolled = [...(selectedClassroomForStudents.students || []), ...(selectedClassroomForStudents.pending_students || [])]
+      .some((student) => student.id === std.id || (student.student_id && std.student_id && student.student_id === std.student_id));
+    if (alreadyEnrolled) {
+      showNotification(language === 'th' ? 'นักเรียนคนนี้อยู่ในห้องเรียนแล้ว' : 'This student is already in the classroom');
+      return;
+    }
     await dataService.addStudentToClassroom(
       selectedClassroomForStudents.id,
       {
@@ -272,35 +277,6 @@ export default function ClassroomsPage() {
     await loadData();
   };
 
-  const handleAddStudent = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClassroomForStudents || !newStudentFirstName.trim() || !newStudentLastName.trim()) return;
-
-    const sid = newStudentId.trim();
-    const fallbackEmail = sid
-      ? `${sid}@student.pudding.ac.th`
-      : `${newStudentFirstName.toLowerCase()}@student.pudding.ac.th`;
-
-    await dataService.addStudentToClassroom(
-      selectedClassroomForStudents.id,
-      {
-        first_name: newStudentFirstName.trim(),
-        last_name: newStudentLastName.trim(),
-        student_id: sid || undefined,
-        email: newStudentEmail.trim() || fallbackEmail,
-        institution: teacherProfile?.institution,
-      },
-      { autoAdmit: true }
-    );
-
-    setNewStudentFirstName('');
-    setNewStudentLastName('');
-    setNewStudentId('');
-    setNewStudentEmail('');
-    showNotification(language === 'th' ? 'เพิ่มนักเรียนเข้าห้องเรียนสำเร็จ' : 'Student added successfully');
-    await loadData();
-  };
-
   const handleRemoveStudent = async (studentId: string) => {
     if (!selectedClassroomForStudents) return;
     if (confirm(t('classroom_mgmt.remove_student_confirm'))) {
@@ -308,6 +284,26 @@ export default function ClassroomsPage() {
       showNotification(language === 'th' ? 'นำนักเรียนออกจากห้องแล้ว' : 'Student removed');
       await loadData();
     }
+  };
+
+  const handleEditStudent = async (student: User) => {
+    if (!selectedClassroomForStudents || !clerkUser?.id) return;
+    const firstName = window.prompt('ชื่อจริง', student.first_name || '')?.trim();
+    if (!firstName) return;
+    const lastName = window.prompt('นามสกุล', student.last_name || '')?.trim();
+    if (!lastName) return;
+    const studentId = window.prompt('รหัสนักเรียน', student.student_id || '')?.trim();
+    if (!studentId) return;
+    const updated = await dataService.updateClassroomStudent(
+      selectedClassroomForStudents.id,
+      student.id,
+      clerkUser.id,
+      { first_name: firstName, last_name: lastName, student_id: studentId }
+    );
+    showNotification(updated
+      ? (language === 'th' ? 'แก้ไขข้อมูลนักเรียนเรียบร้อยแล้ว' : 'Student details updated')
+      : (language === 'th' ? 'ไม่มีสิทธิ์แก้ไขห้องเรียนนี้' : 'You cannot edit this classroom'));
+    if (updated) await loadData();
   };
 
   const handleAdmitStudent = async (studentId: string) => {
@@ -757,50 +753,6 @@ export default function ClassroomsPage() {
                     )}
                   </div>
 
-                  {/* Add Student Form */}
-                  <form
-                    onSubmit={handleAddStudent}
-                    className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/80 space-y-3"
-                  >
-                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <UserPlus className="w-3.5 h-3.5 text-amber-500" />
-                      <span>{t('classroom_mgmt.add_student_manual')}</span>
-                    </span>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                      <input
-                        type="text"
-                        placeholder="รหัส นร."
-                        value={newStudentId}
-                        onChange={(e) => setNewStudentId(e.target.value)}
-                        className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium"
-                      />
-                      <input
-                        type="text"
-                        required
-                        placeholder="ชื่อจริง *"
-                        value={newStudentFirstName}
-                        onChange={(e) => setNewStudentFirstName(e.target.value)}
-                        className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium"
-                      />
-                      <input
-                        type="text"
-                        required
-                        placeholder="นามสกุล *"
-                        value={newStudentLastName}
-                        onChange={(e) => setNewStudentLastName(e.target.value)}
-                        className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium"
-                      />
-                      <button
-                        type="submit"
-                        className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <PlusCircle className="w-3.5 h-3.5" />
-                        <span>เพิ่ม</span>
-                      </button>
-                    </div>
-                  </form>
-
                   {/* Student Table */}
                   <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
                     <table className="w-full text-left text-xs">
@@ -817,8 +769,8 @@ export default function ClassroomsPage() {
                           <tr>
                             <td colSpan={4} className="py-8 text-center text-slate-400">
                               {language === 'th'
-                                ? 'ยังไม่มีนักเรียนในห้องนี้ ใช้ LINE LIFF หรือแบบฟอร์มด้านบนเพื่อเชิญนักเรียน'
-                                : 'No students enrolled yet. Use LINE LIFF or the form above to add students.'}
+                                ? 'ยังไม่มีนักเรียนในห้องนี้ ใช้ช่องค้นหาด้านบนหรือ LINE LIFF เพื่อเชิญนักเรียน'
+                                : 'No students enrolled yet. Use the search above or LINE LIFF to add students.'}
                             </td>
                           </tr>
                         ) : (
@@ -869,6 +821,14 @@ export default function ClassroomsPage() {
                                 )}
                               </td>
                               <td className="py-3 px-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditStudent(std)}
+                                  className="text-slate-400 hover:text-amber-600 p-1.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors"
+                                  title={language === 'th' ? 'แก้ไขข้อมูลนักเรียน' : 'Edit student'}
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveStudent(std.id)}

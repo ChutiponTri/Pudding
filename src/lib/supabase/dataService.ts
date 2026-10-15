@@ -22,7 +22,6 @@ import {
   mockSubmissions,
   mockSubmissionAnswers,
   mockSubmissionEvents,
-  mockStudents,
   mockTeacher,
   mockCoTeacher1,
   mockCoTeacher2,
@@ -832,11 +831,6 @@ export const dataService = {
       if (u.student_id) localUserMap.set(u.student_id, u);
       if (u.email) localUserMap.set(u.email, u);
     }
-    mockStudents.forEach((ms) => {
-      if (!localUserMap.has(ms.id)) localUserMap.set(ms.id, ms);
-      if (ms.student_id && !localUserMap.has(ms.student_id)) localUserMap.set(ms.student_id, ms);
-    });
-
     const hydrated = stored.map((cls) => {
       const students = (cls.students || []).map((s) => {
         const real =
@@ -1498,9 +1492,8 @@ export const dataService = {
     });
 
     let results = Array.from(studentMap.values());
-    if (institution) {
-      results = results.filter((s) => !s.institution || s.institution === institution);
-    }
+    if (!institution) return [];
+    results = results.filter((s) => s.institution === institution);
     const q = query.toLowerCase().trim();
     if (q) {
       results = results.filter(
@@ -1511,6 +1504,48 @@ export const dataService = {
       );
     }
     return results;
+  },
+
+  async updateClassroomStudent(
+    classroomId: string,
+    studentId: string,
+    teacherId: string,
+    data: { first_name: string; last_name: string; student_id: string }
+  ): Promise<boolean> {
+    const classroom = (await this.getClassrooms()).find((item) => item.id === classroomId);
+    if (!classroom || (classroom.teacher_id !== teacherId && !classroom.teachers?.some((teacher) => teacher.teacher_id === teacherId))) {
+      return false;
+    }
+    const firstName = data.first_name.trim();
+    const lastName = data.last_name.trim();
+    const studentCode = data.student_id.trim();
+    if (!firstName || !lastName || !studentCode) return false;
+
+    if (isSupabaseConfigured) {
+      const supabase = createClient();
+      const { error } = await supabase.from('users').update({
+        first_name: firstName,
+        last_name: lastName,
+        student_id: studentCode,
+        updated_at: new Date().toISOString(),
+      }).eq('id', studentId);
+      if (error) throw error;
+    }
+
+    const classrooms = await this.getClassrooms();
+    const target = classrooms.find((item) => item.id === classroomId);
+    if (!target) return false;
+    const update = (student: User): User => student.id === studentId
+      ? { ...student, first_name: firstName, last_name: lastName, student_id: studentCode }
+      : student;
+    target.students = (target.students || []).map(update);
+    target.pending_students = (target.pending_students || []).map(update);
+    if (isSupabaseConfigured) {
+      const supabase = createClient();
+      await supabase.from('classrooms').update({ students: target.students, pending_students: target.pending_students }).eq('id', classroomId);
+    }
+    setStored('classrooms', classrooms);
+    return true;
   },
 
   async searchTeachers(query?: string, institution?: string): Promise<User[]> {
@@ -1905,6 +1940,20 @@ export const dataService = {
     setStored('questions', [...questions, ...newQuestions]);
 
     return { assignment: newAssignment, questions: newQuestions };
+  },
+
+  async updateAssignment(id: string, data: Partial<Omit<Assignment, 'id' | 'created_at'>>): Promise<Assignment | null> {
+    if (isSupabaseConfigured) {
+      const supabase = createClient();
+      const { error } = await supabase.from('assignments').update(data).eq('id', id);
+      if (error) throw error;
+    }
+    const assignments = getStoredOr<Assignment[]>('assignments', []);
+    const index = assignments.findIndex((assignment) => assignment.id === id);
+    if (index === -1) return null;
+    assignments[index] = { ...assignments[index], ...data };
+    setStored('assignments', assignments);
+    return assignments[index];
   },
 
   async updateAssignmentDeadlineOverride(

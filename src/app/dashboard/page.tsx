@@ -116,10 +116,6 @@ export default function DashboardPage() {
   // Student Roster & LINE Invite Modal state
   const [managingClassroom, setManagingClassroom] = useState<Classroom | null>(null);
   const [studentTab, setStudentTab] = useState<'roster' | 'pending' | 'line' | 'email'>('roster');
-  const [newStudentId, setNewStudentId] = useState('');
-  const [newStudentFirst, setNewStudentFirst] = useState('');
-  const [newStudentLast, setNewStudentLast] = useState('');
-  const [newStudentEmail, setNewStudentEmail] = useState('');
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [studentSearchResults, setStudentSearchResults] = useState<User[]>([]);
   const [isSearchingStudents, setIsSearchingStudents] = useState(false);
@@ -636,36 +632,6 @@ export default function DashboardPage() {
     }
   };
 
-  // Student management actions
-  const handleAddStudent = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!managingClassroom || !newStudentFirst.trim() || !newStudentLast.trim()) return;
-
-    const sid = newStudentId.trim();
-    const fallbackEmail = sid
-      ? `${sid}@student.pudding.ac.th`
-      : `${newStudentFirst.toLowerCase()}@student.pudding.ac.th`;
-
-    await dataService.addStudentToClassroom(
-      managingClassroom.id,
-      {
-        student_id: sid || undefined,
-        first_name: newStudentFirst.trim(),
-        last_name: newStudentLast.trim(),
-        email: newStudentEmail.trim() || fallbackEmail,
-        institution: teacherProfile?.institution,
-      },
-      { autoAdmit: true }
-    );
-
-    setNewStudentFirst('');
-    setNewStudentLast('');
-    setNewStudentId('');
-    setNewStudentEmail('');
-    showToast(language === 'th' ? 'เพิ่มนักเรียนเข้าห้องเรียนสำเร็จ' : 'Student added successfully');
-    await loadAllData();
-  };
-
   const handleRemoveStudent = async (studentId: string) => {
     if (!managingClassroom) return;
     if (confirm(t('classroom_mgmt.remove_student_confirm'))) {
@@ -710,6 +676,10 @@ export default function DashboardPage() {
       setStudentSearchResults([]);
       return;
     }
+    if (!teacherProfile?.institution) {
+      setStudentSearchResults([]);
+      return;
+    }
     setIsSearchingStudents(true);
     try {
       const res = await dataService.searchStudentsByInstitution(q, teacherProfile?.institution);
@@ -723,6 +693,12 @@ export default function DashboardPage() {
 
   const handleSelectFoundStudent = async (std: User) => {
     if (!managingClassroom) return;
+    const alreadyEnrolled = [...(managingClassroom.students || []), ...(managingClassroom.pending_students || [])]
+      .some((student) => student.id === std.id || (student.student_id && std.student_id && student.student_id === std.student_id));
+    if (alreadyEnrolled) {
+      showToast(language === 'th' ? 'นักเรียนคนนี้อยู่ในห้องเรียนแล้ว' : 'This student is already in the classroom');
+      return;
+    }
     await dataService.addStudentToClassroom(
       managingClassroom.id,
       {
@@ -842,7 +818,8 @@ export default function DashboardPage() {
     // Also persist mode and lesson plans
     await dataService.updateCourse(editingCourseIndicators.id, {
       indicator_mode: indicatorMode,
-      lesson_plans: lessonPlanDraft,
+      // A course uses exactly one assessment framework at a time.
+      lesson_plans: indicatorMode === 'competency' ? lessonPlanDraft : [],
     } as any);
     showToast(
       language === 'th' ? 'บันทึกตัวชี้วัดเรียบร้อยแล้ว' : 'Course indicators saved successfully'
@@ -2629,9 +2606,7 @@ export default function DashboardPage() {
                           key={found.id}
                           type="button"
                           onClick={() => {
-                            setNewStudentId(found.student_id || '');
-                            setNewStudentFirst(found.first_name);
-                            setNewStudentLast(found.last_name);
+                            handleSelectFoundStudent(found);
                             setStudentSearchQuery('');
                             setStudentSearchResults([]);
                           }}
@@ -2660,42 +2635,6 @@ export default function DashboardPage() {
                     </div>
                   )}
                 </div>
-
-                {/* Add student inline form */}
-                <form
-                  onSubmit={handleAddStudent}
-                  className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 grid grid-cols-1 sm:grid-cols-4 gap-2"
-                >
-                  <input
-                    type="text"
-                    value={newStudentId}
-                    onChange={(e) => setNewStudentId(e.target.value)}
-                    placeholder="รหัสนักเรียน (54101)"
-                    className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                  />
-                  <input
-                    type="text"
-                    required
-                    value={newStudentFirst}
-                    onChange={(e) => setNewStudentFirst(e.target.value)}
-                    placeholder="ชื่อจริง *"
-                    className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                  />
-                  <input
-                    type="text"
-                    required
-                    value={newStudentLast}
-                    onChange={(e) => setNewStudentLast(e.target.value)}
-                    placeholder="นามสกุล *"
-                    className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                  />
-                  <button
-                    type="submit"
-                    className="py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs cursor-pointer"
-                  >
-                    + เพิ่มนักเรียน
-                  </button>
-                </form>
 
                 {/* Students list */}
                 <div className="space-y-2">
