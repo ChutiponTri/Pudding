@@ -2809,7 +2809,8 @@ export default function DashboardPage() {
 
             {lineConnection.status === 'connected' ? (
               <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-200">
-                กลุ่ม LINE นี้พร้อมรับแจ้งเตือนรายชื่อนักเรียนที่ยังไม่ส่งงานตามเวลาที่ตั้งไว้
+                กลุ่ม LINE นี้พร้อมรับแจ้งเตือนรายชื่อนักเรียนที่ยังไม่ส่งงานตามเวลาที่ตั้งไว้<br />
+                นักเรียนพิมพ์ <b>ขอรหัสเข้าห้อง</b> ในกลุ่ม เพื่อรับรหัสและลิงก์เข้าห้องเรียนได้ทันที
               </div>
             ) : (
               <div className="space-y-3">

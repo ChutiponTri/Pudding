@@ -37,6 +37,12 @@ function normalizeCommand(command: string | undefined) {
     attendance: 'attendance',
     'เช็กชื่อ': 'attendance',
     'เช็คชื่อ': 'attendance',
+    join: 'join',
+    code: 'join',
+    'ขอรหัส': 'join',
+    'ขอรหัสเข้าห้อง': 'join',
+    'รหัสเข้าห้อง': 'join',
+    'เข้าห้อง': 'join',
   };
   const value = (command || 'help').trim().toLowerCase();
   return aliases[value] || value;
@@ -49,6 +55,15 @@ async function replySafely(replyToken: string | undefined, text: string) {
   } catch (error) {
     console.error('LINE reply failed:', error);
   }
+}
+
+async function replyClassroomJoinCode(replyToken: string | undefined, classroom: { name: string; invite_code?: string | null; id: string }, liffUrl: string | null) {
+  const joinUrl = liffUrl ? `${liffUrl}?classId=${encodeURIComponent(classroom.id)}` : null;
+  const lines = [`🎓 ห้องเรียน: ${classroom.name}`];
+  if (classroom.invite_code) lines.push(`รหัสเข้าห้อง: ${classroom.invite_code}`);
+  if (joinUrl) lines.push(`กดลิงก์นี้เพื่อเข้าร่วม: ${joinUrl}`);
+  lines.push('หากเป็นนักเรียนใหม่ ให้เปิดลิงก์ผ่าน LINE แล้วกรอกข้อมูลเพื่อส่งคำขอเข้าห้องเรียน');
+  await replySafely(replyToken, lines.join('\n'));
 }
 
 /**
@@ -84,11 +99,17 @@ export async function POST(request: NextRequest) {
         : 'Pudding พร้อมใช้งาน กรุณาใช้ปุ่ม LINE Group ในหน้าเว็บเพื่อเชื่อมกับห้องเรียน');
       continue;
     }
+    if (groupId && event.type === 'memberJoined') {
+      const { data: joinedClassroom } = await supabase.from('classrooms').select('id, name, invite_code').eq('line_group_id', groupId).maybeSingle();
+      if (joinedClassroom) await replyClassroomJoinCode(event.replyToken, joinedClassroom, getLiffUrl());
+      continue;
+    }
     const normalizedText = (event.message?.type === 'text'
       ? event.message.text?.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim()
       : '') || '';
     const match = normalizedText.match(/(?:^|\s)#pudding[\s:：]+([a-z0-9]{8})(?:\s|$)/i);
     const commandMatch = normalizedText.match(/^#pudding(?:\s+(.+))?$/i);
+    const directJoinRequest = /^(?:#pudding\s+)?(?:join|code|ขอรหัส|ขอรหัสเข้าห้อง|รหัสเข้าห้อง|เข้าห้อง)$/i.test(normalizedText);
     if (!groupId && !lineUserId) continue;
 
     // Pairing remains the only command that can change classroom/group state.
@@ -150,8 +171,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Ignore ordinary group messages. Only explicit Pudding commands continue below.
-    if (!commandMatch) continue;
-    const rawCommand = (commandMatch[1] || '').trim();
+    if (!commandMatch && !directJoinRequest) continue;
+    const rawCommand = directJoinRequest ? 'join' : (commandMatch?.[1] || '').trim();
     const [command, ...args] = rawCommand.split(/\s+/);
     const normalizedCommand = normalizeCommand(command);
     const liffUrl = getLiffUrl();
@@ -240,14 +261,15 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    const { data: groupClassroom } = await supabase.from('classrooms').select('id, name, teacher_id, teachers, line_group_id').eq('line_group_id', groupId).maybeSingle();
+    const { data: groupClassroom } = await supabase.from('classrooms').select('id, name, teacher_id, teachers, line_group_id, invite_code').eq('line_group_id', groupId).maybeSingle();
     if (!groupClassroom) {
-      if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
+      if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding join หรือ “ขอรหัสเข้าห้อง” ขอรหัส/ลิงก์เข้าห้อง\n#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
       else if (normalizedCommand === 'link') await replySafely(event.replyToken, liffUrl ? `เปิด Pudding: ${liffUrl}` : 'ยังไม่ได้ตั้งค่า LIFF URL');
       else if (normalizedCommand === 'status') await replySafely(event.replyToken, 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียนใน Pudding');
       continue;
     }
-    if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
+    if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding join หรือ “ขอรหัสเข้าห้อง” ขอรหัส/ลิงก์เข้าห้อง\n#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
+    else if (normalizedCommand === 'join') await replyClassroomJoinCode(event.replyToken, groupClassroom, liffUrl);
     else if (normalizedCommand === 'link') await replySafely(event.replyToken, liffUrl ? `เปิด Pudding: ${liffUrl}` : 'ยังไม่ได้ตั้งค่า LIFF URL');
     else if (normalizedCommand === 'status') await replySafely(event.replyToken, `ห้อง: ${groupClassroom.name}\nLINE Group: เชื่อมต่อแล้ว\nแจ้งเตือนงาน: พร้อมใช้งาน`);
     else if (normalizedCommand === 'attendance') await replySafely(event.replyToken, 'ระบบเช็กชื่อยังไม่ได้เปิดใช้งานใน Pudding');
