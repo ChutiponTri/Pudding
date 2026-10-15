@@ -103,6 +103,8 @@ export default function DashboardPage() {
   const [teacherInstitutionInput, setTeacherInstitutionInput] = useState('');
   const [teacherFirstNameInput, setTeacherFirstNameInput] = useState('');
   const [teacherLastNameInput, setTeacherLastNameInput] = useState('');
+  const [teacherLineLink, setTeacherLineLink] = useState<{ status: 'disconnected' | 'waiting' | 'connected'; token?: string; expiresAt?: string }>({ status: 'disconnected' });
+  const [isTeacherLineLinkLoading, setIsTeacherLineLinkLoading] = useState(false);
 
   // Classroom Modals state
   const [isClassModalOpen, setIsClassModalOpen] = useState(false);
@@ -841,6 +843,35 @@ export default function DashboardPage() {
       showToast(language === 'th' ? 'บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง' : 'Save failed, please try again');
     }
   };
+
+  const loadTeacherLineLink = async () => {
+    try {
+      const response = await fetch('/api/line/teacher-link');
+      const result = await response.json();
+      if (response.ok) setTeacherLineLink(result);
+    } catch (error) {
+      console.error('Failed to load teacher LINE link status:', error);
+    }
+  };
+
+  const createTeacherLineLink = async () => {
+    setIsTeacherLineLinkLoading(true);
+    try {
+      const response = await fetch('/api/line/teacher-link', { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'ไม่สามารถสร้างรหัสเชื่อม LINE ได้');
+      setTeacherLineLink(result);
+      showToast('สร้างรหัสเชื่อม LINE สำหรับครูแล้ว');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ไม่สามารถสร้างรหัสเชื่อม LINE ได้');
+    } finally {
+      setIsTeacherLineLinkLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isInstitutionModalOpen && clerkUser?.id) loadTeacherLineLink();
+  }, [isInstitutionModalOpen, clerkUser?.id]);
 
   const getRealLiffUrl = (cls: Classroom) => {
     const liffId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || '2011818142-BznwnWyj';
@@ -3323,6 +3354,45 @@ export default function DashboardPage() {
                   <b className="text-slate-900 dark:text-white">{teacherProfile.institution}</b>
                 </div>
               )}
+
+              <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/20 p-4 space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black text-slate-900 dark:text-white">เชื่อม LINE สำหรับคำสั่งครู</p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">ใช้สำหรับยืนยันตัวตนครูในแชตส่วนตัวกับ Pudding Bot</p>
+                  </div>
+                  <span className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-black ${teacherLineLink.status === 'connected' ? 'bg-emerald-200 text-emerald-800' : teacherLineLink.status === 'waiting' ? 'bg-amber-200 text-amber-800' : 'bg-white text-slate-500'}`}>
+                    {teacherLineLink.status === 'connected' ? 'เชื่อมแล้ว' : teacherLineLink.status === 'waiting' ? 'รอยืนยัน' : 'ยังไม่เชื่อม'}
+                  </span>
+                </div>
+                {teacherLineLink.status === 'waiting' && teacherLineLink.token && (
+                  <div className="rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/50 p-3">
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">ส่งข้อความนี้ในแชตส่วนตัวกับ LINE Official Account:</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <code className="flex-1 font-mono font-black tracking-widest text-sm text-slate-900 dark:text-white">#pudding link {teacherLineLink.token}</code>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(`#pudding link ${teacherLineLink.token}`)}
+                        className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
+                        title="คัดลอกคำสั่ง"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-amber-700 dark:text-amber-300 mt-1.5">รหัสใช้ได้ครั้งเดียวและหมดอายุภายใน 10 นาที</p>
+                  </div>
+                )}
+                {teacherLineLink.status !== 'connected' && (
+                  <button
+                    type="button"
+                    onClick={createTeacherLineLink}
+                    disabled={isTeacherLineLinkLoading}
+                    className="w-full py-2 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-xs font-black disabled:opacity-50 cursor-pointer"
+                  >
+                    {isTeacherLineLinkLoading ? 'กำลังสร้างรหัส...' : teacherLineLink.status === 'waiting' ? 'สร้างรหัสใหม่' : 'สร้างรหัสเชื่อม LINE'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Footer */}

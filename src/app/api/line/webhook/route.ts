@@ -156,13 +156,52 @@ export async function POST(request: NextRequest) {
     const normalizedCommand = normalizeCommand(command);
     const liffUrl = getLiffUrl();
 
+    // Teacher account pairing: a code generated while signed in with Clerk
+    // is exchanged once from the teacher's LINE private chat.
+    if (!groupId && normalizedCommand === 'link' && /^[A-Z0-9]{8}$/i.test(args[0] || '') && lineUserId) {
+      const tokenHash = hashToken(args[0].toUpperCase());
+      const { data: teacher, error: teacherLinkLookupError } = await supabase
+        .from('users')
+        .select('id, first_name, line_link_token_expires_at')
+        .eq('line_link_token_hash', tokenHash)
+        .eq('line_link_status', 'waiting')
+        .eq('role', 'teacher')
+        .limit(1)
+        .maybeSingle();
+      if (teacherLinkLookupError) {
+        console.error('LINE teacher link lookup failed:', teacherLinkLookupError);
+        await replySafely(event.replyToken, 'ระบบยังไม่พร้อมสำหรับการเชื่อมบัญชีครู กรุณาให้ผู้ดูแลรัน migration ล่าสุด');
+        continue;
+      }
+      if (!teacher || !teacher.line_link_token_expires_at || new Date(teacher.line_link_token_expires_at).getTime() <= Date.now()) {
+        await replySafely(event.replyToken, 'ไม่พบรหัสเชื่อมครู หรือรหัสหมดอายุแล้ว กรุณาสร้างรหัสใหม่จากหน้า Pudding');
+        continue;
+      }
+      const { error: teacherLinkUpdateError } = await supabase.from('users').update({
+        line_uid: lineUserId,
+        is_line_connected: true,
+        line_link_status: 'connected',
+        line_link_token_hash: null,
+        line_link_token: null,
+        line_link_token_expires_at: null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', teacher.id).eq('role', 'teacher');
+      if (teacherLinkUpdateError) {
+        console.error('LINE teacher link update failed:', teacherLinkUpdateError);
+        await replySafely(event.replyToken, 'เชื่อมบัญชีครูไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+      } else {
+        await replySafely(event.replyToken, '✅ เชื่อม LINE กับบัญชีครูเรียบร้อยแล้ว ใช้ #pudding status ตรวจสอบได้');
+      }
+      continue;
+    }
+
     const { data: linkedTeacher } = lineUserId
       ? await supabase.from('users').select('id, first_name, last_name, role').eq('line_uid', lineUserId).eq('role', 'teacher').maybeSingle()
       : { data: null };
 
     if (!groupId) {
       if (normalizedCommand === 'help') {
-        await replySafely(event.replyToken, '#pudding status ตรวจสถานะ\n#pudding test ทดสอบแจ้งเตือน\n#pudding link เปิด Pudding\n#pudding attendance สถานะเช็กชื่อ');
+        await replySafely(event.replyToken, '#pudding status ตรวจสถานะ\n#pudding test ทดสอบแจ้งเตือน\n#pudding link เปิด Pudding\n#pudding link <รหัส> เชื่อมบัญชีครู\n#pudding attendance สถานะเช็กชื่อ');
         continue;
       }
       if (normalizedCommand === 'link') {

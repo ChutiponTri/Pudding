@@ -268,6 +268,10 @@ export default function LiffStudentPage() {
       alert("กรุณาระบุข้อมูลให้ครบถ้วน: ชื่อจริง นามสกุล รหัสนักเรียน (ขั้นต่ำ 3 หลัก) และเลือกสถานศึกษา");
       return;
     }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      alert("กรุณาระบุอีเมลให้ถูกต้อง หรือเว้นว่างไว้ได้");
+      return;
+    }
 
     setIsSavingStudentId(true);
     try {
@@ -1465,6 +1469,9 @@ export default function LiffStudentPage() {
                   placeholder="เช่น student@example.com"
                   className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-[#06C755] focus:outline-hidden"
                 />
+                {inputEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inputEmail.trim()) && (
+                  <p className="text-[10px] text-rose-500">รูปแบบอีเมลไม่ถูกต้อง เช่น student@example.com</p>
+                )}
               </div>
             </div>
 
@@ -1486,7 +1493,8 @@ export default function LiffStudentPage() {
                   !inputFirstName.trim() ||
                   !inputLastName.trim() ||
                   inputStudentId.trim().length < 3 ||
-                  !inputInstitution.trim()
+                  !inputInstitution.trim() ||
+                  (!!inputEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inputEmail.trim()))
                 }
                 onClick={handleSaveStudentId}
                 className="flex-1 py-2.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50 transition-all"

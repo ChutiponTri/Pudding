@@ -15,7 +15,11 @@ ADD COLUMN IF NOT EXISTS clerk_id TEXT,
 ADD COLUMN IF NOT EXISTS avatar_url TEXT,
 ADD COLUMN IF NOT EXISTS email TEXT,
 ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'teacher',
-ADD COLUMN IF NOT EXISTS is_line_connected BOOLEAN DEFAULT FALSE;
+ADD COLUMN IF NOT EXISTS is_line_connected BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS line_link_status TEXT DEFAULT 'disconnected',
+ADD COLUMN IF NOT EXISTS line_link_token_hash TEXT,
+ADD COLUMN IF NOT EXISTS line_link_token TEXT,
+ADD COLUMN IF NOT EXISTS line_link_token_expires_at TIMESTAMPTZ;
 
 -- 2. Ensure all columns exist on `classrooms` table
 ALTER TABLE IF EXISTS public.classrooms
