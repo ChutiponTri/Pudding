@@ -143,7 +143,13 @@ export default function ClassroomsPage() {
     const loadLineConnection = async () => {
       try {
         const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(selectedClassroomForStudents.id)}`, { cache: 'no-store' });
-        if (response.ok && active) setLineConnection(await response.json());
+        if (response.ok && active) {
+          const result = await response.json();
+          setLineConnection((current) => ({
+            ...result,
+            token: result.status === 'waiting' ? (result.token || current.token) : undefined,
+          }));
+        }
       } catch (error) {
         console.warn('Unable to load LINE group status:', error);
       }

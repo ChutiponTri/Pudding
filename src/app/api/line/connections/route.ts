@@ -32,8 +32,11 @@ export async function GET(request: NextRequest) {
   const { userId, classroom } = await getOwnedClassroom(classroomId);
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!classroom) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
+  const isExpired = classroom.line_connection_status === 'waiting'
+    && classroom.line_connection_token_expires_at
+    && new Date(classroom.line_connection_token_expires_at).getTime() <= Date.now();
   return NextResponse.json({
-    status: classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected'),
+    status: isExpired ? 'disconnected' : (classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected')),
     connectedAt: classroom.line_connected_at,
     expiresAt: classroom.line_connection_token_expires_at,
   });

@@ -115,7 +115,7 @@ export default function DashboardPage() {
 
   // Student Roster & LINE Invite Modal state
   const [managingClassroom, setManagingClassroom] = useState<Classroom | null>(null);
-  const [studentTab, setStudentTab] = useState<'roster' | 'pending' | 'line' | 'email'>('roster');
+  const [studentTab, setStudentTab] = useState<'roster' | 'pending' | 'line' | 'line-group' | 'email'>('roster');
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [studentSearchResults, setStudentSearchResults] = useState<User[]>([]);
   const [isSearchingStudents, setIsSearchingStudents] = useState(false);
@@ -249,10 +249,18 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!managingClassroom) return;
     let active = true;
-    const loadLineConnection = async () => {
+  const loadLineConnection = async () => {
       try {
         const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(managingClassroom.id)}`, { cache: 'no-store' });
-        if (response.ok && active) setLineConnection(await response.json());
+        if (response.ok && active) {
+          const result = await response.json();
+          setLineConnection((current) => ({
+            ...result,
+            // GET intentionally never returns the raw one-time token. Keep it visible
+            // while waiting so polling does not erase the code from the UI.
+            token: result.status === 'waiting' ? (result.token || current.token) : undefined,
+          }));
+        }
       } catch (error) {
         console.warn('Unable to load LINE group status:', error);
       }
@@ -2799,6 +2807,18 @@ export default function DashboardPage() {
                 <MessageCircle className="w-3.5 h-3.5" />
                 <span>{t('classroom_mgmt.invite_line_title')}</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setStudentTab('line-group')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  studentTab === 'line-group'
+                    ? 'bg-emerald-600 text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>LINE Group แจ้งเตือน</span>
+              </button>
             </div>
 
             {/* Student Roster Tab */}
@@ -2996,9 +3016,11 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* LINE LIFF Invite Tab */}
-            {studentTab === 'line' && (
+            {/* LINE LIFF Invite / LINE Group tabs */}
+            {(studentTab === 'line' || studentTab === 'line-group') && (
               <div className="space-y-5 text-center p-3 sm:p-5">
+                {studentTab === 'line' && (
+                <>
                 <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto shadow-xs">
                   <MessageCircle className="w-6 h-6" />
                 </div>
@@ -3010,8 +3032,11 @@ export default function DashboardPage() {
                     {t('classroom_mgmt.invite_line_desc')}
                   </p>
                 </div>
+                </>
+                )}
 
                 {/* LINE Group connection for assignment reminders */}
+                {studentTab === 'line-group' && (
                 <div className="max-w-lg mx-auto w-full text-left p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -3046,7 +3071,10 @@ export default function DashboardPage() {
                     )}
                   </div>
                 </div>
+                )}
 
+                {studentTab === 'line' && (
+                <>
                 {/* Invite Code Highlight */}
                 {managingClassroom.invite_code && (
                   <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 max-w-sm mx-auto flex items-center justify-between">
@@ -3128,6 +3156,8 @@ export default function DashboardPage() {
                     <span>{language === 'th' ? 'คัดลอกลิงก์เว็บตรง' : 'Copy Web Link'}</span>
                   </button>
                 </div>
+                </>
+                )}
               </div>
             )}
 

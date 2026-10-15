@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
+import { replyLineText } from '@/lib/line/messaging';
 
 export const runtime = 'nodejs';
 
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
-  const payload = JSON.parse(body) as { events?: Array<{ source?: { type?: string; groupId?: string }; message?: { type?: string; text?: string } }> };
+  const payload = JSON.parse(body) as { events?: Array<{ replyToken?: string; source?: { type?: string; groupId?: string }; message?: { type?: string; text?: string } }> };
   const supabase = createServiceSupabaseClient();
   for (const event of payload.events || []) {
     const groupId = event.source?.type === 'group' ? event.source.groupId : undefined;
@@ -39,14 +40,22 @@ export async function POST(request: NextRequest) {
       .eq('line_connection_status', 'waiting')
       .limit(1);
     const classroom = classrooms?.[0];
-    if (!classroom || !classroom.line_connection_token_expires_at || new Date(classroom.line_connection_token_expires_at).getTime() < Date.now()) continue;
-    await supabase.from('classrooms').update({
+    if (!classroom || !classroom.line_connection_token_expires_at || new Date(classroom.line_connection_token_expires_at).getTime() < Date.now()) {
+      if (event.replyToken) {
+        await replyLineText(event.replyToken, 'ไม่พบรหัสเชื่อมต่อ หรือรหัสหมดอายุแล้ว กรุณาสร้างรหัสใหม่จากหน้าเว็บ');
+      }
+      continue;
+    }
+    const { error } = await supabase.from('classrooms').update({
       line_group_id: groupId,
       line_connection_status: 'connected',
       line_connection_token_hash: null,
       line_connection_token_expires_at: null,
       line_connected_at: new Date().toISOString(),
     }).eq('id', classroom.id);
+    if (!error && event.replyToken) {
+      await replyLineText(event.replyToken, '✅ เชื่อมต่อ LINE Group กับห้องเรียนเรียบร้อยแล้ว ระบบพร้อมส่งแจ้งเตือนการบ้าน');
+    }
   }
   return NextResponse.json({ ok: true });
 }
