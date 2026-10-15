@@ -218,12 +218,18 @@ export async function POST(request: NextRequest) {
       fallbackStore.saveAttendanceRecord({ ...record, id: `att-rec-uid-${Date.now()}`, student_id: cleanLineUid });
     }
 
+    // Resolve the real profile from the classroom enrollment snapshot first.
+    // LIFF syncs this profile to users before check-in.
+    let resolvedFirstName = '';
+    let resolvedLastName = '';
+    let matchedStudent: any = null;
+
     // Try finding matching student in classroom to cross-bind student_id, id, and line_uid
     let canonicalUserId = primaryId;
     try {
       const { data: clsData } = await sb.from('classrooms').select('students').eq('id', classroomId).maybeSingle();
       const studentsList: any[] = clsData?.students || [];
-      const matchedStudent = studentsList.find((st: any) => {
+      matchedStudent = studentsList.find((st: any) => {
         if (!st) return false;
         if (cleanStudentId && st.id && String(st.id).trim() === cleanStudentId) return true;
         if (cleanLineUid && st.id && String(st.id).trim() === cleanLineUid) return true;
@@ -235,6 +241,12 @@ export async function POST(request: NextRequest) {
       });
 
       if (matchedStudent) {
+        if (typeof matchedStudent.first_name === 'string' && matchedStudent.first_name.trim()) {
+          resolvedFirstName = matchedStudent.first_name.trim();
+        }
+        if (typeof matchedStudent.last_name === 'string') {
+          resolvedLastName = matchedStudent.last_name.trim();
+        }
         if (matchedStudent.id && String(matchedStudent.id).trim()) {
           const mId = String(matchedStudent.id).trim();
           canonicalUserId = mId;
@@ -254,19 +266,34 @@ export async function POST(request: NextRequest) {
     // has a foreign key to users.id.
     try {
       if (cleanLineUid) {
-        const { data: lineUser } = await sb.from('users').select('id').eq('line_uid', cleanLineUid).maybeSingle();
-        if (lineUser?.id) canonicalUserId = lineUser.id;
+        const { data: lineUser } = await sb.from('users').select('id, first_name, last_name').eq('line_uid', cleanLineUid).maybeSingle();
+        if (lineUser?.id) {
+          canonicalUserId = lineUser.id;
+          if (typeof lineUser.first_name === 'string' && lineUser.first_name.trim()) resolvedFirstName = lineUser.first_name.trim();
+          if (typeof lineUser.last_name === 'string') resolvedLastName = lineUser.last_name.trim();
+        }
       }
       if (canonicalUserId === primaryId && studentId) {
-        const { data: studentUser } = await sb.from('users').select('id').eq('student_id', cleanStudentId).maybeSingle();
-        if (studentUser?.id) canonicalUserId = studentUser.id;
+        const { data: studentUser } = await sb.from('users').select('id, first_name, last_name').eq('student_id', cleanStudentId).maybeSingle();
+        if (studentUser?.id) {
+          canonicalUserId = studentUser.id;
+          if (typeof studentUser.first_name === 'string' && studentUser.first_name.trim()) resolvedFirstName = studentUser.first_name.trim();
+          if (typeof studentUser.last_name === 'string') resolvedLastName = studentUser.last_name.trim();
+        }
+      }
+
+      // Production must never create a placeholder student profile. Both names
+      // must come from the synced LIFF/user record or classroom enrollment.
+      if (!resolvedFirstName || !resolvedLastName) {
+        return NextResponse.json({ error: 'ยังไม่พบชื่อและนามสกุลจาก LIFF กรุณาซิงค์โปรไฟล์นักเรียนแล้วลองเช็คชื่ออีกครั้ง' }, { status: 409 });
       }
 
       const { error: userError } = await sb.from('users').upsert({
         id: canonicalUserId,
         role: 'student',
         line_uid: cleanLineUid || undefined,
-        first_name: 'นักเรียน',
+        first_name: resolvedFirstName,
+        last_name: resolvedLastName,
       }, { onConflict: 'id', ignoreDuplicates: true });
       if (userError) throw userError;
 
@@ -473,4 +500,3 @@ export async function DELETE(request: NextRequest) {
 
   return NextResponse.json({ success: true, deletedSessionId: sessionId });
 }
-
