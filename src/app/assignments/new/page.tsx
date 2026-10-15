@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
-import { Course, Classroom, LearningIndicator, QuestionType, Question } from '@/types/database';
+import { Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
 import {
   PlusCircle,
   Trash2,
@@ -49,6 +49,8 @@ export default function NewAssignmentPage() {
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [selectedClassroomIds, setSelectedClassroomIds] = useState<string[]>([]);
   const [indicators, setIndicators] = useState<LearningIndicator[]>([]);
+  // Course-level indicators derived from the selected course
+  const [courseIndicators, setCourseIndicators] = useState<CourseLearningIndicator[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Form fields
@@ -129,14 +131,22 @@ export default function NewAssignmentPage() {
           setSelectedCourseId(crs[0].id);
           const matchingClasses = cls.filter((c) => c.course_id === crs[0].id);
           setSelectedClassroomIds(matchingClasses.length > 0 ? [matchingClasses[0].id] : [cls[0]?.id || '']);
+
+          // Use first course's CourseLearningIndicators as the initial indicator list
+          const firstCourseInds = crs[0].indicators || [];
+          setCourseIndicators(firstCourseInds);
+          if (firstCourseInds.length > 0) {
+            setQuestions((prev) =>
+              prev.map((q) => ({ ...q, indicator_id: firstCourseInds[0].id }))
+            );
+          } else if (ind.length > 0) {
+            // Fallback to flat indicators if course has none configured yet
+            setQuestions((prev) =>
+              prev.map((q) => ({ ...q, indicator_id: ind[0].id }))
+            );
+          }
         } else if (cls.length > 0) {
           setSelectedClassroomIds([cls[0].id]);
-        }
-
-        if (ind.length > 0) {
-          setQuestions((prev) =>
-            prev.map((q) => ({ ...q, indicator_id: ind[0].id }))
-          );
         }
       } catch (err) {
         console.error(err);
@@ -152,6 +162,14 @@ export default function NewAssignmentPage() {
     const matchingClasses = classrooms.filter((c) => c.course_id === courseId);
     if (matchingClasses.length > 0) {
       setSelectedClassroomIds([matchingClasses[0].id]);
+    }
+    // Update available indicators for the newly-selected course
+    const course = courses.find((c) => c.id === courseId);
+    const indList = course?.indicators || [];
+    setCourseIndicators(indList);
+    // Reset all question indicator_ids to the first available
+    if (indList.length > 0) {
+      setQuestions((prev) => prev.map((q) => ({ ...q, indicator_id: indList[0].id })));
     }
   };
 
@@ -177,10 +195,12 @@ export default function NewAssignmentPage() {
   };
 
   const handleAddQuestion = (type: QuestionType = 'short_answer') => {
+    // Use courseIndicators first, fall back to global indicators
+    const defaultIndId = courseIndicators[0]?.id || indicators[0]?.id || '';
     setQuestions((prev) => [
       ...prev,
       {
-        indicator_id: indicators[0]?.id || '',
+        indicator_id: defaultIndId,
         type,
         question_text: '',
         options: ['ตัวเลือก ก', 'ตัวเลือก ข', 'ตัวเลือก ค', 'ตัวเลือก ง'],
@@ -727,22 +747,73 @@ export default function NewAssignmentPage() {
                     </select>
                   </div>
 
-                  {/* Indicator Select */}
+                  {/* Indicator / Competency Select — sourced from selected course */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      {t('assignment_creator.questions_builder.indicator_select')}
-                    </label>
-                    <select
-                      value={q.indicator_id}
-                      onChange={(e) => handleQuestionChange(idx, 'indicator_id', e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
-                    >
-                      {indicators.map((ind) => (
-                        <option key={ind.id} value={ind.id}>
-                          {ind.code}: {ind.title.substring(0, 48)}...
-                        </option>
-                      ))}
-                    </select>
+                    {(() => {
+                      const selectedCourse = courses.find((c) => c.id === selectedCourseId);
+                      const isCompetency = selectedCourse?.indicator_mode === 'competency';
+                      const lessonPlans = selectedCourse?.lesson_plans || [];
+
+                      if (isCompetency && lessonPlans.length > 0) {
+                        // Competency mode: choose a lesson plan entry (which maps to competency items)
+                        return (
+                          <>
+                            <label className="text-xs font-bold text-violet-700 dark:text-violet-300">
+                              แผนการสอน / สมรรถนะ
+                            </label>
+                            <select
+                              value={q.indicator_id}
+                              onChange={(e) => handleQuestionChange(idx, 'indicator_id', e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-violet-500 cursor-pointer"
+                            >
+                              {lessonPlans.map((plan, planIdx) => {
+                                const mappedLabels = (plan.mapped_indicator_ids || [])
+                                  .map((mid) => {
+                                    const ci = courseIndicators.find((c) => c.id === mid);
+                                    const ciIdx = courseIndicators.findIndex((c) => c.id === mid);
+                                    return ci ? `สมรรถนะ ${ciIdx + 1}` : null;
+                                  })
+                                  .filter(Boolean)
+                                  .join(', ');
+                                return (
+                                  <option key={plan.id} value={plan.id}>
+                                    แผน {planIdx + 1}: {plan.title.substring(0, 35) || '(ไม่มีชื่อ)'}
+                                    {mappedLabels ? ` → ${mappedLabels}` : ''}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </>
+                        );
+                      }
+
+                      // Indicator mode: choose from course's CourseLearningIndicator list
+                      const indOptions = courseIndicators.length > 0 ? courseIndicators : indicators;
+                      return (
+                        <>
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                            {t('assignment_creator.questions_builder.indicator_select')}
+                          </label>
+                          {indOptions.length === 0 ? (
+                            <p className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                              ยังไม่มีตัวชี้วัดในวิชานี้ — ไปตั้งค่าใน Dashboard ก่อน
+                            </p>
+                          ) : (
+                            <select
+                              value={q.indicator_id}
+                              onChange={(e) => handleQuestionChange(idx, 'indicator_id', e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
+                            >
+                              {indOptions.map((ind, indIdx) => (
+                                <option key={ind.id} value={ind.id}>
+                                  ข้อ {indIdx + 1}: {ind.title.substring(0, 50)}{ind.title.length > 50 ? '…' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 

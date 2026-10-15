@@ -12,6 +12,7 @@ import {
   ClassroomTeacher,
   Course,
   CourseLearningIndicator,
+  CourseLessonPlan,
   LearningIndicator,
   User,
 } from '@/types/database';
@@ -132,6 +133,10 @@ export default function DashboardPage() {
   const [isIndicatorsModalOpen, setIsIndicatorsModalOpen] = useState(false);
   const [savedTeacherIndicators, setSavedTeacherIndicators] = useState<CourseLearningIndicator[]>([]);
   const [isSavedLibraryOpen, setIsSavedLibraryOpen] = useState(false);
+  // 'indicator' = ตัวชี้วัด (default), 'competency' = สมรรถนะรายวิชา
+  const [indicatorMode, setIndicatorMode] = useState<'indicator' | 'competency'>('indicator');
+  // Lesson-plan entries for competency mode
+  const [lessonPlanDraft, setLessonPlanDraft] = useState<CourseLessonPlan[]>([]);
 
   // Co-Teaching Setup Modal (TA vs Research Evaluator)
   const [editingCourseCoTeachers, setEditingCourseCoTeachers] = useState<Course | null>(null);
@@ -778,6 +783,9 @@ export default function DashboardPage() {
   const handleOpenIndicatorsModal = async (course: Course) => {
     setEditingCourseIndicators(course);
     setIndicatorListDraft(course.indicators || []);
+    setIndicatorMode(course.indicator_mode || 'indicator');
+    setLessonPlanDraft(course.lesson_plans || []);
+    setIsSavedLibraryOpen(false);
     setIsIndicatorsModalOpen(true);
     const saved = await dataService.getSavedTeacherIndicators(clerkUser?.id);
     setSavedTeacherIndicators(saved);
@@ -831,6 +839,11 @@ export default function DashboardPage() {
   const handleSaveIndicators = async () => {
     if (!editingCourseIndicators) return;
     await dataService.updateCourseIndicators(editingCourseIndicators.id, indicatorListDraft);
+    // Also persist mode and lesson plans
+    await dataService.updateCourse(editingCourseIndicators.id, {
+      indicator_mode: indicatorMode,
+      lesson_plans: lessonPlanDraft,
+    } as any);
     showToast(
       language === 'th' ? 'บันทึกตัวชี้วัดเรียบร้อยแล้ว' : 'Course indicators saved successfully'
     );
@@ -1490,134 +1503,326 @@ export default function DashboardPage() {
               </span>
             </div>
 
-            {/* Saved Indicators Library Suggestions (Reuse in other courses) */}
-            {savedTeacherIndicators.length > 0 && (
-              <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/60 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    <span>{t('indicators_config.saved_library_title')} ({savedTeacherIndicators.length})</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsSavedLibraryOpen(!isSavedLibraryOpen)}
-                    className="text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer"
-                  >
-                    {isSavedLibraryOpen ? 'ซ่อนคลังตัวชี้วัด' : 'แสดงคลังตัวชี้วัด (คลิกเพื่อเลือกใช้)'}
-                  </button>
-                </div>
-                {isSavedLibraryOpen && (
-                  <div className="space-y-2 pt-1 max-h-48 overflow-y-auto pr-1">
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      {t('indicators_config.saved_library_desc')}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {savedTeacherIndicators.map((sInd) => (
-                        <button
-                          key={sInd.id}
-                          type="button"
-                          onClick={() => handleAddFromSavedLibrary(sInd)}
-                          className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 hover:border-amber-500 text-left text-xs text-slate-800 dark:text-slate-200 transition-all hover:scale-[1.01] flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                        >
-                          {sInd.code && (
-                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
-                              {sInd.code}
-                            </span>
-                          )}
-                          <span className="line-clamp-1 max-w-[280px]">{sInd.title}</span>
-                          <PlusCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 ml-1" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Indicator Items List (Numbered items, easy to add/remove) */}
-            <div className="space-y-3">
-              {indicatorListDraft.length === 0 ? (
-                <div className="p-8 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
-                  ยังไม่มีตัวชี้วัดในรายวิชานี้ กดปุ่มด้านล่างเพื่อเพิ่มข้อใหม่
-                </div>
-              ) : (
-                indicatorListDraft.map((ind, idx) => (
-                  <div
-                    key={ind.id}
-                    className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-2.5"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded-lg bg-amber-500 text-slate-950 font-black text-xs font-mono">
-                          {t('indicators_config.item_label')} {idx + 1}
-                        </span>
-                        <input
-                          type="text"
-                          value={ind.code}
-                          onChange={(e) => {
-                            const copy = [...indicatorListDraft];
-                            copy[idx].code = e.target.value;
-                            setIndicatorListDraft(copy);
-                          }}
-                          placeholder="รหัส เช่น ท 1.1 ม.4/1 (ถ้ามี)"
-                          className="w-40 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white font-mono"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={idx === 0}
-                          onClick={() => handleMoveIndicator(idx, 'up')}
-                          className="p-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-100 cursor-pointer"
-                          title={t('indicators_config.move_up')}
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={idx === indicatorListDraft.length - 1}
-                          onClick={() => handleMoveIndicator(idx, 'down')}
-                          className="p-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-100 cursor-pointer"
-                          title={t('indicators_config.move_down')}
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteIndicatorDraft(idx)}
-                          className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                          title="ลบตัวชี้วัดนี้"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <textarea
-                      rows={2}
-                      value={ind.title}
-                      onChange={(e) => {
-                        const copy = [...indicatorListDraft];
-                        copy[idx].title = e.target.value;
-                        setIndicatorListDraft(copy);
-                      }}
-                      placeholder={t('indicators_config.title_label')}
-                      className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white resize-none focus:outline-hidden focus:border-amber-500"
-                    />
-                  </div>
-                ))
-              )}
+            {/* ─── MODE TOGGLE: ตัวชี้วัด vs สมรรถนะรายวิชา ─── */}
+            <div className="p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 flex gap-1">
+              <button
+                type="button"
+                onClick={() => setIndicatorMode('indicator')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  indicatorMode === 'indicator'
+                    ? 'bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-300 shadow-sm border border-amber-200 dark:border-amber-800'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>ตัวชี้วัด</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIndicatorMode('competency')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  indicatorMode === 'competency'
+                    ? 'bg-white dark:bg-slate-900 text-violet-700 dark:text-violet-300 shadow-sm border border-violet-200 dark:border-violet-800'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <Award className="w-3.5 h-3.5" />
+                <span>สมรรถนะรายวิชา</span>
+              </button>
             </div>
 
-            <button
-              type="button"
-              onClick={handleAddIndicatorDraft}
-              className="w-full py-2.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <PlusCircle className="w-4 h-4 text-amber-500" />
-              <span>+ {t('indicators_config.add_indicator')} (ข้อที่ {indicatorListDraft.length + 1})</span>
-            </button>
+            {/* ─── INDICATOR MODE ─── */}
+            {indicatorMode === 'indicator' && (
+              <>
+                {/* Saved Indicators Library Suggestions */}
+                {savedTeacherIndicators.length > 0 && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/60 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                        <span>{t('indicators_config.saved_library_title')} ({savedTeacherIndicators.length})</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsSavedLibraryOpen(!isSavedLibraryOpen)}
+                        className="text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer"
+                      >
+                        {isSavedLibraryOpen ? 'ซ่อนคลังตัวชี้วัด' : 'แสดงคลังตัวชี้วัด (คลิกเพื่อเลือกใช้)'}
+                      </button>
+                    </div>
+                    {isSavedLibraryOpen && (
+                      <div className="space-y-2 pt-1 max-h-48 overflow-y-auto pr-1">
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {t('indicators_config.saved_library_desc')}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {savedTeacherIndicators.map((sInd) => (
+                            <button
+                              key={sInd.id}
+                              type="button"
+                              onClick={() => handleAddFromSavedLibrary(sInd)}
+                              className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 hover:border-amber-500 text-left text-xs text-slate-800 dark:text-slate-200 transition-all hover:scale-[1.01] flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                            >
+                              {sInd.code && (
+                                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                                  {sInd.code}
+                                </span>
+                              )}
+                              <span className="line-clamp-1 max-w-[280px]">{sInd.title}</span>
+                              <PlusCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 ml-1" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Indicator Items List */}
+                <div className="space-y-3">
+                  {indicatorListDraft.length === 0 ? (
+                    <div className="p-8 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                      ยังไม่มีตัวชี้วัดในรายวิชานี้ กดปุ่มด้านล่างเพื่อเพิ่มข้อใหม่
+                    </div>
+                  ) : (
+                    indicatorListDraft.map((ind, idx) => (
+                      <div
+                        key={ind.id}
+                        className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="px-2.5 py-0.5 rounded-lg bg-amber-500 text-slate-950 font-black text-xs font-mono shrink-0">
+                            {t('indicators_config.item_label')} {idx + 1}
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => handleMoveIndicator(idx, 'up')}
+                              className="p-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-100 cursor-pointer"
+                              title={t('indicators_config.move_up')}
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === indicatorListDraft.length - 1}
+                              onClick={() => handleMoveIndicator(idx, 'down')}
+                              className="p-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-30 hover:bg-slate-100 cursor-pointer"
+                              title={t('indicators_config.move_down')}
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteIndicatorDraft(idx)}
+                              className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                              title="ลบตัวชี้วัดนี้"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <textarea
+                          rows={2}
+                          value={ind.title}
+                          onChange={(e) => {
+                            const copy = [...indicatorListDraft];
+                            copy[idx].title = e.target.value;
+                            setIndicatorListDraft(copy);
+                          }}
+                          placeholder={t('indicators_config.title_label')}
+                          className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white resize-none focus:outline-hidden focus:border-amber-500"
+                        />
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleAddIndicatorDraft}
+                  className="w-full py-2.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <PlusCircle className="w-4 h-4 text-amber-500" />
+                  <span>+ {t('indicators_config.add_indicator')} (ข้อที่ {indicatorListDraft.length + 1})</span>
+                </button>
+              </>
+            )}
+
+            {/* ─── COMPETENCY MODE ─── */}
+            {indicatorMode === 'competency' && (
+              <>
+                {/* Step 1: define competency items */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <Award className="w-3.5 h-3.5 text-violet-500" />
+                      ขั้นที่ 1 — กำหนดสมรรถนะรายวิชา ({indicatorListDraft.length} ข้อ)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                    ระบุสมรรถนะหลักของรายวิชา เพื่อใช้เป็นเป้าหมายที่แผนการสอนจะ map เข้าหา
+                  </p>
+
+                  <div className="space-y-2">
+                    {indicatorListDraft.length === 0 ? (
+                      <div className="p-6 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                        ยังไม่มีสมรรถนะ กดปุ่มด้านล่างเพื่อเพิ่ม
+                      </div>
+                    ) : (
+                      indicatorListDraft.map((ind, idx) => (
+                        <div
+                          key={ind.id}
+                          className="flex items-start gap-2 p-3 rounded-xl bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-900/60"
+                        >
+                          <span className="shrink-0 w-6 h-6 rounded-lg bg-violet-500 text-white font-black text-xs flex items-center justify-center mt-0.5">
+                            {idx + 1}
+                          </span>
+                          <input
+                            type="text"
+                            value={ind.title}
+                            onChange={(e) => {
+                              const copy = [...indicatorListDraft];
+                              copy[idx].title = e.target.value;
+                              setIndicatorListDraft(copy);
+                            }}
+                            placeholder="เช่น ผู้เรียนสามารถวิเคราะห์และสังเคราะห์ข้อมูลได้"
+                            className="flex-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-violet-200 dark:border-violet-800 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-violet-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteIndicatorDraft(idx)}
+                            className="p-1 rounded-lg text-slate-400 hover:text-rose-500 cursor-pointer mt-0.5 shrink-0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddIndicatorDraft}
+                    className="w-full py-2 rounded-xl border border-dashed border-violet-300 dark:border-violet-800 text-xs font-bold text-violet-700 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    <span>+ เพิ่มสมรรถนะ (ข้อที่ {indicatorListDraft.length + 1})</span>
+                  </button>
+                </div>
+
+                {/* Step 2: lesson plan mapping */}
+                {indicatorListDraft.length > 0 && (
+                  <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                        <BookOpen className="w-3.5 h-3.5 text-amber-500" />
+                        ขั้นที่ 2 — แผนการสอน / กิจกรรม ({lessonPlanDraft.length} แผน)
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      เขียนแผนการสอนแต่ละข้อ แล้วเลือกว่าแผนนั้น map ไปยังสมรรถนะข้อใดบ้าง (เลือกซ้ำได้)
+                    </p>
+
+                    <div className="space-y-3">
+                      {lessonPlanDraft.map((plan, planIdx) => (
+                        <div
+                          key={plan.id}
+                          className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="px-2.5 py-0.5 rounded-lg bg-amber-500 text-slate-950 font-black text-xs font-mono shrink-0">
+                              แผน {planIdx + 1}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setLessonPlanDraft(lessonPlanDraft.filter((_, i) => i !== planIdx))}
+                              className="p-1 rounded-lg text-slate-400 hover:text-rose-500 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          <input
+                            type="text"
+                            value={plan.title}
+                            onChange={(e) => {
+                              const copy = [...lessonPlanDraft];
+                              copy[planIdx] = { ...copy[planIdx], title: e.target.value };
+                              setLessonPlanDraft(copy);
+                            }}
+                            placeholder="เช่น กิจกรรมที่ 1: อ่านบทความและจับประเด็น"
+                            className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                          />
+
+                          {/* Competency mapping checkboxes */}
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                              map ไปยังสมรรถนะ (เลือกได้หลายข้อ / ซ้ำได้):
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {indicatorListDraft.map((ind, indIdx) => {
+                                const isMapped = plan.mapped_indicator_ids.includes(ind.id);
+                                return (
+                                  <button
+                                    key={ind.id}
+                                    type="button"
+                                    onClick={() => {
+                                      const copy = [...lessonPlanDraft];
+                                      const mapped = [...copy[planIdx].mapped_indicator_ids];
+                                      if (isMapped) {
+                                        // Remove first occurrence only
+                                        const firstIdx = mapped.indexOf(ind.id);
+                                        if (firstIdx !== -1) mapped.splice(firstIdx, 1);
+                                      } else {
+                                        mapped.push(ind.id);
+                                      }
+                                      copy[planIdx] = { ...copy[planIdx], mapped_indicator_ids: mapped };
+                                      setLessonPlanDraft(copy);
+                                    }}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border ${
+                                      isMapped
+                                        ? 'bg-violet-500 text-white border-violet-600 shadow-xs'
+                                        : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-400'
+                                    }`}
+                                  >
+                                    สมรรถนะ {indIdx + 1}
+                                    {isMapped && <span className="ml-1">✓</span>}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextIdx = lessonPlanDraft.length + 1;
+                        setLessonPlanDraft([
+                          ...lessonPlanDraft,
+                          {
+                            id: `lp-${Date.now()}`,
+                            title: '',
+                            order_index: nextIdx,
+                            mapped_indicator_ids: [],
+                          },
+                        ]);
+                      }}
+                      className="w-full py-2.5 rounded-2xl border border-dashed border-amber-300 dark:border-amber-800 text-xs font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      <span>+ เพิ่มแผนการสอน (แผนที่ {lessonPlanDraft.length + 1})</span>
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button
@@ -1638,6 +1843,12 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+
+
+
+
+
 
       {/* CO-TEACHING SETUP MODAL */}
       {isCoTeachersModalOpen && editingCourseCoTeachers && (

@@ -37,6 +37,17 @@ export interface CourseLearningIndicator {
   order_index: number;
 }
 
+/**
+ * A single lesson-plan activity entry used when indicator_mode === 'competency'.
+ * Each entry can be mapped to one or more CourseLearningIndicator ids.
+ */
+export interface CourseLessonPlan {
+  id: string;
+  title: string;       // แผนการสอน/กิจกรรม เช่น "กิจกรรมที่ 1: อ่านบทกวีและวิเคราะห์"
+  order_index: number;
+  mapped_indicator_ids: string[]; // ids from indicators[] that this lesson maps to (can repeat)
+}
+
 export interface Course {
   id: string;
   code: string; // e.g. "ท31101", "ท31102"
@@ -47,7 +58,10 @@ export interface Course {
   year_ce: number;
   primary_teacher_id: string;
   teachers: ClassroomTeacher[];
+  /** 'indicator' = ตัวชี้วัด (default), 'competency' = สมรรถนะรายวิชา */
+  indicator_mode?: 'indicator' | 'competency';
   indicators: CourseLearningIndicator[];
+  lesson_plans?: CourseLessonPlan[]; // used when indicator_mode === 'competency'
   classroom_ids?: string[];
   created_at?: string;
 }

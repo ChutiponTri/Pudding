@@ -19,7 +19,6 @@ import {
   LogIn,
   Smartphone,
 } from 'lucide-react';
-import { mockTeacher } from '@/lib/supabase/mockData';
 
 export const Navbar: React.FC = () => {
   const pathname = usePathname();
