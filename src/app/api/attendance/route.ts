@@ -299,6 +299,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, sessionId });
   }
 
+  if (action === 'update_session') {
+    const newTitle = typeof body.title === 'string' ? body.title.trim() : '';
+    const newStatus = body.status === 'open' || body.status === 'closed' ? body.status : undefined;
+    const existing = fallbackStore.getAttendanceSessions(classroomId).find((s) => s.id === sessionId);
+    if (existing) {
+      if (newTitle) existing.title = newTitle;
+      if (newStatus) {
+        existing.status = newStatus;
+        if (newStatus === 'open') existing.closed_at = null;
+        if (newStatus === 'closed') existing.closed_at = new Date().toISOString();
+      }
+      fallbackStore.saveAttendanceSession(existing);
+    }
+    try {
+      const updateData: Record<string, any> = {};
+      if (newTitle) updateData.title = newTitle;
+      if (newStatus) updateData.status = newStatus;
+      await supabase.from('attendance_sessions').update(updateData).eq('id', sessionId);
+    } catch {}
+    return NextResponse.json({ success: true, sessionId });
+  }
+
   if (action === 'extend') {
     const lateUntilMinutes = Math.max(0, Number(body.lateUntilMinutes || 40));
     const existing = fallbackStore.getAttendanceSessions(classroomId).find((s) => s.id === sessionId);

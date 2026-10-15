@@ -10,14 +10,8 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeToggle } from './ThemeToggle';
 import {
-  Sparkles,
-  LayoutDashboard,
-  School,
-  PlusCircle,
-  FileCheck2,
   Bell,
   LogIn,
-  Smartphone,
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -74,27 +68,6 @@ export const Navbar: React.FC = () => {
     return null;
   }
 
-  const navItems = [
-    {
-      href: '/dashboard',
-      label: t('nav.dashboard'),
-      icon: LayoutDashboard,
-      isActive: pathname === '/' || pathname === '/dashboard',
-    },
-    {
-      href: '/creation',
-      label: t('dashboard.quick_actions.create_assignment'),
-      icon: PlusCircle,
-      isActive: pathname === '/creation' || pathname === '/assignments/new',
-    },
-    {
-      href: '/grading',
-      label: language === 'th' ? 'ตรวจข้อสอบ & วิเคราะห์' : 'Grading & Integrity',
-      icon: FileCheck2,
-      isActive: pathname.startsWith('/grading') || pathname.includes('/grading'),
-    },
-  ];
-
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
@@ -117,27 +90,6 @@ export const Navbar: React.FC = () => {
             </p>
           </div>
         </Link>
-
-        {/* Center Navigation Links */}
-        <nav className="hidden md:flex items-center gap-1 bg-slate-100/80 dark:bg-slate-800/60 p-1 rounded-xl border border-slate-200/60 dark:border-slate-700/60">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all ${
-                  item.isActive
-                    ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-slate-800/80'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
 
         {/* Right Section: Theme Toggle, Language Switcher, Alerts & Profile */}
         <div className="flex items-center gap-2 sm:gap-3">

@@ -413,7 +413,8 @@ export default function LiffStudentPage() {
           c.pending_students?.some((s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid)
         );
 
-        let active = enrolled[0] || null;
+        // Default to Overview (null) unless a specific class was requested via URL link
+        let active: Classroom | null = null;
 
         // Auto-enroll if arrived via invite code or classId link (deduplicated)
         if (codeParam || classIdParam) {
@@ -474,19 +475,20 @@ export default function LiffStudentPage() {
           }
         }
 
-        setClassrooms(enrolled);
-        setSelectedClassroom(active);
-
-        // Load assignments for enrolled classrooms
+        // Single-beat unified data loading: filter assignments and load student submissions together
         const enrolledClassIds = new Set(enrolled.map((c) => c.id));
-        const relevantAssigns = allAssigns.filter((a) => enrolledClassIds.has(a.classroom_id));
-        setAssignments(relevantAssigns);
+        const relevantAssigns = (allAssigns || []).filter((a) => a && enrolledClassIds.has(a.classroom_id));
 
-        // Load existing submissions for this real LINE student
-        const submissionResults = await Promise.all(relevantAssigns.map(async (assignment) => ({
-          assignmentId: assignment.id,
-          submissions: await dataService.getSubmissions(assignment.id),
-        })));
+        const submissionResults = await Promise.all(
+          relevantAssigns.map(async (assignment) => {
+            try {
+              const subs = await dataService.getSubmissions(assignment.id);
+              return { assignmentId: assignment.id, submissions: subs || [] };
+            } catch {
+              return { assignmentId: assignment.id, submissions: [] };
+            }
+          })
+        );
         const subMap: Record<string, Submission> = {};
         for (const result of submissionResults) {
           const found = result.submissions.find(
@@ -494,6 +496,11 @@ export default function LiffStudentPage() {
           );
           if (found) subMap[result.assignmentId] = found;
         }
+
+        // Batch all state updates in one single beat
+        setClassrooms(enrolled);
+        setSelectedClassroom(active);
+        setAssignments(relevantAssigns);
         setSubmissions(subMap);
       } catch (err) {
         console.error("Failed to load student data:", err);
@@ -956,14 +963,6 @@ export default function LiffStudentPage() {
   // ==========================================
   // VIEW: 4. Authenticated Student Portal
   // ==========================================
-  const filteredAssignments = assignments.filter((a) => {
-    return visibleClassroomIds.has(a.classroom_id);
-  });
-
-  const pendingAssignments = filteredAssignments
-    .filter((a) => !submissions[a.id])
-    .sort((a, b) => Number(b.is_exam) - Number(a.is_exam) || new Date(a.due_date).getTime() - new Date(b.due_date).getTime());
-  const completedAssignments = filteredAssignments.filter((a) => Boolean(submissions[a.id]));
   const courseGroups = classrooms.reduce((groups, classroom) => {
     const key = `${classroom.course_id || classroom.subject_code || classroom.name}-${classroom.semester || ''}-${classroom.year_ce || classroom.academic_year || ''}`;
     const current = groups.get(key) || { label: classroom.course_name || classroom.subject_code || classroom.name, term: classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year, classrooms: [] as Classroom[] };
@@ -985,15 +984,45 @@ export default function LiffStudentPage() {
     });
   const visibleClassrooms = selectedTermClassrooms.length > 0 ? selectedTermClassrooms : classrooms;
   const visibleClassroomIds = new Set(
-    studentPortalTab === "course" && selectedClassroom ? [selectedClassroom.id] : visibleClassrooms.map((classroom) => classroom.id)
+    selectedClassroom ? [selectedClassroom.id] : visibleClassrooms.map((classroom) => classroom.id)
   );
 
-  const minutesUntil = (dueDate: string) => Math.ceil((new Date(dueDate).getTime() - Date.now()) / 60000);
+  const filteredAssignments = (assignments || []).filter((a) => {
+    return a && a.classroom_id && visibleClassroomIds.has(a.classroom_id);
+  });
+
+  const pendingAssignments = filteredAssignments
+    .filter((a) => !submissions[a.id])
+    .sort((a, b) => Number(b.is_exam) - Number(a.is_exam) || (new Date(a.due_date || '').getTime() || 0) - (new Date(b.due_date || '').getTime() || 0));
+  const completedAssignments = filteredAssignments.filter((a) => Boolean(submissions[a.id]));
+
+  const minutesUntil = (dueDate?: string) => {
+    if (!dueDate) return 0;
+    const t = new Date(dueDate).getTime();
+    if (isNaN(t)) return 0;
+    return Math.max(0, Math.ceil((t - Date.now()) / 60000));
+  };
+
   const studentTimeline = [
-    ...classroomPosts.map((post) => ({ id: `post-${post.id}`, label: post.activity_type === 'exam' ? 'ข้อสอบใหม่' : post.activity_type === 'assignment' ? 'งานใหม่' : 'ประกาศจากครู', body: post.body, created_at: post.created_at })),
-    ...filteredAssignments.map((assignment) => ({ id: `assignment-${assignment.id}`, label: assignment.is_exam ? 'ข้อสอบ' : 'งาน', body: assignment.title, created_at: assignment.created_at || assignment.due_date })),
-    ...courseAttendance.map((attendance) => ({ id: `attendance-${attendance.id}`, label: 'คาบเช็คชื่อ', body: attendance.title, created_at: attendance.starts_at })),
-  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    ...classroomPosts.map((post) => ({
+      id: `post-${post.id}`,
+      label: post.activity_type === 'exam' ? 'ข้อสอบใหม่' : post.activity_type === 'assignment' ? 'งานใหม่' : post.activity_type === 'attendance' ? 'เช็คชื่อ' : 'ประกาศจากครู',
+      body: post.body,
+      created_at: post.created_at || new Date().toISOString()
+    })),
+    ...filteredAssignments.map((assignment) => ({
+      id: `assignment-${assignment.id}`,
+      label: assignment.is_exam ? 'ข้อสอบ' : 'งาน',
+      body: assignment.title,
+      created_at: assignment.created_at || assignment.due_date || new Date().toISOString()
+    })),
+    ...courseAttendance.map((attendance) => ({
+      id: `attendance-${attendance.id}`,
+      label: 'คาบเช็คชื่อ',
+      body: attendance.title,
+      created_at: attendance.starts_at || new Date().toISOString()
+    })),
+  ].sort((a, b) => (new Date(b.created_at).getTime() || 0) - (new Date(a.created_at).getTime() || 0));
 
   return (
     <div className="flex-1 flex flex-col pb-12 font-sans bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
