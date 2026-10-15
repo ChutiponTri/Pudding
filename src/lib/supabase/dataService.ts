@@ -33,6 +33,9 @@ import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 const STORAGE_PREFIX = 'pudding_';
 const LEGACY_STORAGE_PREFIX = 'omurice_';
 
+let registeredInstitutionsCache: { value: string[]; expiresAt: number } | null = null;
+let registeredInstitutionsRequest: Promise<string[]> | null = null;
+
 function getStoredOr<T>(key: string, defaultValue: T): T {
   if (typeof window === 'undefined') return defaultValue;
   try {
@@ -1718,6 +1721,12 @@ export const dataService = {
   },
 
   async getRegisteredInstitutions(): Promise<string[]> {
+    if (registeredInstitutionsCache && registeredInstitutionsCache.expiresAt > Date.now()) {
+      return registeredInstitutionsCache.value;
+    }
+    if (registeredInstitutionsRequest) return registeredInstitutionsRequest;
+
+    registeredInstitutionsRequest = (async () => {
     const set = new Set<string>();
     if (isSupabaseConfigured) {
       try {
@@ -1742,7 +1751,16 @@ export const dataService = {
       }
     });
 
-    return Array.from(set);
+    const value = Array.from(set);
+    registeredInstitutionsCache = { value, expiresAt: Date.now() + 5 * 60 * 1000 };
+    return value;
+    })();
+
+    try {
+      return await registeredInstitutionsRequest;
+    } finally {
+      registeredInstitutionsRequest = null;
+    }
   },
 
   subscribeToClassroomChanges(

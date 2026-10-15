@@ -526,6 +526,12 @@ export default function ClassroomsPage() {
                   <span>{t('dashboard.classrooms_section.view_class')}</span>
                   <Share2 className="w-3 h-3 text-amber-500" />
                 </button>
+                <Link
+                  href={`/classrooms/${cls.id}`}
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-colors flex items-center gap-1.5"
+                >
+                  เปิดห้องเรียน
+                </Link>
               </div>
             </div>
           );

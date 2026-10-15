@@ -319,7 +319,12 @@ export default function LiffStudentPage() {
       if (!currentStudent) return;
       setIsLoadingData(true);
       try {
-        const allClasses = await dataService.getClassrooms();
+        const [allClasses, institutions, allAssigns] = await Promise.all([
+          dataService.getClassrooms(),
+          dataService.getRegisteredInstitutions(),
+          dataService.getAssignments(),
+        ]);
+        setRegisteredInstitutions(institutions);
 
         // Check URL params for invite code or classId
         const params = new URLSearchParams(window.location.search);
@@ -397,19 +402,21 @@ export default function LiffStudentPage() {
         setSelectedClassroom(active);
 
         // Load assignments for enrolled classrooms
-        const allAssigns = await dataService.getAssignments();
         const enrolledClassIds = new Set(enrolled.map((c) => c.id));
         const relevantAssigns = allAssigns.filter((a) => enrolledClassIds.has(a.classroom_id));
         setAssignments(relevantAssigns);
 
         // Load existing submissions for this real LINE student
+        const submissionResults = await Promise.all(relevantAssigns.map(async (assignment) => ({
+          assignmentId: assignment.id,
+          submissions: await dataService.getSubmissions(assignment.id),
+        })));
         const subMap: Record<string, Submission> = {};
-        for (const a of relevantAssigns) {
-          const subs = await dataService.getSubmissions(a.id);
-          const found = subs.find(
+        for (const result of submissionResults) {
+          const found = result.submissions.find(
             (s) => s.student_id === currentStudent.id || s.student_id === currentStudent.line_uid
           );
-          if (found) subMap[a.id] = found;
+          if (found) subMap[result.assignmentId] = found;
         }
         setSubmissions(subMap);
       } catch (err) {
@@ -420,9 +427,6 @@ export default function LiffStudentPage() {
     }
 
     loadData();
-
-    // Load registered institutions from teachers to show in institution picker
-    dataService.getRegisteredInstitutions().then(setRegisteredInstitutions).catch(console.error);
 
     // Real-time synchronization: Auto-refresh when teacher admits student into classroom
     const unsub = dataService.subscribeToClassroomChanges(undefined, () => {

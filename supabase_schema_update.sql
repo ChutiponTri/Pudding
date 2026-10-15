@@ -65,6 +65,51 @@ ALTER TABLE IF EXISTS public.classroom_students
 ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active',
 ADD COLUMN IF NOT EXISTS joined_via TEXT DEFAULT 'line_liff';
 
+-- 4.1 Attendance sessions and per-student records
+CREATE TABLE IF NOT EXISTS public.attendance_sessions (
+  id TEXT PRIMARY KEY,
+  classroom_id TEXT NOT NULL REFERENCES public.classrooms(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT 'เช็กชื่อ',
+  starts_at TIMESTAMPTZ NOT NULL,
+  on_time_until_minutes INTEGER NOT NULL DEFAULT 10,
+  late_until_minutes INTEGER NOT NULL DEFAULT 30,
+  status TEXT NOT NULL DEFAULT 'open',
+  closed_at TIMESTAMPTZ,
+  created_by TEXT NOT NULL REFERENCES public.users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT attendance_sessions_status_check CHECK (status IN ('scheduled', 'open', 'closed')),
+  CONSTRAINT attendance_sessions_time_check CHECK (on_time_until_minutes >= 0 AND late_until_minutes >= on_time_until_minutes)
+);
+
+CREATE TABLE IF NOT EXISTS public.attendance_records (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES public.attendance_sessions(id) ON DELETE CASCADE,
+  classroom_id TEXT NOT NULL REFERENCES public.classrooms(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'absent',
+  checked_at TIMESTAMPTZ,
+  adjusted_at TIMESTAMPTZ,
+  adjusted_by TEXT REFERENCES public.users(id),
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT attendance_records_status_check CHECK (status IN ('on_time', 'late', 'absent', 'excused')),
+  UNIQUE (session_id, student_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_classroom ON public.attendance_sessions(classroom_id, starts_at DESC);
+CREATE INDEX IF NOT EXISTS idx_attendance_records_session ON public.attendance_records(session_id);
+
+-- 4.2 Classroom announcements
+CREATE TABLE IF NOT EXISTS public.classroom_posts (
+  id TEXT PRIMARY KEY,
+  classroom_id TEXT NOT NULL REFERENCES public.classrooms(id) ON DELETE CASCADE,
+  author_id TEXT NOT NULL REFERENCES public.users(id),
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_classroom_posts_classroom ON public.classroom_posts(classroom_id, created_at DESC);
+
 -- 5. Ensure `submission_answers` has `research_grades` for IRR / Research Co-evaluators
 ALTER TABLE IF EXISTS public.submission_answers
 ADD COLUMN IF NOT EXISTS research_grades JSONB DEFAULT '{}'::jsonb;
@@ -100,6 +145,9 @@ CREATE INDEX IF NOT EXISTS idx_classroom_students_classroom_id ON public.classro
 ALTER TABLE IF EXISTS public.users REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.classrooms REPLICA IDENTITY FULL;
 ALTER TABLE IF EXISTS public.classroom_students REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.attendance_sessions REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.attendance_records REPLICA IDENTITY FULL;
+ALTER TABLE IF EXISTS public.classroom_posts REPLICA IDENTITY FULL;
 
 -- 8. Add tables to Supabase Realtime publication
 DO $$
@@ -119,6 +167,21 @@ BEGIN
   EXCEPTION
     WHEN duplicate_object THEN NULL;
   END;
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.attendance_sessions;
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.attendance_records;
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.classroom_posts;
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+  END;
 END $$;
 
 -- 9. Verify schema state
@@ -127,6 +190,6 @@ SELECT
   column_name,
   data_type
 FROM information_schema.columns
-WHERE table_name IN ('users', 'classrooms', 'courses', 'classroom_students', 'submission_answers')
+WHERE table_name IN ('users', 'classrooms', 'courses', 'classroom_students', 'attendance_sessions', 'attendance_records', 'classroom_posts', 'submission_answers')
   AND column_name IN ('first_name', 'last_name', 'student_id', 'institution', 'pending_students', 'teachers', 'status', 'research_grades', 'line_group_id', 'line_connection_status', 'line_connection_token_hash', 'line_connection_token', 'line_connection_token_expires_at', 'line_connected_at')
 ORDER BY table_name, column_name;
