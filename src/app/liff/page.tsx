@@ -1137,6 +1137,7 @@ export default function LiffStudentPage() {
 
       {/* MAIN CONTENT AREA */}
       {!activeAssignment ? (
+          <>
           <div className={`p-4 space-y-5 ${studentPortalTab === "overview" ? "" : "hidden"}`}>
           {isLoadingData ? (
             <div className="p-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
@@ -1345,6 +1346,7 @@ export default function LiffStudentPage() {
             </section>
           </div>
         )}
+          </>
       ) : (
         /* ACTIVE TAKING EXAM/ASSIGNMENT VIEW */
         <div className="p-4 space-y-4">
