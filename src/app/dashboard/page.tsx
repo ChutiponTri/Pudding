@@ -193,6 +193,12 @@ export default function DashboardPage() {
 
       setCourses(crs);
       setClassrooms(myClassrooms);
+      setLineConnectionStatuses(Object.fromEntries(
+        myClassrooms.map((classroom) => [
+          classroom.id,
+          classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected'),
+        ])
+      ));
       setAssignments(myAssignments);
       setIndicators(ind);
       setAllSubmissions(mySubmissions);
@@ -282,26 +288,6 @@ export default function DashboardPage() {
       window.clearInterval(timer);
     };
   }, [managingClassroom?.id, lineConnectionClassroom?.id]);
-
-  useEffect(() => {
-    let active = true;
-    const loadStatuses = async () => {
-      const classroomsToCheck = classrooms;
-      const entries = await Promise.all(classroomsToCheck.map(async (classroom) => {
-        try {
-          const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(classroom.id)}`, { cache: 'no-store' });
-          if (!response.ok) return [classroom.id, classroom.line_connection_status || 'disconnected'] as const;
-          const result = await response.json();
-          return [classroom.id, result.status || 'disconnected'] as const;
-        } catch {
-          return [classroom.id, classroom.line_connection_status || 'disconnected'] as const;
-        }
-      }));
-      if (active) setLineConnectionStatuses(Object.fromEntries(entries));
-    };
-    loadStatuses();
-    return () => { active = false; };
-  }, [classrooms]);
 
   const handleLineConnection = async (action: 'create' | 'test' | 'disconnect') => {
     const activeClassroom = lineConnectionClassroom || managingClassroom;

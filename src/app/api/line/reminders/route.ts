@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
 
   let sent = 0;
   for (const assignment of assignments || []) {
+    if (!assignment.reminder_offset_minutes || Number(assignment.reminder_offset_minutes) <= 0) continue;
     const dueAt = new Date(assignment.due_date).getTime();
     const reminderAt = dueAt - Number(assignment.reminder_offset_minutes || 1440) * 60 * 1000;
     if (now.getTime() < reminderAt || now.getTime() >= dueAt) continue;

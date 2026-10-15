@@ -49,6 +49,7 @@ export default function NewAssignmentPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState('');
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [lineConnectionStatuses, setLineConnectionStatuses] = useState<Record<string, 'disconnected' | 'waiting' | 'connected'>>({});
   const [selectedClassroomIds, setSelectedClassroomIds] = useState<string[]>([]);
   const [indicators, setIndicators] = useState<LearningIndicator[]>([]);
   // Course-level indicators derived from the selected course
@@ -110,6 +111,12 @@ export default function NewAssignmentPage() {
         ]);
         setCourses(crs);
         setClassrooms(cls);
+        setLineConnectionStatuses(Object.fromEntries(
+          cls.map((classroom) => [
+            classroom.id,
+            classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected'),
+          ])
+        ));
         setIndicators(ind);
 
         if (crs.length > 0) {
@@ -254,7 +261,7 @@ export default function NewAssignmentPage() {
           is_exam: isExam,
           due_date: dueDate || new Date(Date.now() + 7 * 86400000).toISOString(),
           reminder_cron: reminderCron,
-          reminder_offset_minutes: reminderOffsetMinutes,
+          reminder_offset_minutes: selectedClassroomsLineReady ? reminderOffsetMinutes : 0,
           total_points: totalPoints,
           status_override: 'auto',
           sample_work_title: !isExam ? sampleWorkTitle : undefined,
@@ -310,6 +317,8 @@ export default function NewAssignmentPage() {
   const currentCourseClassrooms = classrooms.filter(
     (c) => !selectedCourseId || c.course_id === selectedCourseId
   );
+  const selectedClassroomsLineReady = selectedClassroomIds.length > 0
+    && selectedClassroomIds.every((classroomId) => lineConnectionStatuses[classroomId] === 'connected');
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-24">
@@ -478,15 +487,26 @@ export default function NewAssignmentPage() {
                 <Clock className="w-3.5 h-3.5 text-emerald-500" />
                 <span>{t('assignment_creator.fields.line_reminder_label')}</span>
               </label>
-              <select
-                value={reminderOffsetMinutes}
-                onChange={(event) => setReminderOffsetMinutes(Number(event.target.value))}
-                className="w-full px-3 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
-              >
-                {reminderOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
+              {selectedClassroomsLineReady ? (
+                <select
+                  value={reminderOffsetMinutes}
+                  onChange={(event) => setReminderOffsetMinutes(Number(event.target.value))}
+                  className="w-full px-3 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
+                >
+                  {reminderOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              ) : (
+                <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
+                  <p>ห้องเรียนที่เลือกยังไม่ได้เชื่อมต่อ LINE Bot จึงยังตั้งเวลาทวงงานไม่ได้</p>
+                  <button type="button" onClick={() => router.push('/dashboard')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold">
+                    ไปเชื่อมต่อ LINE Bot <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน ณ เวลานี้ แล้วส่งสรุปเข้า LINE group ของห้องเรียน
+                {selectedClassroomsLineReady
+                  ? 'ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน ณ เวลานี้ แล้วส่งสรุปเข้า LINE group ของห้องเรียน'
+                  : 'เมื่อเชื่อมต่อ LINE Bot แล้ว จึงจะสามารถตั้งเวลาและส่งสรุปเข้า LINE group ได้'}
               </p>
             </div>
           </div>

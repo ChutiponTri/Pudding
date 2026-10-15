@@ -36,7 +36,18 @@ export async function POST(request: NextRequest) {
   }
 
   const payload = JSON.parse(body) as { events?: Array<{ replyToken?: string; source?: { type?: string; groupId?: string }; message?: { type?: string; text?: string } }> };
-  const supabase = createServiceSupabaseClient();
+  let supabase;
+  try {
+    supabase = createServiceSupabaseClient();
+  } catch (error) {
+    console.error('LINE Supabase service client configuration failed:', error);
+    for (const event of payload.events || []) {
+      await replySafely(event.replyToken, error instanceof Error && error.message.includes('SUPABASE_SERVICE_ROLE_KEY')
+        ? 'ระบบยังไม่ได้ตั้งค่า SUPABASE_SERVICE_ROLE_KEY บนระบบที่ deploy'
+        : 'ระบบยังไม่ได้ตั้งค่า Supabase URL บนระบบที่ deploy');
+    }
+    return NextResponse.json({ error: 'Supabase service configuration is missing' }, { status: 503 });
+  }
   for (const event of payload.events || []) {
     const groupId = event.source?.type === 'group' ? event.source.groupId : undefined;
     const normalizedText = (event.message?.type === 'text'
