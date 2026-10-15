@@ -1075,7 +1075,7 @@ export default function DashboardPage() {
             <span>Pudding Learning Intelligence</span>
           </div>
           <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-950">
-            {t('dashboard.welcome')}, <br className="md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || t('nav.demo_teacher')}
+            {t('dashboard.welcome')}, <br className="md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || (loading ? 'กำลังโหลดข้อมูล...' : '')}
           </h1>
           <p className="text-slate-900/90 text-sm max-w-xl font-medium">
             {t('dashboard.overview_subtitle')}

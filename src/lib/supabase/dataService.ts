@@ -13,19 +13,6 @@ import {
   TeacherRole,
   User,
 } from '@/types/database';
-import {
-  mockAssignments,
-  mockClassrooms,
-  mockCourses,
-  mockLearningIndicators,
-  mockQuestions,
-  mockSubmissions,
-  mockSubmissionAnswers,
-  mockSubmissionEvents,
-  mockTeacher,
-  mockCoTeacher1,
-  mockCoTeacher2,
-} from './mockData';
 import { createClient, isSupabaseConfigured } from './client';
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 
@@ -1603,27 +1590,10 @@ export const dataService = {
       }
     }
 
-    // Local / Offline fallback
+    // Local records may still be used for an explicitly offline session, but
+    // never inject sample teachers into production search results.
     const localUsers = getStoredOr<User[]>('users', []).filter((u) => u.role === 'teacher');
-    const mockTchrs: User[] = [
-      mockTeacher,
-      { ...mockCoTeacher1, institution: 'โรงเรียนเตรียมอุดมศึกษา' },
-      { ...mockCoTeacher2, institution: 'โรงเรียนสวนกุหลาบวิทยาลัย' },
-      {
-        id: 'teacher-researcher-01',
-        first_name: 'ผศ.ดร.พงศ์พิสุทธิ์',
-        last_name: 'ภูมิวิจัย',
-        email: 'pongpisut.research@edu.ac.th',
-        avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-        role: 'teacher',
-        institution: 'มหาวิทยาลัยเชียงใหม่',
-      },
-    ];
-
-    const combined: User[] = [...mockTchrs];
-    for (const u of localUsers) {
-      if (!combined.some((t) => t.id === u.id)) combined.push(u);
-    }
+    const combined: User[] = [...localUsers];
 
     const q = (query || '').toLowerCase().trim();
     let results = combined;
@@ -2271,8 +2241,7 @@ export const dataService = {
 
     if (merged.length > 0) return merged;
 
-    // Fallback to mockSubmissions if sample assignment
-    return mockSubmissions.filter((s) => s.assignment_id === assignmentId);
+    return [];
   },
 
   async getSubmissionEvents(submissionId: string): Promise<SubmissionEvent[]> {
@@ -2308,7 +2277,7 @@ export const dataService = {
 
     const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>(
       'submission_answers',
-      mockSubmissionAnswers
+      {}
     );
     return allAnswers[submissionId] || {};
   },
@@ -2318,8 +2287,8 @@ export const dataService = {
     questionId: string,
     teacherScore: number,
     teacherComment: string,
-    teacherId: string = 'teacher-tippanan',
-    teacherName: string = 'ครูธิปนรรจ์ พรายหนู',
+    teacherId: string = '',
+    teacherName: string = '',
     teacherRole: TeacherRole = 'primary'
   ): Promise<void> {
     const isPrimary = teacherRole === 'primary';
@@ -2327,7 +2296,7 @@ export const dataService = {
     // Update local state
     const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>(
       'submission_answers',
-      mockSubmissionAnswers
+      {}
     );
     if (!allAnswers[submissionId]) {
       allAnswers[submissionId] = {};

@@ -222,7 +222,7 @@ export const Navbar: React.FC = () => {
               />
               <div className="hidden lg:block text-left">
                 <span className="block text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
-                  {user?.fullName || user?.firstName || t("nav.demo_teacher")}
+                  {user?.fullName || user?.firstName || 'กำลังโหลดข้อมูล...'}
                 </span>
                 <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
                   {t("nav.teacher_role")}
