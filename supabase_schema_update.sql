@@ -26,6 +26,10 @@ ADD COLUMN IF NOT EXISTS year_ce INTEGER DEFAULT 2026,
 ADD COLUMN IF NOT EXISTS subject_code TEXT,
 ADD COLUMN IF NOT EXISTS invite_code TEXT;
 
+-- LINE group reminder configuration
+ALTER TABLE IF EXISTS public.classrooms
+ADD COLUMN IF NOT EXISTS line_group_id TEXT;
+
 -- 3. Ensure all columns exist on `courses` table
 ALTER TABLE IF EXISTS public.courses
 ADD COLUMN IF NOT EXISTS teachers JSONB DEFAULT '[]'::jsonb,
@@ -33,6 +37,10 @@ ADD COLUMN IF NOT EXISTS semester INTEGER DEFAULT 1,
 ADD COLUMN IF NOT EXISTS year_ce INTEGER DEFAULT 2026,
 ADD COLUMN IF NOT EXISTS indicators JSONB DEFAULT '[]'::jsonb,
 ADD COLUMN IF NOT EXISTS classroom_ids JSONB DEFAULT '[]'::jsonb;
+
+ALTER TABLE IF EXISTS public.assignments
+ADD COLUMN IF NOT EXISTS reminder_offset_minutes INTEGER DEFAULT 1440,
+ADD COLUMN IF NOT EXISTS line_last_reminded_at TIMESTAMPTZ;
 
 -- 4. Ensure `classroom_students` table exists with status & joined_via
 CREATE TABLE IF NOT EXISTS public.classroom_students (

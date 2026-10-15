@@ -79,6 +79,7 @@ export interface Classroom {
   student_count?: number;
   subject_code?: string;
   invite_code?: string;
+  line_group_id?: string;
   students?: User[];
   pending_students?: User[]; // นักเรียนที่รอการอนุมัติ (Admit) จากคุณครู
   created_at?: string;
@@ -106,6 +107,9 @@ export interface Assignment {
   is_exam: boolean;
   due_date: string;
   reminder_cron: string;
+  /** Minutes before due_date when the LINE reminder worker should run. */
+  reminder_offset_minutes?: number;
+  line_last_reminded_at?: string;
   total_points?: number;
   status_override?: SubmissionOverrideStatus;
   extended_until?: string;

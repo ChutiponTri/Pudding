@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS public.classrooms (
   student_count INTEGER DEFAULT 0,
   subject_code TEXT,
   invite_code TEXT UNIQUE,                    -- Invite code for LINE LIFF join (e.g. THAI-401)
+  line_group_id TEXT,                         -- LINE group where reminders are posted
   students JSONB DEFAULT '[]'::JSONB,         -- Cached roster snapshot
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -128,6 +129,8 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   is_exam BOOLEAN NOT NULL DEFAULT FALSE,
   due_date TIMESTAMPTZ NOT NULL,
   reminder_cron TEXT DEFAULT '0 18 * * *',    -- Cron schedule for LINE reminders
+  reminder_offset_minutes INTEGER DEFAULT 1440,
+  line_last_reminded_at TIMESTAMPTZ,
   total_points NUMERIC DEFAULT 20,
   status_override TEXT DEFAULT 'auto' CHECK (status_override IN ('auto', 'force_closed', 'extended')),
   extended_until TIMESTAMPTZ,

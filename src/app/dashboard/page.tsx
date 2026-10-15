@@ -139,13 +139,9 @@ export default function DashboardPage() {
   const [isCoTeachersModalOpen, setIsCoTeachersModalOpen] = useState(false);
   const [coTeachersDraft, setCoTeachersDraft] = useState<ClassroomTeacher[]>([]);
   const [newCoTeacherRole, setNewCoTeacherRole] = useState<'assistant' | 'researcher'>('assistant');
-  const [newCoTeacherFirst, setNewCoTeacherFirst] = useState('');
-  const [newCoTeacherLast, setNewCoTeacherLast] = useState('');
-  const [newCoTeacherEmail, setNewCoTeacherEmail] = useState('');
   const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
   const [teacherSearchResults, setTeacherSearchResults] = useState<User[]>([]);
   const [isSearchingTeachers, setIsSearchingTeachers] = useState(false);
-  const [inviteRoleTab, setInviteRoleTab] = useState<'assistant' | 'researcher'>('assistant');
   const [isCopiedTeacherLink, setIsCopiedTeacherLink] = useState(false);
 
   // Course Creation Modal state
@@ -156,6 +152,7 @@ export default function DashboardPage() {
   const [courseSemesterInput, setCourseSemesterInput] = useState<number>(defaultPeriod.semester);
   const [courseYearInput, setCourseYearInput] = useState<number>(defaultPeriod.yearCE);
   const [courseIndicatorsDraft, setCourseIndicatorsDraft] = useState<CourseLearningIndicator[]>([]);
+  const [courseCreationMode, setCourseCreationMode] = useState<'indicator' | 'competency'>('indicator');
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -439,6 +436,7 @@ export default function DashboardPage() {
     setCourseSemesterInput(defaultPeriod.semester);
     setCourseYearInput(defaultPeriod.yearCE);
     setCourseIndicatorsDraft([]);
+    setCourseCreationMode('indicator');
     setIsCourseModalOpen(true);
   };
 
@@ -455,7 +453,34 @@ export default function DashboardPage() {
     setCourseSemesterInput(nextSem);
     setCourseYearInput(nextYr);
     setCourseIndicatorsDraft(course.indicators || []);
+    setCourseCreationMode(course.indicator_mode || 'indicator');
     setIsCourseModalOpen(true);
+  };
+
+  const handleAddCourseFrameworkItem = () => {
+    setCourseIndicatorsDraft((current) => [
+      ...current,
+      {
+        id: `draft-${Date.now()}`,
+        course_id: '',
+        code: '',
+        title: '',
+        weight: 0,
+        order_index: current.length + 1,
+      },
+    ]);
+  };
+
+  const handleUpdateCourseFrameworkItem = (index: number, field: 'code' | 'title', value: string) => {
+    setCourseIndicatorsDraft((current) => current.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, [field]: value } : item
+    )));
+  };
+
+  const handleRemoveCourseFrameworkItem = (index: number) => {
+    setCourseIndicatorsDraft((current) => current
+      .filter((_, itemIndex) => itemIndex !== index)
+      .map((item, itemIndex) => ({ ...item, order_index: itemIndex + 1 })));
   };
 
   const handleSaveCourse = async (e: React.FormEvent) => {
@@ -468,32 +493,19 @@ export default function DashboardPage() {
     const currentTeacherEmail = clerkUser?.primaryEmailAddress?.emailAddress || "teacher@pudding.ac.th";
     const currentTeacherAvatar = clerkUser?.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150";
 
-    const initialIndicators: CourseLearningIndicator[] =
-      courseIndicatorsDraft.length > 0
-        ? courseIndicatorsDraft.map((ind, i) => ({
-            ...ind,
-            id: `ind-${Date.now()}-${i + 1}`,
-            course_id: '',
-            order_index: i + 1,
-          }))
-        : [
-            {
-              id: `ind-${Date.now()}-1`,
-              course_id: '',
-              code: `${courseCodeInput.trim().toUpperCase()} ข้อ 1`,
-              title: language === 'th' ? 'การประเมินทักษะการเรียนรู้และการนำไปใช้จริง' : 'Core learning standard & practical application',
-              weight: 0,
-              order_index: 1,
-            },
-            {
-              id: `ind-${Date.now()}-2`,
-              course_id: '',
-              code: `${courseCodeInput.trim().toUpperCase()} ข้อ 2`,
-              title: language === 'th' ? 'การคิดวิเคราะห์อย่างมีวิจารณญาณและการสื่อสาร' : 'Critical analytical thinking & synthesis',
-              weight: 0,
-              order_index: 2,
-            },
-          ];
+    if (courseIndicatorsDraft.length === 0 || courseIndicatorsDraft.some((indicator) => !indicator.code.trim() || !indicator.title.trim())) {
+      alert(language === 'th'
+        ? 'กรุณาเพิ่มและกรอกข้อมูลตัวชี้วัด/สมรรถนะให้ครบอย่างน้อย 1 รายการก่อนยืนยัน'
+        : 'Add and complete at least one indicator/competency before confirming the course');
+      return;
+    }
+
+    const initialIndicators: CourseLearningIndicator[] = courseIndicatorsDraft.map((ind, i) => ({
+      ...ind,
+      id: `ind-${Date.now()}-${i + 1}`,
+      course_id: '',
+      order_index: i + 1,
+    }));
 
     await dataService.createCourse({
       code: courseCodeInput.trim().toUpperCase(),
@@ -503,6 +515,7 @@ export default function DashboardPage() {
       year_ce: courseYearInput,
       academic_year: academicYearStr,
       primary_teacher_id: currentTeacherId,
+      indicator_mode: courseCreationMode,
       teachers: [
         {
           teacher_id: currentTeacherId,
@@ -513,6 +526,14 @@ export default function DashboardPage() {
         },
       ],
       indicators: initialIndicators,
+      lesson_plans: courseCreationMode === 'competency'
+        ? initialIndicators.map((indicator, index) => ({
+            id: `plan-${Date.now()}-${index + 1}`,
+            title: indicator.title,
+            order_index: index + 1,
+            mapped_indicator_ids: [indicator.id],
+          }))
+        : [],
       classroom_ids: [],
     });
 
@@ -833,9 +854,6 @@ export default function DashboardPage() {
     setEditingCourseCoTeachers(course);
     setCoTeachersDraft(course.teachers || []);
     setNewCoTeacherRole('assistant');
-    setNewCoTeacherFirst('');
-    setNewCoTeacherLast('');
-    setNewCoTeacherEmail('');
     setTeacherSearchQuery('');
     setTeacherSearchResults([]);
     setIsCopiedTeacherLink(false);
@@ -877,26 +895,6 @@ export default function DashboardPage() {
     setCoTeachersDraft([...coTeachersDraft, newTeacher]);
     setTeacherSearchQuery('');
     setTeacherSearchResults([]);
-  };
-
-  const handleAddCoTeacher = () => {
-    if (!newCoTeacherFirst.trim() || !newCoTeacherLast.trim()) {
-      alert(language === 'th' ? 'กรุณากรอกทั้งชื่อและนามสกุลของครู' : 'Please provide both first and last name');
-      return;
-    }
-    const fullName = `${newCoTeacherFirst.trim()} ${newCoTeacherLast.trim()}`;
-    const newTeacher: ClassroomTeacher = {
-      teacher_id: `teacher-${Date.now()}`,
-      name: fullName,
-      email: newCoTeacherEmail.trim() || `${newCoTeacherFirst.trim().toLowerCase()}@pudding.ac.th`,
-      avatar_url: `https://images.unsplash.com/photo-${1534528741775 + Math.floor(Math.random() * 100)}?w=150`,
-      role: newCoTeacherRole,
-      institution: teacherProfile?.institution,
-    };
-    setCoTeachersDraft([...coTeachersDraft, newTeacher]);
-    setNewCoTeacherFirst('');
-    setNewCoTeacherLast('');
-    setNewCoTeacherEmail('');
   };
 
   const handleRemoveCoTeacher = (teacherId: string) => {
@@ -1941,7 +1939,7 @@ export default function DashboardPage() {
                   + เพิ่มครูร่วมสอนในรายวิชา
                 </span>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  เลือกบทบาทที่ต้องการเพิ่ม จากนั้นค้นหาด้วยชื่อหรืออีเมล หรือกรอกข้อมูลด้วยตนเอง
+                  เลือกบทบาทครั้งเดียว จากนั้นค้นหาครูในระบบ หรือคัดลอกลิงก์เชิญให้ครูยืนยันด้วยตนเอง
                 </p>
               </div>
 
@@ -2053,42 +2051,6 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              {/* Manual Entry Fallback Form */}
-              <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 space-y-2">
-                <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block">
-                  หรือกรอกข้อมูลด้วยตนเอง (หากยังไม่มีในระบบค้นหา):
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input
-                    type="text"
-                    value={newCoTeacherFirst}
-                    onChange={(e) => setNewCoTeacherFirst(e.target.value)}
-                    placeholder="ชื่อ *"
-                    className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                  />
-                  <input
-                    type="text"
-                    value={newCoTeacherLast}
-                    onChange={(e) => setNewCoTeacherLast(e.target.value)}
-                    placeholder="นามสกุล *"
-                    className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                  />
-                  <input
-                    type="email"
-                    value={newCoTeacherEmail}
-                    onChange={(e) => setNewCoTeacherEmail(e.target.value)}
-                    placeholder="อีเมล (ถ้ามี)"
-                    className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleAddCoTeacher}
-                  className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer transition-colors"
-                >
-                  + บันทึกเพิ่ม{newCoTeacherRole === 'assistant' ? 'ครูผู้ช่วยสอน (TA)' : 'ครูตรวจวิจัย (Researcher)'}
-                </button>
-              </div>
             </div>
 
             {/* Teacher Web & LINE Invite Link Section */}
@@ -2101,34 +2063,12 @@ export default function DashboardPage() {
                   </span>
                 </div>
 
-                {/* Invite Link Role Tabs */}
-                <div className="flex items-center gap-2 p-1 bg-white/70 dark:bg-slate-900/70 rounded-xl border border-amber-200 dark:border-amber-900/60">
-                  <button
-                    type="button"
-                    onClick={() => setInviteRoleTab('assistant')}
-                    className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                      inviteRoleTab === 'assistant'
-                        ? 'bg-blue-600 text-white shadow-xs'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                    }`}
-                  >
-                    👨‍🏫 คำเชิญ: ครูผู้ช่วยสอน (TA)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInviteRoleTab('researcher')}
-                    className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                      inviteRoleTab === 'researcher'
-                        ? 'bg-purple-600 text-white shadow-xs'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                    }`}
-                  >
-                    🔬 คำเชิญ: ครูตรวจวิจัย (Researcher)
-                  </button>
+                <div className="inline-flex items-center gap-2 rounded-xl bg-white/70 dark:bg-slate-900/70 border border-amber-200 dark:border-amber-900/60 px-3 py-2 text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                  {newCoTeacherRole === 'assistant' ? '👨‍🏫 ลิงก์นี้ใช้สำหรับครูผู้ช่วยสอน (TA)' : '🔬 ลิงก์นี้ใช้สำหรับครูตรวจงานวิจัย (Researcher)'}
                 </div>
 
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  {inviteRoleTab === 'assistant'
+                  {newCoTeacherRole === 'assistant'
                     ? 'ลิงก์นี้สำหรับเชิญครูผู้ช่วยสอน (TA) เพื่อเข้ามาตรวจให้คะแนนจริงในห้องเรียน'
                     : 'ลิงก์นี้สำหรับเชิญครูตรวจงานวิจัย (Research Evaluator) เพื่อเข้ามาประเมินความเที่ยงตรง (IRR) โดยไม่แสดงคะแนนหรือชื่อต่อนักเรียน'}
                 </p>
@@ -2137,31 +2077,31 @@ export default function DashboardPage() {
                   {typeof window !== 'undefined'
                     ? `${window.location.origin}/teacher-invite?courseId=${editingCourseCoTeachers.id}&inviter=${encodeURIComponent(
                         `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim() || 'อาจารย์'
-                      )}&role=${inviteRoleTab}`
-                    : `/teacher-invite?courseId=${editingCourseCoTeachers.id}&role=${inviteRoleTab}`}
+                      )}&role=${newCoTeacherRole}`
+                    : `/teacher-invite?courseId=${editingCourseCoTeachers.id}&role=${newCoTeacherRole}`}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => handleCopyTeacherInviteLink(editingCourseCoTeachers, inviteRoleTab)}
+                    onClick={() => handleCopyTeacherInviteLink(editingCourseCoTeachers, newCoTeacherRole)}
                     className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
                   >
                     <Copy className="w-3.5 h-3.5" />
-                    <span>{isCopiedTeacherLink ? 'คัดลอกลิงก์แล้ว!' : `คัดลอกลิงก์เชิญ (${inviteRoleTab === 'assistant' ? 'TA' : 'ผู้วิจัย'})`}</span>
+                    <span>{isCopiedTeacherLink ? 'คัดลอกลิงก์แล้ว!' : `คัดลอกลิงก์เชิญ (${newCoTeacherRole === 'assistant' ? 'TA' : 'ผู้วิจัย'})`}</span>
                   </button>
 
                   <a
                     href={`https://line.me/R/msg/text/?${encodeURIComponent(
                       `ขอเชิญคุณครูเข้าร่วมเป็น${
-                        inviteRoleTab === 'assistant'
+                        newCoTeacherRole === 'assistant'
                           ? 'ครูผู้ช่วยสอน (Teaching Assistant - TA)'
                           : 'ครูผู้ช่วยตรวจงานวิจัย (Research Evaluator)'
                       } วิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}" ที่ลิงก์: ${
                         typeof window !== 'undefined' ? window.location.origin : ''
                       }/teacher-invite?courseId=${editingCourseCoTeachers.id}&inviter=${encodeURIComponent(
                         `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim() || 'อาจารย์'
-                      )}&role=${inviteRoleTab}`
+                      )}&role=${newCoTeacherRole}`
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -2174,16 +2114,16 @@ export default function DashboardPage() {
                   <a
                     href={`mailto:?subject=${encodeURIComponent(
                       `คำเชิญเป็น${
-                        inviteRoleTab === 'assistant' ? 'ครูผู้ช่วยสอน' : 'ครูตรวจงานวิจัย'
+                        newCoTeacherRole === 'assistant' ? 'ครูผู้ช่วยสอน' : 'ครูตรวจงานวิจัย'
                       } วิชา ${editingCourseCoTeachers.code}`
                     )}&body=${encodeURIComponent(
                       `เรียนคุณครู,\n\nขอเชิญเข้าร่วมเป็น${
-                        inviteRoleTab === 'assistant'
+                        newCoTeacherRole === 'assistant'
                           ? 'ครูผู้ช่วยสอน (Teaching Assistant - TA)'
                           : 'ครูผู้ช่วยตรวจงานวิจัย (Research Evaluator)'
                       } สำหรับรายวิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}"\n\nท่านสามารถกดยืนยันคำเชิญได้ที่ลิงก์นี้:\n${
                         typeof window !== 'undefined' ? window.location.origin : ''
-                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}&role=${inviteRoleTab}\n\nขอบคุณครับ/ค่ะ`
+                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}&role=${newCoTeacherRole}\n\nขอบคุณครับ/ค่ะ`
                     )}`}
                     className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                   >
@@ -2454,6 +2394,72 @@ export default function DashboardPage() {
                 />
               </div>
 
+              {/* The framework is part of the same draft; nothing is persisted until the final submit. */}
+              <div className="space-y-3 rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-xs font-black text-slate-900 dark:text-white">
+                      2. เลือกกรอบการวัดผลและกำหนดข้อมูลจริง <span className="text-rose-500">*</span>
+                    </label>
+                    <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300">ยังไม่บันทึกฐานข้อมูล</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                    ต้องกรอกอย่างน้อย 1 รายการ และเลือกใช้เพียงกรอบเดียวต่อรายวิชา
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-amber-200 dark:border-amber-900/60">
+                  <button
+                    type="button"
+                    onClick={() => setCourseCreationMode('indicator')}
+                    className={`rounded-lg py-2 text-xs font-bold transition-colors ${courseCreationMode === 'indicator' ? 'bg-amber-500 text-slate-950' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
+                  >
+                    ตัวชี้วัด
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCourseCreationMode('competency')}
+                    className={`rounded-lg py-2 text-xs font-bold transition-colors ${courseCreationMode === 'competency' ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
+                  >
+                    สมรรถนะ
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {courseIndicatorsDraft.map((item, index) => (
+                    <div key={item.id} className="grid grid-cols-[minmax(0,0.35fr)_minmax(0,1fr)_auto] gap-2 items-center">
+                      <input
+                        value={item.code}
+                        onChange={(event) => handleUpdateCourseFrameworkItem(index, 'code', event.target.value)}
+                        placeholder={courseCreationMode === 'indicator' ? 'รหัส เช่น ท 1.1' : 'รหัสสมรรถนะ'}
+                        className="min-w-0 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white"
+                      />
+                      <input
+                        value={item.title}
+                        onChange={(event) => handleUpdateCourseFrameworkItem(index, 'title', event.target.value)}
+                        placeholder={courseCreationMode === 'indicator' ? 'ชื่อตัวชี้วัด' : 'ชื่อสมรรถนะ'}
+                        className="min-w-0 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveCourseFrameworkItem(index)}
+                        className="p-2 text-slate-400 hover:text-rose-500 rounded-lg"
+                        aria-label="ลบรายการ"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={handleAddCourseFrameworkItem}
+                    className="w-full py-2 rounded-xl border border-dashed border-amber-300 dark:border-amber-800 text-xs font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-100/60 dark:hover:bg-amber-950/40"
+                  >
+                    + เพิ่ม{courseCreationMode === 'indicator' ? 'ตัวชี้วัด' : 'สมรรถนะ'}
+                  </button>
+                </div>
+              </div>
+
               {/* Semester & Year */}
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <div className="space-y-1.5">
@@ -2501,7 +2507,7 @@ export default function DashboardPage() {
                   type="submit"
                   className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-md shadow-amber-500/20 cursor-pointer transition-transform active:scale-95"
                 >
-                  {t('courses.create_course_btn') || (language === 'th' ? 'สร้างรายวิชา' : 'Create Course')}
+                  {language === 'th' ? 'ยืนยันสร้างวิชาและกรอบการวัดผล' : 'Create course and framework'}
                 </button>
               </div>
             </form>

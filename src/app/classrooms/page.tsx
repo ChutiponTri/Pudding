@@ -980,6 +980,12 @@ export default function ClassroomsPage() {
                       </div>
                     )}
 
+                    <div className="max-w-sm mx-auto p-3 rounded-2xl bg-slate-950/40 border border-emerald-500/20 text-left text-[11px] text-emerald-100 leading-relaxed">
+                      <b>ตั้งค่าการแจ้งเตือนในกลุ่ม LINE:</b> เพิ่มบอทเข้ากลุ่มนี้ แล้วส่งข้อความ
+                      <code className="mx-1 px-1.5 py-0.5 rounded bg-black/30 font-mono">#pudding {selectedClassroomForStudents.invite_code || 'รหัสห้อง'}</code>
+                      เพื่อผูกกลุ่มกับห้องเรียน ระบบจะส่งรายชื่อผู้ที่ยังไม่ส่งงานตามเวลาที่ตั้งไว้
+                    </div>
+
                     {/* Real Scannable QR Code */}
                     <div className="flex flex-col items-center justify-center gap-2">
                       <div className="p-3 bg-white rounded-2xl shadow-lg border border-emerald-500/30 inline-block">

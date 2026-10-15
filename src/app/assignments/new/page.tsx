@@ -60,8 +60,8 @@ export default function NewAssignmentPage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
-  const [reminderCron, setReminderCron] = useState('0 18 * * *');
-  const [cronPreset, setCronPreset] = useState('1d');
+  const reminderCron = 'relative_due_date';
+  const [reminderOffsetMinutes, setReminderOffsetMinutes] = useState(24 * 60);
 
   // Conditional Sample Work / Guidelines (Assignment Mode only)
   const [sampleWorkTitle, setSampleWorkTitle] = useState("");
@@ -168,16 +168,14 @@ export default function NewAssignmentPage() {
     });
   };
 
-  const handleCronPresetChange = (preset: string) => {
-    setCronPreset(preset);
-    if (preset === '1d') {
-      setReminderCron('0 18 * * *');
-    } else if (preset === '6h') {
-      setReminderCron('0 */6 * * *');
-    } else if (preset === 'morning') {
-      setReminderCron('0 8 * * *');
-    }
-  };
+  const reminderOptions = [
+    { value: 24 * 60, label: language === 'th' ? '24 ชั่วโมงก่อนกำหนดส่ง' : '24 hours before due' },
+    { value: 12 * 60, label: language === 'th' ? '12 ชั่วโมงก่อนกำหนดส่ง' : '12 hours before due' },
+    { value: 6 * 60, label: language === 'th' ? '6 ชั่วโมงก่อนกำหนดส่ง' : '6 hours before due' },
+    { value: 3 * 60, label: language === 'th' ? '3 ชั่วโมงก่อนกำหนดส่ง' : '3 hours before due' },
+    { value: 60, label: language === 'th' ? '1 ชั่วโมงก่อนกำหนดส่ง' : '1 hour before due' },
+    { value: 30, label: language === 'th' ? '30 นาทีก่อนกำหนดส่ง' : '30 minutes before due' },
+  ];
 
   const handleAddQuestion = (type: QuestionType = 'short_answer') => {
     // Use courseIndicators first, fall back to global indicators
@@ -256,6 +254,7 @@ export default function NewAssignmentPage() {
           is_exam: isExam,
           due_date: dueDate || new Date(Date.now() + 7 * 86400000).toISOString(),
           reminder_cron: reminderCron,
+          reminder_offset_minutes: reminderOffsetMinutes,
           total_points: totalPoints,
           status_override: 'auto',
           sample_work_title: !isExam ? sampleWorkTitle : undefined,
@@ -473,47 +472,22 @@ export default function NewAssignmentPage() {
               />
             </div>
 
-            {/* LINE Reminder Cron Setting */}
+            {/* LINE Reminder Setting */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-emerald-500" />
                 <span>{t('assignment_creator.fields.line_reminder_label')}</span>
               </label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleCronPresetChange('1d')}
-                  className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
-                    cronPreset === '1d'
-                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-700 dark:text-emerald-300 font-bold'
-                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  {language === 'th' ? '1 วันก่อนส่ง' : '1 day before submission'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCronPresetChange('6h')}
-                  className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
-                    cronPreset === '6h'
-                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-700 dark:text-emerald-300 font-bold'
-                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  {language === 'th' ? '6 ชม. ก่อนส่ง' : '6 hours before submission'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCronPresetChange('morning')}
-                  className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-all text-center cursor-pointer ${
-                    cronPreset === 'morning'
-                      ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-700 dark:text-emerald-300 font-bold'
-                      : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
-                  }`}
-                >
-                  {language === 'th' ? 'ทุก 08:00 น.' : 'Every 8:00 AM'}
-                </button>
-              </div>
+              <select
+                value={reminderOffsetMinutes}
+                onChange={(event) => setReminderOffsetMinutes(Number(event.target.value))}
+                className="w-full px-3 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
+              >
+                {reminderOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน ณ เวลานี้ แล้วส่งสรุปเข้า LINE group ของห้องเรียน
+              </p>
             </div>
           </div>
         </div>
@@ -583,7 +557,7 @@ export default function NewAssignmentPage() {
                   />
 
                   {/* Keep the file in browser memory until the assignment is confirmed. */}
-                  <label className="shrink-0 cursor-pointer px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 transition-transform active:scale-95">
+                  <label className="shrink-0 cursor-pointer px-4 py-2.5 rounded-xl bg-linear-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 transition-transform active:scale-95">
                     {isUploadingSample ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
