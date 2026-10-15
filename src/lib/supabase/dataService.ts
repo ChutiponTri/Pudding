@@ -64,8 +64,10 @@ export const dataService = {
     avatar?: string | null;
     student_id?: string;
     institution?: string;
+    email?: string | null;
   }): Promise<User> {
-    const userId = student.line_uid;
+    const lineUid = student.line_uid.trim();
+    const userId = lineUid;
     let firstName = student.first_name?.trim() || "";
     let lastName = student.last_name?.trim() || "";
     let finalStudentId: string | null = student.student_id?.trim() || null;
@@ -81,11 +83,22 @@ export const dataService = {
       try {
         const supabase = createClient();
         // Check if student already exists and preserve real first_name, last_name, student_id, institution
-        const { data: existingUser } = await supabase
+        const { data: existingUserById } = await supabase
           .from("users")
           .select("*")
-          .eq("id", userId)
+          .eq("id", lineUid)
           .maybeSingle();
+
+        // LINE userId is the stable identity across LIFF in LINE and an external browser.
+        // Reuse an older row found by line_uid before creating/upserting anything.
+        const { data: existingUserByLineUid } = await supabase
+          .from("users")
+          .select("*")
+          .eq("line_uid", lineUid)
+          .limit(1)
+          .maybeSingle();
+        const existingUser = existingUserById || existingUserByLineUid;
+        const canonicalUserId = existingUser?.id || userId;
 
         if (existingUser) {
           if (existingUser.first_name && !student.first_name) firstName = existingUser.first_name;
@@ -95,16 +108,19 @@ export const dataService = {
         }
 
         const userPayload: Record<string, any> = {
-          id: userId,
+          id: canonicalUserId,
           first_name: firstName,
           last_name: lastName,
           avatar_url: student.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
-          email: `${userId.substring(0, 8)}@student.pudding.ac.th`,
           role: "student",
-          line_uid: student.line_uid,
+          line_uid: lineUid,
           is_line_connected: true,
           updated_at: new Date().toISOString(),
         };
+
+        const existingEmail = typeof existingUser?.email === "string" ? existingUser.email.trim() : "";
+        const suppliedEmail = student.email?.trim() || "";
+        if (suppliedEmail || existingEmail) userPayload.email = suppliedEmail || existingEmail;
 
         if (finalStudentId) {
           userPayload.student_id = finalStudentId;
@@ -117,7 +133,7 @@ export const dataService = {
         console.log("Synced real LINE student to Supabase:", userId, firstName, "student_id:", finalStudentId);
 
         const returnedUser: User = {
-          id: userId,
+          id: canonicalUserId,
           first_name: firstName,
           last_name: lastName,
           student_id: finalStudentId || undefined,
@@ -125,29 +141,31 @@ export const dataService = {
           avatar_url: userPayload.avatar_url,
           email: userPayload.email,
           role: "student",
-          line_uid: student.line_uid,
+          line_uid: lineUid,
           is_line_connected: true,
         };
-        setStored("line_student_" + userId, returnedUser);
+        setStored("line_student_" + lineUid, returnedUser);
         return returnedUser;
       } catch (err) {
         console.error("Error syncing LINE student to Supabase:", err);
       }
     }
 
+    const localUsers = getStoredOr<User[]>('users', []);
+    const existingLocalUser = localUsers.find((user) => user.line_uid === lineUid);
     const userRecord: User = {
-      id: userId,
-      first_name: firstName,
-      last_name: lastName,
-      student_id: finalStudentId || undefined,
-      institution: finalInstitution || undefined,
+      id: existingLocalUser?.id || userId,
+      first_name: existingLocalUser?.first_name || firstName,
+      last_name: existingLocalUser?.last_name || lastName,
+      student_id: finalStudentId || existingLocalUser?.student_id || undefined,
+      institution: finalInstitution || existingLocalUser?.institution || undefined,
       avatar_url: student.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
-      email: `${userId.substring(0, 8)}@student.pudding.ac.th`,
       role: "student",
-      line_uid: student.line_uid,
+      line_uid: lineUid,
       is_line_connected: true,
     };
-    setStored("line_student_" + userId, userRecord);
+    if (student.email?.trim() || existingLocalUser?.email) userRecord.email = student.email?.trim() || existingLocalUser?.email;
+    setStored("line_student_" + lineUid, userRecord);
     return userRecord;
   },
 
@@ -158,12 +176,14 @@ export const dataService = {
       last_name: string;
       student_id: string;
       institution: string;
+      email?: string | null;
     }
   ): Promise<boolean> {
     const fn = data.first_name.trim();
     const ln = data.last_name.trim();
     const sid = data.student_id.trim();
     const inst = data.institution.trim();
+    const email = data.email?.trim() || null;
 
     if (isSupabaseConfigured) {
       try {
@@ -175,6 +195,7 @@ export const dataService = {
             last_name: ln,
             student_id: sid,
             institution: inst,
+            email,
             updated_at: new Date().toISOString(),
           })
           .eq("id", userId);
@@ -187,14 +208,14 @@ export const dataService = {
             const updatedStudents = ((cls.students || []) as any[]).map((s) => {
               if (s.id === userId || s.line_uid === userId) {
                 touched = true;
-                return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst };
+                return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst, email };
               }
               return s;
             });
             const updatedPending = ((cls.pending_students || []) as any[]).map((s) => {
               if (s.id === userId || s.line_uid === userId) {
                 touched = true;
-                return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst };
+                return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst, email };
               }
               return s;
             });
@@ -222,7 +243,7 @@ export const dataService = {
       institution: inst,
       line_uid: storedStudent?.line_uid || userId,
       avatar_url: storedStudent?.avatar_url,
-      email: storedStudent?.email || (sid ? `${sid}@student.pudding.ac.th` : undefined),
+      email: data.email === undefined ? storedStudent?.email : email || undefined,
     };
     setStored("line_student_" + userId, updatedStudentObj);
 
@@ -236,6 +257,7 @@ export const dataService = {
         last_name: ln,
         student_id: sid,
         institution: inst,
+        email: email || undefined,
       };
     } else {
       localUsers.push(updatedStudentObj);
@@ -250,14 +272,14 @@ export const dataService = {
       const students = (cls.students || []).map((s) => {
         if (s.id === userId || s.line_uid === userId || (s.student_id && s.student_id === sid)) {
           clsUpdated = true;
-          return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst };
+          return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst, email: email || undefined };
         }
         return s;
       });
       const pending_students = (cls.pending_students || []).map((s) => {
         if (s.id === userId || s.line_uid === userId || (s.student_id && s.student_id === sid)) {
           clsUpdated = true;
-          return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst };
+          return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst, email: email || undefined };
         }
         return s;
       });

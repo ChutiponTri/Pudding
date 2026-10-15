@@ -69,6 +69,26 @@ ADD COLUMN IF NOT EXISTS research_grades JSONB DEFAULT '{}'::jsonb;
 CREATE INDEX IF NOT EXISTS idx_users_institution ON public.users(institution);
 CREATE INDEX IF NOT EXISTS idx_users_student_id ON public.users(student_id);
 CREATE INDEX IF NOT EXISTS idx_users_line_uid ON public.users(line_uid);
+
+-- Prevent future duplicate student accounts when the same LINE identity opens LIFF
+-- from LINE and an external browser. If old duplicates exist, clean them up first;
+-- this block keeps the migration non-destructive and reports that condition.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM public.users
+    WHERE line_uid IS NOT NULL
+    GROUP BY line_uid
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE NOTICE 'Duplicate line_uid rows exist; unique index was not created. Review them before retrying.';
+  ELSE
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_line_uid_unique
+      ON public.users(line_uid)
+      WHERE line_uid IS NOT NULL;
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_classroom_students_status ON public.classroom_students(status);
 CREATE INDEX IF NOT EXISTS idx_classroom_students_classroom_id ON public.classroom_students(classroom_id);
 

@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { replyLineText } from '@/lib/line/messaging';
+import { pushLineGroupText, replyLineText } from '@/lib/line/messaging';
 
 export const runtime = 'nodejs';
 
@@ -14,6 +14,32 @@ function isValidSignature(body: string, signature: string | null) {
 
 function hashToken(token: string) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function getLiffUrl() {
+  const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
+  return liffId ? `https://liff.line.me/${liffId}` : null;
+}
+
+function normalizeCommand(command: string | undefined) {
+  const aliases: Record<string, string> = {
+    help: 'help',
+    ช่วย: 'help',
+    ช่วยเหลือ: 'help',
+    คำสั่ง: 'help',
+    status: 'status',
+    สถานะ: 'status',
+    test: 'test',
+    ทดสอบ: 'test',
+    link: 'link',
+    ลิงก์: 'link',
+    ลิงค์: 'link',
+    attendance: 'attendance',
+    'เช็กชื่อ': 'attendance',
+    'เช็คชื่อ': 'attendance',
+  };
+  const value = (command || 'help').trim().toLowerCase();
+  return aliases[value] || value;
 }
 
 async function replySafely(replyToken: string | undefined, text: string) {
@@ -35,7 +61,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
-  const payload = JSON.parse(body) as { events?: Array<{ replyToken?: string; source?: { type?: string; groupId?: string }; message?: { type?: string; text?: string } }> };
+  const payload = JSON.parse(body) as { events?: Array<{ type?: string; replyToken?: string; source?: { type?: string; groupId?: string; userId?: string }; message?: { type?: string; text?: string } }> };
   let supabase;
   try {
     supabase = createServiceSupabaseClient();
@@ -50,12 +76,24 @@ export async function POST(request: NextRequest) {
   }
   for (const event of payload.events || []) {
     const groupId = event.source?.type === 'group' ? event.source.groupId : undefined;
+    const lineUserId = event.source?.userId;
+    if (groupId && event.type === 'join') {
+      const { data: joinedClassroom } = await supabase.from('classrooms').select('name').eq('line_group_id', groupId).maybeSingle();
+      await replySafely(event.replyToken, joinedClassroom
+        ? `Pudding เชื่อมต่อแล้ว: ห้อง ${joinedClassroom.name}`
+        : 'Pudding พร้อมใช้งาน กรุณาใช้ปุ่ม LINE Group ในหน้าเว็บเพื่อเชื่อมกับห้องเรียน');
+      continue;
+    }
     const normalizedText = (event.message?.type === 'text'
       ? event.message.text?.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim()
       : '') || '';
     const match = normalizedText.match(/(?:^|\s)#pudding[\s:：]+([a-z0-9]{8})(?:\s|$)/i);
-    if (!groupId || !match) continue;
-    const tokenHash = hashToken(match[1].trim().toUpperCase());
+    const commandMatch = normalizedText.match(/^#pudding(?:\s+(.+))?$/i);
+    if (!groupId && !lineUserId) continue;
+
+    // Pairing remains the only command that can change classroom/group state.
+    if (groupId && match) {
+      const tokenHash = hashToken(match[1].trim().toUpperCase());
     const { data: classrooms, error: lookupError } = await supabase
       .from('classrooms')
       .select('id, line_connection_token_expires_at')
@@ -89,6 +127,11 @@ export async function POST(request: NextRequest) {
       await replySafely(event.replyToken, 'ไม่พบรหัสเชื่อมต่อ หรือรหัสหมดอายุแล้ว กรุณาสร้างรหัสใหม่จากหน้าเว็บ');
       continue;
     }
+    const { data: existingGroup } = await supabase.from('classrooms').select('id, name').eq('line_group_id', groupId).maybeSingle();
+    if (existingGroup && existingGroup.id !== classroom.id) {
+      await replySafely(event.replyToken, 'กลุ่มนี้เชื่อมกับห้องเรียนอื่นอยู่แล้ว กรุณายกเลิกการเชื่อมต่อเดิมก่อน');
+      continue;
+    }
     const { error } = await supabase.from('classrooms').update({
       line_group_id: groupId,
       line_connection_status: 'connected',
@@ -103,6 +146,72 @@ export async function POST(request: NextRequest) {
     } else {
       await replySafely(event.replyToken, '✅ เชื่อมต่อ LINE Group กับห้องเรียนเรียบร้อยแล้ว ระบบพร้อมส่งแจ้งเตือนการบ้าน');
     }
+      continue;
+    }
+
+    // Ignore ordinary group messages. Only explicit Pudding commands continue below.
+    if (!commandMatch) continue;
+    const rawCommand = (commandMatch[1] || '').trim();
+    const [command, ...args] = rawCommand.split(/\s+/);
+    const normalizedCommand = normalizeCommand(command);
+    const liffUrl = getLiffUrl();
+
+    const { data: linkedTeacher } = lineUserId
+      ? await supabase.from('users').select('id, first_name, last_name, role').eq('line_uid', lineUserId).eq('role', 'teacher').maybeSingle()
+      : { data: null };
+
+    if (!groupId) {
+      if (normalizedCommand === 'help') {
+        await replySafely(event.replyToken, '#pudding status ตรวจสถานะ\n#pudding test ทดสอบแจ้งเตือน\n#pudding link เปิด Pudding\n#pudding attendance สถานะเช็กชื่อ');
+        continue;
+      }
+      if (normalizedCommand === 'link') {
+        await replySafely(event.replyToken, liffUrl ? `เปิด Pudding: ${liffUrl}` : 'ยังไม่ได้ตั้งค่า LIFF URL');
+        continue;
+      }
+      if (!linkedTeacher) {
+        await replySafely(event.replyToken, 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับบัญชีครูใน Pudding');
+        continue;
+      }
+      const { data: allTeacherClasses } = await supabase.from('classrooms').select('id, name, teacher_id, teachers, line_group_id, line_connection_status');
+      const teacherClasses = (allTeacherClasses || []).filter((item) => item.teacher_id === linkedTeacher.id || (item.teachers || []).some((teacher: { teacher_id?: string }) => teacher.teacher_id === linkedTeacher.id));
+      if (normalizedCommand === 'status') {
+        const connected = (teacherClasses || []).filter((item) => item.line_group_id);
+        await replySafely(event.replyToken, `เชื่อมต่อแล้ว ${connected.length}/${(teacherClasses || []).length} ห้อง\nแจ้งเตือน: ${connected.length ? 'พร้อมใช้งาน' : 'ยังไม่พร้อม'}`);
+      } else if (normalizedCommand === 'test') {
+        const target = args[0] ? (teacherClasses || []).find((item) => item.id === args[0] || item.name === args.join(' ')) : (teacherClasses || []).length === 1 ? teacherClasses?.[0] : undefined;
+        if (!target) {
+          await replySafely(event.replyToken, (teacherClasses || []).length > 1 ? 'มีหลายห้อง กรุณาระบุ classroom ID หลังคำสั่ง test' : 'ยังไม่มีห้องที่เชื่อม LINE Group');
+        } else if (!target.line_group_id) {
+          await replySafely(event.replyToken, 'ห้องนี้ยังไม่ได้เชื่อม LINE Group');
+        } else {
+          try {
+            await pushLineGroupText(target.line_group_id, `✅ ทดสอบแจ้งเตือนจาก Pudding: ${target.name}`);
+            await replySafely(event.replyToken, 'ส่งข้อความทดสอบแล้ว');
+          } catch (error) {
+            console.error('LINE teacher test push failed:', error);
+            await replySafely(event.replyToken, 'ส่งข้อความทดสอบไม่สำเร็จ กรุณาตรวจการตั้งค่า LINE Bot');
+          }
+        }
+      } else if (normalizedCommand === 'attendance') {
+        await replySafely(event.replyToken, 'ระบบเช็กชื่อยังไม่ได้เปิดใช้งานใน Pudding');
+      } else {
+        await replySafely(event.replyToken, 'ไม่รู้จักคำสั่ง ใช้ #pudding help เพื่อดูคำสั่งที่ใช้ได้');
+      }
+      continue;
+    }
+
+    const { data: groupClassroom } = await supabase.from('classrooms').select('id, name, teacher_id, teachers, line_group_id').eq('line_group_id', groupId).maybeSingle();
+    if (!groupClassroom) {
+      if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
+      else if (normalizedCommand === 'link') await replySafely(event.replyToken, liffUrl ? `เปิด Pudding: ${liffUrl}` : 'ยังไม่ได้ตั้งค่า LIFF URL');
+      else if (normalizedCommand === 'status') await replySafely(event.replyToken, 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียนใน Pudding');
+      continue;
+    }
+    if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
+    else if (normalizedCommand === 'link') await replySafely(event.replyToken, liffUrl ? `เปิด Pudding: ${liffUrl}` : 'ยังไม่ได้ตั้งค่า LIFF URL');
+    else if (normalizedCommand === 'status') await replySafely(event.replyToken, `ห้อง: ${groupClassroom.name}\nLINE Group: เชื่อมต่อแล้ว\nแจ้งเตือนงาน: พร้อมใช้งาน`);
+    else if (normalizedCommand === 'attendance') await replySafely(event.replyToken, 'ระบบเช็กชื่อยังไม่ได้เปิดใช้งานใน Pudding');
   }
   return NextResponse.json({ ok: true });
 }
