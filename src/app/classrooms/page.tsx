@@ -75,6 +75,13 @@ export default function ClassroomsPage() {
   const [emailInviteList, setEmailInviteList] = useState('');
   const [isCopied, setIsCopied] = useState(false);
   const [actionSuccessNotice, setActionSuccessNotice] = useState<string | null>(null);
+  const [lineConnection, setLineConnection] = useState<{
+    status: 'disconnected' | 'waiting' | 'connected';
+    token?: string;
+    expiresAt?: string;
+    connectedAt?: string;
+  }>({ status: 'disconnected' });
+  const [isLineConnectionLoading, setIsLineConnectionLoading] = useState(false);
 
   const showNotification = (msg: string) => {
     setActionSuccessNotice(msg);
@@ -126,6 +133,28 @@ export default function ClassroomsPage() {
   useEffect(() => {
     loadData();
   }, [clerkUser?.id]);
+
+  useEffect(() => {
+    if (!selectedClassroomForStudents) {
+      setLineConnection({ status: 'disconnected' });
+      return;
+    }
+    let active = true;
+    const loadLineConnection = async () => {
+      try {
+        const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(selectedClassroomForStudents.id)}`, { cache: 'no-store' });
+        if (response.ok && active) setLineConnection(await response.json());
+      } catch (error) {
+        console.warn('Unable to load LINE group status:', error);
+      }
+    };
+    loadLineConnection();
+    const timer = window.setInterval(loadLineConnection, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [selectedClassroomForStudents?.id]);
 
   // Real-time synchronization for instant updates when students scan QR or join
   useEffect(() => {
@@ -341,6 +370,28 @@ export default function ClassroomsPage() {
   const getWebInviteUrl = (cls: Classroom) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     return `${origin}/liff?classId=${cls.id}&code=${cls.invite_code || ''}`;
+  };
+
+  const handleLineConnection = async (action: 'create' | 'test' | 'disconnect') => {
+    if (!selectedClassroomForStudents) return;
+    setIsLineConnectionLoading(true);
+    try {
+      const response = await fetch('/api/line/connections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classroomId: selectedClassroomForStudents.id, action }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'LINE connection failed');
+      setLineConnection(result);
+      if (action === 'create') showNotification(language === 'th' ? 'สร้างรหัสเชื่อมต่อแล้ว' : 'Connection code created');
+      if (action === 'test') showNotification(language === 'th' ? 'ส่งข้อความทดสอบแล้ว' : 'Test message sent');
+      if (action === 'disconnect') showNotification(language === 'th' ? 'ยกเลิกการเชื่อมต่อแล้ว' : 'LINE group disconnected');
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : 'ไม่สามารถเชื่อมต่อ LINE ได้');
+    } finally {
+      setIsLineConnectionLoading(false);
+    }
   };
 
   const handleCopyLiff = (cls: Classroom) => {
@@ -941,7 +992,7 @@ export default function ClassroomsPage() {
               {/* TAB 2: LINE LIFF Invitation */}
               {studentActiveTab === 'line' && (
                 <div className="space-y-6">
-                  <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-950/30 to-slate-900 border border-emerald-800/40 space-y-5 text-center">
+                  <div className="p-5 rounded-2xl bg-linear-to-br from-emerald-950/30 to-slate-900 border border-emerald-800/40 space-y-5 text-center">
                     <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-xs">
                       <MessageCircle className="w-6 h-6" />
                     </div>
@@ -972,7 +1023,7 @@ export default function ClassroomsPage() {
                             setIsCopied(true);
                             setTimeout(() => setIsCopied(false), 2000);
                           }}
-                          className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold text-white border border-white/10 flex items-center gap-1 cursor-pointer"
+                          className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold text-white border border-white/10 inline-flex items-center gap-1 cursor-pointer"
                         >
                           <Copy className="w-3.5 h-3.5" />
                           <span>{isCopied ? t('classroom_mgmt.copied') : (language === 'th' ? 'คัดลอกรหัส' : 'Copy')}</span>
@@ -980,10 +1031,48 @@ export default function ClassroomsPage() {
                       </div>
                     )}
 
+                    <div className="max-w-sm mx-auto w-full p-4 rounded-2xl bg-white/10 border border-emerald-400/30 text-left space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-black text-white">เชื่อมต่อ LINE Group</p>
+                          <p className="text-[11px] text-emerald-100/80 mt-0.5">
+                            {lineConnection.status === 'connected' ? 'พร้อมส่งแจ้งเตือนอัตโนมัติ' : lineConnection.status === 'waiting' ? 'รอการยืนยันจากกลุ่ม LINE' : 'ยังไม่ได้เชื่อมต่อกลุ่ม'}
+                          </p>
+                        </div>
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-black ${lineConnection.status === 'connected' ? 'bg-emerald-400/20 text-emerald-200' : lineConnection.status === 'waiting' ? 'bg-amber-400/20 text-amber-200' : 'bg-white/10 text-slate-200'}`}>
+                          {lineConnection.status === 'connected' ? 'เชื่อมต่อแล้ว' : lineConnection.status === 'waiting' ? 'รอยืนยัน' : 'ยังไม่เชื่อมต่อ'}
+                        </span>
+                      </div>
+
+                      {lineConnection.status === 'waiting' && lineConnection.token ? (
+                        <div className="space-y-2">
+                          <div className="p-3 rounded-xl bg-slate-950/60 text-center">
+                            <p className="text-[10px] text-emerald-100/70">ส่งข้อความนี้ในกลุ่มที่เพิ่ม Pudding Official Account</p>
+                            <code className="block mt-1 text-lg font-black tracking-widest text-amber-300">#pudding {lineConnection.token}</code>
+                            <p className="text-[10px] text-amber-100/70 mt-1">รหัสหมดอายุใน 10 นาที และใช้ได้ครั้งเดียว</p>
+                          </div>
+                          <p className="text-[11px] text-emerald-100/80">หลังส่งรหัส ระบบจะตรวจสอบอัตโนมัติ ไม่ต้องกรอก Group ID</p>
+                        </div>
+                      ) : null}
+
+                      <div className="flex flex-wrap gap-2">
+                        {lineConnection.status !== 'connected' && (
+                          <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-black disabled:opacity-50">
+                            {lineConnection.status === 'waiting' ? 'สร้างรหัสใหม่' : 'เชื่อมต่อ LINE Group'}
+                          </button>
+                        )}
+                        {lineConnection.status === 'connected' && (
+                          <>
+                            <button type="button" onClick={() => handleLineConnection('test')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-[11px] font-black disabled:opacity-50">ทดสอบส่งข้อความ</button>
+                            <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold disabled:opacity-50">เปลี่ยนกลุ่ม</button>
+                            <button type="button" onClick={() => handleLineConnection('disconnect')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-100 text-[11px] font-bold disabled:opacity-50">ยกเลิกการเชื่อมต่อ</button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="max-w-sm mx-auto p-3 rounded-2xl bg-slate-950/40 border border-emerald-500/20 text-left text-[11px] text-emerald-100 leading-relaxed">
-                      <b>ตั้งค่าการแจ้งเตือนในกลุ่ม LINE:</b> เพิ่มบอทเข้ากลุ่มนี้ แล้วส่งข้อความ
-                      <code className="mx-1 px-1.5 py-0.5 rounded bg-black/30 font-mono">#pudding {selectedClassroomForStudents.invite_code || 'รหัสห้อง'}</code>
-                      เพื่อผูกกลุ่มกับห้องเรียน ระบบจะส่งรายชื่อผู้ที่ยังไม่ส่งงานตามเวลาที่ตั้งไว้
+                      <b>ตั้งค่าการแจ้งเตือนในกลุ่ม LINE:</b> กด “เชื่อมต่อ LINE Group” ด้านบนเพื่อสร้างรหัสชั่วคราว แล้วเพิ่มบอทเข้ากลุ่มและส่งรหัสนั้น ระบบจะส่งรายชื่อผู้ที่ยังไม่ส่งงานตามเวลาที่ตั้งไว้
                     </div>
 
                     {/* Real Scannable QR Code */}
@@ -1024,7 +1113,7 @@ export default function ClassroomsPage() {
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-4 py-2 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer inline-flex"
+                        className="px-4 py-2 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs inline-flex items-center gap-1.5 transition-colors cursor-pointer"
                       >
                         <Share2 className="w-3.5 h-3.5" />
                         <span>{language === 'th' ? 'แชร์เข้าแชท LINE' : 'Share to LINE'}</span>

@@ -80,6 +80,9 @@ export interface Classroom {
   subject_code?: string;
   invite_code?: string;
   line_group_id?: string;
+  line_connection_status?: 'disconnected' | 'waiting' | 'connected';
+  line_connection_token_expires_at?: string;
+  line_connected_at?: string;
   students?: User[];
   pending_students?: User[]; // นักเรียนที่รอการอนุมัติ (Admit) จากคุณครู
   created_at?: string;

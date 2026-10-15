@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS public.classrooms (
   subject_code TEXT,
   invite_code TEXT UNIQUE,                    -- Invite code for LINE LIFF join (e.g. THAI-401)
   line_group_id TEXT,                         -- LINE group where reminders are posted
+  line_connection_status TEXT DEFAULT 'disconnected',
+  line_connection_token_hash TEXT,
+  line_connection_token_expires_at TIMESTAMPTZ,
+  line_connected_at TIMESTAMPTZ,
   students JSONB DEFAULT '[]'::JSONB,         -- Cached roster snapshot
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

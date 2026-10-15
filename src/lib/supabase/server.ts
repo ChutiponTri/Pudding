@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
 export async function createServerSupabaseClient() {
@@ -23,4 +24,12 @@ export async function createServerSupabaseClient() {
       },
     },
   });
+}
+
+/** Use only for trusted server jobs such as LINE webhook/cron processing. */
+export function createServiceSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not configured');
+  return createSupabaseClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
 }

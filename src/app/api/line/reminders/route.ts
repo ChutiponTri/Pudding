@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
 
 export const runtime = 'nodejs';
@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const supabase = await createServerSupabaseClient();
+  const supabase = createServiceSupabaseClient();
   const now = new Date();
   const { data: assignments, error } = await supabase
     .from('assignments')

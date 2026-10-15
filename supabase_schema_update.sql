@@ -28,7 +28,11 @@ ADD COLUMN IF NOT EXISTS invite_code TEXT;
 
 -- LINE group reminder configuration
 ALTER TABLE IF EXISTS public.classrooms
-ADD COLUMN IF NOT EXISTS line_group_id TEXT;
+ADD COLUMN IF NOT EXISTS line_group_id TEXT,
+ADD COLUMN IF NOT EXISTS line_connection_status TEXT DEFAULT 'disconnected',
+ADD COLUMN IF NOT EXISTS line_connection_token_hash TEXT,
+ADD COLUMN IF NOT EXISTS line_connection_token_expires_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS line_connected_at TIMESTAMPTZ;
 
 -- 3. Ensure all columns exist on `courses` table
 ALTER TABLE IF EXISTS public.courses

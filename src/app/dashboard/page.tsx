@@ -153,6 +153,7 @@ export default function DashboardPage() {
   const [courseYearInput, setCourseYearInput] = useState<number>(defaultPeriod.yearCE);
   const [courseIndicatorsDraft, setCourseIndicatorsDraft] = useState<CourseLearningIndicator[]>([]);
   const [courseCreationMode, setCourseCreationMode] = useState<'indicator' | 'competency'>('indicator');
+  const [courseCreationStep, setCourseCreationStep] = useState<1 | 2>(1);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -437,6 +438,7 @@ export default function DashboardPage() {
     setCourseYearInput(defaultPeriod.yearCE);
     setCourseIndicatorsDraft([]);
     setCourseCreationMode('indicator');
+    setCourseCreationStep(1);
     setIsCourseModalOpen(true);
   };
 
@@ -454,6 +456,7 @@ export default function DashboardPage() {
     setCourseYearInput(nextYr);
     setCourseIndicatorsDraft(course.indicators || []);
     setCourseCreationMode(course.indicator_mode || 'indicator');
+    setCourseCreationStep(1);
     setIsCourseModalOpen(true);
   };
 
@@ -938,7 +941,7 @@ export default function DashboardPage() {
       )}
 
       {/* Hero Welcome Banner with High-Visibility Primary CTAs */}
-      <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-3xl p-6 md:p-8 text-slate-950 shadow-xl shadow-amber-500/10 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors">
+      <div className="bg-linear-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-3xl p-6 md:p-8 text-slate-950 shadow-xl shadow-amber-500/10 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors">
         <div className="space-y-2 min-w-0 md:min-w-150">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
             <span className="text-sm">🍮</span>
@@ -1002,9 +1005,9 @@ export default function DashboardPage() {
           {/* 3. Create Assignment / Exam CTA */}
           <Link
             href="/creation"
-            className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-xl shadow-black/25 hover:shadow-2xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer"
+            className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
+            <div className="w-10 h-10 rounded-xl bg-linear-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
@@ -1543,7 +1546,7 @@ export default function DashboardPage() {
                                   {sInd.code}
                                 </span>
                               )}
-                              <span className="line-clamp-1 max-w-[280px]">{sInd.title}</span>
+                              <span className="line-clamp-1 max-w-70">{sInd.title}</span>
                               <PlusCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 ml-1" />
                             </button>
                           ))}
@@ -2318,9 +2321,21 @@ export default function DashboardPage() {
             </div>
 
             <form onSubmit={handleSaveCourse} className="space-y-4">
+              <div className="flex items-center gap-3 pb-1">
+                {[1, 2].map((step) => (
+                  <React.Fragment key={step}>
+                    <div className={`flex items-center gap-2 text-xs font-black ${courseCreationStep === step ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}`}>
+                      <span className={`w-6 h-6 rounded-full flex items-center justify-center ${courseCreationStep === step ? 'bg-amber-500 text-slate-950' : 'bg-slate-200 dark:bg-slate-800'}`}>{step}</span>
+                      <span>{step === 1 ? 'ข้อมูลรายวิชา' : 'กรอบการวัดผล'}</span>
+                    </div>
+                    {step === 1 && <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />}
+                  </React.Fragment>
+                ))}
+              </div>
+
               {/* Optional: Import/Clone from Existing Course */}
               {courses.length > 0 && (
-                <div className="p-3 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/60 space-y-1.5">
+                <div className={`${courseCreationStep === 1 ? '' : 'hidden'} p-3 rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/60 space-y-1.5`}>
                   <label className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
                     <Copy className="w-3.5 h-3.5 text-amber-600" />
                     <span>{language === 'th' ? 'คัดลอกข้อมูลจากวิชาเดิม (ตัวเลือก)' : 'Import from existing course (Optional)'}</span>
@@ -2329,13 +2344,25 @@ export default function DashboardPage() {
                     defaultValue=""
                     onChange={(e) => {
                       const selId = e.target.value;
-                      if (!selId) return;
+                      if (!selId) {
+                        setCourseCodeInput('');
+                        setCourseNameInput('');
+                        setCourseDescInput('');
+                        setCourseSemesterInput(defaultPeriod.semester);
+                        setCourseYearInput(defaultPeriod.yearCE);
+                        setCourseIndicatorsDraft([]);
+                        setCourseCreationMode('indicator');
+                        setCourseCreationStep(1);
+                        return;
+                      }
                       const sel = courses.find((c) => c.id === selId);
                       if (sel) {
                         setCourseCodeInput(sel.code);
                         setCourseNameInput(sel.name);
                         setCourseDescInput(sel.description || '');
                         setCourseIndicatorsDraft(sel.indicators || []);
+                        setCourseCreationMode(sel.indicator_mode || 'indicator');
+                        setCourseCreationStep(1);
                       }
                     }}
                     className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-hidden cursor-pointer"
@@ -2351,7 +2378,7 @@ export default function DashboardPage() {
               )}
 
               {/* Course Code */}
-              <div className="space-y-1.5">
+              <div className={`${courseCreationStep === 1 ? '' : 'hidden'} space-y-1.5`}>
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                   {t('courses.course_code')} *
                 </label>
@@ -2366,7 +2393,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Course Name */}
-              <div className="space-y-1.5">
+              <div className={`${courseCreationStep === 1 ? '' : 'hidden'} space-y-1.5`}>
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                   {t('courses.course_name')} *
                 </label>
@@ -2381,7 +2408,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Course Description */}
-              <div className="space-y-1.5">
+              <div className={`${courseCreationStep === 1 ? '' : 'hidden'} space-y-1.5`}>
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                   {t('courses.course_desc')}
                 </label>
@@ -2395,7 +2422,7 @@ export default function DashboardPage() {
               </div>
 
               {/* The framework is part of the same draft; nothing is persisted until the final submit. */}
-              <div className="space-y-3 rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+              <div className={`${courseCreationStep === 2 ? '' : 'hidden'} space-y-3 rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20 p-4`}>
                 <div>
                   <div className="flex items-center justify-between gap-3">
                     <label className="text-xs font-black text-slate-900 dark:text-white">
@@ -2461,7 +2488,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Semester & Year */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className={`${courseCreationStep === 1 ? '' : 'hidden'} grid grid-cols-2 gap-3 pt-1`}>
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                     {t('classroom_mgmt.fields.semester_label')} *
@@ -2503,12 +2530,37 @@ export default function DashboardPage() {
                 >
                   {t('common.cancel')}
                 </button>
+                {courseCreationStep === 2 && (
+                  <button
+                  type="button"
+                  onClick={() => setCourseCreationStep(1)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  ย้อนกลับ
+                </button>
+                )}
+                {courseCreationStep === 1 ? (
+                  <button
+                  type="button"
+                  onClick={() => {
+                    if (!courseCodeInput.trim() || !courseNameInput.trim()) {
+                      alert(language === 'th' ? 'กรุณากรอกรหัสและชื่อรายวิชา' : 'Please enter course code and name');
+                      return;
+                    }
+                    setCourseCreationStep(2);
+                  }}
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-md shadow-amber-500/20 cursor-pointer transition-transform active:scale-95"
+                >
+                  ถัดไป: กำหนดกรอบการวัดผล
+                </button>
+                ) : (
                 <button
                   type="submit"
                   className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-md shadow-amber-500/20 cursor-pointer transition-transform active:scale-95"
                 >
                   {language === 'th' ? 'ยืนยันสร้างวิชาและกรอบการวัดผล' : 'Create course and framework'}
                 </button>
+                )}
               </div>
             </form>
           </div>
@@ -2858,7 +2910,7 @@ export default function DashboardPage() {
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs inline-flex"
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
                   >
                     <Share2 className="w-3.5 h-3.5" />
                     <span>{language === 'th' ? 'แชร์เข้าแชท LINE' : 'Share to LINE'}</span>
