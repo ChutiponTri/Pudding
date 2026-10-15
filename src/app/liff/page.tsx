@@ -27,6 +27,7 @@ import {
 import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
+import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 
 interface RealLineStudent {
   id: string; // LINE userId
@@ -73,6 +74,9 @@ export default function LiffStudentPage() {
   const [registeredInstitutions, setRegisteredInstitutions] = useState<string[]>([]);
   const [classroomPosts, setClassroomPosts] = useState<ClassroomPost[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const currentAcademicPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
+  const [studentPortalTab, setStudentPortalTab] = useState<"overview" | "courses" | "course">("overview");
+  const [selectedTermKey, setSelectedTermKey] = useState("current");
 
   const loadClassroomPosts = async (classroom: Classroom | null, lineUid: string) => {
     if (!classroom) {
@@ -756,7 +760,7 @@ export default function LiffStudentPage() {
   // ==========================================
   if (authStatus === "loading") {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-4 min-h-[500px]">
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-4 min-h-125">
         <div className="relative">
           <div className="w-20 h-20 rounded-3xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center text-4xl shadow-lg ring-8 ring-amber-500/10 animate-bounce">
             🍮
@@ -780,7 +784,7 @@ export default function LiffStudentPage() {
   // ==========================================
   if (authStatus === "error") {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-5 min-h-[500px]">
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-5 min-h-125">
         <div className="w-16 h-16 rounded-3xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center shadow-md">
           <AlertCircle className="w-8 h-8" />
         </div>
@@ -810,11 +814,11 @@ export default function LiffStudentPage() {
   // ==========================================
   if (authStatus === "unauthenticated" || !currentStudent) {
     return (
-      <div className="flex-1 flex flex-col justify-between p-6 bg-radial from-emerald-500/10 via-transparent to-transparent text-slate-900 dark:text-white min-h-[600px]">
+      <div className="flex-1 flex flex-col justify-between p-6 bg-radial from-emerald-500/10 via-transparent to-transparent text-slate-900 dark:text-white min-h-150">
         {/* Top Branding */}
         <div className="pt-8 text-center space-y-4">
-          <div className="relative inline-block">
-            <div className="w-24 h-24 rounded-3xl bg-gradient-to-tr from-amber-400 to-amber-200 dark:from-amber-600 dark:to-amber-400 flex items-center justify-center text-5xl shadow-2xl ring-8 ring-emerald-500/20 mx-auto">
+            <div className="relative inline-block">
+            <div className="w-24 h-24 rounded-3xl bg-linear-to-tr from-amber-400 to-amber-200 dark:from-amber-600 dark:to-amber-400 flex items-center justify-center text-5xl shadow-2xl ring-8 ring-emerald-500/20 mx-auto">
               🍮
             </div>
             <span className="absolute -bottom-2 -right-2 px-2.5 py-0.5 rounded-full bg-[#06C755] text-white text-[10px] font-black shadow-md border-2 border-white dark:border-slate-900">
@@ -903,8 +907,7 @@ export default function LiffStudentPage() {
   // VIEW: 4. Authenticated Student Portal
   // ==========================================
   const filteredAssignments = assignments.filter((a) => {
-    if (!selectedClassroom) return true;
-    return a.classroom_id === selectedClassroom.id;
+    return visibleClassroomIds.has(a.classroom_id);
   });
 
   const pendingAssignments = filteredAssignments
@@ -919,6 +922,22 @@ export default function LiffStudentPage() {
     return groups;
   }, new Map<string, { label: string; term?: string; classrooms: Classroom[] }>());
 
+  const termOptions = Array.from(new Map(classrooms.map((classroom) => {
+    const key = classroom.semester && classroom.year_ce ? `${classroom.semester}_${classroom.year_ce}` : `academic_${classroom.academic_year}`;
+    return [key, classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year];
+  })).entries());
+  const currentTermKey = `${currentAcademicPeriod.semester}_${currentAcademicPeriod.yearCE}`;
+  const selectedTermClassrooms = selectedTermKey === "all"
+    ? classrooms
+    : classrooms.filter((classroom) => {
+      const key = classroom.semester && classroom.year_ce ? `${classroom.semester}_${classroom.year_ce}` : `academic_${classroom.academic_year}`;
+      return key === (selectedTermKey === "current" ? currentTermKey : selectedTermKey);
+    });
+  const visibleClassrooms = selectedTermClassrooms.length > 0 ? selectedTermClassrooms : classrooms;
+  const visibleClassroomIds = new Set(
+    studentPortalTab === "course" && selectedClassroom ? [selectedClassroom.id] : visibleClassrooms.map((classroom) => classroom.id)
+  );
+
   const minutesUntil = (dueDate: string) => Math.ceil((new Date(dueDate).getTime() - Date.now()) / 60000);
 
   return (
@@ -930,9 +949,9 @@ export default function LiffStudentPage() {
           <span className="font-extrabold tracking-tight">พุดดิ้ง • LINE LIFF</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 text-[11px] bg-black/20 px-2.5 py-0.5 rounded-full">
+            <div className="flex items-center gap-1.5 text-[11px] bg-black/20 px-2.5 py-0.5 rounded-full">
             <span className="w-2 h-2 rounded-full bg-emerald-200 animate-pulse" />
-            <span className="max-w-[110px] truncate">{currentStudent.name}</span>
+            <span className="max-w-27.5 truncate">{currentStudent.name}</span>
             <button
               onClick={handleLineLogout}
               title="ออกจากระบบ"
@@ -1053,8 +1072,31 @@ export default function LiffStudentPage() {
         </button>
       </div>
 
-      {/* Lightweight student classroom overview */}
       {!activeAssignment && classrooms.length > 0 && (
+        <div className="px-4 pt-3 space-y-3">
+          <div className="flex items-center gap-1 p-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            {[
+              ["overview", "ภาพรวม"],
+              ["courses", "รายวิชา"],
+            ].map(([id, label]) => (
+              <button key={id} onClick={() => setStudentPortalTab(id as "overview" | "courses")} className={`flex-1 py-2 rounded-xl text-xs font-black ${studentPortalTab === id ? "bg-[#06C755] text-white" : "text-slate-500"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-black text-slate-700 dark:text-slate-300">ภาคเรียน</span>
+            <select value={selectedTermKey} onChange={(e) => { setSelectedTermKey(e.target.value); setStudentPortalTab("courses"); }} className="flex-1 max-w-55 p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold">
+              <option value="current">ภาคเรียนปัจจุบัน ({currentAcademicPeriod.semester}/{currentAcademicPeriod.yearCE + 543})</option>
+              <option value="all">ทุกภาคเรียน</option>
+              {termOptions.filter(([key]) => key !== currentTermKey).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Lightweight student classroom overview */}
+      {!activeAssignment && classrooms.length > 0 && studentPortalTab !== "course" && (
         <div className="px-4 pt-4 space-y-4">
           <div className="grid grid-cols-2 gap-2">
             <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
@@ -1070,8 +1112,8 @@ export default function LiffStudentPage() {
           <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 space-y-3">
             <h2 className="text-sm font-black flex items-center gap-1.5"><CalendarDays className="w-4 h-4 text-blue-500" />รายวิชาและภาคเรียน</h2>
             <div className="grid gap-2">
-              {Array.from(courseGroups.values()).map((group) => (
-                <button key={`${group.label}-${group.term}`} onClick={() => setSelectedClassroom(group.classrooms[0])} className="text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-amber-950/30 border border-transparent hover:border-amber-200">
+              {Array.from(courseGroups.values()).filter((group) => group.classrooms.some((item) => visibleClassrooms.some((visible) => visible.id === item.id))).map((group) => (
+                <button key={`${group.label}-${group.term}`} onClick={() => { setSelectedClassroom(group.classrooms[0]); setStudentPortalTab("course"); }} className="text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-amber-950/30 border border-transparent hover:border-amber-200">
                   <p className="text-xs font-black">{group.label}</p>
                   <p className="text-[10px] text-slate-500 mt-1">{group.term || 'ไม่ระบุภาคเรียน'} · {group.classrooms.length} ห้อง</p>
                 </button>
@@ -1095,7 +1137,7 @@ export default function LiffStudentPage() {
 
       {/* MAIN CONTENT AREA */}
       {!activeAssignment ? (
-        <div className="p-4 space-y-5">
+          <div className={`p-4 space-y-5 ${studentPortalTab === "overview" ? "" : "hidden"}`}>
           {isLoadingData ? (
             <div className="p-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-[#06C755]" />
@@ -1275,6 +1317,34 @@ export default function LiffStudentPage() {
             </>
           )}
         </div>
+        {studentPortalTab !== "overview" && (
+          <div className="p-4 space-y-4">
+            <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <div>
+                  <p className="text-[10px] text-slate-500">{studentPortalTab === "course" ? "รายละเอียดวิชา" : "วิชาในภาคเรียนที่เลือก"}</p>
+                  <h2 className="text-base font-black">{selectedClassroom?.course_name || selectedClassroom?.subject_code || "รายวิชาของฉัน"}</h2>
+                </div>
+                {studentPortalTab === "course" && <button onClick={() => setStudentPortalTab("courses")} className="text-xs font-bold text-[#06C755]">ดูทุกรายวิชา</button>}
+              </div>
+              {studentPortalTab === "courses" ? (
+                <div className="space-y-2">
+                  {Array.from(courseGroups.values()).filter((group) => group.classrooms.some((item) => visibleClassrooms.some((visible) => visible.id === item.id))).map((group) => (
+                    <button key={`${group.label}-${group.term}-detail`} onClick={() => { setSelectedClassroom(group.classrooms[0]); setStudentPortalTab("course"); }} className="w-full text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 hover:bg-amber-50 border border-slate-200 dark:border-slate-700">
+                      <p className="text-sm font-black">{group.label}</p>
+                      <p className="text-[10px] text-slate-500 mt-1">{group.term || "ไม่ระบุภาคเรียน"} · {group.classrooms.map((item) => item.name).join(", ")}</p>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {classroomPosts.length > 0 && <div className="space-y-2"><h3 className="text-xs font-black flex items-center gap-1"><Megaphone className="w-3.5 h-3.5 text-amber-500" />โพสประกาศ</h3>{classroomPosts.map((post) => <article key={post.id} className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/20"><p className="text-xs whitespace-pre-wrap">{post.body}</p><p className="text-[10px] text-slate-400 mt-1">{new Date(post.created_at).toLocaleString("th-TH")}</p></article>)}</div>}
+                  <div><h3 className="text-xs font-black mb-2">งานในวิชานี้</h3><div className="space-y-2">{pendingAssignments.map((assignment) => <button key={assignment.id} onClick={() => handleOpenAssignment(assignment)} className="w-full text-left p-3 rounded-2xl border border-slate-200 dark:border-slate-700"><div className="flex justify-between gap-2"><span className="text-xs font-bold">{assignment.is_exam ? "📝 " : "📋 "}{assignment.title}</span><span className="text-[10px] font-bold text-rose-600">{minutesUntil(assignment.due_date)} นาที</span></div><p className="text-[10px] text-slate-500 mt-1">ยังไม่ส่ง · {new Date(assignment.due_date).toLocaleString("th-TH")}</p></button>)}{completedAssignments.map((assignment) => <button key={assignment.id} onClick={() => submissions[assignment.id] && handleOpenGradedDetail(assignment, submissions[assignment])} className="w-full text-left p-3 rounded-2xl border border-emerald-200 bg-emerald-50/50"><div className="flex justify-between gap-2"><span className="text-xs font-bold">✓ {assignment.title}</span><span className="text-[10px] font-bold text-emerald-600">{submissions[assignment.id]?.total_score !== undefined ? `${submissions[assignment.id].total_score}/${assignment.total_points || 20}` : "รอตรวจ"}</span></div><p className="text-[10px] text-slate-500 mt-1">ส่งแล้ว</p></button>)}{pendingAssignments.length === 0 && completedAssignments.length === 0 && <p className="text-xs text-slate-400">ยังไม่มีงานในวิชานี้</p>}</div></div>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
       ) : (
         /* ACTIVE TAKING EXAM/ASSIGNMENT VIEW */
         <div className="p-4 space-y-4">
@@ -1334,7 +1404,7 @@ export default function LiffStudentPage() {
           ) : (
             <>
               {/* Exam Header Card */}
-              <div className="p-4 rounded-3xl bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-yellow-500/10 border border-amber-200 dark:border-amber-900/50 space-y-1.5">
+              <div className="p-4 rounded-3xl bg-linear-to-r from-amber-500/10 via-orange-500/10 to-yellow-500/10 border border-amber-200 dark:border-amber-900/50 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-black uppercase text-amber-800 dark:text-amber-300">
                     {activeAssignment.is_exam ? "ข้อสอบออนไลน์" : "ใบงาน"}
@@ -1453,7 +1523,7 @@ export default function LiffStudentPage() {
                   type="button"
                   disabled={isSubmitting}
                   onClick={handleSubmitTask}
-                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-[#06C755] hover:from-emerald-700 hover:to-[#05b34c] text-white font-black text-sm shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 transition-transform active:scale-98 disabled:opacity-50 cursor-pointer"
+                  className="w-full py-3.5 rounded-2xl bg-linear-to-r from-emerald-600 to-[#06C755] hover:from-emerald-700 hover:to-[#05b34c] text-white font-black text-sm shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 transition-transform active:scale-98 disabled:opacity-50 cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
                   <span>{isSubmitting ? "กำลังส่งข้อสอบ..." : "ส่งข้อสอบ / ยืนยันการส่งงาน"}</span>

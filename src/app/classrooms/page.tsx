@@ -518,20 +518,21 @@ export default function ClassroomsPage() {
                   <span>{studentCount} {t('dashboard.classrooms_section.students_enrolled')}</span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleOpenClassroomStudents(cls)}
+                <Link
+                  href={`/classrooms/${cls.id}`}
                   className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <span>{t('dashboard.classrooms_section.view_class')}</span>
                   <Share2 className="w-3 h-3 text-amber-500" />
-                </button>
-                <Link
-                  href={`/classrooms/${cls.id}`}
-                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-colors flex items-center gap-1.5"
-                >
-                  เปิดห้องเรียน
                 </Link>
+                <button
+                  type="button"
+                  onClick={() => handleOpenClassroomStudents(cls)}
+                  className="px-3 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-black transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <UserCheck className="w-3 h-3" />
+                  เชิญนักเรียน
+                </button>
               </div>
             </div>
           );
