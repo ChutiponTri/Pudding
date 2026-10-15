@@ -249,22 +249,36 @@ export async function POST(request: NextRequest) {
       }
     } catch {}
 
-    // Ensure user row exists in Supabase users table before attendance_records upsert
+    // Resolve the canonical Supabase user first. The LIFF client may send either
+    // the LINE id or the student's school id, while attendance_records.student_id
+    // has a foreign key to users.id.
     try {
-      await sb.from('users').upsert({
+      if (cleanLineUid) {
+        const { data: lineUser } = await sb.from('users').select('id').eq('line_uid', cleanLineUid).maybeSingle();
+        if (lineUser?.id) canonicalUserId = lineUser.id;
+      }
+      if (canonicalUserId === primaryId && studentId) {
+        const { data: studentUser } = await sb.from('users').select('id').eq('student_id', cleanStudentId).maybeSingle();
+        if (studentUser?.id) canonicalUserId = studentUser.id;
+      }
+
+      const { error: userError } = await sb.from('users').upsert({
         id: canonicalUserId,
         role: 'student',
         line_uid: cleanLineUid || undefined,
         first_name: 'นักเรียน',
       }, { onConflict: 'id', ignoreDuplicates: true });
+      if (userError) throw userError;
 
-      await sb.from('attendance_records').upsert({
+      const { error: attendanceError } = await sb.from('attendance_records').upsert({
+        id: record.id,
         session_id: session.id,
         classroom_id: classroomId,
         student_id: canonicalUserId,
         status: computedStatus,
         checked_at: record.checked_at,
-      });
+      }, { onConflict: 'session_id,student_id' });
+      if (attendanceError) throw attendanceError;
     } catch (dbErr) {
       console.warn('Supabase attendance record upsert note:', dbErr);
     }
@@ -459,5 +473,4 @@ export async function DELETE(request: NextRequest) {
 
   return NextResponse.json({ success: true, deletedSessionId: sessionId });
 }
-
 

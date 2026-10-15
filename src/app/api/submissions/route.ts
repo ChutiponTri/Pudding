@@ -202,7 +202,9 @@ export async function POST(request: NextRequest) {
         { onConflict: 'id', ignoreDuplicates: false }
       );
 
-      // Ensure assignment row exists so foreign key constraint assignments(id) succeeds
+      // The assignment must exist before a submission can be stored. Do not
+      // create a fake classroom/assignment row: its foreign keys can make the
+      // later submission write fail while the client still sees a false success.
       const { data: existingAssignment } = await supabase
         .from('assignments')
         .select('id')
@@ -210,14 +212,7 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       if (!existingAssignment) {
-        console.log('[POST /api/submissions] Assignment not found in Supabase, inserting stub:', assignment_id);
-        await supabase.from('assignments').insert({
-          id: assignment_id,
-          title: 'การบ้าน/ข้อสอบ',
-          classroom_id: 'classroom',
-          due_date: new Date(Date.now() + 7 * 86400000).toISOString(),
-          total_points: assignmentMaxScore,
-        });
+        throw new Error(`Assignment ${assignment_id} was not found in Supabase`);
       }
 
       // Upsert submission record
@@ -237,7 +232,7 @@ export async function POST(request: NextRequest) {
       });
 
       if (subErr) {
-        console.error('[POST /api/submissions] Supabase submissions upsert error:', subErr);
+        throw subErr;
       } else {
         console.log('[POST /api/submissions] Supabase submissions upsert succeeded:', subId);
       }
@@ -253,16 +248,17 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
 
           if (!existingQ) {
-            await supabase.from('questions').insert({
+            const { error: questionError } = await supabase.from('questions').insert({
               id: ans.question_id,
               assignment_id,
               question_text: 'คำถามข้อนี้',
-              type: 'essay',
+              type: 'short_answer',
               max_score: 5,
             });
+            if (questionError) throw questionError;
           }
 
-          await supabase.from('submission_answers').upsert({
+          const { error: answerError } = await supabase.from('submission_answers').upsert({
             id: `ans-${subId}-${ans.question_id}`,
             submission_id: subId,
             question_id: ans.question_id,
@@ -270,6 +266,7 @@ export async function POST(request: NextRequest) {
             file_url: ans.file_url || null,
             teacher_score: ans.teacher_score !== undefined ? ans.teacher_score : null,
           });
+          if (answerError) throw answerError;
         }
       }
 
@@ -285,8 +282,13 @@ export async function POST(request: NextRequest) {
           details: evt.details || null,
         });
       }
+      console.log('[POST /api/submissions] Supabase answer write completed:', subId);
     } catch (dbErr) {
       console.error('[POST /api/submissions] Supabase service write error:', dbErr);
+      return NextResponse.json({
+        error: 'บันทึกคำตอบลงฐานข้อมูลไม่สำเร็จ',
+        detail: dbErr instanceof Error ? dbErr.message : 'Supabase write failed',
+      }, { status: 503 });
     }
 
     return NextResponse.json({ success: true, submission: submissionRecord });
@@ -295,4 +297,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error?.message || 'Internal Server Error' }, { status: 500 });
   }
 }
-

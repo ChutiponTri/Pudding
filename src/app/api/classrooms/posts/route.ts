@@ -96,6 +96,35 @@ export async function POST(request: NextRequest) {
   
   const context = await getContext(classroomId);
   const authorId = context.userId || 'teacher';
+
+  // Assignment creation can be retried by the client after a slow response.
+  // Use the assignment id as an idempotency key so one assignment produces one
+  // timeline post and one LINE notification.
+  const assignmentId = typeof (metadata as { assignmentId?: unknown }).assignmentId === 'string'
+    ? (metadata as { assignmentId: string }).assignmentId
+    : '';
+  if (assignmentId && (activityType === 'assignment' || activityType === 'exam')) {
+    try {
+      const lookupClient = createServiceSupabaseClient();
+      const { data: existingPosts } = await lookupClient
+        .from('classroom_posts')
+        .select('*')
+        .eq('classroom_id', classroomId)
+        .eq('activity_type', activityType)
+        .contains('metadata', { assignmentId });
+      const existingPost = existingPosts?.[0] as FallbackPost | undefined;
+      if (existingPost) {
+        fallbackStore.savePost(existingPost);
+        return NextResponse.json({ post: existingPost, deduplicated: true }, { status: 200 });
+      }
+    } catch (error) {
+      console.warn('Assignment post idempotency lookup warning:', error);
+    }
+    const localExisting = fallbackStore.getPosts(classroomId).find((post) =>
+      (post.activity_type === activityType) && post.metadata?.assignmentId === assignmentId
+    );
+    if (localExisting) return NextResponse.json({ post: localExisting, deduplicated: true }, { status: 200 });
+  }
   
   // Create post object
   const newPost: FallbackPost = {
@@ -195,4 +224,3 @@ export async function DELETE(request: NextRequest) {
 
   return NextResponse.json({ success: true, deletedPostId: id });
 }
-

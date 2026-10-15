@@ -95,7 +95,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
             </div>
             <div className="min-w-0">
               <h2 className="text-sm font-black text-slate-900 dark:text-white truncate">ห้องเรียนและรายวิชา</h2>
-              <p className="text-[10px] text-slate-500 font-medium truncate">รายวิชาทั้งหมด (ใหม่ไปเก่า)</p>
+              <p className="text-[10px] text-slate-500 font-medium truncate">รายวิชาทั้งหมด</p>
             </div>
           </div>
           <button
