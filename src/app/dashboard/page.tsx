@@ -1488,14 +1488,13 @@ export default function DashboardPage() {
                           </div>
 
                           <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenManagingClassroom(cls, 'roster')}
+                            <Link
+                              href={`/classrooms/${cls.id}`}
                               className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
                             >
                               <span>{t('dashboard.classrooms_section.view_class')}</span>
                               <ArrowRight className="w-3 h-3" />
-                            </button>
+                            </Link>
 
                             <button
                               type="button"
