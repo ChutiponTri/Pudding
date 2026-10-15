@@ -53,7 +53,13 @@ export async function POST(request: NextRequest) {
       .limit(1);
     if (lookupError) {
       console.error('LINE connection token lookup failed:', lookupError);
-      await replySafely(event.replyToken, 'ระบบเชื่อมต่อ LINE ยังไม่พร้อม กรุณาติดต่อผู้ดูแลระบบ');
+      const isMissingLineSchema = lookupError.code === '42703' || /column .*line_connection|schema cache/i.test(lookupError.message || '');
+      await replySafely(
+        event.replyToken,
+        isMissingLineSchema
+          ? 'ระบบยังไม่ได้ติดตั้งโครงสร้าง LINE ในฐานข้อมูล กรุณาให้ผู้ดูแลรัน supabase_schema_update.sql ก่อน'
+          : 'ระบบเชื่อมต่อ LINE ยังไม่พร้อม กรุณาติดต่อผู้ดูแลระบบ'
+      );
       continue;
     }
     const classroom = classrooms?.[0];

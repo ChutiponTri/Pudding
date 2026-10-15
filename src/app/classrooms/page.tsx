@@ -82,6 +82,7 @@ export default function ClassroomsPage() {
     connectedAt?: string;
   }>({ status: 'disconnected' });
   const [isLineConnectionLoading, setIsLineConnectionLoading] = useState(false);
+  const [isLineCodeCopied, setIsLineCodeCopied] = useState(false);
 
   const showNotification = (msg: string) => {
     setActionSuccessNotice(msg);
@@ -1054,7 +1055,12 @@ export default function ClassroomsPage() {
                         <div className="space-y-2">
                           <div className="p-3 rounded-xl bg-slate-950/60 text-center">
                             <p className="text-[10px] text-emerald-100/70">ส่งข้อความนี้ในกลุ่มที่เพิ่ม Pudding Official Account</p>
-                            <code className="block mt-1 text-lg font-black tracking-widest text-amber-300">#pudding {lineConnection.token}</code>
+                            <div className="flex items-center gap-2 mt-1">
+                              <code className="text-lg font-black tracking-widest text-amber-300">#pudding {lineConnection.token}</code>
+                              <button type="button" onClick={() => { navigator.clipboard.writeText(`#pudding ${lineConnection.token}`); setIsLineCodeCopied(true); setTimeout(() => setIsLineCodeCopied(false), 2000); }} className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/20 text-[10px] font-bold text-white hover:bg-white/20">
+                                {isLineCodeCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                              </button>
+                            </div>
                             <p className="text-[10px] text-amber-100/70 mt-1">รหัสหมดอายุใน 10 นาที และใช้ได้ครั้งเดียว</p>
                           </div>
                           <p className="text-[11px] text-emerald-100/80">หลังส่งรหัส ระบบจะตรวจสอบอัตโนมัติ ไม่ต้องกรอก Group ID</p>

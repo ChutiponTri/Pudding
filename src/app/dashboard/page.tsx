@@ -130,6 +130,7 @@ export default function DashboardPage() {
     connectedAt?: string;
   }>({ status: 'disconnected' });
   const [isLineConnectionLoading, setIsLineConnectionLoading] = useState(false);
+  const [isLineCodeCopied, setIsLineCodeCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Course-level Learning Indicators & Rubrics Settings Modal
@@ -2217,6 +2218,23 @@ export default function DashboardPage() {
                   </span>
                 </div>
 
+                <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-white/70 dark:bg-slate-900/70 border border-amber-200 dark:border-amber-900/60">
+                  <button
+                    type="button"
+                    onClick={() => setNewCoTeacherRole('assistant')}
+                    className={`py-2 rounded-xl text-xs font-bold transition-colors ${newCoTeacherRole === 'assistant' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
+                  >
+                    👨‍🏫 ครู TA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewCoTeacherRole('researcher')}
+                    className={`py-2 rounded-xl text-xs font-bold transition-colors ${newCoTeacherRole === 'researcher' ? 'bg-purple-600 text-white' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
+                  >
+                    🔬 นักวิจัย
+                  </button>
+                </div>
+
                 <div className="inline-flex items-center gap-2 rounded-xl bg-white/70 dark:bg-slate-900/70 border border-amber-200 dark:border-amber-900/60 px-3 py-2 text-[11px] font-bold text-slate-700 dark:text-slate-300">
                   {newCoTeacherRole === 'assistant' ? '👨‍🏫 ลิงก์นี้ใช้สำหรับครูผู้ช่วยสอน (TA)' : '🔬 ลิงก์นี้ใช้สำหรับครูตรวจงานวิจัย (Researcher)'}
                 </div>
@@ -2809,7 +2827,12 @@ export default function DashboardPage() {
                 {lineConnection.status === 'waiting' && lineConnection.token && (
                   <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 text-center">
                     <div className="text-[11px] text-amber-800 dark:text-amber-200">รหัสเชื่อมต่อ ใช้ครั้งเดียวภายใน 10 นาที</div>
-                    <code className="block mt-2 text-xl font-black tracking-widest text-amber-700 dark:text-amber-300">#pudding {lineConnection.token}</code>
+                    <div className="flex items-center justify-center gap-2 mt-2">
+                      <code className="text-xl font-black tracking-widest text-amber-700 dark:text-amber-300">#pudding {lineConnection.token}</code>
+                      <button type="button" onClick={() => { navigator.clipboard.writeText(`#pudding ${lineConnection.token}`); setIsLineCodeCopied(true); setTimeout(() => setIsLineCodeCopied(false), 2000); }} className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 text-[11px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/50">
+                        {isLineCodeCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3128,7 +3151,10 @@ export default function DashboardPage() {
                   {lineConnection.status === 'waiting' && lineConnection.token && (
                     <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800/60">
                       <div className="text-[11px] text-slate-500 dark:text-slate-400">เพิ่มบอทเข้ากลุ่ม แล้วส่งข้อความนี้ในกลุ่ม</div>
-                      <code className="block mt-1 text-lg font-black tracking-widest text-amber-600 dark:text-amber-300">#pudding {lineConnection.token}</code>
+                      <div className="flex items-center gap-2 mt-1">
+                        <code className="text-lg font-black tracking-widest text-amber-600 dark:text-amber-300">#pudding {lineConnection.token}</code>
+                        <button type="button" onClick={() => { navigator.clipboard.writeText(`#pudding ${lineConnection.token}`); setIsLineCodeCopied(true); setTimeout(() => setIsLineCodeCopied(false), 2000); }} className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 text-[10px] font-bold text-amber-700 dark:text-amber-300">{isLineCodeCopied ? 'แล้ว' : 'คัดลอก'}</button>
+                      </div>
                       <div className="text-[10px] text-slate-400 mt-1">รหัสใช้ได้ครั้งเดียวและหมดอายุภายใน 10 นาที</div>
                     </div>
                   )}
