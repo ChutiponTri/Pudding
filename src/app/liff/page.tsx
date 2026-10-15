@@ -130,11 +130,13 @@ export default function LiffStudentPage() {
             });
             if (!res.ok) return [];
             const data = await res.json();
-            const openSessions = (data.sessions || []).filter((s: any) => s.status === "open");
             const recordsMap = Object.fromEntries(
               (data.records || []).map((r: any) => [r.session_id, r.status])
             );
-            return openSessions.map((s: any) => ({
+            // Overview is an action list: once this student has a record for
+            // the session, remove it from the shortcut list. The attendance
+            // tab still loads the full session history separately.
+            return (data.sessions || []).filter((s: any) => s.status === "open" && !recordsMap[s.id]).map((s: any) => ({
               classroom: cls,
               session: s,
               checkedIn: Boolean(recordsMap[s.id]),
@@ -1153,7 +1155,7 @@ export default function LiffStudentPage() {
                     className={`p-4 rounded-3xl border transition-all flex flex-wrap items-center justify-between gap-3 shadow-sm ${
                       item.checkedIn
                         ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'
-                        : 'bg-gradient-to-r from-emerald-500/15 via-teal-500/15 to-emerald-500/10 border-emerald-400 dark:border-emerald-700 ring-2 ring-emerald-400/30 animate-pulse'
+                        : 'bg-linear-to-r from-emerald-500/15 via-teal-500/15 to-emerald-500/10 border-emerald-400 dark:border-emerald-700 ring-2 ring-emerald-400/30 animate-pulse'
                     }`}
                   >
                     <div className="min-w-0">
@@ -1192,7 +1194,7 @@ export default function LiffStudentPage() {
 
             {/* 2. Urgent Online Exams Shortcut Section (1-Click Exam Start) */}
             {pendingExams.length > 0 && (
-              <section className="bg-gradient-to-br from-purple-500/10 via-purple-500/5 to-transparent rounded-3xl border border-purple-200 dark:border-purple-900/60 p-4 space-y-3 shadow-xs">
+              <section className="bg-linear-to-br from-purple-500/10 via-purple-500/5 to-transparent rounded-3xl border border-purple-200 dark:border-purple-900/60 p-4 space-y-3 shadow-xs">
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-black text-purple-900 dark:text-purple-200 flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-purple-600" />
