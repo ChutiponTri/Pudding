@@ -34,3 +34,9 @@ export function createServiceSupabaseClient() {
   if (!serviceKey) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not configured');
   return createSupabaseClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
 }
+
+export function createAnonServerSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key';
+  return createSupabaseClient(url, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
+}

@@ -1964,7 +1964,12 @@ export const dataService = {
 
     if (isSupabaseConfigured) {
       const supabase = createClient();
-      await supabase.from('assignments').insert(newAssignment);
+      let { error: assignError } = await supabase.from('assignments').insert(newAssignment);
+      // If group_name column doesn't exist yet in Supabase schema, retry without it
+      if (assignError && assignError.message?.includes('group_name')) {
+        const { group_name, ...withoutGroup } = newAssignment;
+        await supabase.from('assignments').insert(withoutGroup);
+      }
       if (newQuestions.length > 0) {
         await supabase.from('questions').insert(newQuestions);
       }
@@ -1986,7 +1991,7 @@ export const dataService = {
         body: JSON.stringify({
           classroomId: assignmentData.classroom_id,
           activityType: assignmentData.is_exam ? 'exam' : 'assignment',
-          body: `${assignmentData.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${assignmentData.title}`,
+          body: `${assignmentData.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${assignmentData.title} (กำหนดส่ง: ${new Date(assignmentData.due_date).toLocaleString('th-TH')})`,
           metadata: { assignmentId: id, dueDate: assignmentData.due_date, groupName: assignmentData.group_name || (assignmentData.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
         }),
       }).catch((error) => console.warn('Unable to publish assignment activity:', error));
@@ -1995,11 +2000,24 @@ export const dataService = {
     return { assignment: newAssignment, questions: newQuestions };
   },
 
+  async getAssignmentsByClassroomId(classroomId: string): Promise<Assignment[]> {
+    if (isSupabaseConfigured) {
+      const supabase = createClient();
+      const { data, error } = await supabase.from('assignments').select('*').eq('classroom_id', classroomId).order('created_at', { ascending: false });
+      if (!error && data) return data as Assignment[];
+    }
+    const assignments = getStoredOr<Assignment[]>('assignments', []);
+    return assignments.filter((a) => a.classroom_id === classroomId);
+  },
+
   async updateAssignment(id: string, data: Partial<Omit<Assignment, 'id' | 'created_at'>>): Promise<Assignment | null> {
     if (isSupabaseConfigured) {
       const supabase = createClient();
-      const { error } = await supabase.from('assignments').update(data).eq('id', id);
-      if (error) throw error;
+      let { error } = await supabase.from('assignments').update(data).eq('id', id);
+      if (error && error.message?.includes('group_name')) {
+        const { group_name, ...withoutGroup } = data;
+        await supabase.from('assignments').update(withoutGroup).eq('id', id);
+      }
     }
     const assignments = getStoredOr<Assignment[]>('assignments', []);
     const index = assignments.findIndex((assignment) => assignment.id === id);

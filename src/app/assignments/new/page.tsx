@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '@clerk/nextjs';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import { Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
@@ -29,6 +29,7 @@ import {
   ExternalLink,
   Lock,
   ArrowRight,
+  ArrowLeft,
 } from 'lucide-react';
 
 interface QuestionDraft {
@@ -41,8 +42,10 @@ interface QuestionDraft {
   max_score: number;
 }
 
-export default function NewAssignmentPage() {
+function NewAssignmentContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlClassroomId = searchParams.get('classroomId');
   const { user: clerkUser } = useUser();
   const { t, language } = useLanguage();
 
@@ -121,25 +124,37 @@ export default function NewAssignmentPage() {
         setIndicators(ind);
 
         if (crs.length > 0) {
-          setSelectedCourseId(crs[0].id);
-          const matchingClasses = cls.filter((c) => c.course_id === crs[0].id);
-          setSelectedClassroomIds(matchingClasses.length > 0 ? [matchingClasses[0].id] : [cls[0]?.id || '']);
+          let initialClassroomId = cls[0]?.id || '';
+          let initialCourseId = crs[0].id;
 
-          // Use first course's CourseLearningIndicators as the initial indicator list
-          const firstCourseInds = crs[0].indicators || [];
+          if (urlClassroomId) {
+            const matchedClass = cls.find((c) => c.id === urlClassroomId);
+            if (matchedClass) {
+              initialClassroomId = matchedClass.id;
+              if (matchedClass.course_id && crs.some((c) => c.id === matchedClass.course_id)) {
+                initialCourseId = matchedClass.course_id;
+              }
+            }
+          }
+
+          setSelectedCourseId(initialCourseId);
+          setSelectedClassroomIds([initialClassroomId]);
+
+          // Use matched course's CourseLearningIndicators as the initial indicator list
+          const matchedCourse = crs.find((c) => c.id === initialCourseId) || crs[0];
+          const firstCourseInds = matchedCourse.indicators || [];
           setCourseIndicators(firstCourseInds);
           if (firstCourseInds.length > 0) {
             setQuestions((prev) =>
               prev.map((q) => ({ ...q, indicator_id: firstCourseInds[0].id }))
             );
           } else if (ind.length > 0) {
-            // Fallback to flat indicators if course has none configured yet
             setQuestions((prev) =>
               prev.map((q) => ({ ...q, indicator_id: ind[0].id }))
             );
           }
         } else if (cls.length > 0) {
-          setSelectedClassroomIds([cls[0].id]);
+          setSelectedClassroomIds([urlClassroomId || cls[0].id]);
         }
       } catch (err) {
         console.error(err);
@@ -148,7 +163,7 @@ export default function NewAssignmentPage() {
       }
     }
     init();
-  }, []);
+  }, [urlClassroomId]);
 
   const handleCourseChange = (courseId: string) => {
     setSelectedCourseId(courseId);
@@ -323,7 +338,26 @@ export default function NewAssignmentPage() {
     && selectedClassroomIds.every((classroomId) => lineConnectionStatuses[classroomId] === 'connected');
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-24">
+    <div className="max-w-5xl mx-auto space-y-6 pb-24">
+      {/* Back to Classroom Button */}
+      <div>
+        <button
+          type="button"
+          onClick={() => {
+            const targetId = urlClassroomId || selectedClassroomIds[0];
+            if (targetId) {
+              router.push(`/classrooms/${targetId}?tab=classwork`);
+            } else {
+              router.back();
+            }
+          }}
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>กลับไปหน้าห้องเรียน (งานและเนื้อหา)</span>
+        </button>
+      </div>
+
       {/* Page Header */}
       <div>
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-xs font-bold mb-2">
@@ -968,5 +1002,13 @@ export default function NewAssignmentPage() {
         </div>
       </form>
     </div>
+  );
+}
+
+export default function NewAssignmentPage() {
+  return (
+    <React.Suspense fallback={<div className="p-8 text-center text-sm text-slate-400">กำลังโหลด...</div>}>
+      <NewAssignmentContent />
+    </React.Suspense>
   );
 }
