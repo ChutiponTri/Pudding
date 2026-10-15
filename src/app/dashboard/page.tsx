@@ -121,6 +121,13 @@ export default function DashboardPage() {
   const [isSearchingStudents, setIsSearchingStudents] = useState(false);
   const [emailInviteList, setEmailInviteList] = useState('');
   const [isCopied, setIsCopied] = useState(false);
+  const [lineConnection, setLineConnection] = useState<{
+    status: 'disconnected' | 'waiting' | 'connected';
+    token?: string;
+    expiresAt?: string;
+    connectedAt?: string;
+  }>({ status: 'disconnected' });
+  const [isLineConnectionLoading, setIsLineConnectionLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Course-level Learning Indicators & Rubrics Settings Modal
@@ -139,6 +146,8 @@ export default function DashboardPage() {
   const [isCoTeachersModalOpen, setIsCoTeachersModalOpen] = useState(false);
   const [coTeachersDraft, setCoTeachersDraft] = useState<ClassroomTeacher[]>([]);
   const [newCoTeacherRole, setNewCoTeacherRole] = useState<'assistant' | 'researcher'>('assistant');
+  const [coTeacherInviteStep, setCoTeacherInviteStep] = useState<1 | 2>(1);
+  const [isCoTeachingArchitectureOpen, setIsCoTeachingArchitectureOpen] = useState(false);
   const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
   const [teacherSearchResults, setTeacherSearchResults] = useState<User[]>([]);
   const [isSearchingTeachers, setIsSearchingTeachers] = useState(false);
@@ -226,6 +235,7 @@ export default function DashboardPage() {
   const handleOpenManagingClassroom = async (cls: Classroom, tab: 'roster' | 'pending' | 'line' | 'email' = 'roster') => {
     setManagingClassroom(cls);
     setStudentTab(tab);
+    setLineConnection({ status: 'disconnected' });
     try {
       const roster = await dataService.getClassroomRoster(cls.id);
       if (roster.classroom) {
@@ -233,6 +243,45 @@ export default function DashboardPage() {
       }
     } catch (err) {
       console.warn('Error loading fresh classroom roster in dashboard:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (!managingClassroom) return;
+    let active = true;
+    const loadLineConnection = async () => {
+      try {
+        const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(managingClassroom.id)}`, { cache: 'no-store' });
+        if (response.ok && active) setLineConnection(await response.json());
+      } catch (error) {
+        console.warn('Unable to load LINE group status:', error);
+      }
+    };
+    loadLineConnection();
+    const timer = window.setInterval(loadLineConnection, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [managingClassroom?.id]);
+
+  const handleLineConnection = async (action: 'create' | 'test' | 'disconnect') => {
+    if (!managingClassroom) return;
+    setIsLineConnectionLoading(true);
+    try {
+      const response = await fetch('/api/line/connections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ classroomId: managingClassroom.id, action }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'LINE connection failed');
+      setLineConnection(result);
+      showToast(action === 'disconnect' ? 'ยกเลิกการเชื่อมต่อ LINE Group แล้ว' : action === 'test' ? 'ส่งข้อความทดสอบแล้ว' : 'สร้างรหัสเชื่อมต่อแล้ว');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'ไม่สามารถเชื่อมต่อ LINE Group ได้');
+    } finally {
+      setIsLineConnectionLoading(false);
     }
   };
 
@@ -898,6 +947,8 @@ export default function DashboardPage() {
     setEditingCourseCoTeachers(course);
     setCoTeachersDraft(course.teachers || []);
     setNewCoTeacherRole('assistant');
+    setCoTeacherInviteStep(1);
+    setIsCoTeachingArchitectureOpen(false);
     setTeacherSearchQuery('');
     setTeacherSearchResults([]);
     setIsCopiedTeacherLink(false);
@@ -1895,21 +1946,35 @@ export default function DashboardPage() {
             </div>
 
             {/* Role Definitions & Rules Banner */}
-            <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 space-y-2 text-xs">
-              <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200">
-                <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>โครงสร้างบทบาทครูร่วมในรายวิชา (Co-Teaching Architecture)</span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1 text-[11px] leading-relaxed">
-                <div className="p-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-blue-950 dark:text-blue-200">
-                  <span className="font-bold block mb-1">👨‍🏫 ครูผู้ช่วยสอน (Teaching Assistant - TA):</span>
-                  <span>ตรวจงานและให้คะแนนแก่นักเรียนได้จริง แต่<strong>ไม่สามารถแก้ไขรายวิชาหรือรายละเอียดวิชาได้</strong> (สงวนเฉพาะครูเจ้าของวิชา) และจะค้นหาจากสถาบันเดียวกัน</span>
+            <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setIsCoTeachingArchitectureOpen((open) => !open)}
+                className="w-full p-4 flex items-center justify-between gap-3 text-left cursor-pointer"
+              >
+                <span className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-200">
+                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>โครงสร้างบทบาทครูร่วมในรายวิชา (Co-Teaching Architecture)</span>
+                </span>
+                <ChevronDown className={`w-4 h-4 text-amber-600 transition-transform ${isCoTeachingArchitectureOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {isCoTeachingArchitectureOpen && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-4 pb-4 text-[11px] leading-relaxed">
+                  <div className="p-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-blue-950 dark:text-blue-200">
+                    <span className="font-bold block mb-1">👨‍🏫 ครูผู้ช่วยสอน (Teaching Assistant - TA):</span>
+                    <span>ตรวจงานและให้คะแนนได้ แต่<strong>ไม่สามารถแก้ไขรายวิชา</strong> และระบบจะค้นหาจากสถาบันเดียวกัน</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/50 text-purple-950 dark:text-purple-200">
+                    <span className="font-bold block mb-1">🔬 ครูตรวจเพื่อวิจัย (Research Evaluator):</span>
+                    <span>ใช้ประเมิน IRR เท่านั้น ไม่แสดงในหน้า LIFF และคะแนนไม่ปนกับคะแนนทางการ</span>
+                  </div>
                 </div>
-                <div className="p-2.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/50 text-purple-950 dark:text-purple-200">
-                  <span className="font-bold block mb-1">🔬 ครูตรวจเพื่อวิจัย (Research Evaluator):</span>
-                  <span>ตรวจเพื่อวิจัย/วัดความเที่ยงตรง (IRR) เท่านั้น <strong>จะไม่แสดงในหน้า LIFF ของนักเรียน</strong> และคะแนนจะถูกแยกเก็บเฉพาะ ไม่ปนกับคะแนนทางการของวิชา</span>
-                </div>
-              </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800">
+              <button type="button" onClick={() => setCoTeacherInviteStep(1)} className={`py-2 rounded-xl text-xs font-bold ${coTeacherInviteStep === 1 ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}>ค้นหาครูในระบบ</button>
+              <button type="button" onClick={() => setCoTeacherInviteStep(2)} className={`py-2 rounded-xl text-xs font-bold ${coTeacherInviteStep === 2 ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}>เชิญด้วยรหัส / QR</button>
             </div>
 
             {/* Existing Teachers in this Course */}
@@ -1977,6 +2042,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Add New Teacher Form & Autocomplete Search */}
+            {coTeacherInviteStep === 1 && (
             <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 space-y-4">
               <div>
                 <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
@@ -2096,9 +2162,10 @@ export default function DashboardPage() {
               </div>
 
             </div>
+            )}
 
             {/* Teacher Web & LINE Invite Link Section */}
-            {editingCourseCoTeachers && (
+            {editingCourseCoTeachers && coTeacherInviteStep === 2 && (
               <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-300 dark:border-amber-800/80 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
@@ -2942,6 +3009,42 @@ export default function DashboardPage() {
                   <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1">
                     {t('classroom_mgmt.invite_line_desc')}
                   </p>
+                </div>
+
+                {/* LINE Group connection for assignment reminders */}
+                <div className="max-w-lg mx-auto w-full text-left p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-black text-slate-900 dark:text-white">เชื่อมต่อ LINE Group</div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">ใช้กลุ่มนี้ส่งแจ้งเตือนรายชื่อนักเรียนที่ยังไม่ส่งงาน</p>
+                    </div>
+                    <span className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-black ${lineConnection.status === 'connected' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300' : lineConnection.status === 'waiting' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                      {lineConnection.status === 'connected' ? 'เชื่อมต่อแล้ว' : lineConnection.status === 'waiting' ? 'รอยืนยัน' : 'ยังไม่เชื่อมต่อ'}
+                    </span>
+                  </div>
+
+                  {lineConnection.status === 'waiting' && lineConnection.token && (
+                    <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800/60">
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">เพิ่มบอทเข้ากลุ่ม แล้วส่งข้อความนี้ในกลุ่ม</div>
+                      <code className="block mt-1 text-lg font-black tracking-widest text-amber-600 dark:text-amber-300">#pudding {lineConnection.token}</code>
+                      <div className="text-[10px] text-slate-400 mt-1">รหัสใช้ได้ครั้งเดียวและหมดอายุภายใน 10 นาที</div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    {lineConnection.status !== 'connected' && (
+                      <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black disabled:opacity-50">
+                        {lineConnection.status === 'waiting' ? 'สร้างรหัสใหม่' : 'เชื่อมต่อ LINE Group'}
+                      </button>
+                    )}
+                    {lineConnection.status === 'connected' && (
+                      <>
+                        <button type="button" onClick={() => handleLineConnection('test')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black disabled:opacity-50">ทดสอบส่งข้อความ</button>
+                        <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-bold disabled:opacity-50">เปลี่ยนกลุ่ม</button>
+                        <button type="button" onClick={() => handleLineConnection('disconnect')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-[11px] font-bold disabled:opacity-50">ยกเลิกการเชื่อมต่อ</button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 {/* Invite Code Highlight */}

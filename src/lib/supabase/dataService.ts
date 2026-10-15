@@ -1555,14 +1555,13 @@ export const dataService = {
         const { data } = await supabase.from('users').select('*').eq('role', 'teacher').limit(50);
         if (data && data.length > 0) {
           const q = (query || '').toLowerCase().trim();
-          let list = data as User[];
-          if (q) {
+            let list = data as User[];
+            if (q) {
             list = list.filter(
               (u) =>
-                u.first_name.toLowerCase().includes(q) ||
-                u.last_name.toLowerCase().includes(q) ||
-                (u.email && u.email.toLowerCase().includes(q)) ||
-                (u.institution && u.institution.toLowerCase().includes(q))
+                `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase().includes(q) ||
+                (u.email || '').toLowerCase().includes(q) ||
+                (u.institution || '').toLowerCase().includes(q)
             );
           }
           if (institution) {
@@ -1606,10 +1605,9 @@ export const dataService = {
     if (q) {
       results = results.filter(
         (u) =>
-          u.first_name.toLowerCase().includes(q) ||
-          u.last_name.toLowerCase().includes(q) ||
-          (u.email && u.email.toLowerCase().includes(q)) ||
-          (u.institution && u.institution.toLowerCase().includes(q))
+          `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase().includes(q) ||
+          (u.email || '').toLowerCase().includes(q) ||
+          (u.institution || '').toLowerCase().includes(q)
       );
     }
     if (institution) {
