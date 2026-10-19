@@ -1,5 +1,9 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## LINE setup
+
+Teachers sign in with LINE only, and LINE groups link automatically. See [docs/LINE_SETUP_GUIDE.md](docs/LINE_SETUP_GUIDE.md) and run `npm run line:verify` to check the setup.
+
 ## Getting Started
 
 First, run the development server:
