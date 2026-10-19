@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getGroupSummary, isGroupMember, pushLineGroupText, replyLineText } from '@/lib/line/messaging';
+import { withLiffLink } from '@/lib/line/liffLink';
 
 export const runtime = 'nodejs';
 
@@ -323,9 +324,9 @@ export async function POST(request: NextRequest) {
     }
     if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding join หรือ “ขอรหัสเข้าห้อง” ขอรหัส/ลิงก์เข้าห้อง\n#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
     else if (normalizedCommand === 'join') await replyClassroomJoinCode(event.replyToken, groupClassroom, liffUrl);
-    else if (normalizedCommand === 'link') await replySafely(event.replyToken, liffUrl ? `เปิด Pudding: ${liffUrl}` : 'ยังไม่ได้ตั้งค่า LIFF URL');
+    else if (normalizedCommand === 'link') await replySafely(event.replyToken, withLiffLink(`🎓 ห้องเรียน: ${groupClassroom.name}`, 'เปิดห้องเรียนใน Pudding', { classroomId: groupClassroom.id }));
     else if (normalizedCommand === 'status') await replySafely(event.replyToken, `ห้อง: ${groupClassroom.name}\nLINE Group: เชื่อมต่อแล้ว\nแจ้งเตือนงาน: พร้อมใช้งาน`);
-    else if (normalizedCommand === 'attendance') await replySafely(event.replyToken, 'ระบบเช็กชื่อยังไม่ได้เปิดใช้งานใน Pudding');
+    else if (normalizedCommand === 'attendance') await replySafely(event.replyToken, withLiffLink(`⏰ เช็คชื่อ: ${groupClassroom.name}`, 'กดเพื่อเช็คชื่อ', { classroomId: groupClassroom.id, view: 'attendance' }));
   }
   return NextResponse.json({ ok: true });
 }

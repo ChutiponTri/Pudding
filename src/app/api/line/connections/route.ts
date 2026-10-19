@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient, createServiceSupabaseClient } from '@/lib/supabase/server';
 import { leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
+import { withLiffLink } from '@/lib/line/liffLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -83,7 +84,10 @@ export async function POST(request: NextRequest) {
 
   if (action === 'test') {
     if (!classroom.line_group_id) return NextResponse.json({ error: 'LINE Group is not connected' }, { status: 409 });
-    await pushLineGroupText(classroom.line_group_id, `✅ Pudding เชื่อมต่อห้องเรียน “${classroom.name}” สำเร็จแล้ว`);
+    await pushLineGroupText(
+      classroom.line_group_id,
+      withLiffLink(`✅ Pudding เชื่อมต่อห้องเรียน “${classroom.name}” สำเร็จแล้ว`, 'นักเรียนกดเพื่อเข้าห้องเรียน', { classroomId: classroom.id })
+    );
     return NextResponse.json({ status: 'connected' });
   }
 

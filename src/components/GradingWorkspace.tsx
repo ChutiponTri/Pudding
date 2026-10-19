@@ -338,7 +338,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       }, 2500);
     } catch (err) {
       console.error(err);
-      alert('Error saving grade');
+      alert(err instanceof Error ? `บันทึกคะแนนไม่สำเร็จ: ${err.message}` : 'บันทึกคะแนนไม่สำเร็จ');
       setQuestionGrades((prev) => ({
         ...prev,
         [q.id]: { ...prev[q.id], isSaving: false },
@@ -373,7 +373,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       }
     } catch (err) {
       console.error(err);
-      alert('Error saving all grades');
+      alert(err instanceof Error ? `บันทึกคะแนนไม่สำเร็จ: ${err.message}` : 'บันทึกคะแนนไม่สำเร็จ');
     } finally {
       setIsSavingAll(false);
     }
@@ -460,7 +460,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                 {submission.student?.first_name} {submission.student?.last_name}
               </span>
               <span className="text-xs text-slate-400 font-mono hidden sm:inline">
-                ID: {submission.student?.student_id || submission.student_id}
+                {submission.student?.student_id ? `รหัส ${submission.student.student_id}` : ''}
               </span>
             </div>
           </div>

@@ -46,6 +46,41 @@ export async function GET(request: NextRequest) {
   for (const s of localSubmissions) merged.set(s.id, s);
   for (const s of dbSubmissions) merged.set(s.id, { ...merged.get(s.id), ...s });
 
+  // Attach each student's real profile. submissions.student_id is users.id
+  // (usually the LINE user id), so without this the teacher UI showed the raw
+  // LINE id instead of the student's name, student number and photo.
+  const studentIds = [...new Set([...merged.values()].map((s) => s.student_id).filter(Boolean))];
+  if (studentIds.length > 0) {
+    try {
+      const supabase = createServiceSupabaseClient();
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name, student_id, avatar_url, line_uid, email, institution')
+        .or(`id.in.(${studentIds.map((id) => `"${id}"`).join(',')}),line_uid.in.(${studentIds.map((id) => `"${id}"`).join(',')})`);
+      const byId = new Map<string, any>();
+      for (const user of users || []) {
+        byId.set(user.id, user);
+        if (user.line_uid) byId.set(user.line_uid, user);
+      }
+      for (const [id, submission] of merged) {
+        const profile = byId.get(submission.student_id);
+        if (profile) {
+          merged.set(id, {
+            ...submission,
+            // Only non-empty profile fields override the cached snapshot.
+            student: {
+              ...(submission.student || {}),
+              ...Object.fromEntries(Object.entries(profile).filter(([, value]) => value != null && value !== '')),
+              role: 'student',
+            },
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('GET /api/submissions student lookup failed:', err);
+    }
+  }
+
   return NextResponse.json({ submissions: [...merged.values()] });
 }
 

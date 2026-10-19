@@ -3,6 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnonServerSupabaseClient, createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
+import { withLiffLink } from '@/lib/line/liffLink';
 import { fallbackStore, FallbackPost } from '@/lib/classroom/storageFallback';
 
 export const runtime = 'nodejs';
@@ -182,7 +183,14 @@ export async function POST(request: NextRequest) {
         title = 'เปิดคาบเช็คชื่อ';
       }
       const message = `${icon} ${title}\nห้อง: ${classroomName}\n\n${postBody}`;
-      await pushLineGroupText(lineGroupId, message);
+      // Always include a tap-through link to the exact place students need.
+      const linkedAssignmentId = typeof metadata?.assignmentId === 'string' ? metadata.assignmentId : undefined;
+      const linked = activityType === 'attendance'
+        ? withLiffLink(message, 'กดเพื่อเช็คชื่อ', { classroomId, view: 'attendance' })
+        : (activityType === 'assignment' || activityType === 'exam') && linkedAssignmentId
+          ? withLiffLink(message, activityType === 'exam' ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', { classroomId, assignmentId: linkedAssignmentId })
+          : withLiffLink(message, 'เปิดห้องเรียนใน Pudding', { classroomId });
+      await pushLineGroupText(lineGroupId, linked);
     } catch (lineError) {
       console.error('Classroom post LINE push failed:', lineError);
     }

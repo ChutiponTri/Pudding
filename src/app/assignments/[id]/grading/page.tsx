@@ -204,7 +204,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // Filter Submissions
   const filteredSubmissions = submissions.filter((sub) => {
     const studentName = `${sub.student?.first_name || ''} ${sub.student?.last_name || ''}`;
-    const studentId = sub.student?.student_id || sub.student_id;
+    const studentId = sub.student?.student_id || '';
     const matchesSearch =
       studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       studentId.toLowerCase().includes(searchTerm.toLowerCase());
@@ -537,10 +537,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
         {/* Table Content */}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[44rem] text-left text-xs">
-            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-100 dark:border-slate-800">
+          <table className="w-full min-w-[46rem] text-left text-xs">
+            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 tracking-wide font-semibold border-b border-slate-100 dark:border-slate-800">
               <tr>
-                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.student_id')}</th>
                 <th className="py-3.5 px-4 sm:px-6">{t('grading.table.student_name')}</th>
                 <th className="py-3.5 px-4 sm:px-6">{t('grading.table.status')}</th>
                 <th className="py-3.5 px-4 sm:px-6">{t('grading.table.time_spent')}</th>
@@ -552,7 +551,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
               {filteredSubmissions.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
+                  <td colSpan={6} className="py-8 text-center text-slate-400">
                     {t('common.no_data')}
                   </td>
                 </tr>
@@ -560,55 +559,66 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 filteredSubmissions.map((sub) => {
                   const student = sub.student;
                   const isGraded = sub.total_score != null;
+                  const fullName = student?.first_name
+                    ? `${student.first_name} ${student.last_name || ''}`.trim()
+                    : (language === 'th' ? 'ไม่พบข้อมูลนักเรียน' : 'Unknown student');
+                  const initials = (student?.first_name?.[0] || '?') + (student?.last_name?.[0] || '');
+                  const isLate = sub.status === 'late';
 
                   return (
                     <tr
                       key={sub.id}
                       className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                     >
-                      <td className="py-4 px-4 sm:px-6 font-mono text-slate-500 dark:text-slate-400">
-                        {student?.student_id || sub.student_id}
-                      </td>
-
-                      <td className="py-4 px-4 sm:px-6">
-                        <div className="flex items-center gap-3">
-                          <img
-                            src={
-                              student?.avatar_url ||
-                              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'
-                            }
-                            alt=""
-                            className="w-7 h-7 rounded-full object-cover"
-                          />
-                          <span className="font-bold text-slate-900 dark:text-white">
-                            {student?.first_name ? `${student.first_name} ${student.last_name || ''}` : sub.student_id || 'ผู้เรียน'}
-                          </span>
+                      {/* Student: real photo (LINE) or initials, name and student number */}
+                      <td className="py-3.5 px-4 sm:px-6">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {student?.avatar_url ? (
+                            <img src={student.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-white dark:ring-slate-900" />
+                          ) : (
+                            <span className="w-9 h-9 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-xs font-black flex items-center justify-center shrink-0">
+                              {initials}
+                            </span>
+                          )}
+                          <div className="min-w-0">
+                            <p className="font-bold text-sm text-slate-900 dark:text-white truncate">{fullName}</p>
+                            <p className="text-[11px] text-slate-400 font-mono">
+                              {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ยังไม่ระบุรหัสนักเรียน' : 'No student ID')}
+                            </p>
+                          </div>
                         </div>
                       </td>
 
-                      <td className="py-4 px-4 sm:px-6">
+                      {/* Submission status + when it was submitted */}
+                      <td className="py-3.5 px-4 sm:px-6 whitespace-nowrap">
                         <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                            sub.status === 'submitted'
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                              : sub.status === 'late'
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                            isLate
                               ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              : sub.status === 'submitted'
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                               : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                           }`}
                         >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isLate ? 'bg-amber-500' : sub.status === 'submitted' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                           {sub.status === 'submitted'
                             ? t('grading.status_badges.submitted')
-                            : sub.status === 'late'
+                            : isLate
                             ? t('grading.status_badges.late')
                             : t('grading.status_badges.pending')}
                         </span>
+                        {sub.submitted_at && (
+                          <p className="text-[11px] text-slate-400 mt-1">
+                            {new Date(sub.submitted_at).toLocaleString(language === 'th' ? 'th-TH' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+                          </p>
+                        )}
                       </td>
 
-                      <td className="py-4 px-4 sm:px-6 text-slate-500 dark:text-slate-400 font-mono">
+                      <td className="py-3.5 px-4 sm:px-6 text-slate-500 dark:text-slate-400 font-mono whitespace-nowrap">
                         {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}
                       </td>
 
-                      <td className="py-4 px-4 sm:px-6">
+                      <td className="py-3.5 px-4 sm:px-6">
                         <div className="flex items-center gap-2">
                           <AntiCheatingBadge
                             isFlagged={sub.is_flagged_suspicious}
@@ -628,28 +638,30 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         </div>
                       </td>
 
-                      <td className="py-4 px-4 sm:px-6 text-center font-bold">
+                      <td className="py-3.5 px-4 sm:px-6 text-center whitespace-nowrap">
                         {isGraded ? (
-                          <span className="text-slate-900 dark:text-white font-mono text-sm">
-                            {sub.total_score}
-                            <span className="text-slate-400 font-normal text-xs ml-0.5">
-                              / {sub.max_total_score || 20}
-                            </span>
+                          <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
+                            <span className="text-sm tabular-nums">{sub.total_score}</span>
+                            <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || 20}</span>
                           </span>
                         ) : (
-                          <span className="text-amber-600 dark:text-amber-400 text-xs italic">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
                             {t('grading.pending_eval')}
                           </span>
                         )}
                       </td>
 
-                      <td className="py-4 px-4 sm:px-6 text-right">
+                      <td className="py-3.5 px-4 sm:px-6 text-right">
                         <button
                           type="button"
                           onClick={() => handleOpenGrading(sub)}
-                          className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold transition-all shadow-xs flex items-center gap-1.5 ml-auto cursor-pointer"
+                          className={`px-3.5 py-1.5 rounded-xl font-bold transition-all shadow-xs flex items-center gap-1.5 ml-auto cursor-pointer whitespace-nowrap ${
+                            isGraded
+                              ? 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:bg-slate-50'
+                              : 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+                          }`}
                         >
-                          <span>{t('grading.actions.grade_btn')}</span>
+                          <span>{isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
                           <ChevronRight className="w-3.5 h-3.5" />
                         </button>
                       </td>

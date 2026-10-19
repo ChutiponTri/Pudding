@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
+import { withLiffLink } from '@/lib/line/liffLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,7 +55,11 @@ export async function POST(request: NextRequest) {
     const dueLabel = new Date(assignment.due_date).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
     await pushLineGroupText(
       classroom.line_group_id,
-      `🔔 แจ้งเตือนส่งงาน\n${assignment.title}\nห้อง: ${classroom.name}\nกำหนดส่ง: ${dueLabel}\n\nยังไม่ส่งงาน (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`
+      withLiffLink(
+        `🔔 แจ้งเตือนส่งงาน\n${assignment.title}\nห้อง: ${classroom.name}\nกำหนดส่ง: ${dueLabel}\n\nยังไม่ส่งงาน (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`,
+        'กดเพื่อส่งงาน',
+        { classroomId: assignment.classroom_id, assignmentId: assignment.id }
+      )
     );
     await supabase.from('assignments').update({ line_last_reminded_at: now.toISOString() }).eq('id', assignment.id);
     sent += 1;

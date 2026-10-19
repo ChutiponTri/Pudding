@@ -3,6 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnonServerSupabaseClient, createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
+import { withLiffLink } from '@/lib/line/liffLink';
 import { fallbackStore, FallbackAttendanceSession, FallbackAttendanceRecord } from '@/lib/classroom/storageFallback';
 
 export const runtime = 'nodejs';
@@ -429,7 +430,11 @@ export async function POST(request: NextRequest) {
       try {
         await pushLineGroupText(
           lineGroupId,
-          `⏰ เปิดคาบเช็คชื่อ\nห้อง: ${classroomName}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`
+          withLiffLink(
+            `⏰ เปิดคาบเช็คชื่อ\nห้อง: ${classroomName}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
+            'กดเพื่อเช็คชื่อ',
+            { classroomId, view: 'attendance' }
+          )
         );
       } catch (err) {
         console.error('Attendance LINE push failed:', err);

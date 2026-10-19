@@ -215,6 +215,11 @@ export default function LiffStudentPage() {
   const [selectedClassroom, setSelectedClassroom] = useState<Classroom | null>(null);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
+  // Submissions whose every answer has a teacher score (grading finished).
+  const [gradedSubmissionIds, setGradedSubmissionIds] = useState<Set<string>>(new Set());
+  // Results the student has already opened: submission id -> score they saw.
+  // Kept per device; a re-grade with a new score is announced again.
+  const [seenScores, setSeenScores] = useState<Record<string, number>>({});
   const [registeredInstitutions, setRegisteredInstitutions] = useState<string[]>([]);
   const [classroomPosts, setClassroomPosts] = useState<ClassroomPost[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
@@ -395,6 +400,9 @@ export default function LiffStudentPage() {
   const [joinInviteCode, setJoinInviteCode] = useState("");
   const [joinMessage, setJoinMessage] = useState<string | null>(null);
   const processedEnrollRef = useRef<string | null>(null);
+  // Deep link from a LINE message (?assignmentId=…, ?view=attendance), applied
+  // once the student's classrooms, work and submissions have loaded.
+  const pendingDeepLinkRef = useRef<{ assignmentId?: string; view?: "timeline" | "work" | "attendance" } | null>(null);
 
   // Graded Detail Modal
   const [viewingGradedSub, setViewingGradedSub] = useState<{
@@ -616,6 +624,12 @@ export default function LiffStudentPage() {
         const params = new URLSearchParams(window.location.search);
         const codeParam = params.get("code");
         const classIdParam = params.get("classId");
+        if (isInitial) {
+          const assignmentParam = params.get("assignmentId") || undefined;
+          const viewParam = params.get("view");
+          const view = viewParam === "attendance" || viewParam === "work" || viewParam === "timeline" ? viewParam : undefined;
+          if (assignmentParam || view) pendingDeepLinkRef.current = { assignmentId: assignmentParam, view };
+        }
 
         // Filter ONLY classrooms that this student has actually enrolled in
         let enrolled = allClasses.filter((c) =>
@@ -683,6 +697,8 @@ export default function LiffStudentPage() {
               const cleanUrl = new URL(window.location.href);
               cleanUrl.searchParams.delete("code");
               cleanUrl.searchParams.delete("classId");
+              cleanUrl.searchParams.delete("assignmentId");
+              cleanUrl.searchParams.delete("view");
               window.history.replaceState({}, "", cleanUrl.pathname + (cleanUrl.search ? cleanUrl.search : ""));
             } catch {}
           }
@@ -709,6 +725,25 @@ export default function LiffStudentPage() {
         }
 
         // A newer refresh already started; drop this stale result.
+        // Grading is finished only when every answer has a teacher score; a
+        // running total alone may be partial (objective items auto-scored).
+        const studentSubmissions = Object.values(subMap);
+        const answerRows = await dataService.getAnswersForSubmissions(studentSubmissions.map((submission) => submission.id));
+        const answersBySubmission = new Map<string, SubmissionAnswer[]>();
+        for (const row of answerRows) {
+          const list = answersBySubmission.get(row.submission_id) || [];
+          list.push(row);
+          answersBySubmission.set(row.submission_id, list);
+        }
+        const graded = new Set(
+          studentSubmissions
+            .filter((submission) => {
+              const rows = answersBySubmission.get(submission.id) || [];
+              return submission.total_score != null && rows.length > 0 && rows.every((row) => row.teacher_score != null);
+            })
+            .map((submission) => submission.id)
+        );
+
         if (seq !== loadSeq) return;
 
         // Batch all state updates in one single beat
@@ -717,6 +752,7 @@ export default function LiffStudentPage() {
         setSelectedClassroom(active);
         setAssignments(relevantAssigns);
         setSubmissions(subMap);
+        setGradedSubmissionIds(graded);
         if (currentStudent.line_uid) {
           loadAllActiveAttendance(enrolled, currentStudent.line_uid);
         }
@@ -1008,13 +1044,52 @@ export default function LiffStudentPage() {
   };
 
   // View Graded Detail Modal
+  const seenScoresKey = currentStudent ? `pudding_seen_scores_${currentStudent.line_uid}` : null;
+  useEffect(() => {
+    if (!seenScoresKey) return;
+    try {
+      setSeenScores(JSON.parse(localStorage.getItem(seenScoresKey) || "{}"));
+    } catch {
+      setSeenScores({});
+    }
+  }, [seenScoresKey]);
+
   const handleOpenGradedDetail = async (a: Assignment, s: Submission) => {
     const [qs, answers] = await Promise.all([
       dataService.getQuestions(a.id),
       dataService.getSubmissionAnswers(s.id),
     ]);
     setViewingGradedSub({ assignment: a, submission: s, questions: qs, answers });
+    // Once a graded result is opened, it no longer needs announcing on the overview.
+    if (gradedSubmissionIds.has(s.id) && s.total_score != null) {
+      setSeenScores((prev) => {
+        const next = { ...prev, [s.id]: Number(s.total_score) };
+        try {
+          if (seenScoresKey) localStorage.setItem(seenScoresKey, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    }
   };
+
+  // Apply a LINE deep link once the first load has finished.
+  useEffect(() => {
+    const link = pendingDeepLinkRef.current;
+    if (!link || isLoadingData || !currentStudent) return;
+    pendingDeepLinkRef.current = null;
+    if (link.assignmentId) {
+      const assignment = assignments.find((item) => item.id === link.assignmentId);
+      if (!assignment) return;
+      const assignmentClassroom = classrooms.find((c) => c.id === assignment.classroom_id);
+      if (assignmentClassroom) setSelectedClassroom(assignmentClassroom);
+      setCourseTab("work");
+      const submission = submissions[assignment.id];
+      if (submission) handleOpenGradedDetail(assignment, submission);
+      else handleOpenAssignment(assignment);
+    } else if (link.view) {
+      setCourseTab(link.view);
+    }
+  }, [isLoadingData, assignments, classrooms, submissions]);
 
   // ==========================================
   // VIEW: 1. Loading State
@@ -1161,6 +1236,11 @@ export default function LiffStudentPage() {
   const pendingExams = openPendingAssignments.filter((a) => a.is_exam);
   const pendingHomework = openPendingAssignments.filter((a) => !a.is_exam);
   const completedAssignments = filteredAssignments.filter((a) => Boolean(submissions[a.id]));
+  // Fully graded results the student has not opened yet (or that were re-graded).
+  const newResults = completedAssignments.filter((a) => {
+    const submission = submissions[a.id];
+    return gradedSubmissionIds.has(submission.id) && seenScores[submission.id] !== Number(submission.total_score);
+  });
 
   const studentTimeline = [
     ...classroomPosts.map((post) => ({
@@ -1343,6 +1423,38 @@ export default function LiffStudentPage() {
                 <div className="h-24 rounded-3xl bg-slate-200/70 dark:bg-slate-800/70 animate-pulse" />
                 <div className="h-40 rounded-3xl bg-slate-200/70 dark:bg-slate-800/70 animate-pulse" />
               </div>
+            )}
+
+            {/* New results: shown until the student opens each one */}
+            {newResults.length > 0 && (
+              <section className="space-y-2.5">
+                <SectionTitle icon={<Sparkles className="w-4 h-4 text-emerald-600" />} title="ประกาศคะแนนใหม่" count={newResults.length} />
+                <div className="grid gap-2.5 md:grid-cols-2">
+                  {newResults.map((assignment) => {
+                    const submission = submissions[assignment.id];
+                    const resultClass = classrooms.find((c) => c.id === assignment.classroom_id);
+                    const total = assignment.total_points || submission.max_total_score || 20;
+                    return (
+                      <button
+                        key={assignment.id}
+                        type="button"
+                        onClick={() => handleOpenGradedDetail(assignment, submission)}
+                        className="w-full text-left p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20 flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-transform"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold text-emerald-50/90">🎉 คุณครูตรวจแล้ว • {resultClass?.name || "รายวิชา"}</p>
+                          <p className="text-sm font-bold truncate">{assignment.title}</p>
+                          <p className="text-[11px] text-emerald-50/90 mt-0.5">แตะเพื่อดูคะแนนและความเห็นรายข้อ</p>
+                        </div>
+                        <span className="shrink-0 px-3 py-1.5 rounded-2xl bg-white/20 font-black tabular-nums">
+                          <span className="text-xl">{submission.total_score}</span>
+                          <span className="text-xs font-bold">/{total}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
             )}
 
             {/* Open attendance sessions (1-tap check-in) */}
@@ -1583,7 +1695,7 @@ export default function LiffStudentPage() {
                       {items.map((assignment) => {
                         const submission = submissions[assignment.id];
                         const isSubmitted = Boolean(submission);
-                        const isGraded = submission?.total_score != null;
+                        const isGraded = Boolean(submission && gradedSubmissionIds.has(submission.id));
                         const window_ = getAssignmentWindow(assignment);
                         const isLateSubmitted = isSubmitted && (
                           submission.status === 'late' ||
@@ -2184,7 +2296,7 @@ export default function LiffStudentPage() {
             </button>
           </div>
 
-          {viewingGradedSub.submission.total_score != null ? (
+          {gradedSubmissionIds.has(viewingGradedSub.submission.id) && viewingGradedSub.submission.total_score != null ? (
             <div className="p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white text-center space-y-1">
               <p className="text-4xl font-black tabular-nums">
                 {viewingGradedSub.submission.total_score}
@@ -2207,16 +2319,21 @@ export default function LiffStudentPage() {
             <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">คะแนนและข้อเสนอแนะรายข้อ</h4>
             {viewingGradedSub.questions.map((q, i) => {
               const ans = viewingGradedSub.answers[q.id];
-              const score = ans?.teacher_score ?? ans?.ai_mock_score;
+              // Students only see the teacher's official score, never the AI draft.
+              const score = ans?.teacher_score;
               return (
                 <div key={q.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200/80 dark:ring-slate-700/70 space-y-2.5">
                   <div className="flex items-start justify-between gap-3">
                     <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 min-w-0 break-words">
                       <span className="text-slate-400">ข้อ {i + 1}.</span> {q.question_text}
                     </p>
-                    <span className="text-sm font-bold text-line shrink-0 tabular-nums">
-                      {score ?? '–'}/{q.max_score}
-                    </span>
+                    {score != null ? (
+                      <span className="text-sm font-bold text-line shrink-0 tabular-nums">
+                        {score}/{q.max_score}
+                      </span>
+                    ) : (
+                      <span className="shrink-0"><Pill tone="sky">รอตรวจ</Pill></span>
+                    )}
                   </div>
                   <div className="p-3 rounded-xl bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-300 break-words">
                     <span className="text-xs font-semibold text-slate-400 block mb-0.5">คำตอบของคุณ</span>

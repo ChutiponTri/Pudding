@@ -406,7 +406,13 @@ function GradingHubContent() {
 
     // Map each student to submission record if available
     const mapped = enrolledStudents.map((std, index) => {
-      const sub = activeSubmissions.find((s) => s.student_id === std.id);
+      // A submission's student_id is users.id; the roster entry may carry the
+      // LINE id or school number instead, so match on any of them.
+      const sub = activeSubmissions.find((s) =>
+        s.student_id === std.id ||
+        (std.line_uid && s.student_id === std.line_uid) ||
+        (std.student_id && (s.student_id === std.student_id || s.student?.student_id === std.student_id))
+      );
       return {
         student: std,
         orderNo: index + 1,
@@ -1055,11 +1061,17 @@ function GradingHubContent() {
                           {/* Student Info */}
                           <td className="py-4 px-4">
                             <div className="flex items-center gap-3">
-                              <img
-                                src={item.student.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
-                                alt={item.student.first_name}
-                                className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-700"
-                              />
+                              {item.student.avatar_url ? (
+                                <img
+                                  src={item.student.avatar_url}
+                                  alt=""
+                                  className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-700 shrink-0"
+                                />
+                              ) : (
+                                <span className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px] font-black flex items-center justify-center shrink-0">
+                                  {(item.student.first_name?.[0] || '?') + (item.student.last_name?.[0] || '')}
+                                </span>
+                              )}
                               <div>
                                 <span className="block font-bold text-slate-900 dark:text-white leading-tight">
                                   {item.student.first_name} {item.student.last_name}

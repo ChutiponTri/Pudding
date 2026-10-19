@@ -113,7 +113,7 @@ export const dataService = {
           id: canonicalUserId,
           first_name: firstName,
           last_name: lastName,
-          avatar_url: student.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
+          avatar_url: student.avatar || null,
           role: "student",
           line_uid: lineUid,
           is_line_connected: true,
@@ -161,7 +161,7 @@ export const dataService = {
       last_name: existingLocalUser?.last_name || lastName,
       student_id: finalStudentId || existingLocalUser?.student_id || undefined,
       institution: finalInstitution || existingLocalUser?.institution || undefined,
-      avatar_url: student.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
+      avatar_url: student.avatar || undefined,
       role: "student",
       line_uid: lineUid,
       is_line_connected: true,
@@ -2102,7 +2102,7 @@ export const dataService = {
         line_uid: payload.line_uid || payload.student_id,
         role: 'student',
         email: '',
-        avatar_url: payload.student_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100',
+        avatar_url: payload.student_avatar,
       },
       status: "submitted",
       started_at: new Date(Date.now() - (payload.antiCheating.away_time_seconds * 1000 + 120000)).toISOString(),
@@ -2325,97 +2325,109 @@ export const dataService = {
     teacherName: string = '',
     teacherRole: TeacherRole = 'primary'
   ): Promise<void> {
-    const isPrimary = teacherRole === 'primary';
-
-    // Update local state
-    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>(
-      'submission_answers',
-      {}
-    );
-    if (!allAnswers[submissionId]) {
-      allAnswers[submissionId] = {};
-    }
-
-    const existing = allAnswers[submissionId][questionId] || {
-      id: `ans-${Date.now()}`,
-      submission_id: submissionId,
-      question_id: questionId,
-    };
-
-    const currentCoGrades = existing.co_grades || {};
+    // TA or primary teacher gives the official (student-facing) score; a
+    // researcher's grade is stored for research only.
+    const isOfficial = teacherRole === 'primary' || teacherRole === 'assistant';
+    const isResearcher = teacherRole === 'researcher';
+    const gradedAt = new Date().toISOString();
     const newGradeRecord: TeacherGradeRecord = {
       teacher_id: teacherId,
       teacher_name: teacherName,
       teacher_role: teacherRole,
       score: teacherScore,
       comment: teacherComment,
-      graded_at: new Date().toISOString(),
+      graded_at: gradedAt,
     };
 
-    const isOfficial = teacherRole === 'primary' || teacherRole === 'assistant';
-    const isResearcher = teacherRole === 'researcher';
-
-    // TA or Primary can award official scores; Researcher saves to research_grades without altering student score
-    const currentResearchGrades = existing.research_grades || {};
-    const updatedResearchGrades = isResearcher
-      ? { ...currentResearchGrades, [teacherId]: newGradeRecord }
-      : currentResearchGrades;
-
-    allAnswers[submissionId][questionId] = {
-      ...existing,
-      teacher_score: isOfficial ? teacherScore : existing.teacher_score,
-      teacher_comment: isOfficial ? teacherComment : existing.teacher_comment,
-      graded_at: isOfficial ? new Date().toISOString() : existing.graded_at,
-      co_grades: {
-        ...currentCoGrades,
-        [teacherId]: newGradeRecord,
-      },
-      research_grades: updatedResearchGrades,
-    };
-
-    // Calculate total awarded score from official scores (Primary or TA)
-    const studentAnswers = allAnswers[submissionId];
-    const totalAwarded = Object.values(studentAnswers).reduce(
-      (acc, ans) => acc + (ans.teacher_score ?? ans.ai_mock_score ?? 0),
-      0
-    );
+    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>('submission_answers', {});
+    let existing: Partial<SubmissionAnswer> = allAnswers[submissionId]?.[questionId] || {};
+    let totalAwarded: number | null = null;
 
     if (isSupabaseConfigured) {
       const supabase = createClient();
-      await supabase
+      // The database row is the source of truth. The browser cache may not have
+      // it (another device, or a LIFF submission), and inventing a new row id
+      // would collide with UNIQUE(submission_id, question_id) and drop the grade.
+      const { data: dbRow, error: readError } = await supabase
         .from('submission_answers')
-        .upsert({
-          id: existing.id || `ans-${submissionId}-${questionId}`,
-          submission_id: submissionId,
-          question_id: questionId,
-          teacher_score: isOfficial ? teacherScore : existing.teacher_score,
-          teacher_comment: isOfficial ? teacherComment : existing.teacher_comment,
-          co_grades: {
-            ...currentCoGrades,
-            [teacherId]: newGradeRecord,
-          },
-          research_grades: updatedResearchGrades,
-          graded_at: isOfficial ? new Date().toISOString() : existing.graded_at,
-        });
+        .select('*')
+        .eq('submission_id', submissionId)
+        .eq('question_id', questionId)
+        .maybeSingle();
+      if (readError) throw toDatabaseError(readError, 'submission_answers');
+      if (dbRow) existing = dbRow as SubmissionAnswer;
+
+      const { error: writeError } = await supabase.from('submission_answers').upsert({
+        id: existing.id || `ans-${submissionId}-${questionId}`,
+        submission_id: submissionId,
+        question_id: questionId,
+        teacher_score: isOfficial ? teacherScore : existing.teacher_score ?? null,
+        teacher_comment: isOfficial ? teacherComment : existing.teacher_comment ?? null,
+        co_grades: { ...(existing.co_grades || {}), [teacherId]: newGradeRecord },
+        research_grades: isResearcher
+          ? { ...(existing.research_grades || {}), [teacherId]: newGradeRecord }
+          : existing.research_grades || {},
+        graded_at: isOfficial ? gradedAt : existing.graded_at ?? null,
+        updated_at: gradedAt,
+      }, { onConflict: 'submission_id,question_id' });
+      if (writeError) throw toDatabaseError(writeError, 'submission_answers');
 
       if (isOfficial) {
-        await supabase
+        // Total = sum of official scores across every answer of this submission.
+        const { data: rows, error: totalError } = await supabase
+          .from('submission_answers')
+          .select('teacher_score')
+          .eq('submission_id', submissionId);
+        if (totalError) throw toDatabaseError(totalError, 'submission_answers');
+        totalAwarded = Math.round((rows || []).reduce((sum, row) => sum + Number(row.teacher_score ?? 0), 0) * 10) / 10;
+        const { error: submissionError } = await supabase
           .from('submissions')
-          .update({
-            total_score: Math.round(totalAwarded * 10) / 10,
-          })
+          .update({ total_score: totalAwarded })
           .eq('id', submissionId);
+        if (submissionError) throw toDatabaseError(submissionError, 'submissions');
       }
     }
 
+    // Keep the local cache in step with what was saved.
+    allAnswers[submissionId] = allAnswers[submissionId] || {};
+    allAnswers[submissionId][questionId] = {
+      ...(existing as SubmissionAnswer),
+      id: existing.id || `ans-${submissionId}-${questionId}`,
+      submission_id: submissionId,
+      question_id: questionId,
+      teacher_score: isOfficial ? teacherScore : existing.teacher_score,
+      teacher_comment: isOfficial ? teacherComment : existing.teacher_comment,
+      graded_at: isOfficial ? gradedAt : existing.graded_at,
+      co_grades: { ...(existing.co_grades || {}), [teacherId]: newGradeRecord },
+      research_grades: isResearcher
+        ? { ...(existing.research_grades || {}), [teacherId]: newGradeRecord }
+        : existing.research_grades,
+    };
     setStored('submission_answers', allAnswers);
 
     if (isOfficial) {
+      if (totalAwarded === null) {
+        totalAwarded = Math.round(
+          Object.values(allAnswers[submissionId]).reduce((sum, ans) => sum + (ans.teacher_score ?? 0), 0) * 10
+        ) / 10;
+      }
       const submissions = getStoredOr<Submission[]>('submissions', []);
-      const updatedSubs = submissions.map((s) =>
-        s.id === submissionId ? { ...s, total_score: Math.round(totalAwarded * 10) / 10 } : s
-      );
-      setStored('submissions', updatedSubs);
+      setStored('submissions', submissions.map((sub) => (sub.id === submissionId ? { ...sub, total_score: totalAwarded! } : sub)));
     }
+  },
+
+  /** All answer rows for many submissions in one query (used by the student LIFF). */
+  async getAnswersForSubmissions(submissionIds: string[]): Promise<SubmissionAnswer[]> {
+    const ids = [...new Set(submissionIds.filter(Boolean))];
+    if (ids.length === 0) return [];
+    if (isSupabaseConfigured) {
+      const { data, error } = await createClient()
+        .from('submission_answers')
+        .select('id, submission_id, question_id, teacher_score, teacher_comment, graded_at')
+        .in('submission_id', ids);
+      if (!error && data) return data as SubmissionAnswer[];
+    }
+    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>('submission_answers', {});
+    return ids.flatMap((id) => Object.values(allAnswers[id] || {}));
   },
 };
