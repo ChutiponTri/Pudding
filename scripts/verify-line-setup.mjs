@@ -57,6 +57,14 @@ for (const [table, column] of [
   res.ok ? ok(`${table}.${column}`) : bad(`${table}.${column} is missing — run the SQL in docs/LINE_SETUP_GUIDE.md`);
 }
 
+// --- The API routes use the service role; every table must be readable by it.
+console.log('\nService-role access (used by /api routes)');
+for (const table of ['users', 'courses', 'learning_indicators', 'classrooms', 'classroom_students', 'classroom_posts',
+  'attendance_sessions', 'attendance_records', 'assignments', 'questions', 'submissions', 'submission_answers', 'submission_events']) {
+  const res = await fetch(`${url}/rest/v1/${table}?select=*&limit=0`, { headers });
+  res.ok ? ok(table) : bad(`${table}: no access (${res.status}) — run the "Server (service_role) privileges" SQL`);
+}
+
 // --- Teachers who still need to connect LINE to their existing account.
 console.log('\nTeachers');
 const res = await fetch(`${url}/rest/v1/users?select=id,first_name,line_uid&role=eq.teacher`, { headers });

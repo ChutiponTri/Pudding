@@ -2,7 +2,7 @@ import 'server-only';
 import { clerkClient } from '@clerk/nextjs/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 
-export type TeacherLineStatus = 'connected' | 'missing_line' | 'conflict' | 'not_found';
+export type TeacherLineStatus = 'connected' | 'missing_line' | 'conflict' | 'previous_account' | 'not_found';
 
 export interface TeacherLineIdentity {
   status: TeacherLineStatus;
@@ -56,9 +56,24 @@ export async function syncTeacherLineIdentity(clerkUserId: string): Promise<Teac
   // e.g. the line_bot_friend column is missing because the migration was not run
   if (teacherError) throw teacherError;
   if (!teacher) {
+    // The same person may already have a teacher row under an older Clerk
+    // account (e.g. from email/Google sign-in). Creating a second row would
+    // collide on email, and the old row owns their courses, so report it.
+    const email = clerkUser.primaryEmailAddress?.emailAddress;
+    if (email) {
+      const { data: previous } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
+        .neq('id', clerkUserId)
+        .limit(1)
+        .maybeSingle();
+      if (previous) return { status: 'previous_account', botFriend: null };
+    }
+
     // Right after sign-up the client-side profile sync may not have created the
     // row yet; create it here so linking does not depend on that race.
-    await supabase.from('users').upsert({
+    const { error: createError } = await supabase.from('users').upsert({
       id: clerkUserId,
       clerk_id: clerkUserId,
       role: 'teacher',
@@ -67,6 +82,7 @@ export async function syncTeacherLineIdentity(clerkUserId: string): Promise<Teac
       email: clerkUser.primaryEmailAddress?.emailAddress || null,
       avatar_url: clerkUser.imageUrl || null,
     }, { onConflict: 'id', ignoreDuplicates: true });
+    if (createError) throw createError;
     ({ data: teacher, error: teacherError } = await selectTeacher());
     if (teacherError) throw teacherError;
   }

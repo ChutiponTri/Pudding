@@ -105,7 +105,7 @@ export default function DashboardPage() {
   const [teacherFirstNameInput, setTeacherFirstNameInput] = useState('');
   const [teacherLastNameInput, setTeacherLastNameInput] = useState('');
   const [teacherLineLink, setTeacherLineLink] = useState<{
-    status: 'connected' | 'missing_line' | 'conflict' | 'loading';
+    status: 'connected' | 'missing_line' | 'conflict' | 'previous_account' | 'error' | 'loading';
     botFriend?: boolean | null;
     addFriendUrl?: string;
   }>({ status: 'loading' });
@@ -877,10 +877,12 @@ export default function DashboardPage() {
   const loadTeacherLineLink = async () => {
     try {
       const response = await fetch('/api/line/teacher-link', { cache: 'no-store' });
-      const result = await response.json();
-      if (response.ok) setTeacherLineLink(result);
+      const result = await response.json().catch(() => ({}));
+      // Never leave the card on "checking" when the request fails.
+      setTeacherLineLink(response.ok ? result : { status: 'error' });
     } catch (error) {
       console.error('Failed to load teacher LINE link status:', error);
+      setTeacherLineLink({ status: 'error' });
     }
   };
 
@@ -3456,6 +3458,17 @@ export default function DashboardPage() {
                 </div>
                 {teacherLineLink.status === 'missing_line' && (
                   <p className="text-[11px] text-rose-700 dark:text-rose-300">บัญชีนี้ไม่ได้เข้าสู่ระบบด้วย LINE กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่ด้วย LINE</p>
+                )}
+                {teacherLineLink.status === 'previous_account' && (
+                  <p className="text-[11px] text-rose-700 dark:text-rose-300">พบบัญชีครูเดิมที่ใช้อีเมลเดียวกัน (สมัครก่อนเปลี่ยนมาใช้ LINE) ข้อมูลวิชาและห้องเรียนยังอยู่ที่บัญชีเดิม กรุณาให้ผู้ดูแลระบบรวมบัญชี</p>
+                )}
+                {teacherLineLink.status === 'error' && (
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[11px] text-rose-700 dark:text-rose-300">ตรวจสอบสถานะ LINE ไม่สำเร็จ</p>
+                    <button type="button" onClick={loadTeacherLineLink} className="shrink-0 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900 text-[11px] font-bold text-rose-700 dark:text-rose-300 cursor-pointer">
+                      ลองใหม่
+                    </button>
+                  </div>
                 )}
                 {teacherLineLink.status === 'conflict' && (
                   <p className="text-[11px] text-rose-700 dark:text-rose-300">บัญชี LINE นี้ถูกใช้กับบัญชีอื่นใน Pudding อยู่แล้ว (เช่น บัญชีนักเรียน) กรุณาติดต่อผู้ดูแลระบบ</p>

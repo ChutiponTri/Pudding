@@ -16,6 +16,7 @@ It is read-only and prints no secrets. It checks Clerk's sign-in methods, the Su
 
 | Area | Status |
 |---|---|
+| **Supabase service-role privileges** | ❌ The server key cannot read `courses`, `assignments`, `questions`, `submissions` (and 4 more) or update `users`. Run the grants in section 10. This breaks LIFF submissions and leaves teacher LINE linking stuck on "กำลังตรวจสอบ...". |
 | Supabase columns (`users.line_bot_friend`, `classrooms.line_group_name`, …) | ✅ All present, nothing to alter |
 | LINE env vars (`LINE_CHANNEL_*`, LIFF ID, `LINE_BOT_BASIC_ID`) | ✅ Set in `.env` |
 | Clerk **development** instance (`pumped-hyena-2033`, the one in `.env`) | ❌ Email, password and Google are **still on** |
@@ -137,6 +138,8 @@ Add `LINE_BOT_BASIC_ID` to the production environment too, then redeploy.
 
 | Symptom | Cause / fix |
 |---|---|
+| LINE card stuck on **กำลังตรวจสอบ...** or shows "ตรวจสอบสถานะ LINE ไม่สำเร็จ" | The server's Supabase key lacks table privileges (`permission denied for table`, 42501). Run the grants in section 10, then `npm run line:verify`. |
+| LINE card: "พบบัญชีครูเดิมที่ใช้อีเมลเดียวกัน" | The teacher's old email/Google account row still holds this email. Clear the old row's email (section 10, part 2), or merge the accounts. |
 | LINE card says **ยังไม่เชื่อม**: "บัญชีนี้ไม่ได้เข้าสู่ระบบด้วย LINE" | The Clerk account has no LINE connection. Connect LINE (section 2, step 2), then reopen the dashboard. |
 | LINE card: "บัญชี LINE นี้ถูกใช้กับบัญชีอื่น" | That LINE account already belongs to another Pudding user, usually the same person's student LIFF profile. Use a different LINE account, or remove or merge the student row in `users`. |
 | Bot replies "ยังไม่พบห้องเรียนที่รอเชื่อมกลุ่มนี้" | No classroom was waiting, the 15-minute window expired, or the teacher who pressed connect is not in that group. Press **เชื่อม LINE Group** again, then send a message in the group. |
@@ -148,6 +151,32 @@ Add `LINE_BOT_BASIC_ID` to the production environment too, then redeploy.
 ---
 
 ## 10. Database reference
+
+### Part 1: server privileges (required, **not applied yet**)
+
+Run this once in **Supabase → SQL Editor**. The API routes use the service-role key, and it currently cannot read most tables.
+
+```sql
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO service_role;
+```
+
+### Part 2: move two teachers to their new LINE accounts (one time)
+
+ชุติพนธ์ and ธิปนรรจ์ signed in with LINE as new Clerk accounts. Their old teacher rows still hold their emails, which blocks the new rows. The old rows own no classrooms, posts or attendance sessions. Clearing their email lets the LINE accounts get their own rows on the next dashboard load:
+
+```sql
+UPDATE public.users SET email = NULL
+WHERE role = 'teacher'
+  AND id IN ('user_3KYUk3UE4MGjRWybtW7zsY600Lg', 'user_3Kii9aLiw2uem3ARhihNW8GlAir');
+```
+
+### Part 3: LINE columns
 
 These columns are **already applied** to your Supabase project. The SQL is kept here (and at the end of `supabase_schema_update.sql`) for new environments. It is safe to re-run.
 

@@ -213,3 +213,17 @@ ADD COLUMN IF NOT EXISTS line_group_name TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_classrooms_line_group_id ON public.classrooms(line_group_id);
 CREATE INDEX IF NOT EXISTS idx_classrooms_line_connection_status ON public.classrooms(line_connection_status);
+
+-- ==============================================================================
+-- Server (service_role) privileges
+-- API routes (/api/submissions, /api/attendance, /api/line/*) use the service
+-- role key. Without these grants they fail with "permission denied for table"
+-- (42501): LIFF submissions fail and teacher LINE linking never completes.
+-- ==============================================================================
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO service_role;
