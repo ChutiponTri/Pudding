@@ -82,6 +82,8 @@ export interface Classroom {
   line_group_id?: string;
   line_connection_status?: 'disconnected' | 'waiting' | 'connected';
   line_connection_token?: string;
+  /** Name of the linked LINE group, read from LINE when the bot joins. */
+  line_group_name?: string;
   line_connection_token_expires_at?: string;
   line_connected_at?: string;
   students?: User[];

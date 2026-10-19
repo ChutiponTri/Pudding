@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import {
   X,
   BookOpen,
@@ -21,17 +22,16 @@ export const GlobalClassroomSidebar: React.FC = () => {
   const { isOpen, setIsOpen, closeSidebar } = useSidebar();
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [loading, setLoading] = useState(false);
+  const { user, isLoaded } = useUser();
+  const teacherId = user?.id;
 
-  // Do not render on LIFF student portal
-  if (pathname.startsWith('/liff')) {
-    return null;
-  }
-
-  // Load teacher's classrooms
+  // Load only the signed-in teacher's classrooms (owner or co-teacher), the
+  // same scope the dashboard uses.
   const loadClassrooms = async () => {
+    if (!teacherId) return;
     try {
       setLoading(true);
-      const data = await dataService.getClassrooms();
+      const data = await dataService.getClassrooms(teacherId);
       setClassrooms(data);
     } catch (err) {
       console.warn('Failed to load classrooms for sidebar:', err);
@@ -40,20 +40,22 @@ export const GlobalClassroomSidebar: React.FC = () => {
     }
   };
 
+  // Reload when opened, and when the signed-in teacher changes.
   useEffect(() => {
-    if (isOpen && classrooms.length === 0) {
+    if (isOpen && isLoaded) {
       loadClassrooms();
     }
-  }, [isOpen]);
+  }, [isOpen, isLoaded, teacherId]);
 
   // Sort classrooms from newest to oldest
   const sortedClassrooms = useMemo(() => {
-    return [...classrooms].sort((a, b) => {
+    // Signed out: show nothing rather than a previous teacher's list.
+    return (teacherId ? [...classrooms] : []).sort((a, b) => {
       const timeA = new Date(a.created_at || 0).getTime();
       const timeB = new Date(b.created_at || 0).getTime();
       return timeB - timeA;
     });
-  }, [classrooms]);
+  }, [classrooms, teacherId]);
 
   // Group classrooms by Course / Subject while maintaining newest-to-oldest order
   const groupedCourses = useMemo(() => {
@@ -69,28 +71,29 @@ export const GlobalClassroomSidebar: React.FC = () => {
   }, [sortedClassrooms]);
 
   const handleItemClick = () => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       closeSidebar();
     }
   };
 
-  if (!isOpen) return null;
+  // Do not render on LIFF student portal
+  if (!isOpen || pathname.startsWith('/liff')) return null;
 
   return (
     <>
-      {/* Mobile Drawer Backdrop (ONLY visible on mobile < 768px; iPad and desktop do not blur/cover the page) */}
+      {/* Drawer backdrop on phones and iPads (< 1024px); desktop keeps the page visible beside the sidebar */}
       <div
-        className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 md:hidden animate-in fade-in duration-200"
+        className="fixed inset-0 bg-slate-950/50 backdrop-blur-xs z-40 lg:hidden animate-in fade-in duration-200"
         onClick={closeSidebar}
         aria-hidden="true"
       />
 
       {/* Sidebar Container: Fixed on left (w-80) */}
-      <aside className="fixed inset-y-0 left-0 w-80 max-w-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-2xl md:shadow-lg flex flex-col z-50 animate-in slide-in-from-left duration-250 ease-out select-none overflow-hidden">
+      <aside className="fixed inset-y-0 left-0 w-80 max-w-[86vw] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-r border-slate-200/80 dark:border-slate-800 shadow-2xl lg:shadow-none flex flex-col z-50 animate-in slide-in-from-left duration-300 select-none overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
         {/* Header */}
-        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-850/60 shrink-0">
+        <div className="h-16 px-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
+            <div className="w-9 h-9 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center font-bold text-base shadow-md shadow-amber-500/25 shrink-0">
               🍮
             </div>
             <div className="min-w-0">
@@ -100,7 +103,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
           </div>
           <button
             onClick={closeSidebar}
-            className="p-1.5 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer shrink-0"
+            className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer shrink-0"
             aria-label="Close sidebar"
           >
             <X className="w-4 h-4" />
@@ -108,11 +111,11 @@ export const GlobalClassroomSidebar: React.FC = () => {
         </div>
 
         {/* Quick Actions Shortcuts */}
-        <div className="p-3 border-b border-slate-200 dark:border-slate-800 grid grid-cols-2 gap-2 bg-white dark:bg-slate-900 shrink-0">
+        <div className="p-3 grid grid-cols-2 gap-2 shrink-0">
           <Link
             href="/dashboard"
             onClick={handleItemClick}
-            className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer truncate"
+            className="px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer truncate"
           >
             <LayoutDashboard className="w-3.5 h-3.5 text-amber-600 shrink-0" />
             <span className="truncate">แดชบอร์ด</span>
@@ -120,7 +123,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
           <Link
             href="/assignments/new"
             onClick={handleItemClick}
-            className="p-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs truncate"
+            className="px-3 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-amber-500/30 active:scale-[0.98] truncate"
           >
             <Plus className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate">สร้างงาน/สอบ</span>
@@ -128,7 +131,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
         </div>
 
         {/* Total Count Subtitle Banner */}
-        <div className="px-4 py-2 bg-slate-50/50 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
+        <div className="mx-3 mb-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
           <span className="font-bold flex items-center gap-1">
             <GraduationCap className="w-3.5 h-3.5 text-amber-500" />
             <span>ทั้งหมด {sortedClassrooms.length} ห้องเรียน</span>
@@ -146,7 +149,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
               <p>กำลังโหลดห้องเรียน...</p>
             </div>
           ) : sortedClassrooms.length === 0 ? (
-            <div className="p-8 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs text-slate-400 space-y-2">
+            <div className="p-5 sm:p-8 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs text-slate-400 space-y-2">
               <GraduationCap className="w-8 h-8 text-slate-300 mx-auto" />
               <p>ยังไม่มีห้องเรียนในระบบ</p>
             </div>
@@ -173,9 +176,9 @@ export const GlobalClassroomSidebar: React.FC = () => {
                         key={cls.id}
                         href={`/classrooms/${cls.id}`}
                         onClick={handleItemClick}
-                        className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer min-w-0 ${
+                        className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer min-w-0 ${
                           isActive
-                            ? 'bg-amber-100 dark:bg-amber-950/70 text-amber-950 dark:text-amber-200 font-black border border-amber-300 dark:border-amber-700 shadow-xs'
+                            ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-300/80 dark:ring-amber-700/70'
                             : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
                         }`}
                       >
@@ -197,7 +200,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850/40 text-center shrink-0">
+        <div className="p-3 border-t border-slate-200/80 dark:border-slate-800 text-center shrink-0">
           <span className="text-[10px] text-slate-400 font-medium">
             Pudding Assessment Platform
           </span>

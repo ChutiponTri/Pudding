@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, Building, Check, ChevronDown, School, GraduationCap } from 'lucide-react';
 import { searchInstitutions, EducationalInstitution } from '@/lib/data/thaiInstitutions';
 
@@ -24,18 +25,58 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
 
   const results = searchInstitutions(searchQuery, extraInstitutions);
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      // The menu is portaled to <body>, so it is outside containerRef.
+      if (containerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setIsOpen(false);
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
   }, []);
+
+  // The menu is rendered in a portal with fixed positioning so it is not
+  // clipped by scrollable dialogs. Keep it anchored to the trigger, and open it
+  // upward when there is more room above than below.
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const place = () => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const gap = 6;
+      const margin = 12;
+      const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
+      const spaceAbove = rect.top - gap - margin;
+      const openUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+      const maxHeight = Math.max(160, Math.min(320, openUp ? spaceAbove : spaceBelow));
+      setMenuStyle({
+        position: 'fixed',
+        left: rect.left,
+        width: rect.width,
+        maxHeight,
+        ...(openUp ? { bottom: window.innerHeight - rect.top + gap } : { top: rect.bottom + gap }),
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    window.visualViewport?.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+      window.visualViewport?.removeEventListener('resize', place);
+    };
+  }, [isOpen]);
 
   const handleSelect = (inst: EducationalInstitution) => {
     onChange(inst.name);
@@ -50,6 +91,8 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen((prev) => !prev)}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
         className={`w-full px-3.5 py-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs transition-all cursor-pointer ${
           value
             ? 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-medium'
@@ -64,8 +107,13 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
       </button>
 
       {/* Dropdown Menu */}
-      {isOpen && (
-        <div className="absolute z-50 left-0 right-0 mt-1.5 p-2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 space-y-2 max-h-72 flex flex-col animate-in fade-in zoom-in-95 duration-100">
+      {isOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={menuRef}
+          style={menuStyle}
+          role="listbox"
+          className="z-[80] p-2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl shadow-slate-900/15 border border-slate-200 dark:border-slate-800 space-y-2 flex flex-col animate-in fade-in zoom-in-95 duration-100"
+        >
           {/* Search Box */}
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -80,7 +128,7 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
           </div>
 
           {/* List Options */}
-          <div className="overflow-y-auto space-y-1 pr-1 flex-1">
+          <div className="overflow-y-auto overscroll-contain space-y-1 pr-1 flex-1 min-h-0">
             {results.length === 0 ? (
               <div className="py-6 text-center text-xs text-slate-400">
                 ไม่พบชื่อสถาบันที่ตรงกับคำค้นหา
@@ -92,6 +140,8 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
                   <button
                     key={inst.id}
                     type="button"
+                    role="option"
+                    aria-selected={isSelected}
                     onClick={() => handleSelect(inst)}
                     className={`w-full px-2.5 py-2 rounded-xl text-left text-xs flex items-center justify-between gap-2 transition-colors cursor-pointer ${
                       isSelected
@@ -116,7 +166,8 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
               })
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

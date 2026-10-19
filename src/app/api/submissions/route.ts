@@ -1,13 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceSupabaseClient, createAnonServerSupabaseClient } from '@/lib/supabase/server';
+import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { fallbackStore } from '@/lib/classroom/storageFallback';
+import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { parseTrueFalse } from '@/lib/utils/trueFalse';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   const assignmentId = request.nextUrl.searchParams.get('assignmentId');
-  if (!assignmentId) {
+  const assignmentIds = (request.nextUrl.searchParams.get('assignmentIds') || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const requestedAssignmentIds = assignmentIds.length > 0
+    ? assignmentIds
+    : assignmentId
+      ? [assignmentId]
+      : [];
+
+  if (requestedAssignmentIds.length === 0) {
     return NextResponse.json({ submissions: fallbackStore.getSubmissions() });
   }
 
@@ -17,7 +29,7 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabase
       .from('submissions')
       .select('*')
-      .eq('assignment_id', assignmentId);
+      .in('assignment_id', requestedAssignmentIds);
     if (!error && data) {
       dbSubmissions = data;
     }
@@ -25,18 +37,16 @@ export async function GET(request: NextRequest) {
     console.warn('GET /api/submissions supabase error:', err);
   }
 
-  const localSubmissions = fallbackStore.getSubmissions(assignmentId);
-  const seen = new Set<string>();
-  const merged: any[] = [];
+  const localSubmissions = requestedAssignmentIds.flatMap((id) => fallbackStore.getSubmissions(id));
+  const merged = new Map<string, any>();
 
-  for (const s of [...localSubmissions, ...dbSubmissions]) {
-    if (!seen.has(s.id)) {
-      seen.add(s.id);
-      merged.push(s);
-    }
-  }
+  // Database fields win over the per-instance file cache, which can be stale
+  // (e.g. written by a different server instance). The cache still contributes
+  // extras the table lacks, such as the student snapshot.
+  for (const s of localSubmissions) merged.set(s.id, s);
+  for (const s of dbSubmissions) merged.set(s.id, { ...merged.get(s.id), ...s });
 
-  return NextResponse.json({ submissions: merged });
+  return NextResponse.json({ submissions: [...merged.values()] });
 }
 
 export async function POST(request: NextRequest) {
@@ -70,8 +80,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const effectiveStudentId = student_id || line_uid;
-    const subId = `sub-${assignment_id}-${effectiveStudentId}`;
+    let supabase: ReturnType<typeof createServiceSupabaseClient>;
+    try {
+      supabase = createServiceSupabaseClient();
+    } catch (configErr) {
+      console.error('[POST /api/submissions] Supabase is not configured:', configErr);
+      return NextResponse.json({ error: 'ระบบฐานข้อมูลยังไม่พร้อมใช้งาน กรุณาติดต่อคุณครู' }, { status: 503 });
+    }
+
+    // The assignment must exist and still accept work. The deadline rules are
+    // shared with the teacher portal so both sides agree on open/closed/late.
+    const { data: assignment, error: assignmentError } = await supabase
+      .from('assignments')
+      .select('id, due_date, status_override, extended_until')
+      .eq('id', assignment_id)
+      .maybeSingle();
+    if (assignmentError) {
+      console.error('[POST /api/submissions] Assignment lookup failed:', assignmentError);
+      return NextResponse.json({ error: 'ไม่สามารถตรวจสอบงานนี้ได้ กรุณาลองใหม่อีกครั้ง' }, { status: 503 });
+    }
+    if (!assignment) {
+      return NextResponse.json({ error: 'ไม่พบงานหรือข้อสอบนี้ในระบบ อาจถูกลบไปแล้ว' }, { status: 404 });
+    }
+    const assignmentWindow = getAssignmentWindow(assignment);
+    if (!assignmentWindow.acceptsSubmissions) {
+      return NextResponse.json({ error: 'คุณครูปิดรับงานนี้แล้ว ไม่สามารถส่งได้' }, { status: 409 });
+    }
+
     const awaySeconds = Number(antiCheating.away_time_seconds || 0);
     const tabSwitchCount = Number(antiCheating.tab_switch_count || 0);
     const isSuspicious = tabSwitchCount >= 3 || awaySeconds >= 30;
@@ -79,8 +114,51 @@ export async function POST(request: NextRequest) {
     const firstName = student_first_name || (student_name ? student_name.split(' ')[0] : 'นักเรียน');
     const lastName = student_last_name || (student_name ? student_name.split(' ').slice(1).join(' ') : '');
 
+    // Resolve the canonical users.id. LIFF sends the school student number as
+    // student_id, but submissions.student_id is a foreign key to users.id and the
+    // teacher roster matches on that id, so every copy must use it.
+    let targetUserDbId = line_uid || student_id;
+    let existingUser: { id: string } | null = null;
+    if (line_uid) {
+      const { data } = await supabase.from('users').select('id').eq('line_uid', line_uid).maybeSingle();
+      existingUser = data;
+    }
+    if (!existingUser && student_id) {
+      const { data } = await supabase.from('users').select('id').eq('id', student_id).maybeSingle();
+      existingUser = data;
+    }
+    if (existingUser?.id) {
+      targetUserDbId = existingUser.id;
+    } else {
+      // LIFF syncs the profile on login, so this only runs for legacy clients.
+      const { error: userError } = await supabase.from('users').insert({
+        id: targetUserDbId,
+        role: 'student',
+        first_name: firstName,
+        last_name: lastName,
+        student_id: student_id || undefined,
+        line_uid: line_uid || undefined,
+        avatar_url: student_avatar || undefined,
+      });
+      if (userError) {
+        console.error('[POST /api/submissions] Student user insert failed:', userError);
+        return NextResponse.json({ error: 'ไม่พบบัญชีนักเรียนในระบบ กรุณาออกจากระบบแล้วเข้าใหม่' }, { status: 409 });
+      }
+    }
+
+    // Reuse the existing row id on resubmission. submissions has a UNIQUE
+    // (assignment_id, student_id) constraint, so a new id for the same student
+    // (e.g. after editing their student number) would make the upsert fail.
+    const { data: existingSubmission } = await supabase
+      .from('submissions')
+      .select('id')
+      .eq('assignment_id', assignment_id)
+      .eq('student_id', targetUserDbId)
+      .maybeSingle();
+    const subId = existingSubmission?.id || `sub-${assignment_id}-${targetUserDbId}`;
+
     const studentInfo = {
-      id: effectiveStudentId,
+      id: targetUserDbId,
       first_name: firstName,
       last_name: lastName,
       student_id: student_id || '',
@@ -93,71 +171,73 @@ export async function POST(request: NextRequest) {
     let assignmentMaxScore = 20;
     const scoredAnswers: any[] = [];
 
-    try {
-      const supabase = createServiceSupabaseClient();
-      const { data: questions } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('assignment_id', assignment_id);
+    const { data: questions } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('assignment_id', assignment_id);
 
-      const qsList: any[] = questions || [];
-      if (qsList.length > 0) {
-        let totalMax = 0;
-        let runningScore = 0;
-        let allGraded = true;
+    const qsList: any[] = questions || [];
+    if (qsList.length > 0) {
+      let totalMax = 0;
+      let runningScore = 0;
+      let allGraded = true;
 
-        for (const q of qsList) {
-          totalMax += Number(q.max_score || 0);
-          const studentAns = (answers || []).find((a: any) => a.question_id === q.id);
-          const studentText = (studentAns?.answer_text || '').trim();
+      for (const q of qsList) {
+        totalMax += Number(q.max_score || 0);
+        const studentAns = (answers || []).find((a: any) => a.question_id === q.id);
+        const studentText = (studentAns?.answer_text || '').trim();
 
-          let questionScore: number | undefined = undefined;
-          let aiScore: number | undefined = undefined;
+        let questionScore: number | undefined = undefined;
+        let aiScore: number | undefined = undefined;
 
-          if (q.type === 'multiple_choice' || q.type === 'true_false') {
-            const ideal = (q.ideal_answer || '').trim();
-            if (ideal && studentText) {
-              const isMatch = studentText.toLowerCase() === ideal.toLowerCase() ||
+        if (q.type === 'multiple_choice' || q.type === 'true_false') {
+          const ideal = (q.ideal_answer || '').trim();
+          if (ideal && studentText) {
+            // True/false compares meaning ("จริง" = "ถูก" = "True"); other
+            // objective questions keep the text comparison.
+            const idealBool = q.type === 'true_false' ? parseTrueFalse(ideal) : null;
+            const studentBool = q.type === 'true_false' ? parseTrueFalse(studentText) : null;
+            const isMatch = idealBool !== null && studentBool !== null
+              ? idealBool === studentBool
+              : studentText.toLowerCase() === ideal.toLowerCase() ||
                 studentText.startsWith(ideal) || ideal.startsWith(studentText);
-              questionScore = isMatch ? Number(q.max_score) : 0;
-              runningScore += questionScore;
-            } else {
-              questionScore = 0;
-            }
+            questionScore = isMatch ? Number(q.max_score) : 0;
+            runningScore += questionScore;
           } else {
-            // Subjective / file upload question: provide initial evaluation score or mark as pending
-            allGraded = false;
-            aiScore = Math.max(1, Math.round(Number(q.max_score || 5) * 0.8));
+            questionScore = 0;
           }
-
-          scoredAnswers.push({
-            question_id: q.id,
-            answer_text: studentText,
-            file_url: studentAns?.file_url || null,
-            teacher_score: questionScore,
-            ai_mock_score: aiScore,
-          });
+        } else {
+          // Subjective / file upload question: provide initial evaluation score or mark as pending
+          allGraded = false;
+          aiScore = Math.max(1, Math.round(Number(q.max_score || 5) * 0.8));
         }
 
-        if (totalMax > 0) assignmentMaxScore = totalMax;
-        if (allGraded) {
-          calculatedTotalScore = runningScore;
-        } else if (runningScore > 0) {
-          calculatedTotalScore = runningScore;
-        }
+        scoredAnswers.push({
+          question_id: q.id,
+          answer_text: studentText,
+          file_url: studentAns?.file_url || null,
+          teacher_score: questionScore,
+          ai_mock_score: aiScore,
+        });
       }
-    } catch (calcErr) {
-      console.warn('[POST /api/submissions] Objective scoring check warning:', calcErr);
+
+      if (totalMax > 0) assignmentMaxScore = totalMax;
+      if (allGraded) {
+        calculatedTotalScore = runningScore;
+      } else if (runningScore > 0) {
+        calculatedTotalScore = runningScore;
+      }
     }
 
+    const submittedAt = new Date();
     const submissionRecord = {
       id: subId,
       assignment_id,
-      student_id: effectiveStudentId,
+      student_id: targetUserDbId,
       student: studentInfo,
-      status: 'submitted',
-      started_at: new Date(Date.now() - (awaySeconds * 1000 + 120000)).toISOString(),
-      submitted_at: new Date().toISOString(),
+      status: assignmentWindow.isPastDeadline ? 'late' : 'submitted',
+      started_at: new Date(submittedAt.getTime() - (awaySeconds * 1000 + 120000)).toISOString(),
+      submitted_at: submittedAt.toISOString(),
       time_spent_seconds: 120 + awaySeconds,
       tab_switch_count: tabSwitchCount,
       total_time_away_seconds: awaySeconds,
@@ -167,55 +247,7 @@ export async function POST(request: NextRequest) {
       answers: scoredAnswers.length > 0 ? scoredAnswers : answers,
     };
 
-    // 1. Save to File Fallback Store (Guarantees local persistence and immediate availability)
-    fallbackStore.saveSubmission(submissionRecord);
-    console.log('[POST /api/submissions] Saved to local fallback store:', subId);
-
-    // 2. Try Supabase Service Role (bypasses RLS)
     try {
-      const supabase = createServiceSupabaseClient();
-
-      // Check if user already exists by line_uid or id
-      let targetUserDbId = effectiveStudentId;
-      if (line_uid) {
-        const { data: existingUser } = await supabase
-          .from('users')
-          .select('id')
-          .eq('line_uid', line_uid)
-          .maybeSingle();
-        if (existingUser?.id) {
-          targetUserDbId = existingUser.id;
-        }
-      }
-
-      // Upsert user row so foreign key constraint users(id) succeeds
-      await supabase.from('users').upsert(
-        {
-          id: targetUserDbId,
-          role: 'student',
-          first_name: firstName,
-          last_name: lastName,
-          student_id: student_id || undefined,
-          line_uid: line_uid || undefined,
-          avatar_url: student_avatar || undefined,
-        },
-        { onConflict: 'id', ignoreDuplicates: false }
-      );
-
-      // The assignment must exist before a submission can be stored. Do not
-      // create a fake classroom/assignment row: its foreign keys can make the
-      // later submission write fail while the client still sees a false success.
-      const { data: existingAssignment } = await supabase
-        .from('assignments')
-        .select('id')
-        .eq('id', assignment_id)
-        .maybeSingle();
-
-      if (!existingAssignment) {
-        throw new Error(`Assignment ${assignment_id} was not found in Supabase`);
-      }
-
-      // Upsert submission record
       const { error: subErr } = await supabase.from('submissions').upsert({
         id: submissionRecord.id,
         assignment_id: submissionRecord.assignment_id,
@@ -230,32 +262,30 @@ export async function POST(request: NextRequest) {
         total_score: calculatedTotalScore !== undefined ? calculatedTotalScore : null,
         max_total_score: assignmentMaxScore,
       });
-
-      if (subErr) {
-        throw subErr;
-      } else {
-        console.log('[POST /api/submissions] Supabase submissions upsert succeeded:', subId);
-      }
+      if (subErr) throw subErr;
+      console.log('[POST /api/submissions] Supabase submissions upsert succeeded:', subId);
 
       // Upsert submission answers (and ensure question exists)
       const answersToSave = scoredAnswers.length > 0 ? scoredAnswers : answers;
       for (const ans of answersToSave) {
         if (ans.question_id) {
-          const { data: existingQ } = await supabase
-            .from('questions')
-            .select('id')
-            .eq('id', ans.question_id)
-            .maybeSingle();
+          if (scoredAnswers.length === 0) {
+            const { data: existingQ } = await supabase
+              .from('questions')
+              .select('id')
+              .eq('id', ans.question_id)
+              .maybeSingle();
 
-          if (!existingQ) {
-            const { error: questionError } = await supabase.from('questions').insert({
-              id: ans.question_id,
-              assignment_id,
-              question_text: 'คำถามข้อนี้',
-              type: 'short_answer',
-              max_score: 5,
-            });
-            if (questionError) throw questionError;
+            if (!existingQ) {
+              const { error: questionError } = await supabase.from('questions').insert({
+                id: ans.question_id,
+                assignment_id,
+                question_text: 'คำถามข้อนี้',
+                type: 'short_answer',
+                max_score: 5,
+              });
+              if (questionError) throw questionError;
+            }
           }
 
           const { error: answerError } = await supabase.from('submission_answers').upsert({
@@ -265,31 +295,38 @@ export async function POST(request: NextRequest) {
             text_answer: ans.answer_text || '',
             file_url: ans.file_url || null,
             teacher_score: ans.teacher_score !== undefined ? ans.teacher_score : null,
-          });
+          }, { onConflict: 'submission_id,question_id' });
           if (answerError) throw answerError;
         }
       }
 
       const events = antiCheating.events || [];
-      for (let i = 0; i < events.length; i++) {
-        const evt = events[i];
-        await supabase.from('submission_events').insert({
-          id: `evt-${subId}-${Date.now()}-${i}`,
-          submission_id: subId,
-          event_type: evt.event_type,
-          away_duration_seconds: evt.duration_seconds || 0,
-          created_at: evt.timestamp || new Date().toISOString(),
-          details: evt.details || null,
-        });
+      if (events.length > 0) {
+        const { error: eventsError } = await supabase.from('submission_events').insert(
+          events.map((evt: any, i: number) => ({
+            id: `evt-${subId}-${Date.now()}-${i}`,
+            submission_id: subId,
+            event_type: evt.event_type,
+            away_duration_seconds: evt.duration_seconds || 0,
+            created_at: evt.timestamp || new Date().toISOString(),
+            details: evt.details || null,
+          }))
+        );
+        // Audit events are supplementary; the submission itself is already saved.
+        if (eventsError) console.warn('[POST /api/submissions] Event log write warning:', eventsError);
       }
       console.log('[POST /api/submissions] Supabase answer write completed:', subId);
     } catch (dbErr) {
       console.error('[POST /api/submissions] Supabase service write error:', dbErr);
       return NextResponse.json({
-        error: 'บันทึกคำตอบลงฐานข้อมูลไม่สำเร็จ',
-        detail: dbErr instanceof Error ? dbErr.message : 'Supabase write failed',
+        error: 'บันทึกคำตอบลงฐานข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
+        detail: dbErr instanceof Error ? dbErr.message : (dbErr as any)?.message || 'Supabase write failed',
       }, { status: 503 });
     }
+
+    // Keep the local cache only after the database acknowledged the write, so a
+    // failed submission never shows up as "submitted" to the teacher.
+    fallbackStore.saveSubmission(submissionRecord);
 
     return NextResponse.json({ success: true, submission: submissionRecord });
   } catch (error: any) {

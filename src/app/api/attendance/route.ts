@@ -38,6 +38,48 @@ export async function GET(request: NextRequest) {
   const classroomId = request.nextUrl.searchParams.get('classroomId');
   const sessionId = request.nextUrl.searchParams.get('sessionId');
   const lineUid = request.nextUrl.searchParams.get('lineUid');
+  const classroomIds = (request.nextUrl.searchParams.get('classroomIds') || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+
+  // Student overview: sessions + this student's records for many classrooms in
+  // one request (the LIFF home screen previously sent one request per class).
+  if (!classroomId && classroomIds.length > 0 && lineUid) {
+    const supabase = createAnonServerSupabaseClient();
+    let studentId = lineUid;
+    try {
+      const { data: student } = await supabase.from('users').select('id').eq('line_uid', lineUid).maybeSingle();
+      if (student?.id) studentId = student.id;
+    } catch {}
+
+    let dbSessions: FallbackAttendanceSession[] = [];
+    let dbRecords: FallbackAttendanceRecord[] = [];
+    try {
+      const [sessionsRes, recordsRes] = await Promise.all([
+        supabase.from('attendance_sessions').select('*').in('classroom_id', classroomIds).order('starts_at', { ascending: false }),
+        supabase.from('attendance_records').select('*').in('classroom_id', classroomIds).in('student_id', [...new Set([studentId, lineUid])]),
+      ]);
+      if (!sessionsRes.error && sessionsRes.data) dbSessions = sessionsRes.data as FallbackAttendanceSession[];
+      if (!recordsRes.error && recordsRes.data) dbRecords = recordsRes.data as FallbackAttendanceRecord[];
+    } catch {}
+
+    const byClassroom: Record<string, { sessions: FallbackAttendanceSession[]; records: FallbackAttendanceRecord[] }> = {};
+    for (const id of classroomIds) {
+      const seenSessions = new Set<string>();
+      const sessions = [...dbSessions.filter((s) => s.classroom_id === id), ...fallbackStore.getAttendanceSessions(id)]
+        .filter((s) => !seenSessions.has(s.id) && seenSessions.add(s.id));
+      const seenRecords = new Set<string>();
+      const records = [
+        ...dbRecords.filter((r) => r.classroom_id === id),
+        ...fallbackStore.getStudentRecords(id, studentId),
+        ...fallbackStore.getStudentRecords(id, lineUid),
+      ].filter((r) => !seenRecords.has(r.session_id) && seenRecords.add(r.session_id));
+      byClassroom[id] = { sessions, records };
+    }
+    return NextResponse.json({ byClassroom });
+  }
+
   if (!classroomId) return NextResponse.json({ error: 'classroomId is required' }, { status: 400 });
 
   const context = await getTeacherContext(classroomId);
@@ -57,7 +99,9 @@ export async function GET(request: NextRequest) {
     const localSessions = fallbackStore.getAttendanceSessions(classroomId);
     const seenSess = new Set<string>();
     const mergedSessions: FallbackAttendanceSession[] = [];
-    for (const s of [...localSessions, ...sessions]) {
+    // Database rows win: the file cache is per server instance and can hold a
+    // stale status (e.g. still "open" after the teacher closed the session).
+    for (const s of [...sessions, ...localSessions]) {
       if (!seenSess.has(s.id)) {
         seenSess.add(s.id);
         mergedSessions.push(s);
@@ -82,7 +126,7 @@ export async function GET(request: NextRequest) {
     const localRecords = [...fallbackStore.getStudentRecords(classroomId, studentId), ...fallbackStore.getStudentRecords(classroomId, lineUid)];
     const seenRec = new Set<string>();
     const mergedRecords: FallbackAttendanceRecord[] = [];
-    for (const r of [...localRecords, ...records]) {
+    for (const r of [...records, ...localRecords]) {
       const key = `${r.session_id}-${r.student_id}`;
       if (!seenRec.has(key)) {
         seenRec.add(key);
@@ -110,7 +154,7 @@ export async function GET(request: NextRequest) {
   const localSessions = fallbackStore.getAttendanceSessions(classroomId);
   const seenSess = new Set<string>();
   const mergedSessions: FallbackAttendanceSession[] = [];
-  for (const s of [...localSessions, ...sessions]) {
+  for (const s of [...sessions, ...localSessions]) {
     if (!seenSess.has(s.id)) {
       seenSess.add(s.id);
       mergedSessions.push(s);
@@ -128,7 +172,7 @@ export async function GET(request: NextRequest) {
     const localRecs = fallbackStore.getAttendanceRecords(selectedSession.id);
     const seenR = new Set<string>();
     const mergedR: FallbackAttendanceRecord[] = [];
-    for (const r of [...localRecs, ...records]) {
+    for (const r of [...records, ...localRecs]) {
       if (!seenR.has(r.student_id)) {
         seenR.add(r.student_id);
         mergedR.push(r);
@@ -159,26 +203,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Student identity (studentId or lineUid) is required' }, { status: 400 });
     }
 
-    let sb = createServiceSupabaseClient();
+    const sb = createServiceSupabaseClient();
     // Find active session
     let session: FallbackAttendanceSession | null = null;
+    // The database is authoritative for the session status the teacher sets;
+    // the local cache is only used when the row is not in Supabase.
     if (targetSessionId) {
-      const local = fallbackStore.getAttendanceSessions(classroomId).find((s) => s.id === targetSessionId);
-      if (local) session = local;
-      else {
-        try {
-          const { data } = await sb.from('attendance_sessions').select('*').eq('id', targetSessionId).maybeSingle();
-          if (data) session = data as FallbackAttendanceSession;
-        } catch {}
+      try {
+        const { data } = await sb.from('attendance_sessions').select('*').eq('id', targetSessionId).maybeSingle();
+        if (data) session = data as FallbackAttendanceSession;
+      } catch {}
+      if (!session) {
+        session = fallbackStore.getAttendanceSessions(classroomId).find((s) => s.id === targetSessionId) || null;
       }
     } else {
-      const all = fallbackStore.getAttendanceSessions(classroomId);
-      session = all.find((s) => s.status === 'open') || null;
+      try {
+        const { data } = await sb.from('attendance_sessions').select('*').eq('classroom_id', classroomId).eq('status', 'open').order('starts_at', { ascending: false }).limit(1).maybeSingle();
+        if (data) session = data as FallbackAttendanceSession;
+      } catch {}
       if (!session) {
-        try {
-          const { data } = await sb.from('attendance_sessions').select('*').eq('classroom_id', classroomId).eq('status', 'open').order('starts_at', { ascending: false }).maybeSingle();
-          if (data) session = data as FallbackAttendanceSession;
-        } catch {}
+        session = fallbackStore.getAttendanceSessions(classroomId).find((s) => s.status === 'open') || null;
       }
     }
 
@@ -211,6 +255,25 @@ export async function POST(request: NextRequest) {
       status: computedStatus,
       checked_at: checkInTime,
     };
+
+    // A student can only check in once. Re-tapping (or a second device) must not
+    // overwrite the first check-in time or a status the teacher adjusted.
+    try {
+      const { data: lineUser } = cleanLineUid
+        ? await sb.from('users').select('id').eq('line_uid', cleanLineUid).maybeSingle()
+        : { data: null };
+      const candidateIds = [...new Set([lineUser?.id, cleanStudentId, cleanLineUid].filter(Boolean))] as string[];
+      const { data: existingRecord } = await sb
+        .from('attendance_records')
+        .select('*')
+        .eq('session_id', session.id)
+        .in('student_id', candidateIds)
+        .limit(1)
+        .maybeSingle();
+      if (existingRecord) {
+        return NextResponse.json({ success: true, alreadyCheckedIn: true, status: existingRecord.status, record: existingRecord, session });
+      }
+    } catch {}
 
     // Save to fallback store for primary studentId
     fallbackStore.saveAttendanceRecord(record);
@@ -307,10 +370,13 @@ export async function POST(request: NextRequest) {
       }, { onConflict: 'session_id,student_id' });
       if (attendanceError) throw attendanceError;
     } catch (dbErr) {
-      console.warn('Supabase attendance record upsert note:', dbErr);
+      // Without the database row the teacher never sees this check-in, so do
+      // not report success to the student.
+      console.error('Supabase attendance record upsert failed:', dbErr);
+      return NextResponse.json({ error: 'บันทึกการเช็คชื่อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' }, { status: 503 });
     }
 
-    return NextResponse.json({ success: true, status: computedStatus, record, session });
+    return NextResponse.json({ success: true, status: computedStatus, record: { ...record, student_id: canonicalUserId }, session });
   }
 
   // ----------------------------------------------------
@@ -466,16 +532,23 @@ export async function POST(request: NextRequest) {
     };
     fallbackStore.saveAttendanceRecord(rec);
     try {
-      await supabase.from('attendance_records').upsert({
+      // Roster ids may be a LINE uid; attendance_records.student_id must be users.id.
+      const { data: lineUser } = await supabase.from('users').select('id').eq('line_uid', studentId).maybeSingle();
+      const { error } = await supabase.from('attendance_records').upsert({
+        id: `att-rec-${sessionId}-${lineUser?.id || studentId}`,
         session_id: sessionId,
         classroom_id: classroomId,
-        student_id: studentId,
+        student_id: lineUser?.id || studentId,
         status,
         checked_at: rec.checked_at,
         adjusted_at: rec.adjusted_at,
-        adjusted_by: rec.adjusted_by,
-      });
-    } catch {}
+        adjusted_by: context.userId || null,
+      }, { onConflict: 'session_id,student_id' });
+      if (error) throw error;
+    } catch (dbErr) {
+      console.error('Supabase manual attendance record upsert failed:', dbErr);
+      return NextResponse.json({ error: 'บันทึกสถานะการเข้าเรียนไม่สำเร็จ' }, { status: 503 });
+    }
     return NextResponse.json({ record: rec });
   }
 

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { dataService } from '@/lib/supabase/dataService';
+import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { defaultTeachersList } from '@/lib/supabase/mockData';
 import { Assignment, Classroom, ClassroomTeacher, Submission } from '@/types/database';
 import {
@@ -183,12 +184,43 @@ export default function ClassroomWorkspacePage() {
   const [showLineConnectModal, setShowLineConnectModal] = useState(false);
   const [lineConnection, setLineConnection] = useState<{
     status: 'disconnected' | 'waiting' | 'connected';
-    token?: string;
+    groupName?: string;
     expiresAt?: string;
     connectedAt?: string;
   }>({ status: 'disconnected' });
   const [isLineLoading, setIsLineLoading] = useState(false);
-  const [isLineCodeCopied, setIsLineCodeCopied] = useState(false);
+  const [teacherBot, setTeacherBot] = useState<{ botFriend?: boolean | null; addFriendUrl?: string }>({});
+
+  // Teacher's bot friendship (for the "add Pudding Bot" hint) when the dialog opens.
+  useEffect(() => {
+    if (!showLineConnectModal) return;
+    fetch('/api/line/teacher-link', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((result) => result && setTeacherBot({ botFriend: result.botFriend, addFriendUrl: result.addFriendUrl }))
+      .catch(() => {});
+  }, [showLineConnectModal]);
+
+  // While waiting for the bot to join a group, poll until the webhook links it.
+  useEffect(() => {
+    if (lineConnection.status !== 'waiting' || !classroomId) return;
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const result = await response.json();
+        if (result.status === 'waiting') return;
+        setLineConnection(result);
+        setClassroom((prev) => (prev ? {
+          ...prev,
+          line_connection_status: result.status,
+          line_group_name: result.groupName,
+          line_group_id: result.status === 'connected' ? prev.line_group_id || 'linked' : undefined,
+        } : null));
+        if (result.status === 'connected') setNotice(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`);
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [lineConnection.status, classroomId]);
 
   const getRealLiffUrl = (cls?: Classroom | null) => {
     if (!cls) return '';
@@ -214,13 +246,17 @@ export default function ClassroomWorkspacePage() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'LINE connection failed');
       setLineConnection(result);
-      setClassroom((prev) => (prev ? { ...prev, line_connection_status: result.status } : null));
+      setClassroom((prev) => (prev ? {
+        ...prev,
+        line_connection_status: result.status,
+        ...(action === 'disconnect' ? { line_group_id: undefined, line_group_name: undefined } : {}),
+      } : null));
       setNotice(
         action === 'disconnect'
-          ? 'ยกเลิกการเชื่อมต่อ LINE Group แล้ว'
+          ? 'ยกเลิกการเชื่อมต่อแล้ว และบอทออกจากกลุ่ม LINE แล้ว'
           : action === 'test'
           ? 'ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว'
-          : 'สร้างรหัสเชื่อมต่อกลุ่ม LINE สำเร็จ'
+          : 'พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย'
       );
     } catch (error: any) {
       setNotice(error?.message || 'ไม่สามารถเชื่อมต่อ LINE Group ได้');
@@ -298,8 +334,8 @@ export default function ClassroomWorkspacePage() {
 
       // Concurrently fetch submissions for all assignments to show submit counts
       if (classAssignments.length > 0) {
-        Promise.all(classAssignments.map((item) => dataService.getSubmissions(item.id)))
-          .then((results) => setSubmissions(results.flat()))
+        dataService.getSubmissionsByAssignmentIds(classAssignments.map((item) => item.id))
+          .then(setSubmissions)
           .catch(() => {});
       }
     } catch (error) {
@@ -356,8 +392,8 @@ export default function ClassroomWorkspacePage() {
   useEffect(() => {
     if (tab !== 'grades' || !assignments.length) return;
     setGradesLoading(true);
-    Promise.all(assignments.map((item) => dataService.getSubmissions(item.id)))
-      .then((results) => setSubmissions(results.flat()))
+    dataService.getSubmissionsByAssignmentIds(assignments.map((item) => item.id))
+      .then(setSubmissions)
       .finally(() => setGradesLoading(false));
   }, [tab, assignments]);
 
@@ -370,8 +406,8 @@ export default function ClassroomWorkspacePage() {
           loadAttendance();
         }
         if ((tab === 'grades' || tab === 'classwork') && assignments.length > 0) {
-          Promise.all(assignments.map((item) => dataService.getSubmissions(item.id)))
-            .then((results) => setSubmissions(results.flat()))
+          dataService.getSubmissionsByAssignmentIds(assignments.map((item) => item.id))
+            .then(setSubmissions)
             .catch(() => {});
         }
       }
@@ -380,8 +416,8 @@ export default function ClassroomWorkspacePage() {
     const handleRealtimeEvent = () => {
       loadAttendance();
       if (assignments.length > 0) {
-        Promise.all(assignments.map((item) => dataService.getSubmissions(item.id)))
-          .then((results) => setSubmissions(results.flat()))
+        dataService.getSubmissionsByAssignmentIds(assignments.map((item) => item.id))
+          .then(setSubmissions)
           .catch(() => {});
       }
     };
@@ -740,6 +776,7 @@ export default function ClassroomWorkspacePage() {
       body: JSON.stringify({ action: 'record', classroomId, sessionId: session.id, studentId, status }),
     });
     if (response.ok) await loadAttendance(session.id);
+    else setNotice('บันทึกสถานะการเข้าเรียนไม่สำเร็จ กรุณาลองใหม่');
   };
 
   const sessionAction = async (action: 'close' | 'extend') => {
@@ -961,7 +998,7 @@ export default function ClassroomWorkspacePage() {
   // Loading skeleton
   if (loading && !classroom) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
+      <div className="min-h-dvh flex items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
         <div className="text-center space-y-3">
           <div className="w-10 h-10 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-xs font-bold text-slate-500">กำลังเข้าสู่ห้องเรียน...</p>
@@ -972,7 +1009,7 @@ export default function ClassroomWorkspacePage() {
 
   if (!classroom) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center bg-slate-50 dark:bg-slate-950">
+      <div className="min-h-dvh flex flex-col items-center justify-center p-6 text-center bg-slate-50 dark:bg-slate-950">
         <h2 className="text-lg font-black text-slate-800 dark:text-white">ไม่พบห้องเรียนที่ต้องการ</h2>
         <p className="text-xs text-slate-500 mt-1 mb-4">ห้องเรียนอาจถูกลบหรือคุณไม่มีสิทธิ์ในการเข้าถึง</p>
         <Link href="/dashboard" className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs">
@@ -983,10 +1020,10 @@ export default function ClassroomWorkspacePage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 -m-4 md:-m-8">
-      {/* Mobile Top App Bar with Drawer Toggle */}
-      <div className="lg:hidden sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+    <div className="min-h-dvh bg-slate-50 dark:bg-slate-950 -mx-4 sm:-mx-6 lg:-mx-8 -my-5 sm:-my-8">
+      {/* Mobile Top App Bar with Drawer Toggle (sits under the global navbar) */}
+      <div className="lg:hidden sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800 px-4 py-2.5 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('toggle-classroom-sidebar'))}
             className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 cursor-pointer"
@@ -999,30 +1036,30 @@ export default function ClassroomWorkspacePage() {
             <h1 className="text-sm font-black text-slate-900 dark:text-white truncate">{classroom.name}</h1>
           </div>
         </div>
-        <button onClick={loadWorkspace} className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500">
+        <button onClick={loadWorkspace} aria-label="รีเฟรช" className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
 
-      <div className="max-w-[1700px] mx-auto min-h-screen flex">
+      <div className="max-w-[1700px] mx-auto min-h-dvh flex">
         {/* ============================================================== */}
         {/* MAIN WORKSPACE CONTENT AREA (Full Width, No inner sidebar) */}
         {/* ============================================================== */}
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
-          {/* Header Row */}
-          <div className="hidden lg:flex items-center justify-between gap-4 mb-6">
-            <div className="flex items-center gap-3">
+          {/* Header Row (title is in the mobile bar below lg; actions show on every size) */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4 mb-5 sm:mb-6">
+            <div className="hidden lg:flex items-center gap-3 min-w-0">
               <div>
                 <div className="flex items-center gap-2 text-xs font-bold text-amber-600 mb-1">
                   <span>{classroom.subject_code || 'CLASSROOM'}</span>
                   <span>•</span>
                   <span>ภาคเรียน {classroom.academic_year || 'ปัจจุบัน'}</span>
                 </div>
-                <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{classroom.name}</h1>
+                <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight break-words">{classroom.name}</h1>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 overflow-x-auto scrollbar-none -mx-1 px-1 py-0.5 [&>*]:shrink-0">
               {/* Secondary: Invite Students Modal Trigger */}
               <button
                 type="button"
@@ -1077,16 +1114,16 @@ export default function ClassroomWorkspacePage() {
 
           {/* Toast Notification Notice */}
           {notice && (
-            <div className="mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between">
-              <span>{notice}</span>
-              <button onClick={() => setNotice('')} className="text-amber-600 hover:text-amber-800 p-1">
+            <div role="status" className="mb-5 sm:mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 animate-in fade-in">
+              <span className="min-w-0 break-words">{notice}</span>
+              <button onClick={() => setNotice('')} aria-label="ปิด" className="text-amber-600 hover:text-amber-800 p-1 shrink-0">
                 <X className="w-4 h-4" />
               </button>
             </div>
           )}
 
           {/* Navigation Tab Bar */}
-          <div className="flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-2 mb-6 overflow-x-auto">
+          <div className="flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-2 mb-5 sm:mb-6 overflow-x-auto scrollbar-none -mx-1 px-1">
             {tabs.map((item) => {
               const Icon = item.icon;
               const isActive = tab === item.id;
@@ -1097,7 +1134,7 @@ export default function ClassroomWorkspacePage() {
                     setTab(item.id);
                     router.replace(`/classrooms/${classroom.id}?tab=${item.id}`, { scroll: false });
                   }}
-                  className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`px-3.5 sm:px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                     isActive
                       ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
@@ -1140,7 +1177,7 @@ export default function ClassroomWorkspacePage() {
 
                   {isPostExpanded && (
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[11px] font-bold text-slate-400 mr-1">ประเภท:</span>
                         {(
                           [
@@ -1280,7 +1317,7 @@ export default function ClassroomWorkspacePage() {
                 ))}
 
                 {!timeline.length && (
-                  <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400">
+                  <div className="p-5 sm:p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400">
                     ยังไม่มีโพสต์หรือประกาศในห้องนี้ เริ่มต้นแชร์ข้อความแรกของคุณได้เลย
                   </div>
                 )}
@@ -1300,7 +1337,7 @@ export default function ClassroomWorkspacePage() {
                     จัดกลุ่มตามหมวดหมู่ที่คุณครูบริหารจัดการได้เอง นักเรียนจะเห็นการจัดหมวดหมู่นี้ในหน้าของตนเอง
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => setShowAddGroupModal(true)}
                     className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer"
@@ -1427,8 +1464,8 @@ export default function ClassroomWorkspacePage() {
 
               {/* Modal: Create Category Group */}
               {showAddGroupModal && (
-                <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-                  <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-sm w-full space-y-4 shadow-xl">
+                <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+                  <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
                     <h3 className="font-black text-sm text-slate-900 dark:text-white">เพิ่มหมวดหมู่ใหม่</h3>
                     <input
                       value={newGroupName}
@@ -1462,8 +1499,8 @@ export default function ClassroomWorkspacePage() {
 
               {/* Modal: Move Assignment to Group */}
               {editingAssignmentGroup && (
-                <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-                  <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-sm w-full space-y-4 shadow-xl">
+                <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+                  <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
                     <h3 className="font-black text-sm text-slate-900 dark:text-white">ย้ายหมวดหมู่ของงาน</h3>
                     <p className="text-xs text-slate-500 font-bold truncate">{editingAssignmentGroup.title}</p>
                     <div className="space-y-1.5">
@@ -1544,7 +1581,7 @@ export default function ClassroomWorkspacePage() {
           {tab === 'people' && (
             <section className="max-w-4xl mx-auto space-y-6">
               {/* 1. Instructors Section (แสดงรายชื่อผู้สอน ละเอียดทุกท่าน พร้อมหน้าที่) */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4">
+              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
                   <h2 className="font-black text-slate-900 dark:text-white flex items-center gap-2">
                     <UserCheck className="w-4 h-4 text-amber-500" />
@@ -1654,8 +1691,8 @@ export default function ClassroomWorkspacePage() {
           {/* TAB 5: GRADES (คะแนน) */}
           {/* ============================================================ */}
           {tab === 'grades' && (
-            <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4 overflow-x-auto">
-              <div className="flex items-center justify-between">
+            <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-4 min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h2 className="font-black text-slate-900 dark:text-white">ตารางคะแนนรวมทั้งห้อง</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
@@ -1671,10 +1708,11 @@ export default function ClassroomWorkspacePage() {
                   กำลังโหลดผลคะแนนนักเรียน...
                 </div>
               ) : (
+                <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
                 <table className="w-full min-w-160 text-xs">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 text-left">
-                      <th className="p-3">ชื่อ-นามสกุล</th>
+                      <th className="p-3 sticky left-0 z-10 bg-white dark:bg-slate-900">ชื่อ-นามสกุล</th>
                       <th className="p-3">รหัสนักเรียน</th>
                       {assignments.map((item) => (
                         <th key={item.id} className="p-3 text-center">
@@ -1691,7 +1729,7 @@ export default function ClassroomWorkspacePage() {
                   <tbody>
                     {(classroom.students || []).map((student) => (
                       <tr key={student.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850">
-                        <td className="p-3 font-bold text-slate-900 dark:text-white">
+                        <td className="p-3 font-bold text-slate-900 dark:text-white sticky left-0 bg-white dark:bg-slate-900 whitespace-nowrap">
                           {student.first_name} {student.last_name}
                         </td>
                         <td className="p-3 text-slate-500 font-mono">{student.student_id || '-'}</td>
@@ -1708,7 +1746,7 @@ export default function ClassroomWorkspacePage() {
                           );
                           return (
                             <td key={item.id} className="p-3 text-center font-bold">
-                              {sub?.total_score !== undefined ? (
+                              {sub?.total_score != null ? (
                                 <span className="text-emerald-600 dark:text-emerald-400 font-black text-sm">
                                   {sub.total_score}
                                 </span>
@@ -1726,6 +1764,7 @@ export default function ClassroomWorkspacePage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </section>
           )}
@@ -1736,8 +1775,8 @@ export default function ClassroomWorkspacePage() {
       {/* MODAL: EDIT POST */}
       {/* ============================================================== */}
       {editingPost && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-lg w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-lg w-full space-y-4 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
                 <Edit2 className="w-4 h-4 text-amber-500" />
@@ -1778,8 +1817,8 @@ export default function ClassroomWorkspacePage() {
       {/* MODAL: EDIT ASSIGNMENT / EXAM */}
       {/* ============================================================== */}
       {editingAssignment && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
                 <Edit2 className="w-4 h-4 text-amber-500" />
@@ -1863,8 +1902,8 @@ export default function ClassroomWorkspacePage() {
       {/* MODAL: ADD TEACHER (Search existing + Manual Fallback) */}
       {/* ============================================================== */}
       {showAddTeacherModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
                 <UserPlus className="w-4 h-4 text-amber-500" />
@@ -1978,11 +2017,11 @@ export default function ClassroomWorkspacePage() {
       {/* ============================================================== */}
       {showInviteModal && (
         <div
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in"
           onClick={() => setShowInviteModal(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-xl w-full space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto"
+            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-xl w-full space-y-5 shadow-2xl max-h-[90dvh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -2314,11 +2353,11 @@ export default function ClassroomWorkspacePage() {
       {/* ============================================================== */}
       {showLineConnectModal && (
         <div
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in"
           onClick={() => setShowLineConnectModal(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full space-y-5 shadow-2xl"
+            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-md w-full space-y-5 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -2344,95 +2383,52 @@ export default function ClassroomWorkspacePage() {
             </div>
 
             {/* Connection Status Badge */}
-            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs">
-              <span className="text-slate-500 font-bold">สถานะการเชื่อมต่อ:</span>
+            <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs">
+              <span className="text-slate-500 font-bold shrink-0">สถานะการเชื่อมต่อ:</span>
               <span
-                className={`font-black px-2.5 py-1 rounded-full text-[11px] ${
-                  classroom.line_connection_status === 'connected' || classroom.line_group_id
+                className={`font-black px-2.5 py-1 rounded-full text-[11px] text-right ${
+                  lineConnection.status === 'connected'
                     ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
-                    : classroom.line_connection_status === 'waiting'
+                    : lineConnection.status === 'waiting'
                     ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 animate-pulse'
                     : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                 }`}
               >
-                {classroom.line_connection_status === 'connected' || classroom.line_group_id
-                  ? '🟢 เชื่อมต่อกับกลุ่ม LINE แล้ว'
-                  : classroom.line_connection_status === 'waiting'
-                  ? '🟡 กำลังรอการพิมพ์คำสั่งในกลุ่ม'
+                {lineConnection.status === 'connected'
+                  ? `🟢 เชื่อมแล้ว${lineConnection.groupName ? `: ${lineConnection.groupName}` : ''}`
+                  : lineConnection.status === 'waiting'
+                  ? '🟡 รอเพิ่มบอทเข้ากลุ่ม'
                   : '⚪ ยังไม่ได้เชื่อมต่อ'}
               </span>
             </div>
 
-            {/* Instruction Steps */}
-            <div className="space-y-3">
-              <p className="text-xs font-black text-slate-900 dark:text-white">
-                ขั้นตอนการเชื่อมต่อ:
-              </p>
-              <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
-                <div className="flex items-start gap-2.5">
-                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-black text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-                    1
-                  </span>
-                  <span>เชิญ <strong>Pudding LINE Official Bot</strong> เข้ากลุ่ม LINE ของห้องเรียน</span>
-                </div>
-                <div className="flex items-start gap-2.5">
-                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-black text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-                    2
-                  </span>
-                  <span>กดปุ่ม &quot;สร้างรหัสเชื่อมต่อ&quot; ด้านล่าง แล้วพิมพ์คำสั่งลงในกลุ่ม LINE ดังนี้:</span>
-                </div>
+            {lineConnection.status === 'connected' ? (
+              <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-200 space-y-1">
+                <p className="font-bold">กลุ่มนี้พร้อมรับแจ้งเตือนงานของห้องเรียน</p>
+                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">หากนำบอทออกจากกลุ่ม ห้องเรียนนี้จะยกเลิกการเชื่อมต่อโดยอัตโนมัติ</p>
               </div>
-
-              {/* Token Command Box */}
-              {lineConnection?.token && (
-                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-2">
-                  <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 block">
-                    พิมพ์ข้อความนี้ในแชทกลุ่ม LINE:
-                  </span>
-                  <div className="flex items-center justify-between gap-2">
-                    <code className="text-sm font-black font-mono text-amber-950 dark:text-amber-100">
-                      #pudding {lineConnection.token}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(`#pudding ${lineConnection.token}`);
-                        setIsLineCodeCopied(true);
-                        setTimeout(() => setIsLineCodeCopied(false), 2000);
-                      }}
-                      className="px-3 py-1 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer flex items-center gap-1"
-                    >
-                      {isLineCodeCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3 text-slate-950" />}
-                      <span>{isLineCodeCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
-                    </button>
-                  </div>
-                  {lineConnection.expiresAt && (
-                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                      หมดอายุเวลา: {new Date(lineConnection.expiresAt).toLocaleTimeString('th-TH')}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
+            ) : (
+              <LineGroupConnectSteps status={lineConnection.status} botFriend={teacherBot.botFriend} addFriendUrl={teacherBot.addFriendUrl} />
+            )}
 
             {/* Actions */}
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={isLineLoading}
-                onClick={() => handleLineConnection('create')}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs cursor-pointer disabled:opacity-50"
-              >
-                {isLineLoading ? 'กำลังสร้างรหัส...' : 'สร้างรหัสเชื่อมต่อกลุ่ม LINE'}
-              </button>
-
-              {(classroom.line_connection_status === 'connected' || classroom.line_group_id) && (
+              {lineConnection.status !== 'connected' ? (
+                <button
+                  type="button"
+                  disabled={isLineLoading}
+                  onClick={() => handleLineConnection('create')}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {isLineLoading ? 'กำลังเตรียม...' : lineConnection.status === 'waiting' ? 'เริ่มรอใหม่ (15 นาที)' : 'เชื่อม LINE Group'}
+                </button>
+              ) : (
                 <>
                   <button
                     type="button"
                     disabled={isLineLoading}
                     onClick={() => handleLineConnection('test')}
-                    className="px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-xs hover:bg-emerald-100 cursor-pointer"
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-xs hover:bg-emerald-100 cursor-pointer"
                   >
                     ทดสอบส่งข้อความ
                   </button>
@@ -2472,7 +2468,7 @@ function StudentList({
   );
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4">
+    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-4">
       <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
         <h2 className="font-black text-slate-900 dark:text-white flex items-center gap-2">
           <Users className="w-4 h-4 text-amber-500" />
@@ -2647,7 +2643,7 @@ function AttendancePanel({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {session && (
             <button
               type="button"
@@ -2848,7 +2844,7 @@ function AttendancePanel({
                 onClick={() => toggleSession(item.id)}
                 className="p-4 flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none"
               >
-                <div className="flex items-center gap-3 min-w-48">
+                <div className="flex items-center gap-3 min-w-0 flex-1 sm:min-w-48">
                   <span
                     className={`text-[10px] font-black px-2.5 py-0.5 rounded-full shrink-0 ${
                       isOpen
@@ -3033,7 +3029,7 @@ function AttendancePanel({
                           </div>
 
                           {/* 1-Click Status Switcher Buttons */}
-                          <div className="flex items-center gap-1">
+                          <div className="grid grid-cols-4 gap-1 w-full sm:w-auto">
                             {(
                               [
                                 ['on_time', 'ตรงเวลา', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
@@ -3048,7 +3044,7 @@ function AttendancePanel({
                                   key={stKey}
                                   type="button"
                                   onClick={() => update(student.id, stKey as AttendanceStatus)}
-                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                  className={`px-2.5 py-2 sm:py-1 rounded-lg text-[11px] sm:text-[10px] font-bold border transition-all cursor-pointer ${
                                     isActive
                                       ? `${activeCls} font-black shadow-xs ring-1 ring-current`
                                       : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-700 hover:border-slate-400'

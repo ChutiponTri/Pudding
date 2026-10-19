@@ -16,11 +16,13 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   }
 
   return (
-    <div className="min-h-screen flex flex-col transition-[padding] duration-300 ease-in-out">
+    <div className="min-h-dvh flex flex-col">
       <GlobalClassroomSidebar />
-      <div className={`flex flex-col flex-1 transition-[padding] duration-300 ease-in-out ${isOpen ? 'md:pl-80' : 'pl-0'}`}>
+      {/* The sidebar pushes content only on desktop; on phones and iPads it
+          overlays the page so the workspace keeps its full width. */}
+      <div className={`flex flex-col flex-1 min-w-0 transition-[padding] duration-300 ease-in-out ${isOpen ? 'lg:pl-80' : 'pl-0'}`}>
         <Navbar />
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 transition-all duration-300">
+        <main className="flex-1 max-w-7xl w-full min-w-0 mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8">
           {children}
         </main>
       </div>

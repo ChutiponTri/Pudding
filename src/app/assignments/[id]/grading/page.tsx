@@ -215,10 +215,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       return sub.is_flagged_suspicious || sub.tab_switch_count >= 3 || sub.total_time_away_seconds >= 60;
     }
     if (statusFilter === 'pending') {
-      return sub.total_score === undefined;
+      return sub.total_score == null;
     }
     if (statusFilter === 'graded') {
-      return sub.total_score !== undefined;
+      return sub.total_score != null;
     }
 
     return true;
@@ -228,13 +228,13 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     (s) => s.is_flagged_suspicious || s.tab_switch_count >= 3 || s.total_time_away_seconds >= 60
   ).length;
 
-  const gradedTotal = submissions.filter((s) => s.total_score !== undefined).length;
+  const gradedTotal = submissions.filter((s) => s.total_score != null).length;
 
   return (
     <div className="space-y-8 pb-20">
       {/* Toast Notice */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-2xl bg-amber-500 text-slate-950 font-bold shadow-2xl flex items-center gap-2 text-xs animate-in fade-in slide-in-from-bottom-5">
+        <div className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
           <Check className="w-4 h-4" />
           <span>{toastMessage}</span>
         </div>
@@ -250,7 +250,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           <span>{t('common.back')} {t('nav.dashboard')}</span>
         </Link>
 
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2 mb-2">
@@ -321,7 +321,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               </div>
 
               {/* Status Action Buttons */}
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {/* 1. Automated */}
                 <button
                   type="button"
@@ -537,16 +537,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
         {/* Table Content */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[44rem] text-left text-xs">
             <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 uppercase tracking-wider font-semibold border-b border-slate-100 dark:border-slate-800">
               <tr>
-                <th className="py-3.5 px-6">{t('grading.table.student_id')}</th>
-                <th className="py-3.5 px-6">{t('grading.table.student_name')}</th>
-                <th className="py-3.5 px-6">{t('grading.table.status')}</th>
-                <th className="py-3.5 px-6">{t('grading.table.time_spent')}</th>
-                <th className="py-3.5 px-6">{t('grading.table.integrity')}</th>
-                <th className="py-3.5 px-6 text-center">{t('grading.table.score')}</th>
-                <th className="py-3.5 px-6 text-right">{t('grading.table.action')}</th>
+                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.student_id')}</th>
+                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.student_name')}</th>
+                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.status')}</th>
+                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.time_spent')}</th>
+                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.integrity')}</th>
+                <th className="py-3.5 px-4 sm:px-6 text-center">{t('grading.table.score')}</th>
+                <th className="py-3.5 px-4 sm:px-6 text-right">{t('grading.table.action')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
@@ -559,18 +559,18 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               ) : (
                 filteredSubmissions.map((sub) => {
                   const student = sub.student;
-                  const isGraded = sub.total_score !== undefined;
+                  const isGraded = sub.total_score != null;
 
                   return (
                     <tr
                       key={sub.id}
                       className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                     >
-                      <td className="py-4 px-6 font-mono text-slate-500 dark:text-slate-400">
+                      <td className="py-4 px-4 sm:px-6 font-mono text-slate-500 dark:text-slate-400">
                         {student?.student_id || sub.student_id}
                       </td>
 
-                      <td className="py-4 px-6">
+                      <td className="py-4 px-4 sm:px-6">
                         <div className="flex items-center gap-3">
                           <img
                             src={
@@ -586,7 +586,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         </div>
                       </td>
 
-                      <td className="py-4 px-6">
+                      <td className="py-4 px-4 sm:px-6">
                         <span
                           className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
                             sub.status === 'submitted'
@@ -604,11 +604,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         </span>
                       </td>
 
-                      <td className="py-4 px-6 text-slate-500 dark:text-slate-400 font-mono">
+                      <td className="py-4 px-4 sm:px-6 text-slate-500 dark:text-slate-400 font-mono">
                         {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}
                       </td>
 
-                      <td className="py-4 px-6">
+                      <td className="py-4 px-4 sm:px-6">
                         <div className="flex items-center gap-2">
                           <AntiCheatingBadge
                             isFlagged={sub.is_flagged_suspicious}
@@ -628,7 +628,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         </div>
                       </td>
 
-                      <td className="py-4 px-6 text-center font-bold">
+                      <td className="py-4 px-4 sm:px-6 text-center font-bold">
                         {isGraded ? (
                           <span className="text-slate-900 dark:text-white font-mono text-sm">
                             {sub.total_score}
@@ -643,7 +643,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         )}
                       </td>
 
-                      <td className="py-4 px-6 text-right">
+                      <td className="py-4 px-4 sm:px-6 text-right">
                         <button
                           type="button"
                           onClick={() => handleOpenGrading(sub)}

@@ -199,3 +199,17 @@ FROM information_schema.columns
 WHERE table_name IN ('users', 'classrooms', 'courses', 'classroom_students', 'attendance_sessions', 'attendance_records', 'classroom_posts', 'submission_answers')
   AND column_name IN ('first_name', 'last_name', 'student_id', 'institution', 'pending_students', 'teachers', 'status', 'research_grades', 'line_group_id', 'line_connection_status', 'line_connection_token_hash', 'line_connection_token', 'line_connection_token_expires_at', 'line_connected_at')
 ORDER BY table_name, column_name;
+
+-- ==============================================================================
+-- Automatic LINE linking (no pairing codes)
+-- Teachers are linked from their LINE sign-in; groups link when the bot joins a
+-- group that a waiting classroom's teacher is in, and unlink when it leaves.
+-- ==============================================================================
+ALTER TABLE IF EXISTS public.users
+ADD COLUMN IF NOT EXISTS line_bot_friend BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE IF EXISTS public.classrooms
+ADD COLUMN IF NOT EXISTS line_group_name TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_classrooms_line_group_id ON public.classrooms(line_group_id);
+CREATE INDEX IF NOT EXISTS idx_classrooms_line_connection_status ON public.classrooms(line_connection_status);

@@ -188,7 +188,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   // Accept AI Score & Feedback for single question
   const handleAcceptAIScore = (qId: string) => {
     const ans = answers[qId];
-    if (ans?.ai_mock_score !== undefined) {
+    if (ans?.ai_mock_score != null) {
       setQuestionGrades((prev) => ({
         ...prev,
         [qId]: {
@@ -410,28 +410,53 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
     }
   };
 
+  const graderButtons = availableTeachers.map((tchr) => {
+    const isSelected = activeTeacher.teacher_id === tchr.teacher_id;
+    return (
+      <button
+        key={tchr.teacher_id}
+        type="button"
+        onClick={() => handleTeacherSwitch(tchr)}
+        className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+          isSelected
+            ? 'bg-amber-500 text-slate-950 shadow-xs'
+            : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700'
+        }`}
+      >
+        <img
+          src={tchr.avatar_url}
+          alt=""
+          className="w-4 h-4 rounded-full object-cover"
+        />
+        <span>
+          {tchr.name} ({tchr.role === 'primary' ? 'เจ้าของวิชา' : tchr.role === 'assistant' ? 'TA' : 'ผู้วิจัย'})
+        </span>
+      </button>
+    );
+  });
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-100/90 dark:bg-slate-950/95 backdrop-blur-md overflow-hidden animate-in fade-in transition-colors">
       {/* Top Floating App Bar */}
-      <header className="h-16 px-6 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md flex items-center justify-between shrink-0 shadow-xs">
-        <div className="flex items-center gap-4">
+      <header className="min-h-16 px-3 sm:px-6 pt-[env(safe-area-inset-top)] border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-2 shrink-0 shadow-xs">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
           >
             <ChevronLeft className="w-4 h-4" />
-            <span>{t('common.close')}</span>
+            <span className="hidden sm:inline">{t('common.close')}</span>
           </button>
 
           <div className="h-5 w-px bg-slate-200 dark:border-slate-800 hidden sm:block" />
 
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-black text-slate-900 dark:text-white">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <h2 className="hidden md:block text-sm font-black text-slate-900 dark:text-white shrink-0">
                 {t('grading.workspace.title')}
               </h2>
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-900">
+              <span className="truncate text-xs px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-900">
                 {submission.student?.first_name} {submission.student?.last_name}
               </span>
               <span className="text-xs text-slate-400 font-mono hidden sm:inline">
@@ -448,35 +473,12 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             <span>{t('grading.workspace.active_grader')}:</span>
           </span>
           <div className="flex items-center gap-1">
-            {availableTeachers.map((tchr) => {
-              const isSelected = activeTeacher.teacher_id === tchr.teacher_id;
-              return (
-                <button
-                  key={tchr.teacher_id}
-                  type="button"
-                  onClick={() => handleTeacherSwitch(tchr)}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    isSelected
-                      ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  <img
-                    src={tchr.avatar_url}
-                    alt=""
-                    className="w-4 h-4 rounded-full object-cover"
-                  />
-                  <span>
-                    {tchr.name} ({tchr.role === 'primary' ? 'เจ้าของวิชา' : tchr.role === 'assistant' ? 'TA' : 'ผู้วิจัย'})
-                  </span>
-                </button>
-              );
-            })}
+            {graderButtons}
           </div>
         </div>
 
         {/* Right Action Buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           {onNextStudent && (
             <button
               type="button"
@@ -485,16 +487,24 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
               className="px-4 py-2 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-900 dark:hover:bg-slate-100 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md cursor-pointer disabled:opacity-50"
             >
               {isSavingAll ? <Loader2 className="w-4 h-4 animate-spin text-amber-400" /> : <Save className="w-4 h-4 text-amber-400" />}
-              <span>{t('grading.workspace.save_all_and_next')}</span>
+              <span className="hidden sm:inline">{t('grading.workspace.save_all_and_next')}</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           )}
         </div>
       </header>
 
+      {/* Grader persona selector for phones and iPads (it lives in the header on desktop) */}
+      {availableTeachers.length > 0 && (
+        <div className="lg:hidden px-3 sm:px-6 py-2 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 flex items-center gap-2 overflow-x-auto scrollbar-none shrink-0">
+          <Users className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          {graderButtons}
+        </div>
+      )}
+
       {/* Student Publication Notice Banner */}
       <div
-        className={`px-6 py-2.5 border-b flex items-center justify-between text-xs transition-colors ${
+        className={`px-3 sm:px-6 py-2.5 border-b flex items-center justify-between gap-2 text-xs transition-colors ${
           activeTeacher.role === 'researcher'
             ? 'bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-900/50 text-purple-950 dark:text-purple-200'
             : activeTeacher.role === 'assistant'
@@ -542,7 +552,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             <div className="space-y-1.5">
               {questions.map((q, idx) => {
                 const ans = answers[q.id];
-                const isGraded = ans?.teacher_score !== undefined;
+                const isGraded = ans?.teacher_score != null;
                 return (
                   <button
                     key={q.id}
@@ -592,7 +602,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                 <div
                   key={q.id}
                   id={`question-card-${idx}`}
-                  className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 space-y-6 transition-all scroll-mt-6"
+                  className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-6 space-y-6 transition-all scroll-mt-6"
                 >
                   {/* Question Header & Standard Tag */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
@@ -721,7 +731,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                   </div>
 
                   {/* ASAG AI Mockup Evaluation Card */}
-                  {ans?.ai_mock_score !== undefined && (
+                  {ans?.ai_mock_score != null && (
                     <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/40 dark:to-purple-950/30 border border-indigo-200 dark:border-indigo-900/50 space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -927,11 +937,11 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       {/* MANAGE CUSTOM FEEDBACK PRESET TEMPLATES MODAL */}
       {isPresetModalOpen && (
         <div
-          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => setIsPresetModalOpen(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">

@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import { Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
+import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import {
   PlusCircle,
   Trash2,
@@ -291,7 +292,7 @@ function NewAssignmentContent() {
           type: q.type,
           question_text: q.question_text || 'คำถามข้อนี้',
           indicator_id: q.indicator_id,
-          options: q.type === 'multiple_choice' ? q.options : undefined,
+          options: q.type === 'multiple_choice' ? q.options : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : undefined,
           ideal_answer: q.ideal_answer,
           rubric_criteria: q.rubric_criteria,
           max_score: Number(q.max_score) || 5,
@@ -362,10 +363,10 @@ function NewAssignmentContent() {
               }
             }
           }}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
+          className="inline-flex items-center gap-2 max-w-full px-3.5 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>{isFromDashboard ? 'กลับสู่แดชบอร์ด (Dashboard)' : 'กลับไปหน้าห้องเรียน (งานและเนื้อหา)'}</span>
+          <span className="truncate">{isFromDashboard ? 'กลับสู่แดชบอร์ด (Dashboard)' : 'กลับไปหน้าห้องเรียน (งานและเนื้อหา)'}</span>
         </button>
       </div>
 
@@ -384,8 +385,8 @@ function NewAssignmentContent() {
 
       <form onSubmit={handleSubmit} className="space-y-8">
         {/* Mode Selector Toggle: Assignment vs Exam */}
-        <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3 p-1 rounded-2xl bg-slate-100/70 dark:bg-slate-800/60 sm:bg-transparent sm:dark:bg-transparent sm:p-0">
             <button
               type="button"
               onClick={() => setIsExam(false)}
@@ -400,19 +401,19 @@ function NewAssignmentContent() {
             <button
               type="button"
               onClick={() => setIsExam(true)}
-              className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 isExam
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <ShieldAlert className="w-3.5 h-3.5" />
+              <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
               <span>{t('assignment_creator.mode_exam')}</span>
             </button>
           </div>
 
           {isExam ? (
-            <span className="inline-flex items-center gap-1.5 text-xs text-purple-700 dark:text-purple-300 font-semibold bg-purple-50 dark:bg-purple-950/60 px-3.5 py-1.5 rounded-full border border-purple-200 dark:border-purple-800">
+            <span className="self-start lg:self-auto inline-flex items-start gap-1.5 text-xs leading-relaxed text-purple-700 dark:text-purple-300 font-semibold bg-purple-50 dark:bg-purple-950/60 px-3.5 py-1.5 rounded-full border border-purple-200 dark:border-purple-800">
               <Sparkles className="w-3.5 h-3.5" />
               <span>
                 {language === 'th'
@@ -421,7 +422,7 @@ function NewAssignmentContent() {
               </span>
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300 font-semibold bg-emerald-50 dark:bg-emerald-950/60 px-3.5 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+            <span className="self-start lg:self-auto inline-flex items-start gap-1.5 text-xs leading-relaxed text-emerald-700 dark:text-emerald-300 font-semibold bg-emerald-50 dark:bg-emerald-950/60 px-3.5 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800">
               <Paperclip className="w-3.5 h-3.5" />
               <span>
                 {language === 'th'
@@ -433,7 +434,7 @@ function NewAssignmentContent() {
         </div>
 
         {/* Basic Assignment Details */}
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-6">
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-6">
           <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-amber-500" />
             <span>{language === 'th' ? 'ข้อมูลรายวิชาและการมอบหมาย' : 'Course & Assignment Details'}</span>
@@ -567,7 +568,7 @@ function NewAssignmentContent() {
         {/* CONDITIONAL ATTACHMENT COMPONENT: Sample Work / Guidelines */}
         {!isExam ? (
           /* Assignment Mode: Active Sample Work Section */
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-emerald-200 dark:border-emerald-900/60 shadow-xs space-y-4 animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-emerald-200 dark:border-emerald-900/60 shadow-xs space-y-4 animate-in fade-in duration-300">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400">
@@ -712,8 +713,8 @@ function NewAssignmentContent() {
 
         {/* Dynamic Questions Builder */}
         <div className="space-y-6">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
-            <div>
+          <div className="flex items-start sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
+            <div className="min-w-0">
               <h2 className="text-lg font-black text-slate-900 dark:text-white">
                 {t('assignment_creator.questions_builder.title')}
               </h2>
@@ -723,7 +724,7 @@ function NewAssignmentContent() {
                   : 'Configure question types, rubric scoring, and standard indicators'}
               </p>
             </div>
-            <span className="text-xs font-bold px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+            <span className="shrink-0 text-xs font-bold px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
               {questions.length} {language === 'th' ? 'ข้อ' : 'Questions'}
             </span>
           </div>
@@ -734,7 +735,7 @@ function NewAssignmentContent() {
               <div
                 key={idx}
                 ref={idx === questions.length - 1 ? lastQuestionRef : null}
-                className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-6 relative transition-all"
+                className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-6 relative transition-all"
               >
                 {/* Question Card Header */}
                 <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
@@ -742,7 +743,7 @@ function NewAssignmentContent() {
                     <span className="w-8 h-8 rounded-2xl bg-amber-500 text-slate-950 font-black text-sm flex items-center justify-center shadow-xs">
                       {idx + 1}
                     </span>
-                    <span className="font-bold text-sm text-slate-900 dark:text-white">
+                    <span className="hidden min-[380px]:inline font-bold text-sm text-slate-900 dark:text-white">
                       {t('assignment_creator.questions_builder.question_number')} {idx + 1}
                     </span>
                   </div>
@@ -922,13 +923,40 @@ function NewAssignmentContent() {
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                       {t('assignment_creator.questions_builder.ideal_answer')}
                     </label>
-                    <textarea
-                      rows={2}
-                      value={q.ideal_answer}
-                      onChange={(e) => handleQuestionChange(idx, 'ideal_answer', e.target.value)}
-                      placeholder={t('assignment_creator.questions_builder.ideal_answer_hint')}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                    />
+                    {q.type === 'true_false' ? (
+                      // Pick the correct answer so auto-grading matches what students select.
+                      <div className="grid grid-cols-2 gap-2" role="radiogroup">
+                        {TRUE_FALSE_OPTIONS.map((option) => {
+                          const isSelected = parseTrueFalse(q.ideal_answer) === (option === 'ถูก');
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              role="radio"
+                              aria-checked={isSelected}
+                              onClick={() => handleQuestionChange(idx, 'ideal_answer', option)}
+                              className={`py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                                isSelected
+                                  ? option === 'ถูก'
+                                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                                    : 'bg-rose-600 border-rose-600 text-white shadow-xs'
+                                  : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
+                              }`}
+                            >
+                              {option === 'ถูก' ? '✓ ถูก' : '✗ ผิด'}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <textarea
+                        rows={2}
+                        value={q.ideal_answer}
+                        onChange={(e) => handleQuestionChange(idx, 'ideal_answer', e.target.value)}
+                        placeholder={t('assignment_creator.questions_builder.ideal_answer_hint')}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                      />
+                    )}
                   </div>
 
                   <div className="space-y-1.5">
@@ -949,7 +977,7 @@ function NewAssignmentContent() {
           </div>
 
           {/* QUESTION ADDER PLACEMENT: AT THE BOTTOM OF THE LAST QUESTION ITEM */}
-          <div className="p-6 rounded-3xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 text-center space-y-3">
+          <div className="p-4 sm:p-6 rounded-3xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 text-center space-y-3">
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               {t('assignment_creator.questions_builder.add_question_hint')}
             </p>
@@ -993,8 +1021,8 @@ function NewAssignmentContent() {
           </div>
         </div>
 
-        {/* Submit Actions Bar */}
-        <div className="pt-4 flex items-center justify-end gap-3">
+        {/* Submit Actions Bar (sticky so publishing is always reachable on long forms) */}
+        <div className="sticky bottom-[max(env(safe-area-inset-bottom),0.75rem)] z-20 p-3 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-end gap-2 sm:gap-3">
           <button
             type="button"
             onClick={() => router.back()}
@@ -1005,7 +1033,7 @@ function NewAssignmentContent() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="px-6 py-2.5 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-900 dark:hover:bg-slate-100 text-xs font-bold shadow-lg shadow-black/15 transition-all hover:scale-[1.02] flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            className="flex-1 sm:flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-900 dark:hover:bg-slate-100 text-sm sm:text-xs font-bold shadow-lg shadow-black/15 transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <Send className="w-4 h-4 text-amber-500" />
             <span>{isSubmitting ? t('common.loading') : t('assignment_creator.buttons.publish')}</span>

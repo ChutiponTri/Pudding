@@ -33,9 +33,9 @@ export const SidebarProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return () => window.removeEventListener('toggle-classroom-sidebar', handleToggle);
   }, []);
 
-  // Auto-close on route navigation ONLY on mobile (< 768px)
+  // Auto-close on route navigation when the sidebar overlays the page (< 1024px)
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       setIsOpen(false);
     }
   }, [pathname]);

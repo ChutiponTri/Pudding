@@ -320,7 +320,7 @@ function GradingHubContent() {
       );
 
       const pendingCount = courseSubmissions.filter(
-        (s) => (s.status === 'submitted' || s.status === 'late') && s.total_score === undefined
+        (s) => (s.status === 'submitted' || s.status === 'late') && s.total_score == null
       ).length;
 
       const suspiciousCount = courseSubmissions.filter(
@@ -376,9 +376,9 @@ function GradingHubContent() {
         const submitted = asgSubs.filter((s) => s.status === 'submitted' || s.status === 'late');
         const late = asgSubs.filter((s) => s.status === 'late');
         const flagged = asgSubs.filter((s) => s.is_flagged_suspicious);
-        const graded = asgSubs.filter((s) => s.total_score !== undefined);
+        const graded = asgSubs.filter((s) => s.total_score != null);
         const pending = asgSubs.filter(
-          (s) => (s.status === 'submitted' || s.status === 'late') && s.total_score === undefined
+          (s) => (s.status === 'submitted' || s.status === 'late') && s.total_score == null
         );
         const notSubmittedCount = Math.max(0, studentsList.length - submitted.length);
 
@@ -413,8 +413,8 @@ function GradingHubContent() {
         submission: sub || null,
         isSubmitted: !!sub && (sub.status === 'submitted' || sub.status === 'late'),
         isLate: sub?.status === 'late',
-        isPendingGrade: !!sub && sub.total_score === undefined,
-        isGraded: !!sub && sub.total_score !== undefined,
+        isPendingGrade: !!sub && sub.total_score == null,
+        isGraded: !!sub && sub.total_score != null,
         isFlagged: !!sub?.is_flagged_suspicious,
       };
     });
@@ -451,20 +451,20 @@ function GradingHubContent() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/60 dark:bg-slate-950 pb-20 transition-colors">
+    <div className="min-h-dvh bg-slate-50/60 dark:bg-slate-950 pb-20 transition-colors">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-2xl bg-amber-500 text-slate-950 font-bold shadow-2xl flex items-center gap-2 text-xs animate-in fade-in slide-in-from-bottom-5">
+        <div className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
           <Check className="w-4 h-4" />
           <span>{toastMessage}</span>
         </div>
       )}
 
       {/* Main Container */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
+      <div className="max-w-7xl mx-auto space-y-5 sm:space-y-6">
         {/* BREADCRUMB NAVIGATION BAR */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-wrap items-center justify-between gap-3">
-          <nav className="flex items-center gap-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+          <nav className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-bold text-slate-500 dark:text-slate-400 min-w-0">
             <button
               type="button"
               onClick={handleResetToCourses}
@@ -494,7 +494,7 @@ function GradingHubContent() {
             {selectedClassroom && activeAssignment && (
               <>
                 <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-slate-900 dark:text-white font-black truncate max-w-xs">
+                <span className="text-slate-900 dark:text-white font-black truncate max-w-[16rem] sm:max-w-xs">
                   {selectedClassroom.name} : {activeAssignment.title}
                 </span>
               </>
@@ -523,7 +523,7 @@ function GradingHubContent() {
         {!selectedCourseId && (
           <div className="space-y-6 animate-in fade-in">
             {/* Header info */}
-            <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-3xl p-6 md:p-8 text-slate-950 shadow-xl shadow-amber-500/10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="bg-linear-to-br from-amber-400 via-orange-400 to-amber-500 rounded-3xl p-5 sm:p-6 md:p-8 text-slate-950 shadow-xl shadow-amber-500/15 flex flex-col md:flex-row md:items-center justify-between gap-5 sm:gap-6">
               <div className="space-y-2">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
                   <span>📝</span>
@@ -540,7 +540,7 @@ function GradingHubContent() {
               </div>
 
               {/* Total pending review indicator */}
-              <div className="px-5 py-4 rounded-2xl bg-white/95 text-slate-950 shadow-lg border border-amber-200 text-center min-w-[160px]">
+              <div className="px-5 py-4 rounded-2xl bg-white/95 text-slate-950 shadow-lg ring-1 ring-white/60 text-center md:min-w-40 shrink-0">
                 <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
                   {language === 'th' ? 'งานรอตรวจทั้งหมด' : 'Total Pending'}
                 </span>
@@ -554,12 +554,12 @@ function GradingHubContent() {
             </div>
 
             {/* Courses Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
               {courseStats.map(({ course, sectionsCount, assignmentsCount, pendingCount, suspiciousCount, submittedCount, totalEnrolled }) => (
                 <div
                   key={course.id}
                   onClick={() => handleSelectCourse(course.id)}
-                  className="group bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-5 hover:border-amber-400 dark:hover:border-amber-500 shadow-xs hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between"
+                  className="group bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-5 hover:border-amber-400 dark:hover:border-amber-500 shadow-xs hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between"
                 >
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
@@ -646,7 +646,7 @@ function GradingHubContent() {
         {selectedCourse && !selectedClassroomId && (
           <div className="space-y-6 animate-in fade-in">
             {/* Header of selected course */}
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950 text-xs font-bold text-amber-900 dark:text-amber-300">
                   <span>🏢</span>
@@ -698,7 +698,7 @@ function GradingHubContent() {
                   {sectionItems.map((item) => (
                     <div
                       key={`${item.classroom.id}-${item.assignment.id}`}
-                      className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-5 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-lg transition-all"
+                      className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-5 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-lg transition-all"
                     >
                       {/* Section & Assignment Header */}
                       <div className="flex items-start justify-between gap-3">
@@ -823,7 +823,7 @@ function GradingHubContent() {
         {selectedCourse && selectedClassroom && activeAssignment && (
           <div className="space-y-6 animate-in fade-in">
             {/* Header info */}
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950 text-xs font-bold text-amber-900 dark:text-amber-300">
                   <span>👥</span>
@@ -856,7 +856,7 @@ function GradingHubContent() {
             </div>
 
             {/* MANUAL SUBMISSION CONTROL PANEL (THE FEATURE USER LIKED) */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs p-6 space-y-4">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 sm:p-6 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center">
@@ -1008,7 +1008,7 @@ function GradingHubContent() {
               </div>
 
               {/* Search input */}
-              <div className="relative min-w-[240px]">
+              <div className="relative w-full sm:w-auto sm:min-w-60">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
                   type="text"
@@ -1136,7 +1136,7 @@ function GradingHubContent() {
 
                           {/* Score */}
                           <td className="py-4 px-4 text-center font-bold">
-                            {item.submission?.total_score !== undefined ? (
+                            {item.submission?.total_score != null ? (
                               <span className="px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-xs">
                                 {item.submission.total_score} / {activeAssignment.total_points}
                               </span>
@@ -1211,7 +1211,7 @@ export default function GradingPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center">
+        <div className="min-h-dvh flex items-center justify-center">
           <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
         </div>
       }

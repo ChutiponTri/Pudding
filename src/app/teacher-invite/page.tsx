@@ -109,7 +109,7 @@ function TeacherInviteContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
+      <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
           <p className="text-sm font-semibold text-slate-500">กำลังตรวจสอบคำเชิญ...</p>
@@ -120,8 +120,8 @@ function TeacherInviteContent() {
 
   if (errorMessage || !course) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
-        <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-4">
+      <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
+        <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-4">
           <div className="w-14 h-14 rounded-2xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center mx-auto">
             <AlertCircle className="w-8 h-8" />
           </div>
@@ -141,7 +141,7 @@ function TeacherInviteContent() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
+    <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
       <div className="max-w-lg w-full bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         {/* Banner */}
         <div className="bg-gradient-to-br from-amber-500 via-amber-600 to-orange-600 p-6 sm:p-8 text-white relative overflow-hidden">
@@ -303,7 +303,7 @@ export default function TeacherInvitePage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950">
           <div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" />
         </div>
       }

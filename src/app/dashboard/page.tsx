@@ -4,6 +4,7 @@ import { useUser } from '@clerk/nextjs';
 import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dataService } from '@/lib/supabase/dataService';
 import {
   Assignment,
@@ -103,8 +104,11 @@ export default function DashboardPage() {
   const [teacherInstitutionInput, setTeacherInstitutionInput] = useState('');
   const [teacherFirstNameInput, setTeacherFirstNameInput] = useState('');
   const [teacherLastNameInput, setTeacherLastNameInput] = useState('');
-  const [teacherLineLink, setTeacherLineLink] = useState<{ status: 'disconnected' | 'waiting' | 'connected'; token?: string; expiresAt?: string }>({ status: 'disconnected' });
-  const [isTeacherLineLinkLoading, setIsTeacherLineLinkLoading] = useState(false);
+  const [teacherLineLink, setTeacherLineLink] = useState<{
+    status: 'connected' | 'missing_line' | 'conflict' | 'loading';
+    botFriend?: boolean | null;
+    addFriendUrl?: string;
+  }>({ status: 'loading' });
 
   // Classroom Modals state
   const [isClassModalOpen, setIsClassModalOpen] = useState(false);
@@ -127,12 +131,11 @@ export default function DashboardPage() {
   const [isCopied, setIsCopied] = useState(false);
   const [lineConnection, setLineConnection] = useState<{
     status: 'disconnected' | 'waiting' | 'connected';
-    token?: string;
+    groupName?: string;
     expiresAt?: string;
     connectedAt?: string;
   }>({ status: 'disconnected' });
   const [isLineConnectionLoading, setIsLineConnectionLoading] = useState(false);
-  const [isLineCodeCopied, setIsLineCodeCopied] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Course-level Learning Indicators & Rubrics Settings Modal
@@ -246,7 +249,11 @@ export default function DashboardPage() {
   const handleOpenManagingClassroom = async (cls: Classroom, tab: 'roster' | 'pending' | 'line' | 'line-group' | 'email' = 'roster') => {
     setManagingClassroom(cls);
     setStudentTab(tab);
-    setLineConnection({ status: 'disconnected' });
+    setLineConnection({
+      status: lineConnectionStatuses[cls.id] || cls.line_connection_status || (cls.line_group_id ? 'connected' : 'disconnected'),
+      groupName: cls.line_group_name,
+      connectedAt: cls.line_connected_at,
+    });
     try {
       const roster = await dataService.getClassroomRoster(cls.id);
       if (roster.classroom) {
@@ -263,7 +270,7 @@ export default function DashboardPage() {
     const status = lineConnectionStatuses[cls.id] || cls.line_connection_status || (cls.line_group_id ? 'connected' : 'disconnected');
     setLineConnection({
       status,
-      token: status === 'waiting' ? cls.line_connection_token : undefined,
+      groupName: cls.line_group_name,
       expiresAt: cls.line_connection_token_expires_at,
       connectedAt: cls.line_connected_at,
     });
@@ -283,7 +290,7 @@ export default function DashboardPage() {
       if (!response.ok) throw new Error(result.error || 'LINE connection failed');
       setLineConnection(result);
       setLineConnectionStatuses((current) => ({ ...current, [activeClassroom.id]: result.status }));
-      showToast(action === 'disconnect' ? 'ยกเลิกการเชื่อมต่อ LINE Group แล้ว' : action === 'test' ? 'ส่งข้อความทดสอบแล้ว' : 'สร้างรหัสเชื่อมต่อแล้ว');
+      showToast(action === 'disconnect' ? 'ยกเลิกการเชื่อมต่อแล้ว และบอทออกจากกลุ่ม LINE แล้ว' : action === 'test' ? 'ส่งข้อความทดสอบแล้ว' : 'พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'ไม่สามารถเชื่อมต่อ LINE Group ได้');
     } finally {
@@ -294,6 +301,27 @@ export default function DashboardPage() {
   useEffect(() => {
     loadAllData();
   }, [clerkUser?.id]);
+
+  // While a classroom waits for the bot to join a group, poll its status so the
+  // dialog and class card flip to "connected" as soon as the webhook links it.
+  const waitingLineClassroomId = lineConnection.status === 'waiting'
+    ? (lineConnectionClassroom || managingClassroom)?.id
+    : undefined;
+  useEffect(() => {
+    if (!waitingLineClassroomId) return;
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(waitingLineClassroomId)}`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const result = await response.json();
+        if (result.status === 'waiting') return;
+        setLineConnection(result);
+        setLineConnectionStatuses((current) => ({ ...current, [waitingLineClassroomId]: result.status }));
+        if (result.status === 'connected') showToast(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`);
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [waitingLineClassroomId]);
 
   // Real-time subscription for instant dashboard updates & notifications when students join
   useEffect(() => {
@@ -844,9 +872,11 @@ export default function DashboardPage() {
     }
   };
 
+  // Teachers sign in with LINE, so the server links their LINE account
+  // automatically; this only reads (and refreshes) that status.
   const loadTeacherLineLink = async () => {
     try {
-      const response = await fetch('/api/line/teacher-link');
+      const response = await fetch('/api/line/teacher-link', { cache: 'no-store' });
       const result = await response.json();
       if (response.ok) setTeacherLineLink(result);
     } catch (error) {
@@ -854,24 +884,9 @@ export default function DashboardPage() {
     }
   };
 
-  const createTeacherLineLink = async () => {
-    setIsTeacherLineLinkLoading(true);
-    try {
-      const response = await fetch('/api/line/teacher-link', { method: 'POST' });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'ไม่สามารถสร้างรหัสเชื่อม LINE ได้');
-      setTeacherLineLink(result);
-      showToast('สร้างรหัสเชื่อม LINE สำหรับครูแล้ว');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'ไม่สามารถสร้างรหัสเชื่อม LINE ได้');
-    } finally {
-      setIsTeacherLineLinkLoading(false);
-    }
-  };
-
   useEffect(() => {
-    if (isInstitutionModalOpen && clerkUser?.id) loadTeacherLineLink();
-  }, [isInstitutionModalOpen, clerkUser?.id]);
+    if (clerkUser?.id) loadTeacherLineLink();
+  }, [clerkUser?.id, isInstitutionModalOpen]);
 
   const getRealLiffUrl = (cls: Classroom) => {
     const liffId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || '2011818142-BznwnWyj';
@@ -1058,49 +1073,50 @@ export default function DashboardPage() {
   const yearOptions = getAcademicYearOptions(defaultPeriod.yearCE);
 
   return (
-    <div className="space-y-8 pb-20">
+    <div className="space-y-6 sm:space-y-8 pb-20">
       {/* Toast Notice */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-2xl bg-amber-500 text-slate-950 font-bold shadow-2xl flex items-center gap-2 text-xs animate-in fade-in slide-in-from-bottom-5">
+        <div className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
           <Check className="w-4 h-4" />
           <span>{toastMessage}</span>
         </div>
       )}
 
       {/* Hero Welcome Banner with High-Visibility Primary CTAs */}
-      <div className="bg-linear-to-r from-amber-500 via-orange-500 to-yellow-500 rounded-3xl p-6 md:p-8 text-slate-950 shadow-xl shadow-amber-500/10 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors">
-        <div className="space-y-2 min-w-0 md:min-w-150">
+      <div className="relative overflow-hidden bg-linear-to-br from-amber-400 via-orange-400 to-amber-500 rounded-3xl p-5 sm:p-8 text-slate-950 shadow-xl shadow-amber-500/15 flex flex-col xl:flex-row xl:items-center justify-between gap-6">
+        <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 w-72 h-72 rounded-full bg-white/20 blur-3xl" />
+        <div className="relative space-y-2 min-w-0 xl:max-w-xl">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
             <span className="text-sm">🍮</span>
             <span>Pudding Learning Intelligence</span>
           </div>
-          <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-950">
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-950 break-words">
             {t('dashboard.welcome')}, <br className="md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || (loading ? 'กำลังโหลดข้อมูล...' : '')}
           </h1>
           <p className="text-slate-900/90 text-sm max-w-xl font-medium">
             {t('dashboard.overview_subtitle')}
           </p>
-          <div className="flex items-center gap-2 pt-1">
+          <div className="flex items-center gap-2 pt-1 min-w-0">
             <button
               type="button"
               onClick={() => { setIsProfileRequired(false); setIsInstitutionModalOpen(true); }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/10 hover:bg-black/20 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors cursor-pointer border border-black/10"
+              className="inline-flex items-center gap-1.5 max-w-full px-3 py-1.5 rounded-xl bg-black/10 hover:bg-black/20 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors cursor-pointer border border-black/10"
               title="คลิกเพื่อเลือกหรือแก้ไขสถานศึกษา"
             >
               <Building2 className="w-3.5 h-3.5" />
-              <span>{teacherProfile?.institution || (language === 'th' ? '+ ระบุสถานศึกษา/โรงเรียนของคุณครู' : '+ Specify School')}</span>
+              <span className="truncate">{teacherProfile?.institution || (language === 'th' ? '+ ระบุสถานศึกษา/โรงเรียนของคุณครู' : '+ Specify School')}</span>
               <Edit2 className="w-3 h-3 opacity-70 ml-0.5" />
             </button>
           </div>
         </div>
 
         {/* PRIMARY CTA PROMPTS: Add Course, Add Classroom & Create Assignment/Exam */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="relative grid grid-cols-1 sm:grid-cols-3 xl:flex xl:flex-wrap gap-2.5 sm:gap-3 shrink-0">
           {/* 1. Add Course CTA */}
           <button
             type="button"
             onClick={handleOpenCreateCourseModal}
-            className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
+            className="px-3 py-3 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex items-center gap-3 cursor-pointer ring-1 ring-white/60"
           >
             <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/30 group-hover:rotate-6 transition-transform">
               <BookOpen className="w-5 h-5" />
@@ -1117,7 +1133,7 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={() => handleOpenCreateClassModal()}
-            className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
+            className="px-3 py-3 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex items-center gap-3 cursor-pointer ring-1 ring-white/60"
           >
             <div className="w-10 h-10 rounded-xl bg-orange-500 text-white flex items-center justify-center font-black shadow-md shadow-orange-500/30 group-hover:rotate-6 transition-transform">
               <School className="w-5 h-5" />
@@ -1132,7 +1148,7 @@ export default function DashboardPage() {
           {/* 3. Create Assignment / Exam CTA */}
           <Link
             href="/assignments/new?from=dashboard"
-            className="px-3 py-3.5 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer border border-white/50"
+            className="px-3 py-3 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-sm text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex items-center gap-3 cursor-pointer ring-1 ring-white/60"
           >
             <div className="w-10 h-10 rounded-xl bg-linear-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
               <Sparkles className="w-5 h-5" />
@@ -1147,15 +1163,15 @@ export default function DashboardPage() {
       </div>
 
       {/* Top Metric Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         
         {/* Classrooms count */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 transition-all">
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 transition-all">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {t('dashboard.stats.active_classrooms')}
             </span>
-            <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl shrink-0 bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
               <School className="w-5 h-5" />
             </div>
           </div>
@@ -1170,12 +1186,12 @@ export default function DashboardPage() {
         </div>
 
         {/* Total Students */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-emerald-400 dark:hover:border-emerald-500 transition-all">
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-emerald-400 dark:hover:border-emerald-500 transition-all">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {t('dashboard.stats.total_students')}
             </span>
-            <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl shrink-0 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
               <Users className="w-5 h-5" />
             </div>
           </div>
@@ -1189,14 +1205,14 @@ export default function DashboardPage() {
 
         {/* Pending to Grade */}
         <Link
-          href="/assignments/assign-001/grading"
-          className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-400 dark:hover:border-blue-500 transition-all block group"
+          href="/grading"
+          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-400 dark:hover:border-blue-500 transition-all block group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {t('dashboard.stats.pending_grading')}
             </span>
-            <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <div className="w-9 h-9 rounded-xl shrink-0 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform">
               <FileCheck className="w-5 h-5" />
             </div>
           </div>
@@ -1210,14 +1226,14 @@ export default function DashboardPage() {
 
         {/* Anti-Cheating Alerts */}
         <Link
-          href="/assignments/assign-001/grading"
-          className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-rose-200 dark:border-rose-900/50 shadow-xs hover:border-rose-400 transition-all block group"
+          href="/grading"
+          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-rose-200 dark:border-rose-900/50 shadow-xs hover:border-rose-400 transition-all block group"
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">
               {t('dashboard.stats.flagged_suspicious')}
             </span>
-            <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <div className="w-9 h-9 rounded-xl shrink-0 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center group-hover:scale-110 transition-transform">
               <ShieldAlert className="w-5 h-5 animate-pulse" />
             </div>
           </div>
@@ -1248,15 +1264,15 @@ export default function DashboardPage() {
           </div>
 
           {/* Semester Selector */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold hidden sm:inline">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold hidden sm:inline shrink-0">
               <Calendar className="w-3.5 h-3.5 inline mr-1 text-amber-500" />
               {t('classroom_mgmt.fields.filter_semester_label')}:
             </span>
             <select
               value={selectedSemesterKey}
               onChange={(e) => setSelectedSemesterKey(e.target.value)}
-              className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:border-amber-500 cursor-pointer shadow-xs"
+              className="w-full sm:w-auto h-10 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:border-amber-500 cursor-pointer shadow-xs"
             >
               {availableSemesterOptions.map((opt) => (
                 <option key={`${opt.semester}_${opt.yearCE}`} value={`${opt.semester}_${opt.yearCE}`}>
@@ -1301,16 +1317,16 @@ export default function DashboardPage() {
             groupedCourses.map((course) => (
             <div
               key={course.id}
-              className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs p-6 space-y-6 transition-all hover:border-slate-300 dark:hover:border-slate-700"
+              className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 sm:p-6 space-y-5 sm:space-y-6 transition-all hover:border-slate-300 dark:hover:border-slate-700"
             >
               {/* Course Header */}
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-900 dark:text-amber-300 font-mono text-xs font-bold border border-amber-200 dark:border-amber-900">
                       {course.code}
                     </span>
-                    <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                    <h3 className="text-lg font-black text-slate-900 dark:text-white break-words min-w-0">
                       {course.name}
                     </h3>
                   </div>
@@ -1405,9 +1421,9 @@ export default function DashboardPage() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
                   {course.sections.length === 0 ? (
-                    <div className="col-span-full p-6 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                    <div className="col-span-full p-4 sm:p-6 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
                       {language === 'th' ? 'ยังไม่มีห้องเรียนในรายวิชานี้ กดปุ่ม "เพิ่มห้องเรียน" เพื่อสร้างห้องเรียน' : 'No classroom enrolled under this course yet.'}
                     </div>
                   ) : (
@@ -1417,7 +1433,7 @@ export default function DashboardPage() {
                       return (
                         <div
                           key={cls.id}
-                          className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 flex flex-col justify-between space-y-4 hover:border-amber-400 dark:hover:border-amber-500 transition-all"
+                          className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 flex flex-col justify-between gap-4 min-w-0 hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-md hover:shadow-amber-500/5 transition-all"
                         >
                           <div>
                             <div className="flex items-center justify-between text-xs mb-1.5">
@@ -1454,7 +1470,7 @@ export default function DashboardPage() {
                             </div>
 
                             <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
-                              <span>{cls.name}</span>
+                              <span className="break-words min-w-0">{cls.name}</span>
                               {selectedSemesterKey === 'all' && (
                                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-100/90 dark:bg-amber-950/80 text-amber-900 dark:text-amber-300">
                                   {cls.semester === 3 ? 'ซัมเมอร์' : `เทอม ${cls.semester || 1}`}
@@ -1487,7 +1503,7 @@ export default function DashboardPage() {
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200/60 dark:border-slate-700/60">
                             <Link
                               href={`/classrooms/${cls.id}`}
                               className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
@@ -1496,7 +1512,7 @@ export default function DashboardPage() {
                               <ArrowRight className="w-3 h-3" />
                             </Link>
 
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -1582,11 +1598,11 @@ export default function DashboardPage() {
       {/* COURSE INDICATORS & RUBRICS CONFIGURATION MODAL */}
       {isIndicatorsModalOpen && editingCourseIndicators && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => setIsIndicatorsModalOpen(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[90dvh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -1704,7 +1720,7 @@ export default function DashboardPage() {
                 {/* Indicator Items List */}
                 <div className="space-y-3">
                   {indicatorListDraft.length === 0 ? (
-                    <div className="p-8 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                    <div className="p-5 sm:p-8 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
                       ยังไม่มีตัวชี้วัดในรายวิชานี้ กดปุ่มด้านล่างเพื่อเพิ่มข้อใหม่
                     </div>
                   ) : (
@@ -1792,7 +1808,7 @@ export default function DashboardPage() {
 
                   <div className="space-y-2">
                     {indicatorListDraft.length === 0 ? (
-                      <div className="p-6 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                      <div className="p-4 sm:p-6 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
                         ยังไม่มีสมรรถนะ กดปุ่มด้านล่างเพื่อเพิ่ม
                       </div>
                     ) : (
@@ -1976,11 +1992,11 @@ export default function DashboardPage() {
       {/* CO-TEACHING SETUP MODAL */}
       {isCoTeachersModalOpen && editingCourseCoTeachers && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => setIsCoTeachersModalOpen(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-6 max-h-[92vh] overflow-y-auto"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[92dvh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -2338,11 +2354,11 @@ export default function DashboardPage() {
       {/* CREATE / EDIT CLASSROOM SECTION MODAL */}
       {isClassModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => setIsClassModalOpen(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-6"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -2473,11 +2489,11 @@ export default function DashboardPage() {
       {/* CREATE NEW COURSE MODAL */}
       {isCourseModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => setIsCourseModalOpen(false)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-6"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -2803,11 +2819,11 @@ export default function DashboardPage() {
       {/* LINE GROUP CONNECTION MODAL */}
       {lineConnectionClassroom && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => setLineConnectionClassroom(null)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-5 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -2850,51 +2866,18 @@ export default function DashboardPage() {
 
             {lineConnection.status === 'connected' ? (
               <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-200 space-y-1">
-                <p className="font-bold">กลุ่ม LINE นี้พร้อมรับแจ้งเตือนรายชื่อนักเรียนที่ยังไม่ส่งงานตามเวลาที่ตั้งไว้</p>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">นักเรียนพิมพ์ <b>ขอรหัสเข้าห้อง</b> ในกลุ่ม เพื่อรับรหัสและลิงก์เข้าห้องเรียนได้ทันที</p>
+                <p className="font-bold">
+                  {lineConnection.groupName ? `เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว` : 'เชื่อมกับกลุ่ม LINE แล้ว'}
+                </p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">กลุ่มนี้จะได้รับแจ้งเตือนงาน และนักเรียนพิมพ์ <b>ขอรหัสเข้าห้อง</b> เพื่อรับลิงก์เข้าห้องเรียนได้ทันที</p>
+                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">หากนำบอทออกจากกลุ่ม ห้องเรียนนี้จะยกเลิกการเชื่อมต่อโดยอัตโนมัติ</p>
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
-                  <div className="flex items-start gap-2.5">
-                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-black text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-                      1
-                    </span>
-                    <span>เชิญ <strong>Pudding Official Account</strong> เข้ากลุ่ม LINE ของห้องเรียน</span>
-                  </div>
-                  <div className="flex items-start gap-2.5">
-                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 font-black text-[11px] flex items-center justify-center shrink-0 mt-0.5">
-                      2
-                    </span>
-                    <span>กดปุ่ม &quot;สร้างรหัสเชื่อมต่อ&quot; ด้านล่าง แล้วพิมพ์คำสั่งลงในกลุ่ม LINE ดังนี้:</span>
-                  </div>
-                </div>
-
-                {lineConnection.status === 'waiting' && lineConnection.token && (
-                  <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-2">
-                    <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 block">
-                      พิมพ์ข้อความนี้ในแชทกลุ่ม LINE:
-                    </span>
-                    <div className="flex items-center justify-between gap-2">
-                      <code className="text-sm font-black font-mono text-amber-950 dark:text-amber-100">
-                        #pudding {lineConnection.token}
-                      </code>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(`#pudding ${lineConnection.token}`);
-                          setIsLineCodeCopied(true);
-                          setTimeout(() => setIsLineCodeCopied(false), 2000);
-                        }}
-                        className="px-3 py-1 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer flex items-center gap-1"
-                      >
-                        {isLineCodeCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                        <span>{isLineCodeCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <LineGroupConnectSteps
+                status={lineConnection.status}
+                botFriend={teacherLineLink.botFriend}
+                addFriendUrl={teacherLineLink.addFriendUrl}
+              />
             )}
 
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap justify-end gap-2">
@@ -2905,7 +2888,7 @@ export default function DashboardPage() {
                   disabled={isLineConnectionLoading}
                   className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  {isLineConnectionLoading ? 'กำลังสร้างรหัส...' : lineConnection.status === 'waiting' ? 'สร้างรหัสใหม่' : 'สร้างรหัสเชื่อมต่อ'}
+                  {isLineConnectionLoading ? 'กำลังเตรียม...' : lineConnection.status === 'waiting' ? 'เริ่มรอใหม่ (15 นาที)' : 'เชื่อม LINE Group'}
                 </button>
               )}
               {lineConnection.status === 'connected' && (
@@ -2920,19 +2903,11 @@ export default function DashboardPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleLineConnection('create')}
-                    disabled={isLineConnectionLoading}
-                    className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer"
-                  >
-                    เปลี่ยนกลุ่ม
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => handleLineConnection('disconnect')}
                     disabled={isLineConnectionLoading}
                     className="px-3.5 py-2 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs hover:bg-rose-100 cursor-pointer"
                   >
-                    ยกเลิก
+                    ยกเลิกการเชื่อมต่อ
                   </button>
                 </>
               )}
@@ -2944,11 +2919,11 @@ export default function DashboardPage() {
       {/* STUDENT ROSTER & LINE LIFF INVITE MODAL */}
       {managingClassroom && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => setManagingClassroom(null)}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-6 max-h-[90vh] overflow-y-auto"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[90dvh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -2969,7 +2944,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Tabs */}
-            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
+            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2 overflow-x-auto scrollbar-none -mx-1 px-1 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
               <button
                 type="button"
                 onClick={() => setStudentTab('roster')}
@@ -2993,7 +2968,7 @@ export default function DashboardPage() {
                 <UserCheck className="w-3.5 h-3.5" />
                 <span>คำขอรออนุมัติ (Admit)</span>
                 {(managingClassroom.pending_students?.length || 0) > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
+                  <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
                     {managingClassroom.pending_students?.length}
                   </span>
                 )}
@@ -3089,7 +3064,7 @@ export default function DashboardPage() {
                                   : std.name || 'นักเรียน'}
                               </span>
                               {std.name && (std.first_name || std.last_name) && std.name.trim() !== `${std.first_name || ''} ${std.last_name || ''}`.trim() && (
-                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
+                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
                                   LINE: {std.name}
                                 </span>
                               )}
@@ -3161,7 +3136,7 @@ export default function DashboardPage() {
                                 {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name || 'นักเรียน'}
                               </span>
                               {std.name && (std.first_name || std.last_name) && std.name.trim() !== `${std.first_name || ''} ${std.last_name || ''}`.trim() && (
-                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
+                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
                                   LINE: {std.name}
                                 </span>
                               )}
@@ -3239,27 +3214,27 @@ export default function DashboardPage() {
                     </span>
                   </div>
 
-                  {lineConnection.status === 'waiting' && lineConnection.token && (
-                    <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800/60">
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">เพิ่มบอทเข้ากลุ่ม แล้วส่งข้อความนี้ในกลุ่ม</div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <code className="text-lg font-black tracking-widest text-amber-600 dark:text-amber-300">#pudding {lineConnection.token}</code>
-                        <button type="button" onClick={() => { navigator.clipboard.writeText(`#pudding ${lineConnection.token}`); setIsLineCodeCopied(true); setTimeout(() => setIsLineCodeCopied(false), 2000); }} className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 text-[10px] font-bold text-amber-700 dark:text-amber-300">{isLineCodeCopied ? 'แล้ว' : 'คัดลอก'}</button>
-                      </div>
-                      <div className="text-[10px] text-slate-400 mt-1">รหัสใช้ได้ครั้งเดียวและหมดอายุภายใน 10 นาที</div>
-                    </div>
+                  {lineConnection.status === 'connected' ? (
+                    <p className="text-[11px] text-emerald-800 dark:text-emerald-200 font-semibold">
+                      {lineConnection.groupName ? `เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว` : 'เชื่อมกับกลุ่ม LINE แล้ว'} • นำบอทออกจากกลุ่มเมื่อใด ห้องนี้จะยกเลิกการเชื่อมต่อเอง
+                    </p>
+                  ) : (
+                    <LineGroupConnectSteps
+                      status={lineConnection.status}
+                      botFriend={teacherLineLink.botFriend}
+                      addFriendUrl={teacherLineLink.addFriendUrl}
+                    />
                   )}
 
                   <div className="flex flex-wrap gap-2">
                     {lineConnection.status !== 'connected' && (
                       <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black disabled:opacity-50">
-                        {lineConnection.status === 'waiting' ? 'สร้างรหัสใหม่' : 'เชื่อมต่อ LINE Group'}
+                        {lineConnection.status === 'waiting' ? 'เริ่มรอใหม่ (15 นาที)' : 'เชื่อม LINE Group'}
                       </button>
                     )}
                     {lineConnection.status === 'connected' && (
                       <>
                         <button type="button" onClick={() => handleLineConnection('test')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black disabled:opacity-50">ทดสอบส่งข้อความ</button>
-                        <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-bold disabled:opacity-50">เปลี่ยนกลุ่ม</button>
                         <button type="button" onClick={() => handleLineConnection('disconnect')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-[11px] font-bold disabled:opacity-50">ยกเลิกการเชื่อมต่อ</button>
                       </>
                     )}
@@ -3372,14 +3347,29 @@ export default function DashboardPage() {
       {/* TEACHER INSTITUTION MODAL */}
       {isInstitutionModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
           onClick={() => { if (!isProfileRequired) setIsInstitutionModalOpen(false); }}
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5"
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-5 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
+            {/* Header: a welcome for brand-new teachers, a plain title when editing */}
+            {isProfileRequired ? (
+              <div className="text-center space-y-2 pb-1">
+                <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-amber-300 to-amber-500 text-3xl flex items-center justify-center mx-auto shadow-lg shadow-amber-500/25">
+                  🍮
+                </div>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                  {language === 'th' ? 'ยินดีต้อนรับสู่ Pudding!' : 'Welcome to Pudding!'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
+                  {language === 'th'
+                    ? 'กรอกชื่อและเลือกสถานศึกษาเพียงครั้งเดียว เพื่อให้นักเรียนและเพื่อนครูค้นหาคุณได้ถูกต้อง'
+                    : 'Add your name and institution once so students and co-teachers can find you.'}
+                </p>
+              </div>
+            ) : (
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <School className="w-5 h-5 text-amber-500" />
@@ -3396,16 +3386,19 @@ export default function DashboardPage() {
                 </button>
               )}
             </div>
+            )}
 
             <div className="space-y-4">
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                {language === 'th'
-                  ? 'กรุณากรอกชื่อ–นามสกุล และเลือกสถานศึกษาของคุณครู เพื่อเชื่อมโยงกับเพื่อนครูและนักเรียนได้อย่างถูกต้อง'
-                  : 'Please fill in your name and select your institution so students and co-teachers can find you.'}
-              </p>
+              {!isProfileRequired && (
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  {language === 'th'
+                    ? 'กรุณากรอกชื่อ–นามสกุล และเลือกสถานศึกษาของคุณครู เพื่อเชื่อมโยงกับเพื่อนครูและนักเรียนได้อย่างถูกต้อง'
+                    : 'Please fill in your name and select your institution so students and co-teachers can find you.'}
+                </p>
+              )}
 
               {/* Name row */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                     {language === 'th' ? 'ชื่อ' : 'First Name'} <span className="text-rose-500">*</span>
@@ -3415,7 +3408,7 @@ export default function DashboardPage() {
                     value={teacherFirstNameInput}
                     onChange={(e) => setTeacherFirstNameInput(e.target.value)}
                     placeholder={language === 'th' ? 'เช่น สมหญิง' : 'e.g. Jane'}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm sm:text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -3427,7 +3420,7 @@ export default function DashboardPage() {
                     value={teacherLastNameInput}
                     onChange={(e) => setTeacherLastNameInput(e.target.value)}
                     placeholder={language === 'th' ? 'เช่น ใจดี' : 'e.g. Smith'}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm sm:text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
                   />
                 </div>
               </div>
@@ -3454,45 +3447,41 @@ export default function DashboardPage() {
               <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/20 p-4 space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-black text-slate-900 dark:text-white">เชื่อม LINE สำหรับคำสั่งครู</p>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">ใช้สำหรับยืนยันตัวตนครูในแชตส่วนตัวกับ Pudding Bot</p>
+                    <p className="text-xs font-black text-slate-900 dark:text-white">บัญชี LINE ของครู</p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">เชื่อมอัตโนมัติจากการเข้าสู่ระบบด้วย LINE</p>
                   </div>
-                  <span className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-black ${teacherLineLink.status === 'connected' ? 'bg-emerald-200 text-emerald-800' : teacherLineLink.status === 'waiting' ? 'bg-amber-200 text-amber-800' : 'bg-white text-slate-500'}`}>
-                    {teacherLineLink.status === 'connected' ? 'เชื่อมแล้ว' : teacherLineLink.status === 'waiting' ? 'รอยืนยัน' : 'ยังไม่เชื่อม'}
+                  <span className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-black ${teacherLineLink.status === 'connected' ? 'bg-emerald-200 text-emerald-800' : teacherLineLink.status === 'loading' ? 'bg-white text-slate-400' : 'bg-rose-100 text-rose-700'}`}>
+                    {teacherLineLink.status === 'connected' ? 'เชื่อมแล้ว' : teacherLineLink.status === 'loading' ? 'กำลังตรวจสอบ...' : 'ยังไม่เชื่อม'}
                   </span>
                 </div>
-                {teacherLineLink.status === 'waiting' && teacherLineLink.token && (
-                  <div className="rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/50 p-3">
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400">ส่งข้อความนี้ในแชตส่วนตัวกับ LINE Official Account:</p>
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <code className="flex-1 font-mono font-black tracking-widest text-sm text-slate-900 dark:text-white">#pudding link {teacherLineLink.token}</code>
-                      <button
-                        type="button"
-                        onClick={() => navigator.clipboard?.writeText(`#pudding link ${teacherLineLink.token}`)}
-                        className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
-                        title="คัดลอกคำสั่ง"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-amber-700 dark:text-amber-300 mt-1.5">รหัสใช้ได้ครั้งเดียวและหมดอายุภายใน 10 นาที</p>
-                  </div>
+                {teacherLineLink.status === 'missing_line' && (
+                  <p className="text-[11px] text-rose-700 dark:text-rose-300">บัญชีนี้ไม่ได้เข้าสู่ระบบด้วย LINE กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่ด้วย LINE</p>
                 )}
-                {teacherLineLink.status !== 'connected' && (
-                  <button
-                    type="button"
-                    onClick={createTeacherLineLink}
-                    disabled={isTeacherLineLinkLoading}
-                    className="w-full py-2 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-xs font-black disabled:opacity-50 cursor-pointer"
-                  >
-                    {isTeacherLineLinkLoading ? 'กำลังสร้างรหัส...' : teacherLineLink.status === 'waiting' ? 'สร้างรหัสใหม่' : 'สร้างรหัสเชื่อม LINE'}
-                  </button>
+                {teacherLineLink.status === 'conflict' && (
+                  <p className="text-[11px] text-rose-700 dark:text-rose-300">บัญชี LINE นี้ถูกใช้กับบัญชีอื่นใน Pudding อยู่แล้ว (เช่น บัญชีนักเรียน) กรุณาติดต่อผู้ดูแลระบบ</p>
+                )}
+                {teacherLineLink.status === 'connected' && (
+                  <div className="flex items-center justify-between gap-3 pt-1">
+                    <span className="text-[11px] text-slate-600 dark:text-slate-300">
+                      Pudding Bot: <b>{teacherLineLink.botFriend ? 'เป็นเพื่อนแล้ว ✅' : 'ยังไม่ได้เพิ่มเพื่อน'}</b>
+                    </span>
+                    {!teacherLineLink.botFriend && teacherLineLink.addFriendUrl && (
+                      <a
+                        href={teacherLineLink.addFriendUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="shrink-0 px-3 py-1.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-[11px] font-black"
+                      >
+                        + เพิ่มเพื่อน Pudding Bot
+                      </a>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
               {!isProfileRequired && (
                 <button
                   type="button"
@@ -3506,9 +3495,9 @@ export default function DashboardPage() {
                 type="button"
                 disabled={!teacherFirstNameInput.trim() || !teacherLastNameInput.trim() || !teacherInstitutionInput.trim()}
                 onClick={handleSaveTeacherProfile}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
+                className={`${isProfileRequired ? 'w-full h-12 text-sm' : 'px-4 py-2 text-xs'} rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors active:scale-[0.98]`}
               >
-                {t('common.save')}
+                {isProfileRequired ? (language === 'th' ? 'บันทึกและเริ่มใช้งาน' : 'Save & get started') : t('common.save')}
               </button>
             </div>
           </div>

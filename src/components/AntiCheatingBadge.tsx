@@ -49,7 +49,7 @@ export const AntiCheatingBadge: React.FC<AntiCheatingBadgeProps> = ({
         <ShieldAlert className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 animate-pulse" />
         <span>{language === 'th' ? 'พฤติกรรมน่าสงสัย' : 'Flagged Suspicious'}</span>
         {showDetails && (
-          <span className="bg-rose-200/80 dark:bg-rose-900 text-rose-800 dark:text-rose-200 px-1.5 py-0.2 rounded text-[11px]">
+          <span className="bg-rose-200/80 dark:bg-rose-900 text-rose-800 dark:text-rose-200 px-1.5 py-0.5 rounded text-[11px]">
             {tabSwitchCount} {language === 'th' ? 'ครั้ง' : 'switches'} ({totalTimeAwaySeconds}s)
           </span>
         )}
@@ -67,7 +67,7 @@ export const AntiCheatingBadge: React.FC<AntiCheatingBadgeProps> = ({
       <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
       <span>{language === 'th' ? 'เฝ้าระวัง' : 'Watchlist'}</span>
       {showDetails && (
-        <span className="bg-amber-200/60 dark:bg-amber-900 text-amber-900 dark:text-amber-200 px-1.5 py-0.2 rounded text-[11px]">
+        <span className="bg-amber-200/60 dark:bg-amber-900 text-amber-900 dark:text-amber-200 px-1.5 py-0.5 rounded text-[11px]">
           {tabSwitchCount} {language === 'th' ? 'ครั้ง' : 'sw'}
         </span>
       )}

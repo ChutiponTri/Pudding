@@ -1735,7 +1735,8 @@ export const dataService = {
 
   subscribeToClassroomChanges(
     arg1?: string | ((payload: any) => void),
-    arg2?: (payload: any) => void
+    arg2?: (payload: any) => void,
+    options: { pollIntervalMs?: number } = {}
   ) {
     const teacherId = typeof arg1 === 'string' ? arg1 : 'all';
     const onClassroomUpdate = typeof arg1 === 'function' ? arg1 : (arg2 || (() => {}));
@@ -1835,7 +1836,7 @@ export const dataService = {
             lastKnownFingerprint = fingerprint;
           } catch {}
         }
-      }, 2500);
+      }, options.pollIntervalMs ?? 2500);
     }
 
     return () => {
@@ -2065,7 +2066,7 @@ export const dataService = {
       }>;
     };
   }): Promise<Submission> {
-    const subId = `sub-${payload.assignment_id}-${payload.student_id}`;
+    let subId = `sub-${payload.assignment_id}-${payload.student_id}`;
     const isSuspicious = payload.antiCheating.tab_switch_count >= 3 || payload.antiCheating.away_time_seconds >= 30;
 
     const firstName = payload.student_first_name || (payload.student_name ? payload.student_name.split(' ')[0] : 'นักเรียน');
@@ -2114,47 +2115,25 @@ export const dataService = {
       });
       const resData = await res.json().catch(() => ({}));
       console.log('[submitStudentWork] /api/submissions response:', res.status, resData);
-      if (res.ok && resData?.submission) {
-        submission.total_score = resData.submission.total_score;
-        submission.max_total_score = resData.submission.max_total_score;
+      if (!res.ok || !resData?.submission) {
+        throw new Error(resData?.error || resData?.detail || `ส่งงานไม่สำเร็จ (${res.status})`);
       }
+      // Mirror the server's canonical row (id, users.id, on-time/late status) so
+      // the local cache matches what the teacher portal reads.
+      subId = resData.submission.id || subId;
+      submission.id = subId;
+      submission.student_id = resData.submission.student_id || submission.student_id;
+      submission.status = resData.submission.status || submission.status;
+      submission.submitted_at = resData.submission.submitted_at || submission.submitted_at;
+      submission.total_score = resData.submission.total_score ?? undefined;
+      submission.max_total_score = resData.submission.max_total_score;
     } catch (apiErr) {
-      console.warn('submitStudentWork /api/submissions call notice:', apiErr);
+      console.error('submitStudentWork /api/submissions failed:', apiErr);
+      throw apiErr instanceof Error ? apiErr : new Error('ไม่สามารถส่งงานไปยังเซิร์ฟเวอร์ได้');
     }
 
-
-    // 2. Direct Supabase write as additional fallback
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        await supabase.from("submissions").upsert({
-          id: submission.id,
-          assignment_id: submission.assignment_id,
-          student_id: submission.student_id,
-          status: submission.status,
-          started_at: submission.started_at,
-          submitted_at: submission.submitted_at,
-          time_spent_seconds: submission.time_spent_seconds,
-          tab_switch_count: submission.tab_switch_count,
-          total_time_away_seconds: submission.total_time_away_seconds,
-          is_flagged_suspicious: submission.is_flagged_suspicious,
-        });
-
-        for (const ans of payload.answers) {
-          await supabase.from("submission_answers").upsert({
-            id: `ans-${subId}-${ans.question_id}`,
-            submission_id: subId,
-            question_id: ans.question_id,
-            text_answer: ans.answer_text || "",
-            file_url: ans.file_url || null,
-          });
-        }
-      } catch (err) {
-        console.warn("Client Supabase write notice in submitStudentWork:", err);
-      }
-    }
-
-    // 3. Local state fallback
+    // The server is the single source of truth. Only persist a local copy after
+    // it has acknowledged the submission, so a failed request cannot look sent.
     const submissions = getStoredOr<Submission[]>("submissions", []);
     const existingIdx = submissions.findIndex((s) => s.id === subId);
     if (existingIdx !== -1) {
@@ -2242,6 +2221,43 @@ export const dataService = {
     if (merged.length > 0) return merged;
 
     return [];
+  },
+
+  async getSubmissionsByAssignmentIds(assignmentIds: string[]): Promise<Submission[]> {
+    const ids = [...new Set(assignmentIds.filter(Boolean))];
+    if (ids.length === 0) return [];
+
+    let serverSubmissions: Submission[] = [];
+    let serverOk = false;
+    try {
+      const res = await fetch(`/api/submissions?assignmentIds=${encodeURIComponent(ids.join(','))}`, {
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.submissions)) {
+          serverSubmissions = json.submissions;
+          serverOk = true;
+        }
+      }
+    } catch (error) {
+      console.warn('Bulk submission fetch failed:', error);
+    }
+
+    if (!serverOk && isSupabaseConfigured) {
+      try {
+        const { data, error } = await createClient().from('submissions').select('*').in('assignment_id', ids);
+        if (!error && data) serverSubmissions = data as Submission[];
+      } catch {}
+    }
+
+    const localStored = getStoredOr<Submission[]>('submissions', []).filter((s) => ids.includes(s.assignment_id));
+    const seen = new Set<string>();
+    return [...serverSubmissions, ...localStored].filter((submission) => {
+      if (seen.has(submission.id)) return false;
+      seen.add(submission.id);
+      return true;
+    });
   },
 
   async getSubmissionEvents(submissionId: string): Promise<SubmissionEvent[]> {

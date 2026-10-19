@@ -1,17 +1,13 @@
-import { createHash, randomBytes } from 'node:crypto';
 import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { pushLineGroupText } from '@/lib/line/messaging';
+import { createServerSupabaseClient, createServiceSupabaseClient } from '@/lib/supabase/server';
+import { leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const TOKEN_TTL_MS = 10 * 60 * 1000;
-
-function hashToken(token: string) {
-  return createHash('sha256').update(token).digest('hex');
-}
+/** How long a "connect this classroom" request waits for the bot to join a group. */
+const CONNECT_INTENT_TTL_MS = 15 * 60 * 1000;
 
 async function getOwnedClassroom(classroomId: string) {
   const { userId } = await auth();
@@ -45,9 +41,9 @@ export async function GET(request: NextRequest) {
   }
   return NextResponse.json({
     status: isExpired ? 'disconnected' : (classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected')),
-    token: isExpired ? undefined : classroom.line_connection_token,
+    groupName: classroom.line_group_name || undefined,
     connectedAt: classroom.line_connected_at,
-    expiresAt: classroom.line_connection_token_expires_at,
+    expiresAt: isExpired ? undefined : classroom.line_connection_token_expires_at,
   });
 }
 
@@ -65,6 +61,7 @@ export async function POST(request: NextRequest) {
   if (action === 'disconnect') {
     const { error } = await supabase.from('classrooms').update({
       line_group_id: null,
+      line_group_name: null,
       line_connection_status: 'disconnected',
       line_connection_token_hash: null,
       line_connection_token: null,
@@ -72,6 +69,15 @@ export async function POST(request: NextRequest) {
       line_connected_at: null,
     }).eq('id', classroomId);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    // Unlink both ways: the bot leaves the LINE group too. The resulting
+    // "leave" webhook finds no linked classroom and does nothing.
+    if (classroom.line_group_id) {
+      try {
+        await leaveGroup(classroom.line_group_id);
+      } catch (leaveError) {
+        console.warn('LINE bot could not leave the group:', leaveError);
+      }
+    }
     return NextResponse.json({ status: 'disconnected' });
   }
 
@@ -81,14 +87,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'connected' });
   }
 
-  const token = randomBytes(4).toString('hex').toUpperCase();
-  const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString();
+  // "create": record that this teacher wants to connect this classroom. When the
+  // bot joins a LINE group, the webhook links the group to the waiting classroom
+  // whose teacher is a member of that group. No pairing code is involved.
+  if (classroom.line_group_id) {
+    return NextResponse.json({ status: 'connected', groupName: classroom.line_group_name || undefined });
+  }
+  const service = createServiceSupabaseClient();
+  const { data: teacher } = await service.from('users').select('line_uid').eq('id', userId).maybeSingle();
+  if (!teacher?.line_uid) {
+    return NextResponse.json({ error: 'บัญชีครูยังไม่ได้เชื่อม LINE กรุณาเข้าสู่ระบบด้วย LINE' }, { status: 409 });
+  }
+
+  // One pending request per teacher, so a new group can never match an older,
+  // forgotten request for a different classroom.
+  const { data: waitingClasses } = await service
+    .from('classrooms')
+    .select('id, teacher_id, teachers')
+    .eq('line_connection_status', 'waiting')
+    .neq('id', classroomId);
+  const myOtherWaiting = (waitingClasses || [])
+    .filter((item) => item.teacher_id === userId || (item.teachers || []).some((t: { teacher_id?: string }) => t.teacher_id === userId))
+    .map((item) => item.id);
+  if (myOtherWaiting.length > 0) {
+    await service.from('classrooms').update({
+      line_connection_status: 'disconnected',
+      line_connection_token_expires_at: null,
+    }).in('id', myOtherWaiting);
+  }
+
+  const expiresAt = new Date(Date.now() + CONNECT_INTENT_TTL_MS).toISOString();
   const { error } = await supabase.from('classrooms').update({
     line_connection_status: 'waiting',
-    line_connection_token_hash: hashToken(token),
-    line_connection_token: token,
+    line_connection_token_hash: null,
+    line_connection_token: null,
     line_connection_token_expires_at: expiresAt,
   }).eq('id', classroomId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ status: 'waiting', token, expiresAt });
+  return NextResponse.json({ status: 'waiting', expiresAt });
 }

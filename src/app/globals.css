@@ -3,14 +3,14 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #f8fafc;
+  --background: #f6f7fb;
   --foreground: #0f172a;
   color-scheme: light;
 }
 
 :root.dark {
   --background: #020617;
-  --foreground: #f8fafc;
+  --foreground: #f1f5f9;
   color-scheme: dark;
 }
 
@@ -20,9 +20,117 @@
   --font-sans: var(--font-prompt), var(--font-inter), system-ui, -apple-system, sans-serif;
 }
 
+@theme {
+  /* Used across the app for subtle dark-mode panels; not in Tailwind's default palette. */
+  --color-slate-850: #172033;
+  --color-line: #06c755;
+  --color-line-dark: #05b34c;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-prompt), var(--font-inter), system-ui, sans-serif;
+  font-feature-settings: "kern";
+  text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Consistent, visible keyboard focus for every interactive element. */
+:where(a, button, input, textarea, select, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+img,
+video {
+  max-width: 100%;
+}
+
+/* iOS Safari / the LINE in-app browser zoom the page when a focused field's
+   font is smaller than 16px. Keep fields at 16px on phones. */
+@media (max-width: 640px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Slim, theme-aware scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 163 184 / 0.45) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(148 163 184 / 0.45);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Hide the scrollbar on horizontal chip rows while keeping them scrollable. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Enter animations (the API of tailwindcss-animate, which this project uses in
+   markup but does not install). */
+@keyframes pudding-enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0)
+      scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), 1);
+  }
+}
+
+@utility animate-in {
+  animation: pudding-enter var(--tw-duration, 200ms) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@utility fade-in {
+  --tw-enter-opacity: 0;
+}
+@utility zoom-in-95 {
+  --tw-enter-scale: 0.95;
+}
+@utility slide-in-from-top-2 {
+  --tw-enter-translate-y: -0.5rem;
+}
+@utility slide-in-from-bottom-5 {
+  --tw-enter-translate-y: 1.25rem;
+}
+@utility slide-in-from-left {
+  --tw-enter-translate-x: -100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

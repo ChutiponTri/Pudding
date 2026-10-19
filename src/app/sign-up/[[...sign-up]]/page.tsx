@@ -7,7 +7,7 @@ import { ArrowLeft } from "lucide-react";
 
 export default function SignUpPage() {
   return (
-    <div className="min-h-[85vh] flex flex-col items-center justify-center py-10 px-4">
+    <div className="min-h-[80dvh] flex flex-col items-center justify-center py-6 sm:py-10">
       <div className="w-full max-w-md mb-6 text-center space-y-2">
         <Link
           href="/"
@@ -25,7 +25,7 @@ export default function SignUpPage() {
           </span>
         </div>
         <p className="text-xs text-slate-600 dark:text-slate-400">
-          ลงทะเบียนบัญชีครูผู้สอนใหม่ (รองรับ Google & LINE)
+          ลงทะเบียนบัญชีครูผู้สอนด้วยบัญชี LINE (เชื่อม Pudding Bot อัตโนมัติ)
         </p>
       </div>
 
