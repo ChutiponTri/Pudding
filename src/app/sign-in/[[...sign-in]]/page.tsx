@@ -3,7 +3,7 @@
 import React from "react";
 import { SignIn } from "@clerk/nextjs";
 import Link from "next/link";
-import { ArrowLeft, Sparkles, Smartphone } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 export default function SignInPage() {
   return (
@@ -51,15 +51,6 @@ export default function SignInPage() {
         />
       </div>
 
-      <div className="mt-8 text-center">
-        <Link
-          href="/liff"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold hover:bg-emerald-100 transition-colors"
-        >
-          <Smartphone className="w-4 h-4" />
-          <span>สำหรับนักเรียน: เข้าสู่ระบบผ่าน LINE LIFF คลิกที่นี่</span>
-        </Link>
-      </div>
     </div>
   );
 }

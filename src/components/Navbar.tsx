@@ -75,7 +75,7 @@ export const Navbar: React.FC = () => {
     <header className="sticky top-0 z-30 w-full border-b border-slate-200/70 dark:border-slate-800/80 bg-white/80 dark:bg-slate-950/75 backdrop-blur-xl supports-[backdrop-filter]:bg-white/65 dark:supports-[backdrop-filter]:bg-slate-950/60 transition-colors pt-[env(safe-area-inset-top)]">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
         {/* Left Section: Sidebar Toggle Button + Brand Logo */}
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0 min-[420px]:shrink">
           <button
             type="button"
             onClick={toggleSidebar}
@@ -91,7 +91,8 @@ export const Navbar: React.FC = () => {
             <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-md shadow-amber-500/25 group-hover:scale-105 group-hover:-rotate-3 transition-all duration-300 shrink-0">
               <span className="text-xl sm:text-2xl select-none group-hover:scale-110 transition-transform">🍮</span>
             </div>
-            <div className="min-w-0">
+            {/* On narrow phones (< 420px) the logo alone identifies the app */}
+            <div className="min-w-0 hidden min-[420px]:block">
               <div className="flex items-center gap-1.5">
                 <span className="font-black text-base sm:text-lg tracking-tight text-slate-900 dark:text-white truncate">
                   {language === 'th' ? 'พุดดิ้ง' : 'Pudding'}
@@ -109,13 +110,14 @@ export const Navbar: React.FC = () => {
 
         {/* Right Section: Theme Toggle, Language Switcher, Alerts & Profile */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          {/* Light / Dark Mode Toggle */}
-          <ThemeToggle />
+          {/* Light / Dark Mode Toggle (hidden below 360px to keep the bar on one line) */}
+          <ThemeToggle className="max-[359px]:hidden" />
 
           {/* Language Switcher */}
           <LanguageSwitcher />
 
-          {/* Notification Button & Popover */}
+          {/* Notification Button & Popover (only meaningful once signed in) */}
+          <Show when={"signed-in"}>
           <div className="relative" ref={notificationRef}>
             <button
               type="button"
@@ -211,6 +213,8 @@ export const Navbar: React.FC = () => {
               </div>
             )}
           </div>
+
+          </Show>
 
           {/* Teacher Profile Avatar / Clerk Authentication */}
           <Show when={"signed-in"}>
