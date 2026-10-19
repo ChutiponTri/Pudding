@@ -52,6 +52,8 @@ for (const [table, column] of [
   ['classrooms', 'line_connection_status'],
   ['classrooms', 'line_connection_token_expires_at'],
   ['classrooms', 'line_connected_at'],
+  ['courses', 'indicator_mode'],
+  ['courses', 'lesson_plans'],
 ]) {
   const res = await fetch(`${url}/rest/v1/${table}?select=${column}&limit=1`, { headers });
   res.ok ? ok(`${table}.${column}`) : bad(`${table}.${column} is missing — run the SQL in docs/LINE_SETUP_GUIDE.md`);

@@ -227,3 +227,23 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO service_role;
+
+-- ==============================================================================
+-- Course assessment framework mode (ตัวชี้วัด vs สมรรถนะ)
+-- The course wizard and course settings save these; without them every course
+-- insert fails with "Could not find the 'indicator_mode' column".
+-- ==============================================================================
+ALTER TABLE IF EXISTS public.courses
+ADD COLUMN IF NOT EXISTS indicator_mode TEXT NOT NULL DEFAULT 'indicator',
+ADD COLUMN IF NOT EXISTS lesson_plans JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'courses_indicator_mode_check') THEN
+    ALTER TABLE public.courses
+      ADD CONSTRAINT courses_indicator_mode_check CHECK (indicator_mode IN ('indicator', 'competency'));
+  END IF;
+END $$;
+
+-- Make PostgREST pick up the new columns immediately.
+NOTIFY pgrst, 'reload schema';

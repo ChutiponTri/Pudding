@@ -16,10 +16,11 @@ It is read-only and prints no secrets. It checks Clerk's sign-in methods, the Su
 
 | Area | Status |
 |---|---|
-| **Supabase service-role privileges** | ❌ The server key cannot read `courses`, `assignments`, `questions`, `submissions` (and 4 more) or update `users`. Run the grants in section 10. This breaks LIFF submissions and leaves teacher LINE linking stuck on "กำลังตรวจสอบ...". |
+| **`courses.indicator_mode`, `courses.lesson_plans`** | ❌ Missing, so creating any course fails. Run section 10, part 1b. |
+| Supabase service-role privileges | ✅ Fixed (all tables readable by the server key) |
 | Supabase columns (`users.line_bot_friend`, `classrooms.line_group_name`, …) | ✅ All present, nothing to alter |
 | LINE env vars (`LINE_CHANNEL_*`, LIFF ID, `LINE_BOT_BASIC_ID`) | ✅ Set in `.env` |
-| Clerk **development** instance (`pumped-hyena-2033`, the one in `.env`) | ❌ Email, password and Google are **still on** |
+| Clerk **development** instance (`pumped-hyena-2033`) | ✅ LINE only (email, password and Google off) |
 | Existing teachers | ⚠️ 2 teachers (อรวรรณ, ธิปนรรจ์) have no LINE ID yet |
 
 > Clerk settings are **per instance**. If you changed the *production* instance, the local `.env` (development) still allows email and Google. Apply section 3 to **every** instance you use: development and production.
@@ -152,7 +153,7 @@ Add `LINE_BOT_BASIC_ID` to the production environment too, then redeploy.
 
 ## 10. Database reference
 
-### Part 1: server privileges (required, **not applied yet**)
+### Part 1: server privileges (✅ applied)
 
 Run this once in **Supabase → SQL Editor**. The API routes use the service-role key, and it currently cannot read most tables.
 
@@ -164,6 +165,26 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO service_role;
+```
+
+### Part 1b: course framework columns (required, **not applied yet**)
+
+Creating a course (either ตัวชี้วัด or สมรรถนะ) and saving course settings both need these columns. Without them every course save fails.
+
+```sql
+ALTER TABLE IF EXISTS public.courses
+ADD COLUMN IF NOT EXISTS indicator_mode TEXT NOT NULL DEFAULT 'indicator',
+ADD COLUMN IF NOT EXISTS lesson_plans JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'courses_indicator_mode_check') THEN
+    ALTER TABLE public.courses
+      ADD CONSTRAINT courses_indicator_mode_check CHECK (indicator_mode IN ('indicator', 'competency'));
+  END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
 ```
 
 ### Part 2: move two teachers to their new LINE accounts (one time)

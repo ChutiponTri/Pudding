@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS public.courses (
   primary_teacher_id TEXT REFERENCES public.users(id) ON DELETE SET NULL,
   teachers JSONB DEFAULT '[]'::JSONB,         -- Co-teachers & roles list [{teacher_id, name, role, email}]
   indicators JSONB DEFAULT '[]'::JSONB,       -- Standard OBEC Indicators & rubric weights [{id, code, title, weight}]
+  indicator_mode TEXT NOT NULL DEFAULT 'indicator' CHECK (indicator_mode IN ('indicator', 'competency')), -- ตัวชี้วัด or สมรรถนะ
+  lesson_plans JSONB NOT NULL DEFAULT '[]'::JSONB,   -- Competency mode: [{id, title, order_index, mapped_indicator_ids}]
   classroom_ids JSONB DEFAULT '[]'::JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

@@ -33,6 +33,18 @@ function getStoredOr<T>(key: string, defaultValue: T): T {
   }
 }
 
+/**
+ * Turns a Supabase write error into a readable message. A missing column means
+ * the database is behind the app (the latest migration has not been run).
+ */
+function toDatabaseError(error: { code?: string; message?: string }, table: string): Error {
+  const missingColumn = error.message?.match(/'([^']+)' column/)?.[1] || error.message?.match(/column [\w.]*?\.?(\w+) does not exist/)?.[1];
+  if (error.code === 'PGRST204' || error.code === '42703' || missingColumn) {
+    return new Error(`ฐานข้อมูลยังไม่มีคอลัมน์ ${table}.${missingColumn || '?'} กรุณาให้ผู้ดูแลรัน supabase_schema_update.sql ล่าสุด`);
+  }
+  return new Error(error.message || `บันทึกข้อมูล ${table} ไม่สำเร็จ`);
+}
+
 function setStored<T>(key: string, value: T): void {
   if (typeof window === 'undefined') return;
   try {
@@ -553,7 +565,7 @@ export const dataService = {
       const { error } = await supabase.from('courses').insert(newCourse);
       if (error) {
         console.error('Supabase createCourse error:', error);
-        throw error;
+        throw toDatabaseError(error, 'courses');
       }
     }
 
@@ -567,7 +579,12 @@ export const dataService = {
     if (isSupabaseConfigured) {
       const supabase = createClient();
       const { error } = await supabase.from('courses').update(data).eq('id', id);
-      if (error) console.error('Supabase updateCourse error:', error);
+      if (error) {
+        // Surface the failure; otherwise the UI reports success while the
+        // change was never saved.
+        console.error('Supabase updateCourse error:', error);
+        throw toDatabaseError(error, 'courses');
+      }
     }
 
     const courses = await this.getCourses();
@@ -665,7 +682,8 @@ export const dataService = {
   async updateCourseIndicators(courseId: string, indicators: CourseLearningIndicator[]): Promise<Course | null> {
     if (isSupabaseConfigured) {
       const supabase = createClient();
-      await supabase.from('courses').update({ indicators }).eq('id', courseId);
+      const { error } = await supabase.from('courses').update({ indicators }).eq('id', courseId);
+      if (error) throw toDatabaseError(error, 'courses');
     }
 
     const courses = await this.getCourses();

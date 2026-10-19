@@ -65,6 +65,41 @@ import {
 import { notificationManager } from '@/lib/utils/notificationManager';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 
+/**
+ * Checks an assessment framework before saving. Returns a message naming the
+ * first problem, or null when it is valid. Used by course creation and the
+ * course settings dialog so both modes follow the same rules:
+ * - indicator: at least one item, every item named
+ * - competency: the same, plus at least one named lesson plan, every plan
+ *   mapped to at least one competency, and every competency used by a plan
+ */
+function getFrameworkProblem(
+  mode: 'indicator' | 'competency',
+  items: CourseLearningIndicator[],
+  plans: CourseLessonPlan[],
+  language: string
+): string | null {
+  const th = language === 'th';
+  const itemLabel = mode === 'competency' ? (th ? 'สมรรถนะ' : 'competency') : (th ? 'ตัวชี้วัด' : 'indicator');
+  if (items.length === 0) return th ? `กรุณาเพิ่ม${itemLabel}อย่างน้อย 1 รายการ` : `Add at least one ${itemLabel}`;
+  const unnamedItem = items.findIndex((item) => !item.title.trim());
+  if (unnamedItem !== -1) return th ? `กรุณากรอกชื่อ${itemLabel} ข้อ ${unnamedItem + 1}` : `Enter a name for ${itemLabel} ${unnamedItem + 1}`;
+  if (mode !== 'competency') return null;
+
+  if (plans.length === 0) return th ? 'กรุณาเพิ่มแผนการสอนอย่างน้อย 1 แผน' : 'Add at least one lesson plan';
+  const itemIds = new Set(items.map((item) => item.id));
+  for (const [index, plan] of plans.entries()) {
+    if (!plan.title.trim()) return th ? `กรุณากรอกชื่อแผนการสอนที่ ${index + 1}` : `Enter a name for lesson plan ${index + 1}`;
+    if (!(plan.mapped_indicator_ids || []).some((id) => itemIds.has(id))) {
+      return th ? `แผนการสอนที่ ${index + 1} ยังไม่ได้ map กับสมรรถนะใด` : `Lesson plan ${index + 1} is not mapped to any competency`;
+    }
+  }
+  const mappedIds = new Set(plans.flatMap((plan) => plan.mapped_indicator_ids || []));
+  const unmapped = items.findIndex((item) => !mappedIds.has(item.id));
+  if (unmapped !== -1) return th ? `สมรรถนะข้อ ${unmapped + 1} ยังไม่มีแผนการสอนที่ map ไว้` : `Competency ${unmapped + 1} is not mapped to any lesson plan`;
+  return null;
+}
+
 export default function DashboardPage() {
   const { t, language } = useLanguage();
   const { user: clerkUser } = useUser();
@@ -172,6 +207,7 @@ export default function DashboardPage() {
   const [courseLessonPlanDraft, setCourseLessonPlanDraft] = useState<CourseLessonPlan[]>([]);
   const [courseCreationMode, setCourseCreationMode] = useState<'indicator' | 'competency'>('indicator');
   const [courseCreationStep, setCourseCreationStep] = useState<1 | 2>(1);
+  const [isSavingCourse, setIsSavingCourse] = useState(false);
   const [isCourseCloneFlow, setIsCourseCloneFlow] = useState(false);
 
   const showToast = (msg: string) => {
@@ -575,8 +611,23 @@ export default function DashboardPage() {
       .map((item, itemIndex) => ({ ...item, order_index: itemIndex + 1 })));
   };
 
+  /** Validates step 1 (course details) and moves to step 2 (assessment framework). */
+  const goToCourseFrameworkStep = () => {
+    if (!courseCodeInput.trim() || !courseNameInput.trim()) {
+      alert(language === 'th' ? 'กรุณากรอกรหัสและชื่อรายวิชา' : 'Please enter course code and name');
+      return;
+    }
+    setCourseCreationStep(2);
+  };
+
   const handleSaveCourse = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Pressing Enter in a step-1 field submits the form: treat it as "Next".
+    if (courseCreationStep === 1) {
+      goToCourseFrameworkStep();
+      return;
+    }
+    if (isSavingCourse) return;
     if (!courseCodeInput.trim() || !courseNameInput.trim()) return;
 
     const academicYearStr = formatAcademicPeriod(courseSemesterInput, courseYearInput, language);
@@ -585,25 +636,10 @@ export default function DashboardPage() {
     const currentTeacherEmail = clerkUser?.primaryEmailAddress?.emailAddress || "teacher@pudding.ac.th";
     const currentTeacherAvatar = clerkUser?.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150";
 
-    if (courseIndicatorsDraft.length === 0 || courseIndicatorsDraft.some((indicator) => !indicator.title.trim())) {
-      alert(language === 'th'
-        ? 'กรุณาเพิ่มและกรอกข้อมูลตัวชี้วัด/สมรรถนะให้ครบอย่างน้อย 1 รายการก่อนยืนยัน'
-        : 'Add and complete at least one indicator/competency before confirming the course');
+    const frameworkProblem = getFrameworkProblem(courseCreationMode, courseIndicatorsDraft, courseLessonPlanDraft, language);
+    if (frameworkProblem) {
+      alert(frameworkProblem);
       return;
-    }
-
-    if (courseCreationMode === 'competency') {
-      const mappedIds = new Set(
-        courseLessonPlanDraft.flatMap((plan) => plan.mapped_indicator_ids || [])
-      );
-      const hasInvalidPlan = courseLessonPlanDraft.some((plan) => !plan.title.trim() || (plan.mapped_indicator_ids || []).length === 0);
-      const hasUnmappedCompetency = courseIndicatorsDraft.some((indicator) => !mappedIds.has(indicator.id));
-      if (courseLessonPlanDraft.length === 0 || hasInvalidPlan || hasUnmappedCompetency) {
-        alert(language === 'th'
-          ? 'กรุณาเพิ่มแผนการสอน กรอกชื่อแผน และ map ให้ครบทุกสมรรถนะก่อนยืนยัน'
-          : 'Add lesson plans, enter each plan name, and map every competency before confirming');
-        return;
-      }
     }
 
     const initialIndicators: CourseLearningIndicator[] = courseIndicatorsDraft.map((ind, i) => ({
@@ -615,6 +651,8 @@ export default function DashboardPage() {
     }));
     const indicatorIdMap = new Map(courseIndicatorsDraft.map((indicator, index) => [indicator.id, initialIndicators[index].id]));
 
+    setIsSavingCourse(true);
+    try {
     await dataService.createCourse({
       code: courseCodeInput.trim().toUpperCase(),
       name: courseNameInput.trim(),
@@ -653,6 +691,12 @@ export default function DashboardPage() {
     setCourseLessonPlanDraft([]);
     setIsCourseCloneFlow(false);
     await loadAllData();
+    } catch (error) {
+      console.error('Create course failed:', error);
+      alert(error instanceof Error ? error.message : (language === 'th' ? 'สร้างรายวิชาไม่สำเร็จ' : 'Could not create the course'));
+    } finally {
+      setIsSavingCourse(false);
+    }
   };
 
   const handleDeleteCourse = async (course: Course) => {
@@ -965,33 +1009,29 @@ export default function DashboardPage() {
 
   const handleSaveIndicators = async () => {
     if (!editingCourseIndicators) return;
-    if (indicatorListDraft.length === 0 || indicatorListDraft.some((indicator) => !indicator.title.trim())) {
-      alert(language === 'th' ? 'กรุณาเพิ่มและกรอกกรอบการวัดผลให้ครบอย่างน้อย 1 รายการ' : 'Add and complete at least one assessment framework item');
+    const frameworkProblem = getFrameworkProblem(indicatorMode, indicatorListDraft, lessonPlanDraft, language);
+    if (frameworkProblem) {
+      alert(frameworkProblem);
       return;
     }
-    if (indicatorMode === 'competency') {
-      const mappedIds = new Set(lessonPlanDraft.flatMap((plan) => plan.mapped_indicator_ids || []));
-      const hasInvalidPlan = lessonPlanDraft.some((plan) => !plan.title.trim() || (plan.mapped_indicator_ids || []).length === 0);
-      const hasUnmappedCompetency = indicatorListDraft.some((indicator) => !mappedIds.has(indicator.id));
-      if (lessonPlanDraft.length === 0 || hasInvalidPlan || hasUnmappedCompetency) {
-        alert(language === 'th'
-          ? 'กรุณาเพิ่มแผนการสอน กรอกชื่อแผน และ map ให้ครบทุกสมรรถนะก่อนบันทึก'
-          : 'Add lesson plans, enter each plan name, and map every competency before saving');
-        return;
-      }
+    try {
+      // Mode, items and lesson plans are saved in one update so they cannot drift apart.
+      await dataService.updateCourse(editingCourseIndicators.id, {
+        indicator_mode: indicatorMode,
+        indicators: indicatorListDraft,
+        // A course uses exactly one assessment framework at a time.
+        lesson_plans: indicatorMode === 'competency' ? lessonPlanDraft : [],
+      });
+      await dataService.updateCourseIndicators(editingCourseIndicators.id, indicatorListDraft);
+      showToast(
+        language === 'th' ? 'บันทึกกรอบการวัดผลเรียบร้อยแล้ว' : 'Course framework saved successfully'
+      );
+      setIsIndicatorsModalOpen(false);
+      await loadAllData();
+    } catch (error) {
+      console.error('Save course framework failed:', error);
+      alert(error instanceof Error ? error.message : (language === 'th' ? 'บันทึกไม่สำเร็จ' : 'Could not save'));
     }
-    await dataService.updateCourseIndicators(editingCourseIndicators.id, indicatorListDraft);
-    // Also persist mode and lesson plans
-    await dataService.updateCourse(editingCourseIndicators.id, {
-      indicator_mode: indicatorMode,
-      // A course uses exactly one assessment framework at a time.
-      lesson_plans: indicatorMode === 'competency' ? lessonPlanDraft : [],
-    } as any);
-    showToast(
-      language === 'th' ? 'บันทึกตัวชี้วัดเรียบร้อยแล้ว' : 'Course indicators saved successfully'
-    );
-    setIsIndicatorsModalOpen(false);
-    await loadAllData();
   };
 
   // Co-Teachers Setup (TA vs Research Grader)
@@ -1055,12 +1095,17 @@ export default function DashboardPage() {
 
   const handleSaveCoTeachers = async () => {
     if (!editingCourseCoTeachers) return;
-    await dataService.updateCourse(editingCourseCoTeachers.id, {
-      teachers: coTeachersDraft,
-    });
-    showToast(language === 'th' ? 'บันทึกครูร่วมสอนเรียบร้อย' : 'Co-teaching configuration updated');
-    setIsCoTeachersModalOpen(false);
-    await loadAllData();
+    try {
+      await dataService.updateCourse(editingCourseCoTeachers.id, {
+        teachers: coTeachersDraft,
+      });
+      showToast(language === 'th' ? 'บันทึกครูร่วมสอนเรียบร้อย' : 'Co-teaching configuration updated');
+      setIsCoTeachersModalOpen(false);
+      await loadAllData();
+    } catch (error) {
+      console.error('Save co-teachers failed:', error);
+      alert(error instanceof Error ? error.message : (language === 'th' ? 'บันทึกไม่สำเร็จ' : 'Could not save'));
+    }
   };
 
   const handleCopyTeacherInviteLink = (course: Course, role: 'assistant' | 'researcher' = 'assistant') => {
@@ -2783,6 +2828,7 @@ export default function DashboardPage() {
                 </button>
                 {courseCreationStep === 2 && (
                   <button
+                  key="course-back"
                   type="button"
                   onClick={() => setCourseCreationStep(1)}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
@@ -2790,26 +2836,27 @@ export default function DashboardPage() {
                   ย้อนกลับ
                 </button>
                 )}
+                {/* Distinct keys: without them React reuses one <button> and flips
+                    its type to "submit" during the click, which submitted the form. */}
                 {courseCreationStep === 1 ? (
                   <button
+                  key="course-next"
                   type="button"
-                  onClick={() => {
-                    if (!courseCodeInput.trim() || !courseNameInput.trim()) {
-                      alert(language === 'th' ? 'กรุณากรอกรหัสและชื่อรายวิชา' : 'Please enter course code and name');
-                      return;
-                    }
-                    setCourseCreationStep(2);
-                  }}
+                  onClick={goToCourseFrameworkStep}
                   className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-md shadow-amber-500/20 cursor-pointer transition-transform active:scale-95"
                 >
                   ถัดไป: กำหนดกรอบการวัดผล
                 </button>
                 ) : (
                 <button
+                  key="course-submit"
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-md shadow-amber-500/20 cursor-pointer transition-transform active:scale-95"
+                  disabled={isSavingCourse}
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-md shadow-amber-500/20 cursor-pointer transition-transform active:scale-95 disabled:opacity-60"
                 >
-                  {language === 'th' ? 'ยืนยันสร้างวิชาและกรอบการวัดผล' : 'Create course and framework'}
+                  {isSavingCourse
+                    ? (language === 'th' ? 'กำลังสร้างรายวิชา...' : 'Creating...')
+                    : (language === 'th' ? 'ยืนยันสร้างวิชาและกรอบการวัดผล' : 'Create course and framework')}
                 </button>
                 )}
               </div>
