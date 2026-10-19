@@ -7,6 +7,8 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import { Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
+import { DateTimeField } from '@/components/DateTimeField';
+import { daysFromNowAt } from '@/lib/utils/datetime';
 import {
   PlusCircle,
   Trash2,
@@ -67,7 +69,7 @@ function NewAssignmentContent() {
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
   const [description, setDescription] = useState('');
-  const [dueDate, setDueDate] = useState('');
+  const [dueDate, setDueDate] = useState(() => daysFromNowAt(7, 23, 59));
   const reminderCron = 'relative_due_date';
   const [reminderOffsetMinutes, setReminderOffsetMinutes] = useState(24 * 60);
 
@@ -279,9 +281,9 @@ function NewAssignmentContent() {
           group_name: groupName.trim() || undefined,
           description,
           is_exam: isExam,
-          due_date: dueDate || new Date(Date.now() + 7 * 86400000).toISOString(),
+          due_date: dueDate || daysFromNowAt(7, 23, 59),
           reminder_cron: reminderCron,
-          reminder_offset_minutes: selectedClassroomsLineReady ? reminderOffsetMinutes : 0,
+          reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? reminderOffsetMinutes : 0,
           total_points: totalPoints,
           status_override: 'auto',
           sample_work_title: !isExam ? sampleWorkTitle : undefined,
@@ -320,9 +322,13 @@ function NewAssignmentContent() {
       }
 
       alert(
-        language === 'th'
-          ? 'สร้างการบ้าน/แบบทดสอบสำเร็จ! ระบบเชื่อมต่อ LINE Reminder Bot เรียบร้อย'
-          : 'Assignment created successfully! LINE Reminder scheduled.'
+        isExam
+          ? (language === 'th' ? 'สร้างแบบทดสอบสำเร็จ!' : 'Quiz created successfully!')
+          : !selectedClassroomsLineReady
+          ? (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')
+          : language === 'th'
+          ? 'สร้างการบ้านสำเร็จ! ตั้งเวลาเตือนส่งงานผ่าน LINE เรียบร้อย'
+          : 'Assignment created successfully! LINE reminder scheduled.'
       );
 
       const targetClassId = primaryClassId || urlClassroomId || selectedClassroomIds[0];
@@ -526,15 +532,16 @@ function NewAssignmentContent() {
                 <Calendar className="w-3.5 h-3.5 text-amber-500" />
                 <span>{t('assignment_creator.fields.due_date_label')}</span>
               </label>
-              <input
-                type="datetime-local"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="w-full px-4 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-hidden focus:border-amber-500"
-              />
+              <DateTimeField value={dueDate} onChange={setDueDate} presets="deadline" />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {isExam
+                  ? (language === 'th' ? 'ข้อสอบจะปิดรับคำตอบทันทีเมื่อถึงเวลานี้' : 'The quiz stops accepting answers at this time.')
+                  : (language === 'th' ? 'ส่งหลังเวลานี้ได้ แต่จะถูกบันทึกว่า "ส่งช้า"' : 'Work handed in after this time is marked late.')}
+              </p>
             </div>
 
-            {/* LINE Reminder Setting */}
+            {/* LINE Reminder Setting (homework only — quizzes close at the deadline) */}
+            {!isExam && (
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-emerald-500" />
@@ -562,6 +569,7 @@ function NewAssignmentContent() {
                   : 'เมื่อเชื่อมต่อ LINE Bot แล้ว จึงจะสามารถตั้งเวลาและส่งสรุปเข้า LINE group ได้'}
               </p>
             </div>
+            )}
           </div>
         </div>
 

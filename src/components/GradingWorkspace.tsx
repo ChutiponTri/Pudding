@@ -113,20 +113,37 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   // Master local answers state
   const [answers, setAnswers] = useState<Record<string, SubmissionAnswer>>(initialAnswers);
 
-  // Per-question in-line grade & feedback state
-  const [questionGrades, setQuestionGrades] = useState<Record<string, QuestionGradeState>>(() => {
-    const initial: Record<string, QuestionGradeState> = {};
+  // Prefill each question with the grade this teacher already saved, so editing starts from it
+  const buildGradeStates = (teacher: ClassroomTeacher, source: Record<string, SubmissionAnswer>) => {
+    const states: Record<string, QuestionGradeState> = {};
     for (const q of questions) {
-      const ans = initialAnswers[q.id];
-      initial[q.id] = {
-        score: ans?.teacher_score ?? ans?.ai_mock_score ?? '',
-        comment: ans?.teacher_comment ?? '',
-        isSaving: false,
-        saveSuccess: false,
-      };
+      const ans = source[q.id];
+      const ownRecord = ans?.co_grades?.[teacher.teacher_id];
+      if (teacher.role === 'researcher') {
+        const resGrade = ans?.research_grades?.[teacher.teacher_id] ?? ownRecord;
+        states[q.id] = {
+          score: resGrade?.score ?? '',
+          comment: resGrade?.comment ?? '',
+          isSaving: false,
+          saveSuccess: false,
+        };
+      } else {
+        // Primary or TA: official grade
+        states[q.id] = {
+          score: ans?.teacher_score ?? ownRecord?.score ?? ans?.ai_mock_score ?? '',
+          comment: ans?.teacher_comment ?? ownRecord?.comment ?? '',
+          isSaving: false,
+          saveSuccess: false,
+        };
+      }
     }
-    return initial;
-  });
+    return states;
+  };
+
+  // Per-question in-line grade & feedback state
+  const [questionGrades, setQuestionGrades] = useState<Record<string, QuestionGradeState>>(() =>
+    buildGradeStates(availableTeachers[0], initialAnswers)
+  );
 
   // Image zoom/rotation controls per question
   const [imageControls, setImageControls] = useState<Record<string, { zoom: number; rotate: number }>>({});
@@ -143,30 +160,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   // Active Grader switch handler
   const handleTeacherSwitch = (teacher: ClassroomTeacher) => {
     setActiveTeacher(teacher);
-    setQuestionGrades(() => {
-      const updated: Record<string, QuestionGradeState> = {};
-      for (const q of questions) {
-        const ans = answers[q.id];
-        if (teacher.role === 'researcher') {
-          const resGrade = ans?.research_grades?.[teacher.teacher_id];
-          updated[q.id] = {
-            score: resGrade?.score ?? '',
-            comment: resGrade?.comment ?? '',
-            isSaving: false,
-            saveSuccess: false,
-          };
-        } else {
-          // Primary or TA: official grade
-          updated[q.id] = {
-            score: ans?.teacher_score ?? ans?.ai_mock_score ?? '',
-            comment: ans?.teacher_comment ?? '',
-            isSaving: false,
-            saveSuccess: false,
-          };
-        }
-      }
-      return updated;
-    });
+    setQuestionGrades(buildGradeStates(teacher, answers));
   };
 
   // Score change

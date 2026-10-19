@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { fallbackStore } from '@/lib/classroom/storageFallback';
-import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { getAssignmentWindow, QUIZ_SUBMIT_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { parseTrueFalse } from '@/lib/utils/trueFalse';
 
 export const runtime = 'nodejs';
@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     // shared with the teacher portal so both sides agree on open/closed/late.
     const { data: assignment, error: assignmentError } = await supabase
       .from('assignments')
-      .select('id, due_date, status_override, extended_until')
+      .select('id, due_date, status_override, extended_until, is_exam')
       .eq('id', assignment_id)
       .maybeSingle();
     if (assignmentError) {
@@ -137,7 +137,10 @@ export async function POST(request: NextRequest) {
     if (!assignment) {
       return NextResponse.json({ error: 'ไม่พบงานหรือข้อสอบนี้ในระบบ อาจถูกลบไปแล้ว' }, { status: 404 });
     }
-    const assignmentWindow = getAssignmentWindow(assignment);
+    const assignmentWindow = getAssignmentWindow(assignment, Date.now(), QUIZ_SUBMIT_GRACE_MS);
+    if (assignmentWindow.isQuizClosed) {
+      return NextResponse.json({ error: 'หมดเวลาทำข้อสอบแล้ว ไม่สามารถส่งคำตอบได้' }, { status: 409 });
+    }
     if (!assignmentWindow.acceptsSubmissions) {
       return NextResponse.json({ error: 'คุณครูปิดรับงานนี้แล้ว ไม่สามารถส่งได้' }, { status: 409 });
     }
@@ -270,7 +273,8 @@ export async function POST(request: NextRequest) {
       assignment_id,
       student_id: targetUserDbId,
       student: studentInfo,
-      status: assignmentWindow.isPastDeadline ? 'late' : 'submitted',
+      // A quiz answer that arrives within the grace period counts as on time.
+      status: assignmentWindow.isPastDeadline && !assignment.is_exam ? 'late' : 'submitted',
       started_at: new Date(submittedAt.getTime() - (awaySeconds * 1000 + 120000)).toISOString(),
       submitted_at: submittedAt.toISOString(),
       time_spent_seconds: 120 + awaySeconds,

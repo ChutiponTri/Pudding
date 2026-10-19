@@ -1625,7 +1625,7 @@ export default function DashboardPage() {
                         </div>
 
                         <Link
-                          href={`/assignments/${asg.id}/grading`}
+                          href={`/assignments/${asg.id}/grading?from=dashboard`}
                           className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all shadow-xs flex items-center gap-1 shrink-0 cursor-pointer"
                         >
                           <span>{t('dashboard.pending_section.grade_now')}</span>

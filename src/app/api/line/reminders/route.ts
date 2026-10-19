@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
+import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,15 +22,18 @@ export async function POST(request: NextRequest) {
   const now = new Date();
   const { data: assignments, error } = await supabase
     .from('assignments')
-    .select('id, title, due_date, reminder_offset_minutes, classroom_id, line_last_reminded_at')
+    .select('id, title, due_date, status_override, extended_until, reminder_offset_minutes, classroom_id, line_last_reminded_at')
     .eq('is_exam', false)
     .neq('status_override', 'force_closed');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   let sent = 0;
   for (const assignment of assignments || []) {
+    // Quizzes are filtered out above (is_exam = false): they close at the deadline, so no reminder.
     if (!assignment.reminder_offset_minutes || Number(assignment.reminder_offset_minutes) <= 0) continue;
-    const dueAt = new Date(assignment.due_date).getTime();
+    // Follow the teacher's extension, if any, so the reminder moves with the deadline.
+    const dueAt = getAssignmentWindow(assignment).deadline;
+    if (dueAt === null) continue;
     const reminderAt = dueAt - Number(assignment.reminder_offset_minutes || 1440) * 60 * 1000;
     if (now.getTime() < reminderAt || now.getTime() >= dueAt) continue;
     if (assignment.line_last_reminded_at && new Date(assignment.line_last_reminded_at).getTime() >= reminderAt) continue;
@@ -52,7 +57,8 @@ export async function POST(request: NextRequest) {
     if (!missing.length) continue;
 
     const names = missing.map((student) => `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.name || 'ไม่ระบุชื่อ');
-    const dueLabel = new Date(assignment.due_date).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+    // The server clock is UTC; LINE readers are in Thailand.
+    const dueLabel = formatDateTime(new Date(dueAt).toISOString(), 'th', SCHOOL_TIME_ZONE);
     await pushLineGroupText(
       classroom.line_group_id,
       withLiffLink(

@@ -15,6 +15,7 @@ import {
 } from '@/types/database';
 import { createClient, isSupabaseConfigured } from './client';
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
+import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 
 // Local storage key for persistent interactive testing when Supabase is not configured
 const STORAGE_PREFIX = 'pudding_';
@@ -1980,7 +1981,7 @@ export const dataService = {
         body: JSON.stringify({
           classroomId: assignmentData.classroom_id,
           activityType: assignmentData.is_exam ? 'exam' : 'assignment',
-          body: `${assignmentData.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${assignmentData.title} (กำหนดส่ง: ${new Date(assignmentData.due_date).toLocaleString('th-TH')})`,
+          body: `${assignmentData.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${assignmentData.title} (${assignmentData.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${formatDateTime(assignmentData.due_date, 'th', SCHOOL_TIME_ZONE)})`,
           metadata: { assignmentId: id, dueDate: assignmentData.due_date, groupName: assignmentData.group_name || (assignmentData.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
         }),
       }).catch((error) => console.warn('Unable to publish assignment activity:', error));

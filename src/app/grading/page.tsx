@@ -46,20 +46,16 @@ import {
   HelpCircle,
 } from 'lucide-react';
 
+
 function GradingHubContent() {
   const { t, language } = useLanguage();
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Navigation hierarchy state
+  // This page only picks the work to grade (course -> section/assignment).
+  // Grading itself lives on /assignments/[id]/grading.
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(
     searchParams.get('courseId') || null
-  );
-  const [selectedClassroomId, setSelectedClassroomId] = useState<string | null>(
-    searchParams.get('classroomId') || null
-  );
-  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(
-    searchParams.get('assignmentId') || null
   );
 
   // Core Data
@@ -69,36 +65,15 @@ function GradingHubContent() {
   const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Level 3 Selection Details
-  const [activeAssignment, setActiveAssignment] = useState<Assignment | null>(null);
-  const [activeQuestions, setActiveQuestions] = useState<Question[]>([]);
-  const [activeSubmissions, setActiveSubmissions] = useState<Submission[]>([]);
-
-  // Manual Submission Control Panel State (Level 3)
-  const [overrideStatus, setOverrideStatus] = useState<SubmissionOverrideStatus>('auto');
-  const [extendedDateTime, setExtendedDateTime] = useState('');
-  const [showExtendPicker, setShowExtendPicker] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Filter & Search in Level 3 Roster
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<
-    'all' | 'submitted' | 'pending' | 'late' | 'graded' | 'suspicious'
-  >('all');
-
-  // Modals state
-  const [auditSubmission, setAuditSubmission] = useState<Submission | null>(null);
-  const [auditEvents, setAuditEvents] = useState<SubmissionEvent[]>([]);
-  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
-
-  const [gradingSubmission, setGradingSubmission] = useState<Submission | null>(null);
-  const [gradingAnswers, setGradingAnswers] = useState<Record<string, SubmissionAnswer>>({});
-  const [isGradingWorkspaceOpen, setIsGradingWorkspaceOpen] = useState(false);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
+  // Old links pointed at ?assignmentId=…; send them to the grading page.
+  const legacyAssignmentId = searchParams.get('assignmentId');
+  useEffect(() => {
+    if (!legacyAssignmentId) return;
+    const courseId = searchParams.get('courseId');
+    router.replace(
+      `/assignments/${legacyAssignmentId}/grading?from=grading${courseId ? `&courseId=${encodeURIComponent(courseId)}` : ''}`
+    );
+  }, [legacyAssignmentId, router, searchParams]);
 
   // Load Initial Data
   const loadInitialData = async () => {
@@ -113,11 +88,9 @@ function GradingHubContent() {
       setClassrooms(cls);
       setAssignments(asg);
 
-      // Pre-fetch submissions for all assignments
-      const allSubsPromises = asg.map((a) => dataService.getSubmissions(a.id));
-      const subsArrays = await Promise.all(allSubsPromises);
-      const flattenedSubs = subsArrays.flat();
-      setAllSubmissions(flattenedSubs);
+      // One request for every assignment's submissions.
+      const subs = await dataService.getSubmissionsByAssignmentIds(asg.map((a) => a.id));
+      setAllSubmissions(subs);
     } catch (err) {
       console.error('Error loading grading hub data:', err);
     } finally {
@@ -129,179 +102,18 @@ function GradingHubContent() {
     loadInitialData();
   }, []);
 
-  // When Level 3 assignment is selected, fetch its questions & submissions
-  useEffect(() => {
-    if (selectedAssignmentId) {
-      const fetchAssignmentDetails = async () => {
-        try {
-          const { assignment: asg, questions: qs } =
-            await dataService.getAssignmentById(selectedAssignmentId);
-          setActiveAssignment(asg);
-          setActiveQuestions(qs);
-          if (asg) {
-            setOverrideStatus(asg.status_override || 'auto');
-            if (asg.extended_until) {
-              setExtendedDateTime(asg.extended_until);
-            } else {
-              const inTwoDays = new Date(Date.now() + 2 * 86400000);
-              setExtendedDateTime(inTwoDays.toISOString().slice(0, 16));
-            }
-          }
-
-          const subs = await dataService.getSubmissions(selectedAssignmentId);
-          setActiveSubmissions(subs);
-        } catch (err) {
-          console.error(err);
-        }
-      };
-      fetchAssignmentDetails();
-    } else {
-      setActiveAssignment(null);
-      setActiveQuestions([]);
-      setActiveSubmissions([]);
-    }
-  }, [selectedAssignmentId]);
-
   // Selected Course
   const selectedCourse = useMemo(() => {
     return courses.find((c) => c.id === selectedCourseId) || null;
   }, [courses, selectedCourseId]);
 
-  // Selected Classroom
-  const selectedClassroom = useMemo(() => {
-    return classrooms.find((c) => c.id === selectedClassroomId) || null;
-  }, [classrooms, selectedClassroomId]);
-
-  // Navigation handlers
-  const handleSelectCourse = (courseId: string) => {
+  // Keep the selected course in the URL so "back" from the grading page returns here.
+  const selectCourse = (courseId: string | null) => {
     setSelectedCourseId(courseId);
-    setSelectedClassroomId(null);
-    setSelectedAssignmentId(null);
+    router.replace(courseId ? `/grading?courseId=${encodeURIComponent(courseId)}` : '/grading', { scroll: false });
   };
-
-  const handleSelectSection = (classroomId: string, assignmentId: string) => {
-    setSelectedClassroomId(classroomId);
-    setSelectedAssignmentId(assignmentId);
-  };
-
-  const handleResetToCourses = () => {
-    setSelectedCourseId(null);
-    setSelectedClassroomId(null);
-    setSelectedAssignmentId(null);
-  };
-
-  const handleResetToSections = () => {
-    setSelectedClassroomId(null);
-    setSelectedAssignmentId(null);
-  };
-
-  // Manual Submission Override Action (Level 3)
-  const handleSetOverride = async (
-    newStatus: SubmissionOverrideStatus,
-    newExtendedUntil?: string
-  ) => {
-    if (!selectedAssignmentId) return;
-    try {
-      const updated = await dataService.updateAssignmentDeadlineOverride(
-        selectedAssignmentId,
-        {
-          status_override: newStatus,
-          extended_until:
-            newExtendedUntil || (newStatus === 'extended' ? extendedDateTime : undefined),
-        }
-      );
-
-      if (updated) {
-        setActiveAssignment(updated);
-        setOverrideStatus(newStatus);
-        setAssignments((prev) =>
-          prev.map((a) => (a.id === updated.id ? updated : a))
-        );
-      }
-
-      if (newStatus === 'force_closed') {
-        showToast(
-          language === 'th'
-            ? 'บังคับปิดรับงานทันทีเรียบร้อยแล้ว'
-            : 'Submissions force-closed immediately'
-        );
-        setShowExtendPicker(false);
-      } else if (newStatus === 'extended') {
-        showToast(
-          language === 'th'
-            ? 'ขยายเวลาส่งงานเรียบร้อยแล้ว'
-            : 'Deadline extended successfully'
-        );
-        setShowExtendPicker(false);
-      } else {
-        showToast(
-          language === 'th'
-            ? 'กลับสู่โหมดกำหนดส่งอัตโนมัติ'
-            : 'Reset to automated deadline schedule'
-        );
-        setShowExtendPicker(false);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Error updating deadline override');
-    }
-  };
-
-  // Open Integrity Audit Modal
-  const handleOpenAudit = async (submission: Submission) => {
-    setAuditSubmission(submission);
-    try {
-      const events = await dataService.getSubmissionEvents(submission.id);
-      setAuditEvents(events);
-      setIsAuditModalOpen(true);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Open Grading Workspace Modal
-  const handleOpenGradingWorkspace = async (submission: Submission) => {
-    setGradingSubmission(submission);
-    try {
-      const answers = await dataService.getSubmissionAnswers(submission.id);
-      setGradingAnswers(answers);
-      setIsGradingWorkspaceOpen(true);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Save Teacher Grade handler
-  const handleSaveGrade = async (
-    subId: string,
-    qId: string,
-    score: number,
-    comment: string,
-    teacherId: string,
-    teacherName: string,
-    teacherRole: TeacherRole
-  ) => {
-    await dataService.saveTeacherGrade(
-      subId,
-      qId,
-      score,
-      comment,
-      teacherId,
-      teacherName,
-      teacherRole
-    );
-
-    // Refresh answers and submissions
-    const updatedAnswers = await dataService.getSubmissionAnswers(subId);
-    setGradingAnswers(updatedAnswers);
-
-    if (selectedAssignmentId) {
-      const refreshedSubs = await dataService.getSubmissions(selectedAssignmentId);
-      setActiveSubmissions(refreshedSubs);
-      const cur = refreshedSubs.find((s) => s.id === subId);
-      if (cur) setGradingSubmission(cur);
-    }
-  };
+  const handleSelectCourse = (courseId: string) => selectCourse(courseId);
+  const handleResetToCourses = () => selectCourse(null);
 
   // Calculate stats for Level 1 (Courses Overview)
   const courseStats = useMemo(() => {
@@ -399,54 +211,6 @@ function GradingHubContent() {
     return items;
   }, [selectedCourse, classrooms, assignments, allSubmissions]);
 
-  // Level 3 Roster Data (Filtered by status & search)
-  const rosterData = useMemo(() => {
-    if (!selectedClassroom || !activeAssignment) return [];
-    const enrolledStudents = selectedClassroom.students || [];
-
-    // Map each student to submission record if available
-    const mapped = enrolledStudents.map((std, index) => {
-      // A submission's student_id is users.id; the roster entry may carry the
-      // LINE id or school number instead, so match on any of them.
-      const sub = activeSubmissions.find((s) =>
-        s.student_id === std.id ||
-        (std.line_uid && s.student_id === std.line_uid) ||
-        (std.student_id && (s.student_id === std.student_id || s.student?.student_id === std.student_id))
-      );
-      return {
-        student: std,
-        orderNo: index + 1,
-        submission: sub || null,
-        isSubmitted: !!sub && (sub.status === 'submitted' || sub.status === 'late'),
-        isLate: sub?.status === 'late',
-        isPendingGrade: !!sub && sub.total_score == null,
-        isGraded: !!sub && sub.total_score != null,
-        isFlagged: !!sub?.is_flagged_suspicious,
-      };
-    });
-
-    return mapped.filter((item) => {
-      // Search filter
-      const q = searchTerm.toLowerCase().trim();
-      const matchesSearch =
-        !q ||
-        `${item.student.first_name} ${item.student.last_name}`.toLowerCase().includes(q) ||
-        (item.student.student_id && item.student.student_id.toLowerCase().includes(q)) ||
-        (item.student.email && item.student.email.toLowerCase().includes(q));
-
-      if (!matchesSearch) return false;
-
-      // Status filter
-      if (statusFilter === 'submitted') return item.isSubmitted;
-      if (statusFilter === 'pending') return !item.isSubmitted;
-      if (statusFilter === 'late') return item.isLate;
-      if (statusFilter === 'graded') return item.isGraded;
-      if (statusFilter === 'suspicious') return item.isFlagged;
-
-      return true;
-    });
-  }, [selectedClassroom, activeAssignment, activeSubmissions, searchTerm, statusFilter]);
-
   if (loading) {
     return (
       <div className="min-h-[70vh] flex flex-col items-center justify-center gap-3">
@@ -458,14 +222,6 @@ function GradingHubContent() {
 
   return (
     <div className="min-h-dvh bg-slate-50/60 dark:bg-slate-950 pb-20 transition-colors">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
-          <Check className="w-4 h-4" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
       {/* Main Container */}
       <div className="max-w-7xl mx-auto space-y-5 sm:space-y-6">
         {/* BREADCRUMB NAVIGATION BAR */}
@@ -485,36 +241,18 @@ function GradingHubContent() {
             {selectedCourse && (
               <>
                 <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                <button
-                  type="button"
-                  onClick={handleResetToSections}
-                  className={`hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer ${
-                    !selectedClassroomId ? 'text-amber-600 dark:text-amber-400 font-black' : ''
-                  }`}
-                >
+                <span className="text-amber-600 dark:text-amber-400 font-black">
                   <span className="font-mono">{selectedCourse.code}</span> {selectedCourse.name}
-                </button>
-              </>
-            )}
-
-            {selectedClassroom && activeAssignment && (
-              <>
-                <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-slate-900 dark:text-white font-black truncate max-w-[16rem] sm:max-w-xs">
-                  {selectedClassroom.name} : {activeAssignment.title}
                 </span>
               </>
             )}
           </nav>
 
-          {/* Quick Back Button when in Level 2 or Level 3 */}
-          {(selectedCourseId || selectedClassroomId) && (
+          {/* Quick Back Button when a course is open */}
+          {selectedCourseId && (
             <button
               type="button"
-              onClick={() => {
-                if (selectedClassroomId) handleResetToSections();
-                else handleResetToCourses();
-              }}
+              onClick={handleResetToCourses}
               className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
@@ -649,7 +387,7 @@ function GradingHubContent() {
         {/* ========================================================================= */}
         {/* LEVEL 2: SHOW SECTIONS & TASKS IN SELECTED COURSE (พอกดเข้าไป 1 ครั้ง ก็จะเห็นว่ามีห้องไหนบ้าง) */}
         {/* ========================================================================= */}
-        {selectedCourse && !selectedClassroomId && (
+        {selectedCourse && (
           <div className="space-y-6 animate-in fade-in">
             {/* Header of selected course */}
             <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -805,16 +543,15 @@ function GradingHubContent() {
                         </div>
                       </div>
 
-                      {/* CTA to enter Level 3 */}
-                      <button
-                        type="button"
-                        onClick={() => handleSelectSection(item.classroom.id, item.assignment.id)}
+                      {/* Open the assignment's grading page */}
+                      <Link
+                        href={`/assignments/${item.assignment.id}/grading?from=grading&courseId=${encodeURIComponent(selectedCourse.id)}`}
                         className="w-full py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md shadow-slate-900/10 cursor-pointer transition-all hover:scale-[1.01]"
                       >
                         <UserCheck className="w-4 h-4 text-amber-400" />
-                        <span>{language === 'th' ? 'ดูรายชื่อ & จัดการส่งงานของห้องนี้' : 'Manage Submissions & Grade'}</span>
+                        <span>{language === 'th' ? 'ดูรายชื่อ & ตรวจงานของห้องนี้' : 'Manage Submissions & Grade'}</span>
                         <ChevronRight className="w-4 h-4 text-amber-400" />
-                      </button>
+                      </Link>
                     </div>
                   ))}
                 </div>
@@ -822,399 +559,7 @@ function GradingHubContent() {
             </div>
           </div>
         )}
-
-        {/* ========================================================================= */}
-        {/* LEVEL 3: CLASSROOM SUBMISSION ROSTER & MANUAL SUBMISSION CONTROL PANEL */}
-        {/* ========================================================================= */}
-        {selectedCourse && selectedClassroom && activeAssignment && (
-          <div className="space-y-6 animate-in fade-in">
-            {/* Header info */}
-            <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950 text-xs font-bold text-amber-900 dark:text-amber-300">
-                  <span>👥</span>
-                  <span>{language === 'th' ? 'ขั้นตอนที่ 3 : รายชื่อผู้เรียนและการควบคุมการรับส่งงาน' : 'Step 3 : Student Submission Roster & Control'}</span>
-                </div>
-                <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white">
-                  {selectedClassroom.name} : {activeAssignment.title}
-                </h1>
-                <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                  <Calendar className="w-3.5 h-3.5 text-amber-500" />
-                  <span>
-                    {language === 'th' ? 'กำหนดส่งเดิม:' : 'Due Date:'}{' '}
-                    {new Date(activeAssignment.due_date).toLocaleString('th-TH')}
-                  </span>
-                  <span>•</span>
-                  <span>
-                    {language === 'th' ? 'คะแนนเต็ม:' : 'Total Points:'} {activeAssignment.total_points} {t('common.points')}
-                  </span>
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleResetToSections}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 cursor-pointer self-start md:self-auto"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                <span>{language === 'th' ? 'เปลี่ยนห้องเรียน' : 'Switch Room'}</span>
-              </button>
-            </div>
-
-            {/* MANUAL SUBMISSION CONTROL PANEL (THE FEATURE USER LIKED) */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 sm:p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-                    <Lock className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-sm font-black text-slate-900 dark:text-white">
-                      {t('submission_control.title')}
-                    </h2>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {t('submission_control.subtitle')}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Status Indicator Banner */}
-                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800">
-                  <span className="text-slate-500 dark:text-slate-400">
-                    {language === 'th' ? 'สถานะปัจจุบัน:' : 'Current Status:'}
-                  </span>
-                  {overrideStatus === 'force_closed' && (
-                    <span className="text-rose-600 dark:text-rose-400 flex items-center gap-1 font-black">
-                      <Lock className="w-3.5 h-3.5" />
-                      {t('submission_control.mode_force_closed')}
-                    </span>
-                  )}
-                  {overrideStatus === 'extended' && (
-                    <span className="text-amber-600 dark:text-amber-400 flex items-center gap-1 font-black">
-                      <Unlock className="w-3.5 h-3.5" />
-                      {t('submission_control.mode_extended')} (
-                      {activeAssignment.extended_until
-                        ? new Date(activeAssignment.extended_until).toLocaleString('th-TH')
-                        : ''}
-                      )
-                    </span>
-                  )}
-                  {overrideStatus === 'auto' && (
-                    <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-black">
-                      <Clock className="w-3.5 h-3.5" />
-                      {t('submission_control.mode_auto')}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex flex-wrap items-center gap-2.5">
-                {/* 1. Force Close */}
-                <button
-                  type="button"
-                  onClick={() => handleSetOverride('force_closed')}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all ${
-                    overrideStatus === 'force_closed'
-                      ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30'
-                      : 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-950/70 border border-rose-200 dark:border-rose-900/60'
-                  }`}
-                >
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>{t('submission_control.btn_force_close')}</span>
-                </button>
-
-                {/* 2. Re-open / Extend */}
-                <button
-                  type="button"
-                  onClick={() => setShowExtendPicker(!showExtendPicker)}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all ${
-                    overrideStatus === 'extended'
-                      ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30 font-black'
-                      : 'bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/70 border border-amber-200 dark:border-amber-900/60'
-                  }`}
-                >
-                  <Unlock className="w-3.5 h-3.5" />
-                  <span>{t('submission_control.btn_reopen')}</span>
-                </button>
-
-                {/* 3. Reset to Auto */}
-                <button
-                  type="button"
-                  onClick={() => handleSetOverride('auto')}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all ${
-                    overrideStatus === 'auto'
-                      ? 'bg-slate-900 dark:bg-slate-700 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>{t('submission_control.btn_reset_auto')}</span>
-                </button>
-              </div>
-
-              {/* Datetime picker for Re-open / Extend */}
-              {showExtendPicker && (
-                <div className="p-4 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 flex flex-wrap items-center gap-3 animate-in fade-in">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                    <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                      {t('submission_control.extend_date_label')}:
-                    </span>
-                  </div>
-                  <input
-                    type="datetime-local"
-                    value={extendedDateTime}
-                    onChange={(e) => setExtendedDateTime(e.target.value)}
-                    className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 text-xs font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleSetOverride('extended', extendedDateTime)}
-                    className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold cursor-pointer shadow-xs"
-                  >
-                    {language === 'th' ? 'บันทึกการขยายเวลา' : 'Apply Extension'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowExtendPicker(false)}
-                    className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                  >
-                    {t('common.cancel')}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* FILTER & SEARCH ROSTER TOOLBAR */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-              {/* Filter Tabs */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                {[
-                  { key: 'all', label: language === 'th' ? 'ทั้งหมด' : 'All' },
-                  { key: 'submitted', label: language === 'th' ? 'ส่งแล้ว' : 'Submitted' },
-                  { key: 'pending', label: language === 'th' ? 'ยังไม่ส่ง' : 'Not Submitted' },
-                  { key: 'late', label: language === 'th' ? 'ส่งล่าช้า' : 'Late' },
-                  { key: 'graded', label: language === 'th' ? 'ตรวจแล้ว' : 'Graded' },
-                  { key: 'suspicious', label: language === 'th' ? 'สลับจอ (Flagged)' : 'Flagged' },
-                ].map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setStatusFilter(tab.key as any)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
-                      statusFilter === tab.key
-                        ? 'bg-amber-500 text-slate-950 shadow-xs font-black'
-                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Search input */}
-              <div className="relative w-full sm:w-auto sm:min-w-60">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder={language === 'th' ? 'ค้นหาชื่อ หรือ รหัสนักเรียน...' : 'Search student...'}
-                  className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500 text-slate-900 dark:text-white"
-                />
-              </div>
-            </div>
-
-            {/* STUDENT SUBMISSION ROSTER TABLE */}
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-slate-500 dark:text-slate-400 font-bold">
-                      <th className="py-3.5 px-4 w-12 text-center">#</th>
-                      <th className="py-3.5 px-4">{language === 'th' ? 'รหัส / ชื่อ-นามสกุล' : 'Student Info'}</th>
-                      <th className="py-3.5 px-4 text-center">{language === 'th' ? 'สถานะการส่ง' : 'Submission Status'}</th>
-                      <th className="py-3.5 px-4 text-center">{language === 'th' ? 'เวลาที่ใช้ / ส่งเมื่อ' : 'Time & Date'}</th>
-                      <th className="py-3.5 px-4 text-center">{language === 'th' ? 'การเฝ้าระวังทุจริต' : 'Integrity'}</th>
-                      <th className="py-3.5 px-4 text-center">{language === 'th' ? 'คะแนนรวม' : 'Score'}</th>
-                      <th className="py-3.5 px-4 text-right">{language === 'th' ? 'การดำเนินการ' : 'Action'}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                    {rosterData.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="py-10 text-center text-slate-400">
-                          {language === 'th' ? 'ไม่พบข้อมูลนักเรียนตามเงื่อนไขที่เลือก' : 'No students found.'}
-                        </td>
-                      </tr>
-                    ) : (
-                      rosterData.map((item) => (
-                        <tr
-                          key={item.student.id}
-                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-                        >
-                          <td className="py-4 px-4 text-center text-slate-400 font-mono">
-                            {item.orderNo}
-                          </td>
-
-                          {/* Student Info */}
-                          <td className="py-4 px-4">
-                            <div className="flex items-center gap-3">
-                              {item.student.avatar_url ? (
-                                <img
-                                  src={item.student.avatar_url}
-                                  alt=""
-                                  className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-700 shrink-0"
-                                />
-                              ) : (
-                                <span className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px] font-black flex items-center justify-center shrink-0">
-                                  {(item.student.first_name?.[0] || '?') + (item.student.last_name?.[0] || '')}
-                                </span>
-                              )}
-                              <div>
-                                <span className="block font-bold text-slate-900 dark:text-white leading-tight">
-                                  {item.student.first_name} {item.student.last_name}
-                                </span>
-                                <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                                  {item.student.student_id || '-'}
-                                </span>
-                              </div>
-                            </div>
-                          </td>
-
-                          {/* Submission Status Badge */}
-                          <td className="py-4 px-4 text-center">
-                            {item.isSubmitted ? (
-                              item.isLate ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 text-[11px] font-bold">
-                                  <AlertTriangle className="w-3 h-3 text-amber-600" />
-                                  <span>{language === 'th' ? 'ส่งแล้ว (ล่าช้า)' : 'Submitted (Late)'}</span>
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold">
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  <span>{language === 'th' ? 'ส่งแล้ว (ตรงเวลา)' : 'Submitted'}</span>
-                                </span>
-                              )
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[11px] font-bold">
-                                <Clock className="w-3 h-3 text-slate-400" />
-                                <span>{language === 'th' ? 'ยังไม่ส่ง' : 'Not Submitted'}</span>
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Time & Date */}
-                          <td className="py-4 px-4 text-center">
-                            {item.submission ? (
-                              <div className="space-y-0.5">
-                                <span className="block text-slate-800 dark:text-slate-200 font-semibold text-[11px]">
-                                  {item.submission.submitted_at
-                                    ? new Date(item.submission.submitted_at).toLocaleTimeString('th-TH', {
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                      }) + ' น.'
-                                    : '-'}
-                                </span>
-                                <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                                  {Math.floor(item.submission.time_spent_seconds / 60)} {t('common.minutes')}
-                                </span>
-                              </div>
-                            ) : (
-                              <span className="text-slate-400 text-[11px]">-</span>
-                            )}
-                          </td>
-
-                          {/* Integrity Badge */}
-                          <td className="py-4 px-4 text-center">
-                            {item.submission ? (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenAudit(item.submission!)}
-                                className="inline-block hover:scale-105 transition-transform cursor-pointer"
-                                title={language === 'th' ? 'คลิกเพื่อดูรายละเอียดไทม์ไลน์' : 'Click to view audit log'}
-                              >
-                                <AntiCheatingBadge
-                                  tabSwitchCount={item.submission.tab_switch_count}
-                                  isFlagged={item.submission.is_flagged_suspicious}
-                                  totalTimeAwaySeconds={item.submission.total_time_away_seconds}
-                                />
-                              </button>
-                            ) : (
-                              <span className="text-slate-400 text-[11px]">-</span>
-                            )}
-                          </td>
-
-                          {/* Score */}
-                          <td className="py-4 px-4 text-center font-bold">
-                            {item.submission?.total_score != null ? (
-                              <span className="px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono text-xs">
-                                {item.submission.total_score} / {activeAssignment.total_points}
-                              </span>
-                            ) : item.isSubmitted ? (
-                              <span className="text-amber-600 dark:text-amber-400 text-[11px] font-semibold">
-                                {language === 'th' ? 'รอตรวจ' : 'Pending'}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 text-[11px]">-</span>
-                            )}
-                          </td>
-
-                          {/* Action Button */}
-                          <td className="py-4 px-4 text-right">
-                            {item.isSubmitted ? (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenGradingWorkspace(item.submission!)}
-                                className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 shadow-xs cursor-pointer transition-transform active:scale-95"
-                              >
-                                <Sparkles className="w-3.5 h-3.5" />
-                                <span>
-                                  {item.isGraded
-                                    ? language === 'th' ? 'แก้ไขคะแนน' : 'Edit Grade'
-                                    : language === 'th' ? 'ตรวจข้อสอบ' : 'Grade'}
-                                </span>
-                              </button>
-                            ) : (
-                              <span className="text-[11px] text-slate-400 font-medium italic">
-                                {language === 'th' ? 'รอผู้เรียนส่งงาน' : 'Awaiting student'}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* ========================================================================= */}
-      {/* INTEGRITY AUDIT TIMELINE MODAL */}
-      {/* ========================================================================= */}
-      <IntegrityAuditModal
-        isOpen={isAuditModalOpen}
-        onClose={() => setIsAuditModalOpen(false)}
-        submission={auditSubmission}
-        events={auditEvents}
-      />
-
-      {/* ========================================================================= */}
-      {/* CONTINUOUS SCROLL SINGLE-PAGE GRADING WORKSPACE MODAL */}
-      {/* ========================================================================= */}
-      {isGradingWorkspaceOpen && gradingSubmission && (
-        <GradingWorkspace
-          submission={gradingSubmission}
-          questions={activeQuestions}
-          initialAnswers={gradingAnswers}
-          onClose={() => setIsGradingWorkspaceOpen(false)}
-          onSaveGrade={handleSaveGrade}
-        />
-      )}
     </div>
   );
 }

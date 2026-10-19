@@ -1,18 +1,23 @@
 'use client';
 
-import React, { useState, useEffect, use } from 'react';
+import React, { useState, useEffect, use, Suspense } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import {
   Assignment,
+  Classroom,
   Question,
   Submission,
   SubmissionAnswer,
   SubmissionEvent,
   SubmissionOverrideStatus,
   TeacherRole,
+  User,
 } from '@/types/database';
+import { DateTimeField } from '@/components/DateTimeField';
+import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
 import { AntiCheatingBadge } from '@/components/AntiCheatingBadge';
 import { IntegrityAuditModal } from '@/components/IntegrityAuditModal';
 import { GradingWorkspace } from '@/components/GradingWorkspace';
@@ -38,6 +43,60 @@ import {
   Layers,
 } from 'lucide-react';
 
+/**
+ * Back button that returns to wherever the teacher came from. Links into this
+ * page carry ?from=classroom|dashboard|grading; anything else uses history.
+ */
+function GradingBackLink({ classroomId }: { classroomId?: string }) {
+  const search = useSearchParams();
+  const router = useRouter();
+  const { language } = useLanguage();
+  const th = language === 'th';
+  const from = search.get('from');
+  const fromClassroomId = search.get('classroomId') || classroomId;
+  const courseId = search.get('courseId');
+  const className =
+    'inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-amber-600 transition-colors cursor-pointer';
+
+  let target: { href: string; label: string } | null = null;
+  if (from === 'classroom' && fromClassroomId) {
+    target = { href: `/classrooms/${fromClassroomId}?tab=classwork`, label: th ? 'กลับไปหน้างานของห้องเรียน' : 'Back to classwork' };
+  } else if (from === 'dashboard') {
+    target = { href: '/dashboard', label: th ? 'กลับไปแดชบอร์ด' : 'Back to dashboard' };
+  } else if (from === 'grading') {
+    target = { href: courseId ? `/grading?courseId=${encodeURIComponent(courseId)}` : '/grading', label: th ? 'กลับไปหน้าตรวจงาน' : 'Back to grading' };
+  }
+
+  if (target) {
+    return (
+      <Link href={target.href} className={className}>
+        <ArrowLeft className="w-3.5 h-3.5" />
+        <span>{target.label}</span>
+      </Link>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (window.history.length > 1) router.back();
+        else router.push(classroomId ? `/classrooms/${classroomId}?tab=classwork` : '/dashboard');
+      }}
+      className={className}
+    >
+      <ArrowLeft className="w-3.5 h-3.5" />
+      <span>{th ? 'ย้อนกลับ' : 'Back'}</span>
+    </button>
+  );
+}
+
+type RosterRow = {
+  key: string;
+  student: Partial<User> | undefined;
+  submission: Submission | null;
+};
+
 export default function GradingPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const assignmentId = resolvedParams.id;
@@ -47,11 +106,12 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [classroom, setClassroom] = useState<Classroom | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'suspicious' | 'pending' | 'graded'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'suspicious' | 'pending' | 'graded' | 'missing'>('all');
 
   // Audit modal state
   const [auditSubmission, setAuditSubmission] = useState<Submission | null>(null);
@@ -81,12 +141,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       setQuestions(qs);
       if (asg) {
         setOverrideStatus(asg.status_override || 'auto');
-        if (asg.extended_until) {
-          setExtendedDateTime(asg.extended_until);
-        } else {
-          // default 2 days in future
-          const nextTwoDays = new Date(Date.now() + 2 * 86400000);
-          setExtendedDateTime(nextTwoDays.toISOString().slice(0, 16));
+        // Suggest the current extension, or two days from now at 23:59.
+        setExtendedDateTime(asg.extended_until || daysFromNowAt(2, 23, 59));
+        if (asg.classroom_id) {
+          dataService.getClassroomById(asg.classroom_id).then(setClassroom).catch(() => setClassroom(null));
         }
       }
 
@@ -138,6 +196,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   // Handle Manual Override
   const handleSetOverride = async (newStatus: SubmissionOverrideStatus, newExtendedUntil?: string) => {
+    if (newStatus === 'extended' && new Date(newExtendedUntil || extendedDateTime).getTime() <= Date.now()) {
+      alert(language === 'th' ? 'กรุณาเลือกเวลาขยายที่อยู่ในอนาคต' : 'Please pick a time in the future');
+      return;
+    }
     try {
       const updated = await dataService.updateAssignmentDeadlineOverride(assignmentId, {
         status_override: newStatus,
@@ -179,56 +241,76 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   // Open Grading Workspace
   const handleOpenGrading = async (submission: Submission) => {
-    setGradingSubmission(submission);
+    // Load the saved grades first so the workspace mounts with them already filled in.
+    let answers: Record<string, SubmissionAnswer> = {};
     try {
-      const answers = await dataService.getSubmissionAnswers(submission.id);
-      setGradingAnswers(answers);
+      answers = await dataService.getSubmissionAnswers(submission.id);
     } catch {
-      setGradingAnswers({});
+      answers = {};
     }
+    setGradingAnswers(answers);
+    setGradingSubmission(submission);
     setIsGradingWorkspaceOpen(true);
   };
 
   // Next Student in Workspace
   const handleNextStudent = async () => {
     if (!gradingSubmission) return;
-    const currentIndex = submissions.findIndex((s) => s.id === gradingSubmission.id);
-    if (currentIndex >= 0 && currentIndex < submissions.length - 1) {
-      const nextSub = submissions[currentIndex + 1];
+    const ordered = rosterRows.flatMap((row) => (row.submission ? [row.submission] : []));
+    const currentIndex = ordered.findIndex((s) => s.id === gradingSubmission.id);
+    if (currentIndex >= 0 && currentIndex < ordered.length - 1) {
+      const nextSub = ordered[currentIndex + 1];
       await handleOpenGrading(nextSub);
     } else {
       setIsGradingWorkspaceOpen(false);
     }
   };
 
-  // Filter Submissions
-  const filteredSubmissions = submissions.filter((sub) => {
-    const studentName = `${sub.student?.first_name || ''} ${sub.student?.last_name || ''}`;
-    const studentId = sub.student?.student_id || '';
+  // Every enrolled student, with their submission if any, then submissions from
+  // students no longer on the roster. Roster entries may carry users.id, the
+  // LINE id or the school number, so match on any of them.
+  const rosterRows: RosterRow[] = (() => {
+    const used = new Set<string>();
+    const rows: RosterRow[] = (classroom?.students || []).map((std) => {
+      const sub = submissions.find(
+        (s) =>
+          !used.has(s.id) &&
+          (s.student_id === std.id ||
+            (std.line_uid && s.student_id === std.line_uid) ||
+            (std.student_id && (s.student_id === std.student_id || s.student?.student_id === std.student_id)))
+      );
+      if (sub) used.add(sub.id);
+      return { key: `std-${std.id}`, student: sub?.student || std, submission: sub || null };
+    });
+    for (const sub of submissions) {
+      if (!used.has(sub.id)) rows.push({ key: sub.id, student: sub.student, submission: sub });
+    }
+    return rows;
+  })();
+
+  const isSuspicious = (sub: Submission) =>
+    sub.is_flagged_suspicious || sub.tab_switch_count >= 3 || sub.total_time_away_seconds >= 60;
+
+  const filteredRows = rosterRows.filter(({ student, submission: sub }) => {
+    const studentName = `${student?.first_name || ''} ${student?.last_name || ''}`;
+    const studentId = student?.student_id || '';
     const matchesSearch =
       studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       studentId.toLowerCase().includes(searchTerm.toLowerCase());
 
     if (!matchesSearch) return false;
 
-    if (statusFilter === 'suspicious') {
-      return sub.is_flagged_suspicious || sub.tab_switch_count >= 3 || sub.total_time_away_seconds >= 60;
-    }
-    if (statusFilter === 'pending') {
-      return sub.total_score == null;
-    }
-    if (statusFilter === 'graded') {
-      return sub.total_score != null;
-    }
+    if (statusFilter === 'missing') return !sub;
+    if (statusFilter === 'suspicious') return !!sub && isSuspicious(sub);
+    if (statusFilter === 'pending') return !!sub && sub.total_score == null;
+    if (statusFilter === 'graded') return !!sub && sub.total_score != null;
 
     return true;
   });
 
-  const suspiciousTotal = submissions.filter(
-    (s) => s.is_flagged_suspicious || s.tab_switch_count >= 3 || s.total_time_away_seconds >= 60
-  ).length;
-
+  const suspiciousTotal = submissions.filter(isSuspicious).length;
   const gradedTotal = submissions.filter((s) => s.total_score != null).length;
+  const missingTotal = rosterRows.filter((row) => !row.submission).length;
 
   return (
     <div className="space-y-8 pb-20">
@@ -242,13 +324,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
       {/* Top Breadcrumb & Assignment Header */}
       <div className="space-y-4">
-        <Link
-          href="/dashboard"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-amber-600 transition-colors"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>{t('common.back')} {t('nav.dashboard')}</span>
-        </Link>
+        <Suspense fallback={<span className="block h-4" />}>
+          <GradingBackLink classroomId={assignment?.classroom_id} />
+        </Suspense>
 
         <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -286,18 +364,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
             <div className="flex items-center gap-4">
               <div className="text-right">
                 <span className="text-xs text-slate-400 block font-medium">
-                  {t('grading.due_date')}
+                  {assignment?.is_exam ? (language === 'th' ? 'ปิดรับคำตอบ' : 'Closes') : t('grading.due_date')}
                 </span>
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-mono">
-                  {assignment?.due_date
-                    ? new Date(assignment.due_date).toLocaleDateString(language === 'th' ? 'th-TH' : 'en-US', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })
-                    : '-'}
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  {formatDateTime(assignment?.due_date, language)}
                 </span>
               </div>
             </div>
@@ -368,21 +438,22 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
             {/* Extend Date-Time Picker Drawer */}
             {showExtendPicker && (
-              <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center gap-3 animate-in fade-in">
-                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+              <div className="pt-3 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-start gap-3 animate-in fade-in">
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1.5 sm:pt-3 shrink-0">
                   <Calendar className="w-3.5 h-3.5 text-amber-500" />
                   <span>{t('submission_control.extend_date_label')}:</span>
                 </span>
-                <input
-                  type="datetime-local"
+                <DateTimeField
                   value={extendedDateTime}
-                  onChange={(e) => setExtendedDateTime(e.target.value)}
-                  className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white"
+                  onChange={setExtendedDateTime}
+                  presets="deadline"
+                  className="flex-1 min-w-0"
                 />
                 <button
                   type="button"
                   onClick={() => handleSetOverride('extended', extendedDateTime)}
-                  className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs cursor-pointer"
+                  disabled={!extendedDateTime}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 >
                   {language === 'th' ? 'บันทึกเวลาขยาย' : 'Apply Extension'}
                 </button>
@@ -409,9 +480,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     : overrideStatus === 'extended'
                     ? t('submission_control.status_banner_extended').replace(
                         '{time}',
-                        assignment?.extended_until
-                          ? new Date(assignment.extended_until).toLocaleString(language === 'th' ? 'th-TH' : 'en-US')
-                          : extendedDateTime
+                        formatDateTime(assignment?.extended_until || extendedDateTime, language)
                       )
                     : t('submission_control.status_banner_auto')}
                 </span>
@@ -439,8 +508,13 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           </span>
           <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">
             {submissions.filter((s) => s.status !== 'pending').length}
-            <span className="text-xs font-normal text-slate-400 ml-1">/ {submissions.length}</span>
+            <span className="text-xs font-normal text-slate-400 ml-1">/ {rosterRows.length}</span>
           </p>
+          {missingTotal > 0 && (
+            <span className="text-[11px] font-semibold text-slate-400">
+              {language === 'th' ? `ยังไม่ส่ง ${missingTotal} คน` : `${missingTotal} not submitted`}
+            </span>
+          )}
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
@@ -499,7 +573,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
               }`}
             >
-              {t('grading.filter_all')} ({submissions.length})
+              {t('grading.filter_all')} ({rosterRows.length})
+            </button>
+            <button
+              onClick={() => setStatusFilter('missing')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                statusFilter === 'missing'
+                  ? 'bg-slate-600 text-white'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              {language === 'th' ? 'ยังไม่ส่ง' : 'Not submitted'} ({missingTotal})
             </button>
             <button
               onClick={() => setStatusFilter('suspicious')}
@@ -549,28 +633,21 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-              {filteredSubmissions.length === 0 ? (
+              {filteredRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-slate-400">
                     {t('common.no_data')}
                   </td>
                 </tr>
               ) : (
-                filteredSubmissions.map((sub) => {
-                  const student = sub.student;
-                  const isGraded = sub.total_score != null;
+                filteredRows.map(({ key, student, submission: sub }) => {
+                  const isGraded = sub?.total_score != null;
                   const fullName = student?.first_name
                     ? `${student.first_name} ${student.last_name || ''}`.trim()
                     : (language === 'th' ? 'ไม่พบข้อมูลนักเรียน' : 'Unknown student');
                   const initials = (student?.first_name?.[0] || '?') + (student?.last_name?.[0] || '');
-                  const isLate = sub.status === 'late';
-
-                  return (
-                    <tr
-                      key={sub.id}
-                      className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
-                    >
-                      {/* Student: real photo (LINE) or initials, name and student number */}
+                  const isLate = sub?.status === 'late';
+                  const studentCell = (
                       <td className="py-3.5 px-4 sm:px-6">
                         <div className="flex items-center gap-3 min-w-0">
                           {student?.avatar_url ? (
@@ -588,6 +665,32 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                           </div>
                         </div>
                       </td>
+                  );
+
+                  if (!sub) {
+                    return (
+                      <tr key={key} className="bg-slate-50/40 dark:bg-slate-900/40">
+                        {studentCell}
+                        <td className="py-3.5 px-4 sm:px-6 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                            {language === 'th' ? 'ยังไม่ส่ง' : 'Not submitted'}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
+                        <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
+                        <td className="py-3.5 px-4 sm:px-6 text-center text-slate-400">-</td>
+                        <td className="py-3.5 px-4 sm:px-6 text-right text-[11px] text-slate-400 italic whitespace-nowrap">
+                          {language === 'th' ? 'รอนักเรียนส่งงาน' : 'Awaiting student'}
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  return (
+                    <tr key={key} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                      {/* Student: real photo (LINE) or initials, name and student number */}
+                      {studentCell}
 
                       {/* Submission status + when it was submitted */}
                       <td className="py-3.5 px-4 sm:px-6 whitespace-nowrap">
@@ -609,7 +712,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         </span>
                         {sub.submitted_at && (
                           <p className="text-[11px] text-slate-400 mt-1">
-                            {new Date(sub.submitted_at).toLocaleString(language === 'th' ? 'th-TH' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+                            {formatDateTime(sub.submitted_at, language)}
                           </p>
                         )}
                       </td>
@@ -642,7 +745,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         {isGraded ? (
                           <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
                             <span className="text-sm tabular-nums">{sub.total_score}</span>
-                            <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || 20}</span>
+                            <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
@@ -687,6 +790,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       {/* Single-Page Continuous Grading Workspace Modal */}
       {isGradingWorkspaceOpen && gradingSubmission && (
         <GradingWorkspace
+          key={gradingSubmission.id}
           submission={gradingSubmission}
           questions={questions}
           initialAnswers={gradingAnswers}

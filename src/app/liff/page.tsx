@@ -807,8 +807,9 @@ export default function LiffStudentPage() {
       alert("กรุณารอคุณครูอนุมัติเข้าห้องเรียน (Admit) ก่อนเริ่มต้นทำข้อสอบหรือการบ้าน");
       return;
     }
-    if (!getAssignmentWindow(a).acceptsSubmissions) {
-      alert("คุณครูปิดรับงานนี้แล้ว ไม่สามารถส่งได้");
+    const openWindow = getAssignmentWindow(a);
+    if (!openWindow.acceptsSubmissions) {
+      alert(openWindow.isQuizClosed ? "หมดเวลาทำข้อสอบนี้แล้ว" : "คุณครูปิดรับงานนี้แล้ว ไม่สามารถส่งได้");
       return;
     }
     setStudentAnswers({});
@@ -1697,9 +1698,10 @@ export default function LiffStudentPage() {
                         const isSubmitted = Boolean(submission);
                         const isGraded = Boolean(submission && gradedSubmissionIds.has(submission.id));
                         const window_ = getAssignmentWindow(assignment);
+                        // Quizzes only accept answers on time (plus a short grace), so trust their status.
                         const isLateSubmitted = isSubmitted && (
                           submission.status === 'late' ||
-                          Boolean(submission.submitted_at && window_.deadline && new Date(submission.submitted_at).getTime() > window_.deadline)
+                          (!assignment.is_exam && Boolean(submission.submitted_at && window_.deadline && new Date(submission.submitted_at).getTime() > window_.deadline))
                         );
                         const isClosed = !isSubmitted && !window_.acceptsSubmissions;
 
@@ -1753,7 +1755,7 @@ export default function LiffStudentPage() {
                                     <span className="font-semibold text-emerald-600">ส่งตรงเวลา</span>
                                   )
                                 ) : isClosed ? (
-                                  <span className="font-semibold text-slate-500">คุณครูปิดรับงานแล้ว</span>
+                                  <span className="font-semibold text-slate-500">{window_.isQuizClosed ? 'หมดเวลาทำข้อสอบ' : 'คุณครูปิดรับงานแล้ว'}</span>
                                 ) : window_.isPastDeadline ? (
                                   <span className="font-semibold text-rose-600">เลยกำหนด (ยังส่งได้)</span>
                                 ) : (
