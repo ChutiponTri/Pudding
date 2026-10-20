@@ -25,6 +25,9 @@ import {
   CalendarDays,
   CalendarCheck,
   Layers,
+  Menu,
+  X,
+  LayoutGrid,
 } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
@@ -400,6 +403,13 @@ export default function LiffStudentPage() {
 
   // Join Classroom Code Modal
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [isNavOpen, setIsNavOpen] = useState(false);
+  useEffect(() => {
+    if (!isNavOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setIsNavOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isNavOpen]);
   const [joinInviteCode, setJoinInviteCode] = useState("");
   const [joinMessage, setJoinMessage] = useState<string | null>(null);
   const processedEnrollRef = useRef<string | null>(null);
@@ -1276,6 +1286,18 @@ export default function LiffStudentPage() {
       {/* Top bar */}
       <header className="sticky top-0 z-40 bg-line text-white shadow-sm shadow-emerald-900/10 pt-[env(safe-area-inset-top)]">
         <div className="h-14 px-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1 min-w-0">
+          {!activeAssignment && (
+            <button
+              type="button"
+              onClick={() => setIsNavOpen(true)}
+              aria-label="เปิดเมนูรายวิชา"
+              title="รายวิชาของฉัน"
+              className="w-10 h-10 -ml-2 flex items-center justify-center rounded-full hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -1288,6 +1310,7 @@ export default function LiffStudentPage() {
             <span className="text-xl select-none">🍮</span>
             <span className="font-bold text-base tracking-tight">พุดดิ้ง</span>
           </button>
+          </div>
 
           <div className="flex items-center gap-1 min-w-0">
             <button
@@ -1326,46 +1349,114 @@ export default function LiffStudentPage() {
           </div>
         </div>
 
-        {/* Classroom chips (hidden during an exam) */}
-        {!activeAssignment && (
-          <div className="px-4 pb-3 flex items-center gap-2">
-            <div className="flex items-center gap-2 flex-1 overflow-x-auto scrollbar-none -mx-1 px-1">
+      </header>
+
+      {/* Course sidebar (slide-in drawer). Classes are listed by course name:
+          students in one room (e.g. 412) see the same room name on every
+          subject, so the room alone can't tell them apart. */}
+      {!activeAssignment && (
+        <div
+          className={`fixed inset-0 z-50 transition-opacity duration-200 ${isNavOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+          aria-hidden={!isNavOpen}
+        >
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-xs" onClick={() => setIsNavOpen(false)} />
+          <aside
+            role="dialog"
+            aria-label="รายวิชาของฉัน"
+            className={`absolute inset-y-0 left-0 w-[82%] max-w-xs bg-white dark:bg-slate-900 shadow-2xl flex flex-col transition-transform duration-200 ease-out ${
+              isNavOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
+          >
+            <div className="bg-line text-white pt-[env(safe-area-inset-top)]">
+              <div className="h-14 px-4 flex items-center justify-between">
+                <span className="flex items-center gap-2 font-bold">
+                  <span className="text-xl select-none">🍮</span>
+                  <span>รายวิชาของฉัน</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsNavOpen(false)}
+                  aria-label="ปิดเมนู"
+                  className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/10 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <nav className="flex-1 overflow-y-auto overscroll-contain p-3 space-y-1">
               <button
-                onClick={() => setSelectedClassroom(null)}
-                className={`h-9 px-3.5 rounded-full text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
-                  !selectedClassroom ? "bg-white text-emerald-700 shadow-sm" : "bg-white/15 text-white hover:bg-white/25"
+                type="button"
+                onClick={() => {
+                  setSelectedClassroom(null);
+                  setIsNavOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left text-sm font-bold transition-colors cursor-pointer ${
+                  !selectedClassroom
+                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+                    : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
                 }`}
               >
-                ภาพรวม
+                <LayoutGrid className="w-4 h-4 shrink-0" />
+                <span>ภาพรวม</span>
               </button>
+
+              <p className="px-3 pt-3 pb-1 text-[11px] font-bold text-slate-400">รายวิชา ({classrooms.length})</p>
               {classrooms.map((cls) => {
                 const isSelected = selectedClassroom?.id === cls.id;
+                const term = cls.semester && cls.year_ce ? `${cls.semester}/${cls.year_ce + 543}` : cls.academic_year;
                 return (
                   <button
                     key={cls.id}
-                    onClick={() => setSelectedClassroom(cls)}
-                    className={`h-9 px-3.5 rounded-full text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                      isSelected ? "bg-white text-emerald-700 shadow-sm" : "bg-white/15 text-white hover:bg-white/25"
+                    type="button"
+                    onClick={() => {
+                      setSelectedClassroom(cls);
+                      setIsNavOpen(false);
+                    }}
+                    className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-2xl text-left transition-colors cursor-pointer ${
+                      isSelected
+                        ? "bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-200 dark:ring-emerald-800"
+                        : "hover:bg-slate-100 dark:hover:bg-slate-800"
                     }`}
                   >
-                    <span>{cls.name}</span>
-                    {isPendingIn(cls) && (
-                      <span className="px-1.5 py-0.5 rounded-full bg-amber-300 text-amber-950 text-[10px] font-bold">รออนุมัติ</span>
-                    )}
+                    <BookOpen className={`w-4 h-4 mt-0.5 shrink-0 ${isSelected ? "text-emerald-600" : "text-slate-400"}`} />
+                    <span className="min-w-0 flex-1">
+                      <span className={`block text-sm font-bold leading-snug ${isSelected ? "text-emerald-700 dark:text-emerald-300" : "text-slate-900 dark:text-white"}`}>
+                        {cls.course_name || cls.subject_code || cls.name}
+                      </span>
+                      <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                        ห้อง {cls.name}
+                        {cls.subject_code ? ` • ${cls.subject_code}` : ""}
+                        {term ? ` • ${term}` : ""}
+                      </span>
+                      {isPendingIn(cls) && (
+                        <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
+                          รออนุมัติ
+                        </span>
+                      )}
+                    </span>
                   </button>
                 );
               })}
+              {!classrooms.length && <p className="px-3 py-4 text-xs text-slate-400">ยังไม่ได้เข้าร่วมรายวิชา</p>}
+            </nav>
+
+            <div className="p-3 border-t border-slate-100 dark:border-slate-800 pb-[max(env(safe-area-inset-bottom),0.75rem)]">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsNavOpen(false);
+                  setIsJoinModalOpen(true);
+                }}
+                className="w-full h-11 rounded-2xl bg-line hover:bg-line-dark text-white text-sm font-bold flex items-center justify-center gap-1.5 shadow-sm cursor-pointer active:scale-[0.98] transition-transform"
+              >
+                <Plus className="w-4 h-4" />
+                <span>เข้าร่วมรายวิชา</span>
+              </button>
             </div>
-            <button
-              onClick={() => setIsJoinModalOpen(true)}
-              className="h-9 shrink-0 pl-2.5 pr-3.5 rounded-full text-xs font-bold bg-white text-emerald-700 hover:bg-emerald-50 flex items-center gap-1 shadow-sm cursor-pointer active:scale-95 transition-transform"
-            >
-              <Plus className="w-4 h-4" />
-              <span>เข้าร่วม</span>
-            </button>
-          </div>
-        )}
-      </header>
+          </aside>
+        </div>
+      )}
 
       {/* Floating away-from-screen warning */}
       {awayWarningToast && (
