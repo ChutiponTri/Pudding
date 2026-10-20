@@ -262,6 +262,10 @@ function NewAssignmentContent() {
       alert(language === 'th' ? 'กรุณาระบุชื่อการบ้านหรือข้อสอบ' : 'Please provide a title');
       return;
     }
+    if (dueDate && new Date(dueDate).getTime() <= Date.now()) {
+      alert(language === 'th' ? 'กำหนดส่งต้องเป็นเวลาในอนาคต' : 'The due date must be in the future');
+      return;
+    }
 
     setIsSubmitting(true);
     try {

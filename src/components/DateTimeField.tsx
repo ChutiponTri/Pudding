@@ -30,7 +30,7 @@ interface DateTimeFieldProps {
   /** Show a clear button and accept ''. */
   allowEmpty?: boolean;
   emptyHint?: string;
-  /** Highlight values in the past (deadlines). */
+  /** Highlight values in the past and stop the date picker before today (deadlines). */
   warnPast?: boolean;
   accent?: 'amber' | 'emerald';
   className?: string;
@@ -136,6 +136,7 @@ export function DateTimeField({
             type="date"
             value={date}
             onClick={openPicker}
+            min={warnPast ? toLocalDateValue(new Date(now).toISOString()) : undefined}
             onChange={(e) => commit(e.target.value, time)}
             aria-label={th ? 'วันที่' : 'Date'}
             className={`${inputBase} min-w-0 appearance-none`}
@@ -204,6 +205,7 @@ export function DateTimeField({
         {value ? (
           <>
             {formatDateTime(value, language)} <span className="opacity-80">({formatRelative(value, language, now)})</span>
+            {isPast && <> · {th ? 'กรุณาเลือกเวลาในอนาคต' : 'Please pick a future time'}</>}
           </>
         ) : (
           emptyHint || (th ? 'ยังไม่ได้เลือกวันเวลา' : 'No date selected')

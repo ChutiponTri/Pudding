@@ -694,6 +694,13 @@ export default function ClassroomWorkspacePage() {
     assignmentId: string,
     updates: { title: string; due_date: string; total_points: number; group_name?: string }
   ) => {
+    // Old (already passed) deadlines may be kept when only the title/points change.
+    const previous = assignments.find((a) => a.id === assignmentId)?.due_date;
+    const dueChanged = !previous || new Date(previous).getTime() !== new Date(updates.due_date).getTime();
+    if (dueChanged && new Date(updates.due_date).getTime() <= Date.now()) {
+      alert('กำหนดส่งต้องเป็นเวลาในอนาคต');
+      return;
+    }
     setIsUpdatingAssignment(true);
     try {
       await dataService.updateAssignment(assignmentId, updates);

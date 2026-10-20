@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
 import { useUser, UserButton, Show } from '@clerk/nextjs';
 import { dataService } from '@/lib/supabase/dataService';
 import { notificationManager, AppNotification } from '@/lib/utils/notificationManager';
@@ -16,6 +16,8 @@ import {
   Menu,
 } from 'lucide-react';
 
+const noopSubscribe = () => () => {};
+
 export const Navbar: React.FC = () => {
   const pathname = usePathname();
   const { t, language } = useLanguage();
@@ -24,13 +26,18 @@ export const Navbar: React.FC = () => {
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const [browserPerm, setBrowserPerm] = useState<NotificationPermission>('default');
+  // Read the browser permission after hydration ('default' on the server), then
+  // let a granted/denied answer from the prompt override it.
+  const initialPerm = useSyncExternalStore(
+    noopSubscribe,
+    () => notificationManager.getPermissionStatus(),
+    () => 'default' as NotificationPermission
+  );
+  const [requestedPerm, setBrowserPerm] = useState<NotificationPermission | null>(null);
+  const browserPerm = requestedPerm ?? initialPerm;
   const notificationRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setBrowserPerm(notificationManager.getPermissionStatus());
-    }
     const unsub = notificationManager.subscribe((items) => {
       setNotifications(items);
     });
