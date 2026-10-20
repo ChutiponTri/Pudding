@@ -64,6 +64,7 @@ import {
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
+import { EditStudentModal } from '@/components/EditStudentModal';
 
 /**
  * Checks an assessment framework before saving. Returns a message naming the
@@ -797,6 +798,17 @@ export default function DashboardPage() {
       }
       await loadAllData();
     }
+  };
+
+  const [editingStudent, setEditingStudent] = useState<User | null>(null);
+
+  const handleStudentEdited = async (studentId: string, fields: Pick<User, 'first_name' | 'last_name' | 'student_id'>) => {
+    setManagingClassroom((prev) =>
+      prev ? { ...prev, students: (prev.students || []).map((s) => (s.id === studentId ? { ...s, ...fields } : s)) } : prev
+    );
+    setEditingStudent(null);
+    showToast(language === 'th' ? 'แก้ไขข้อมูลนักเรียนแล้ว' : 'Student updated');
+    await loadAllData();
   };
 
   const handleRemoveStudent = async (studentId: string) => {
@@ -2943,6 +2955,15 @@ export default function DashboardPage() {
       )}
 
       {/* STUDENT ROSTER & LINE LIFF INVITE MODAL */}
+      {editingStudent && managingClassroom && (
+        <EditStudentModal
+          classroomId={managingClassroom.id}
+          student={editingStudent}
+          onClose={() => setEditingStudent(null)}
+          onSaved={handleStudentEdited}
+        />
+      )}
+
       {managingClassroom && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
@@ -3099,14 +3120,24 @@ export default function DashboardPage() {
                           </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveStudent(std.id)}
-                        className="p-1 text-slate-400 hover:text-rose-500 rounded"
-                        title="Remove student"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setEditingStudent(std)}
+                          className="p-1 text-slate-400 hover:text-amber-600 rounded cursor-pointer"
+                          title={language === 'th' ? 'แก้ไขชื่อ นามสกุล และรหัสนักเรียน' : 'Edit student'}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveStudent(std.id)}
+                          className="p-1 text-slate-400 hover:text-rose-500 rounded cursor-pointer"
+                          title="Remove student"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

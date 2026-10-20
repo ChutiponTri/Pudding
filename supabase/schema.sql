@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS public.classrooms (
   line_connection_token TEXT,
   line_connection_token_expires_at TIMESTAMPTZ,
   line_connected_at TIMESTAMPTZ,
+  line_member_joined_at TIMESTAMPTZ,          -- Last LINE group join (debounces the join-link message)
+  line_join_notice_pending BOOLEAN DEFAULT FALSE,
   students JSONB DEFAULT '[]'::JSONB,         -- Cached roster snapshot
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

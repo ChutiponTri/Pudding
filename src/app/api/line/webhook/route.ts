@@ -1,10 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getGroupSummary, isGroupMember, pushLineGroupText, replyLineText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
 
 export const runtime = 'nodejs';
+// Leaves room for the delayed "last student joined" announcement (see handleMemberJoined).
+export const maxDuration = 30;
 
 function isValidSignature(body: string, signature: string | null) {
   const secret = process.env.LINE_CHANNEL_SECRET;
@@ -68,6 +70,71 @@ async function replyClassroomJoinCode(replyToken: string | undefined, classroom:
 }
 
 type ServiceClient = ReturnType<typeof createServiceSupabaseClient>;
+
+/** Joins closer together than this count as one burst (a teacher inviting a class). */
+const JOIN_QUIET_MS = 8000;
+
+/**
+ * Announces the classroom link when students join the LINE group, without
+ * flooding it when a whole class is invited at once:
+ * - the first join after a quiet period gets the link immediately (reply);
+ * - later joins in the same burst stay silent, and once nobody has joined for
+ *   JOIN_QUIET_MS the link is pushed once more for everyone who came late.
+ * State lives on the classroom row because each join arrives as its own
+ * webhook request (possibly on different instances).
+ */
+async function handleMemberJoined(supabase: ServiceClient, groupId: string, replyToken: string | undefined) {
+  const { data: classroom } = await supabase.from('classrooms').select('id, name, invite_code').eq('line_group_id', groupId).maybeSingle();
+  if (!classroom) return;
+  const liffUrl = getLiffUrl();
+  const joinedAt = new Date().toISOString();
+  const quietSince = new Date(Date.now() - JOIN_QUIET_MS).toISOString();
+
+  // Claim "first of the burst" atomically so concurrent joins can't both reply.
+  const { data: first, error } = await supabase
+    .from('classrooms')
+    .update({ line_member_joined_at: joinedAt, line_join_notice_pending: false })
+    .eq('id', classroom.id)
+    .or(`line_member_joined_at.is.null,line_member_joined_at.lt.${quietSince}`)
+    .select('id');
+  if (error) {
+    // Columns missing (migration not run): fall back to replying every time.
+    console.error('LINE join burst tracking failed:', error);
+    await replyClassroomJoinCode(replyToken, classroom, liffUrl);
+    return;
+  }
+  if (first?.length) {
+    await replyClassroomJoinCode(replyToken, classroom, liffUrl);
+    return;
+  }
+
+  // Mid-burst: become the latest join (unless a newer one already is) ...
+  const { data: latest } = await supabase
+    .from('classrooms')
+    .update({ line_member_joined_at: joinedAt, line_join_notice_pending: true })
+    .eq('id', classroom.id)
+    .lt('line_member_joined_at', joinedAt)
+    .select('id');
+  if (!latest?.length) return;
+
+  // ... and if nobody joins after us, send the follow-up once.
+  after(async () => {
+    await new Promise((resolve) => setTimeout(resolve, JOIN_QUIET_MS));
+    const { data: claimed } = await supabase
+      .from('classrooms')
+      .update({ line_join_notice_pending: false })
+      .eq('id', classroom.id)
+      .eq('line_member_joined_at', joinedAt)
+      .eq('line_join_notice_pending', true)
+      .select('id');
+    if (!claimed?.length) return;
+    try {
+      await pushLineGroupText(groupId, classroomJoinText(classroom, liffUrl));
+    } catch (err) {
+      console.error('LINE join follow-up push failed:', err);
+    }
+  });
+}
 type WaitingClassroom = {
   id: string;
   name: string;
@@ -246,8 +313,7 @@ export async function POST(request: NextRequest) {
       continue;
     }
     if (groupId && event.type === 'memberJoined') {
-      const { data: joinedClassroom } = await supabase.from('classrooms').select('id, name, invite_code').eq('line_group_id', groupId).maybeSingle();
-      if (joinedClassroom) await replyClassroomJoinCode(event.replyToken, joinedClassroom, getLiffUrl());
+      await handleMemberJoined(supabase, groupId, event.replyToken);
       continue;
     }
     const normalizedText = (event.message?.type === 'text'

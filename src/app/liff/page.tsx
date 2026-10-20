@@ -231,7 +231,9 @@ export default function LiffStudentPage() {
   const currentAcademicPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
   const [studentPortalTab, setStudentPortalTab] = useState<"overview" | "courses" | "course">("overview");
   const [courseTab, setCourseTab] = useState<"timeline" | "work" | "attendance">("timeline");
-  const [courseAttendance, setCourseAttendance] = useState<{ id: string; title: string; starts_at: string; status: string }[]>([]);
+  const [courseAttendance, setCourseAttendance] = useState<
+    { id: string; title: string; starts_at: string; status: string; on_time_until_minutes?: number; late_until_minutes?: number }[]
+  >([]);
   const [courseAttendanceRecords, setCourseAttendanceRecords] = useState<Record<string, string>>({});
   const [selectedTermKey, setSelectedTermKey] = useState("current");
 
@@ -1788,74 +1790,98 @@ export default function LiffStudentPage() {
             {courseTab === 'attendance' && (
               <section className="space-y-4">
                 {(() => {
-                  const openSession = courseAttendance.find((s) => s.status === 'open');
-                  const currentStatus = openSession ? courseAttendanceRecords[openSession.id] : null;
+                  // Same order as the teacher view: open sessions the student hasn't
+                  // checked into come first (newest first); everything else (checked
+                  // or closed) follows from oldest to newest.
+                  const startTime = (item: { starts_at: string }) => new Date(item.starts_at).getTime();
+                  const pending = courseAttendance
+                    .filter((item) => item.status === 'open' && !courseAttendanceRecords[item.id])
+                    .sort((a, b) => startTime(b) - startTime(a));
+                  const history = courseAttendance
+                    .filter((item) => item.status !== 'open' || courseAttendanceRecords[item.id])
+                    .sort((a, b) => startTime(a) - startTime(b));
 
                   return (
-                    <div className={`${CARD} p-4 sm:p-5 space-y-3`}>
-                      <SectionTitle
-                        icon={<CalendarCheck className="w-4 h-4 text-emerald-600" />}
-                        title="การเช็คชื่อปัจจุบัน"
-                        action={openSession ? <Pill tone="emerald">เปิดรับอยู่</Pill> : undefined}
-                      />
+                    <>
+                      <div className={`${CARD} p-4 sm:p-5 space-y-3`}>
+                        <SectionTitle
+                          icon={<CalendarCheck className="w-4 h-4 text-emerald-600" />}
+                          title="การเช็คชื่อปัจจุบัน"
+                          action={pending.length > 0 ? <Pill tone="emerald">เปิดรับอยู่ {pending.length} คาบ</Pill> : undefined}
+                        />
 
-                      {openSession ? (
-                        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 ring-1 ring-emerald-200 dark:ring-emerald-900 space-y-3">
-                          <div>
-                            <p className="text-base font-bold text-slate-900 dark:text-white">{openSession.title}</p>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                              เริ่มเวลา {new Date(openSession.starts_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
-                            </p>
+                        {pending.length > 0 ? (
+                          <div className="space-y-3">
+                            {pending.map((openSession) => (
+                              <div
+                                key={openSession.id}
+                                className="rounded-2xl overflow-hidden ring-1 ring-emerald-400/60 dark:ring-emerald-700 shadow-lg shadow-emerald-500/15"
+                              >
+                                <div className="p-4 bg-linear-to-r from-emerald-500/15 via-emerald-500/5 to-teal-500/15 border-l-4 border-emerald-500 flex items-start gap-3">
+                                  <span className="relative flex w-3 h-3 shrink-0 mt-1.5">
+                                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                                    <span className="relative inline-flex w-3 h-3 rounded-full bg-emerald-500" />
+                                  </span>
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-black text-[10px] shadow-xs">
+                                        กำลังเปิดรับเช็คชื่อ
+                                      </span>
+                                      <p className="text-base font-bold text-slate-900 dark:text-white">{openSession.title}</p>
+                                    </div>
+                                    <p className="text-xs text-emerald-800/80 dark:text-emerald-300/80 mt-1">
+                                      เริ่มเวลา {new Date(openSession.starts_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+                                      {openSession.on_time_until_minutes != null && ` • ตรงเวลาภายใน ${openSession.on_time_until_minutes} นาที`}
+                                      {openSession.late_until_minutes != null && ` • สายได้ถึง ${openSession.late_until_minutes} นาที`}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="p-3 bg-white dark:bg-slate-900">
+                                  <button
+                                    onClick={() => handleStudentCheckIn(openSession.id)}
+                                    disabled={isCheckingIn}
+                                    className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+                                  >
+                                    {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
+                                    {isCheckingIn ? 'กำลังเช็คชื่อ...' : 'กดเช็คชื่อตอนนี้'}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
+                        ) : (
+                          <EmptyState icon="🕒" text="ขณะนี้ไม่มีคาบเช็คชื่อที่รอให้เช็ค" />
+                        )}
+                      </div>
 
-                          {currentStatus ? (
-                            <div className="p-3 rounded-xl bg-white dark:bg-slate-900 ring-1 ring-emerald-200 dark:ring-emerald-800 flex items-center gap-2 text-sm font-bold text-emerald-700 dark:text-emerald-300">
-                              <CheckCircle2 className="w-5 h-5 shrink-0" />
-                              <span>เช็คชื่อแล้ว: {statusLabels[currentStatus as AttendanceStatus] || currentStatus}</span>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => handleStudentCheckIn(openSession.id)}
-                              disabled={isCheckingIn}
-                              className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
-                            >
-                              {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
-                              {isCheckingIn ? 'กำลังเช็คชื่อ...' : 'กดเช็คชื่อตอนนี้'}
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <EmptyState icon="🕒" text="ขณะนี้ไม่มีคาบเช็คชื่อที่เปิดรับ" />
-                      )}
-                    </div>
+                      <div className={`${CARD} p-4 sm:p-5 space-y-3`}>
+                        <SectionTitle icon={<CalendarDays className="w-4 h-4 text-slate-500" />} title="ประวัติการเช็คชื่อ" count={history.length} />
+                        {history.length > 0 ? (
+                          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {history.map((attendance) => {
+                              // No record on a closed session counts as absent, as on the teacher roster.
+                              const shownStatus = courseAttendanceRecords[attendance.id] || 'absent';
+                              return (
+                                <li key={attendance.id} className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{attendance.title}</p>
+                                    <p className="text-xs text-slate-500 mt-0.5">
+                                      {new Date(attendance.starts_at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })}
+                                      {attendance.status === 'open' && ' • ยังเปิดรับอยู่'}
+                                    </p>
+                                  </div>
+                                  <Pill tone={ATTENDANCE_TONE[shownStatus] || 'slate'}>{ATTENDANCE_SHORT[shownStatus] || shownStatus}</Pill>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : (
+                          <EmptyState icon="📅" text="ยังไม่มีประวัติการเช็คชื่อ" />
+                        )}
+                      </div>
+                    </>
                   );
                 })()}
-
-                <div className={`${CARD} p-4 sm:p-5 space-y-3`}>
-                  <SectionTitle icon={<CalendarDays className="w-4 h-4 text-slate-500" />} title="ประวัติการเช็คชื่อ" count={courseAttendance.length} />
-                  {courseAttendance.length > 0 ? (
-                    <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {courseAttendance.map((attendance) => {
-                        const recordStatus = courseAttendanceRecords[attendance.id];
-                        // No record on a closed session counts as absent, as on the teacher roster.
-                        const shownStatus = recordStatus || (attendance.status === 'open' ? 'idle' : 'absent');
-                        return (
-                          <li key={attendance.id} className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{attendance.title}</p>
-                              <p className="text-xs text-slate-500 mt-0.5">
-                                {new Date(attendance.starts_at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })}
-                              </p>
-                            </div>
-                            <Pill tone={ATTENDANCE_TONE[shownStatus] || 'slate'}>{ATTENDANCE_SHORT[shownStatus] || shownStatus}</Pill>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ) : (
-                    <EmptyState icon="📅" text="ยังไม่มีประวัติการเช็คชื่อ" />
-                  )}
-                </div>
               </section>
             )}
 

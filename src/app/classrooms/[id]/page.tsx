@@ -5,10 +5,12 @@ import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { dataService } from '@/lib/supabase/dataService';
+import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
+import { EditStudentModal } from '@/components/EditStudentModal';
 import { formatDateTime } from '@/lib/utils/datetime';
-import { Assignment, Classroom, ClassroomTeacher, Submission } from '@/types/database';
+import { Assignment, Classroom, ClassroomTeacher, Submission, User } from '@/types/database';
 import {
   ArrowLeft,
   AlertCircle,
@@ -387,6 +389,58 @@ export default function ClassroomWorkspacePage() {
   useEffect(() => {
     loadWorkspace();
   }, [user?.id, classroomId]);
+
+  // Live roster: students join from LIFF by writing the classroom row or a
+  // classroom_students link, so listen for those changes and refetch only the
+  // roster (debounced, so a burst of joins costs one request). Polling is only
+  // a fallback for when the realtime channel can't connect.
+  useEffect(() => {
+    if (!classroomId) return;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    let fallback: ReturnType<typeof setInterval> | undefined;
+    let disposed = false;
+    const refreshRoster = () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        dataService.getClassroomById(classroomId)
+          .then((current) => current && setClassroom(current))
+          .catch(() => {});
+      }, 400);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshRoster();
+    };
+    const startFallback = () => {
+      if (fallback || disposed) return;
+      fallback = setInterval(() => {
+        if (document.visibilityState === 'visible') refreshRoster();
+      }, 15000);
+    };
+
+    const supabase = isSupabaseConfigured ? createClient() : null;
+    const channel = supabase
+      ?.channel(`classroom-roster-${classroomId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'classrooms', filter: `id=eq.${classroomId}` }, refreshRoster)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'classroom_students', filter: `classroom_id=eq.${classroomId}` }, refreshRoster)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          clearInterval(fallback);
+          fallback = undefined;
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          startFallback();
+        }
+      });
+    if (!channel) startFallback();
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      disposed = true;
+      clearTimeout(debounce);
+      clearInterval(fallback);
+      document.removeEventListener('visibilitychange', onVisible);
+      if (channel) supabase?.removeChannel(channel);
+    };
+  }, [classroomId]);
 
   // Fetch Grades when switching to Grades tab
   useEffect(() => {
@@ -956,6 +1010,22 @@ export default function ClassroomWorkspacePage() {
     setNewStudentLast('');
     setNewStudentId('');
     setNewStudentEmail('');
+  };
+
+  const [editingStudent, setEditingStudent] = useState<User | null>(null);
+
+  const handleStudentEdited = (studentId: string, fields: Pick<User, 'first_name' | 'last_name' | 'student_id'>) => {
+    setClassroom((prev) =>
+      prev
+        ? {
+            ...prev,
+            students: (prev.students || []).map((s) => (s.id === studentId ? { ...s, ...fields } : s)),
+            pending_students: (prev.pending_students || []).map((s) => (s.id === studentId ? { ...s, ...fields } : s)),
+          }
+        : prev
+    );
+    setEditingStudent(null);
+    setNotice('แก้ไขข้อมูลผู้เรียนเรียบร้อย');
   };
 
   const handleRemoveStudent = async (studentId: string) => {
@@ -1673,6 +1743,7 @@ export default function ClassroomWorkspacePage() {
                   setInviteTab('search');
                 }}
                 onRemoveStudent={handleRemoveStudent}
+                onEditStudent={setEditingStudent}
               />
             </section>
           )}
@@ -1806,6 +1877,15 @@ export default function ClassroomWorkspacePage() {
       {/* ============================================================== */}
       {/* MODAL: EDIT ASSIGNMENT / EXAM */}
       {/* ============================================================== */}
+      {editingStudent && classroom && (
+        <EditStudentModal
+          classroomId={classroom.id}
+          student={editingStudent}
+          onClose={() => setEditingStudent(null)}
+          onSaved={handleStudentEdited}
+        />
+      )}
+
       {editingAssignment && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
@@ -2414,10 +2494,12 @@ function StudentList({
   classroom,
   onOpenAddStudent,
   onRemoveStudent,
+  onEditStudent,
 }: {
   classroom: Classroom;
   onOpenAddStudent: () => void;
   onRemoveStudent: (id: string) => void;
+  onEditStudent: (student: User) => void;
 }) {
   const [query, setQuery] = useState('');
   const students = classroom.students || [];
@@ -2468,6 +2550,13 @@ function StudentList({
                   LINE
                 </span>
               )}
+              <button
+                onClick={() => onEditStudent(student)}
+                className="p-1 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                title="แก้ไขชื่อ นามสกุล และรหัสนักเรียน"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+              </button>
               <button
                 onClick={() => onRemoveStudent(student.id)}
                 className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
