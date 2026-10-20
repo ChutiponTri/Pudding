@@ -1669,7 +1669,7 @@ export default function LiffStudentPage() {
                   </button>
                 </div>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   {classrooms.map((cls) => {
                     const classPending = assignments.filter(
                       (a) => a.classroom_id === cls.id && !submissions[a.id] && getAssignmentWindow(a).acceptsSubmissions
@@ -1682,7 +1682,7 @@ export default function LiffStudentPage() {
                           setSelectedClassroom(cls);
                           setCourseTab('timeline');
                         }}
-                        className={`${CARD} w-full text-left p-4 hover:ring-2 hover:ring-line/50 transition-all cursor-pointer flex items-center gap-3.5 active:scale-[0.99]`}
+                        className={`${CARD} w-full min-w-0 text-left p-4 hover:ring-2 hover:ring-line/50 transition-all cursor-pointer flex items-center gap-3 active:scale-[0.99]`}
                       >
                         <span className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-line flex items-center justify-center shrink-0">
                           <School className="w-6 h-6" />
@@ -1691,21 +1691,23 @@ export default function LiffStudentPage() {
                           <p className="text-[11px] font-semibold text-slate-400 truncate">
                             {cls.subject_code || 'รายวิชา'} • {cls.academic_year || 'ภาคเรียนปัจจุบัน'}
                           </p>
-                          <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                            {cls.course_name || cls.name}
-                          </h3>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <h3 className="min-w-0 flex-1 text-sm font-bold text-slate-900 dark:text-white truncate">
+                              {cls.course_name || cls.name}
+                            </h3>
+                            <span className="shrink-0">
+                              {pendingApproval ? (
+                                <Pill tone="amber">รออนุมัติ</Pill>
+                              ) : classPending.length > 0 ? (
+                                <Pill tone="amber">ค้าง {classPending.length}</Pill>
+                              ) : (
+                                <Pill tone="emerald">ครบแล้ว</Pill>
+                              )}
+                            </span>
+                          </div>
                           <p className="text-xs text-slate-500 truncate">{cls.name}</p>
                         </div>
-                        <div className="flex flex-col items-end gap-1.5 shrink-0">
-                          {pendingApproval ? (
-                            <Pill tone="amber">รออนุมัติ</Pill>
-                          ) : classPending.length > 0 ? (
-                            <Pill tone="amber">ค้าง {classPending.length}</Pill>
-                          ) : (
-                            <Pill tone="emerald">ครบแล้ว</Pill>
-                          )}
-                          <ChevronRight className="w-4 h-4 text-slate-300" />
-                        </div>
+                        <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                       </button>
                     );
                   })}
