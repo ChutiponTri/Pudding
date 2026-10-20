@@ -96,11 +96,19 @@ export async function GET(request: NextRequest) {
 
   // Teachers always get every session; `sessionId` only picks which one's
   // records to return (filtering the list made other classes vanish).
-  const { data: sessions, error } = await sessionsQuery();
+  // `allRecords=1` returns every session's records in the same round trip so
+  // the workspace can switch sessions without another request.
+  const allRecords = params.get('allRecords') === '1';
+  const [{ data: sessions, error }, allRecordsRes] = await Promise.all([
+    sessionsQuery(),
+    allRecords ? supabase.from('attendance_records').select('*').eq('classroom_id', classroomId) : Promise.resolve(null),
+  ]);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const selectedSession = (sessionId ? sessions?.find((s) => s.id === sessionId) : sessions?.[0]) || null;
   let records: unknown[] = [];
-  if (selectedSession) {
+  if (allRecordsRes) {
+    records = allRecordsRes.data || [];
+  } else if (selectedSession) {
     const { data } = await supabase.from('attendance_records').select('*').eq('session_id', selectedSession.id);
     records = data || [];
   }

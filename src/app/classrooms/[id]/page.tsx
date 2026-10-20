@@ -55,15 +55,33 @@ import {
 
 type Tab = 'overview' | 'classwork' | 'attendance' | 'people' | 'grades';
 type AttendanceStatus = 'on_time' | 'late' | 'absent' | 'excused';
-type AttendanceRecord = { id: string; student_id: string; status: AttendanceStatus; checked_at?: string };
+type AttendanceRecord = { id: string; session_id: string; student_id: string; status: AttendanceStatus; checked_at?: string | null };
 type AttendanceSession = {
   id: string;
+  classroom_id?: string;
   title: string;
   starts_at: string;
   on_time_until_minutes: number;
   late_until_minutes: number;
   status: 'scheduled' | 'open' | 'closed';
+  closed_at?: string | null;
 };
+type RosterStudent = { id: string; line_uid?: string; student_id?: string };
+
+/** A session's records keyed by student_id, so roster lookups are O(1). */
+const indexRecords = (records: AttendanceRecord[]) => new Map(records.map((record) => [record.student_id, record]));
+
+/** Roster entries may carry users.id, the LINE uid or the school number. */
+const findStudentRecord = (index: Map<string, AttendanceRecord>, student: RosterStudent) =>
+  index.get(student.id) ||
+  (student.line_uid ? index.get(student.line_uid) : undefined) ||
+  (student.student_id ? index.get(student.student_id) : undefined);
+
+/** A record replaces any earlier one for the same student in the same session. */
+const upsertRecord = (records: AttendanceRecord[], record: AttendanceRecord) => [
+  ...records.filter((r) => !(r.session_id === record.session_id && r.student_id === record.student_id)),
+  record,
+];
 type TimelineItem = {
   id: string;
   rawId?: string;
@@ -110,20 +128,29 @@ export default function ClassroomWorkspacePage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
+  // Every session's records are held client-side, so picking another session
+  // is a local filter instead of a request.
   const [sessions, setSessions] = useState<AttendanceSession[]>([]);
-  const [session, setSession] = useState<AttendanceSession | null>(null);
-  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [allRecords, setAllRecords] = useState<AttendanceRecord[]>([]);
+  const session = useMemo(
+    () => sessions.find((s) => s.id === selectedSessionId) || null,
+    [sessions, selectedSessionId]
+  );
+  const records = useMemo(
+    () => (selectedSessionId ? allRecords.filter((r) => r.session_id === selectedSessionId) : []),
+    [allRecords, selectedSessionId]
+  );
+  const recordIndex = useMemo(() => indexRecords(records), [records]);
 
   const [tab, setTab] = useState<Tab>((search.get('tab') as Tab) || 'overview');
   const [loading, setLoading] = useState(true);
   const [gradesLoading, setGradesLoading] = useState(false);
   const [notice, setNotice] = useState('');
 
-  // Active attendance session ref to prevent auto-polling from dropping or resetting current session
-  const activeSessionIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    activeSessionIdRef.current = session?.id || null;
-  }, [session?.id]);
+  // Bumped by every local attendance change; a refresh that started before
+  // one is dropped so it can't overwrite the optimistic state.
+  const attendanceVersionRef = useRef(0);
 
   // Overview Facebook-style post form state
   const [isPostExpanded, setIsPostExpanded] = useState(false);
@@ -311,7 +338,7 @@ export default function ClassroomWorkspacePage() {
         dataService.getClassroomById(classroomId),
         dataService.getAssignmentsByClassroomId(classroomId),
         fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' }),
-        fetch(`/api/attendance?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' }),
+        fetch(`/api/attendance?classroomId=${encodeURIComponent(classroomId)}&allRecords=1`, { cache: 'no-store' }),
       ]);
 
       setClassroom(current);
@@ -322,20 +349,10 @@ export default function ClassroomWorkspacePage() {
         setPosts(postsJson.posts || []);
       }
 
-      if (attRes.ok) {
-        const attJson = await attRes.json();
-        setSessions(attJson.sessions || []);
-        setSession(attJson.session || null);
-        activeSessionIdRef.current = attJson.session?.id || null;
-        setRecords(attJson.records || []);
-      }
+      if (attRes.ok) applyAttendance(await attRes.json());
 
       // Concurrently fetch submissions for all assignments to show submit counts
-      if (classAssignments.length > 0) {
-        dataService.getSubmissionsByAssignmentIds(classAssignments.map((item) => item.id))
-          .then(setSubmissions)
-          .catch(() => {});
-      }
+      if (classAssignments.length > 0) refreshSubmissions(classAssignments);
     } catch (error) {
       console.error('Failed to load classroom workspace:', error);
       setNotice('โหลดข้อมูลห้องเรียนไม่สำเร็จ');
@@ -344,46 +361,45 @@ export default function ClassroomWorkspacePage() {
     }
   };
 
-  const loadAttendance = async (preferredSessionId?: string) => {
+  const applyAttendance = (result: { sessions?: AttendanceSession[]; session?: AttendanceSession | null; records?: AttendanceRecord[] }) => {
+    const nextSessions = result.sessions || [];
+    setSessions(nextSessions);
+    setAllRecords(result.records || []);
+    // Keep the teacher's selection; fall back to the newest session only when
+    // nothing is selected or the selected one was deleted.
+    setSelectedSessionId((current) =>
+      current && nextSessions.some((s) => s.id === current) ? current : result.session?.id || nextSessions[0]?.id || null
+    );
+  };
+
+  // Background sync of every session and record in one request.
+  const loadAttendance = async () => {
+    const version = attendanceVersionRef.current;
     try {
-      const targetSessionId = preferredSessionId || activeSessionIdRef.current || session?.id || '';
-      const url = `/api/attendance?classroomId=${encodeURIComponent(classroomId)}${
-        targetSessionId ? `&sessionId=${encodeURIComponent(targetSessionId)}` : ''
-      }`;
-      const response = await fetch(url, { cache: 'no-store' });
-      if (!response.ok) return;
+      const response = await fetch(`/api/attendance?classroomId=${encodeURIComponent(classroomId)}&allRecords=1`, { cache: 'no-store' });
+      if (!response.ok || version !== attendanceVersionRef.current) return;
       const result = await response.json();
-      setSessions(result.sessions || []);
-      // The teacher switched sessions while this request was in flight: keep
-      // their selection instead of snapping back to the old one.
-      if (targetSessionId && activeSessionIdRef.current !== targetSessionId) return;
-      if (result.session) {
-        setSession(result.session);
-        activeSessionIdRef.current = result.session.id;
-      } else if (!targetSessionId) {
-        setSession(result.session || null);
-      }
-      setRecords(result.records || []);
+      if (version !== attendanceVersionRef.current) return;
+      applyAttendance(result);
     } catch (e) {
       console.error(e);
     }
   };
 
-  const loadAttendanceSession = async (sessionId: string) => {
-    try {
-      activeSessionIdRef.current = sessionId;
-      const response = await fetch(
-        `/api/attendance?classroomId=${encodeURIComponent(classroomId)}&sessionId=${encodeURIComponent(sessionId)}`,
-        { cache: 'no-store' }
-      );
-      if (!response.ok) return;
-      const result = await response.json();
-      if (activeSessionIdRef.current !== sessionId) return;
-      setSession(result.session || null);
-      setRecords(result.records || []);
-    } catch (e) {
-      console.error(e);
-    }
+  const patchSession = (sessionId: string, fields: Partial<AttendanceSession>) => {
+    attendanceVersionRef.current++;
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, ...fields } : s)));
+  };
+
+  // Submissions are shared by the classwork and grades tabs; skip a refetch
+  // when the last one is only a few seconds old.
+  const submissionsFetchedAtRef = useRef(0);
+  const refreshSubmissions = (list: Assignment[], maxAgeMs = 0) => {
+    if (!list.length || Date.now() - submissionsFetchedAtRef.current < maxAgeMs) return Promise.resolve();
+    submissionsFetchedAtRef.current = Date.now();
+    return dataService.getSubmissionsByAssignmentIds(list.map((item) => item.id))
+      .then(setSubmissions)
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -442,60 +458,105 @@ export default function ClassroomWorkspacePage() {
     };
   }, [classroomId]);
 
-  // Fetch Grades when switching to Grades tab
+  // Fetch Grades when switching to Grades tab (unless they were just loaded)
   useEffect(() => {
     if (tab !== 'grades' || !assignments.length) return;
+    if (Date.now() - submissionsFetchedAtRef.current < 10000) return;
     setGradesLoading(true);
-    dataService.getSubmissionsByAssignmentIds(assignments.map((item) => item.id))
-      .then(setSubmissions)
-      .finally(() => setGradesLoading(false));
+    refreshSubmissions(assignments).finally(() => setGradesLoading(false));
   }, [tab, assignments]);
 
-  // Background refresh while the teacher is viewing (every 10s, paused when
-  // the tab is hidden), plus instant refresh on same-browser events.
+  // Live attendance: apply check-ins and session changes straight from the
+  // realtime payload (no refetch). Polling only runs while the channel is
+  // down and a session is open, since closed sessions only change locally.
+  const sessionsRef = useRef(sessions);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+  const attendanceLiveRef = useRef(false);
+  useEffect(() => {
+    if (!classroomId) return;
+    let fallback: ReturnType<typeof setInterval> | undefined;
+    let disposed = false;
+    const startFallback = () => {
+      attendanceLiveRef.current = false;
+      if (fallback || disposed) return;
+      fallback = setInterval(() => {
+        if (document.visibilityState === 'visible' && sessionsRef.current.some((s) => s.status === 'open')) loadAttendance();
+      }, 10000);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && !attendanceLiveRef.current) loadAttendance();
+    };
+
+    const supabase = isSupabaseConfigured ? createClient() : null;
+    const channel = supabase
+      ?.channel(`classroom-attendance-${classroomId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records', filter: `classroom_id=eq.${classroomId}` }, (change) => {
+        const row = change.new as AttendanceRecord | undefined;
+        if (!row?.session_id) return;
+        attendanceVersionRef.current++;
+        setAllRecords((prev) => upsertRecord(prev, row));
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_sessions', filter: `classroom_id=eq.${classroomId}` }, (change) => {
+        const row = change.new as AttendanceSession | undefined;
+        if (!row?.id) return;
+        attendanceVersionRef.current++;
+        setSessions((prev) => [row, ...prev.filter((s) => s.id !== row.id)]);
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          attendanceLiveRef.current = true;
+          clearInterval(fallback);
+          fallback = undefined;
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          startFallback();
+        }
+      });
+    if (!channel) startFallback();
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      disposed = true;
+      clearInterval(fallback);
+      document.removeEventListener('visibilitychange', onVisible);
+      if (channel) supabase?.removeChannel(channel);
+    };
+  }, [classroomId]);
+
+  // Submissions refresh while the teacher is on classwork/grades (every 10s,
+  // paused when the tab is hidden), plus instant refresh on same-browser events.
   useEffect(() => {
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        const hasOpenSession = sessions.some((s) => s.status === 'open');
-        if (tab === 'attendance' || hasOpenSession) {
-          loadAttendance();
-        }
-        if ((tab === 'grades' || tab === 'classwork') && assignments.length > 0) {
-          dataService.getSubmissionsByAssignmentIds(assignments.map((item) => item.id))
-            .then(setSubmissions)
-            .catch(() => {});
-        }
+      if (document.visibilityState === 'visible' && (tab === 'grades' || tab === 'classwork')) {
+        refreshSubmissions(assignments);
       }
     }, 10000);
 
-    const handleRealtimeEvent = () => {
-      loadAttendance();
-      if (assignments.length > 0) {
-        dataService.getSubmissionsByAssignmentIds(assignments.map((item) => item.id))
-          .then(setSubmissions)
-          .catch(() => {});
-      }
+    // Attendance only needs this when the realtime channel is down.
+    const onAttendanceChecked = () => {
+      if (!attendanceLiveRef.current) loadAttendance();
     };
+    const onSubmissionCreated = () => refreshSubmissions(assignments);
 
-    window.addEventListener('pudding-submission-created', handleRealtimeEvent);
-    window.addEventListener('pudding-attendance-checked', handleRealtimeEvent);
+    window.addEventListener('pudding-submission-created', onSubmissionCreated);
+    window.addEventListener('pudding-attendance-checked', onAttendanceChecked);
     let bc: BroadcastChannel | null = null;
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       bc = new BroadcastChannel('pudding-realtime');
       bc.onmessage = (event) => {
-        if (event.data?.type === 'attendance_checked' || event.data?.type === 'submission_created') {
-          handleRealtimeEvent();
-        }
+        if (event.data?.type === 'attendance_checked') onAttendanceChecked();
+        if (event.data?.type === 'submission_created') onSubmissionCreated();
       };
     }
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener('pudding-submission-created', handleRealtimeEvent);
-      window.removeEventListener('pudding-attendance-checked', handleRealtimeEvent);
+      window.removeEventListener('pudding-submission-created', onSubmissionCreated);
+      window.removeEventListener('pudding-attendance-checked', onAttendanceChecked);
       bc?.close();
     };
-  }, [classroomId, tab, sessions, assignments]);
+  }, [classroomId, tab, assignments]);
 
   // ----------------------------------------------------
   // UNIFIED TIMELINE BUILDER (Feed of Announcements, Work, Exams, Attendance)
@@ -769,7 +830,13 @@ export default function ClassroomWorkspacePage() {
       });
       if (res.ok) {
         setNotice('อัปเดตข้อมูลคาบเช็คชื่อเรียบร้อย');
-        await loadAttendance(sessionId);
+        patchSession(sessionId, {
+          title: newTitle,
+          ...(newStatus ? { status: newStatus, closed_at: newStatus === 'closed' ? new Date().toISOString() : null } : {}),
+          ...(startsAt ? { starts_at: startsAt } : {}),
+          ...(onTime !== undefined ? { on_time_until_minutes: onTime } : {}),
+          ...(late !== undefined ? { late_until_minutes: late } : {}),
+        });
         setEditingSession(null);
       } else {
         setNotice('อัปเดตคาบเช็คชื่อไม่สำเร็จ');
@@ -790,12 +857,11 @@ export default function ClassroomWorkspacePage() {
       );
       if (res.ok) {
         setNotice('ลบคาบเช็คชื่อเรียบร้อยแล้ว');
+        attendanceVersionRef.current++;
         const remaining = sessions.filter((s) => s.id !== sessionId);
         setSessions(remaining);
-        if (session?.id === sessionId) {
-          setSession(remaining[0] || null);
-          loadAttendance(remaining[0]?.id);
-        }
+        setAllRecords((prev) => prev.filter((r) => r.session_id !== sessionId));
+        if (selectedSessionId === sessionId) setSelectedSessionId(remaining[0]?.id || null);
       } else {
         setNotice('ลบคาบเช็คชื่อไม่สำเร็จ');
       }
@@ -824,12 +890,10 @@ export default function ClassroomWorkspacePage() {
       }
       const { session: created } = (await response.json()) as { session: AttendanceSession };
       setNotice('เปิดคาบเช็คชื่อแล้ว และส่งแจ้งเตือนเข้า LINE Group');
-      // Show and select the new session right away, then sync in the background.
-      activeSessionIdRef.current = created.id;
+      // The response is the full session row, so show and select it without a refetch.
+      attendanceVersionRef.current++;
       setSessions((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
-      setSession(created);
-      setRecords([]);
-      loadAttendance(created.id);
+      setSelectedSessionId(created.id);
       fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' })
         .then((res) => (res.ok ? res.json() : null))
         .then((json) => json && setPosts(json.posts || []))
@@ -841,32 +905,74 @@ export default function ClassroomWorkspacePage() {
 
   // Both handlers take the session explicitly: the parent `session` can lag
   // behind the card the teacher clicked, which used to write to the wrong class.
+  // The status flips immediately; the server's row replaces it (or the old
+  // record comes back) once the request settles.
   const updateAttendanceRecord = async (sessionId: string, studentId: string, status: AttendanceStatus) => {
-    activeSessionIdRef.current = sessionId;
-    const response = await fetch('/api/attendance', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'record', classroomId, sessionId, studentId, status }),
-    });
-    if (response.ok) await loadAttendance(sessionId);
-    else setNotice('บันทึกสถานะการเข้าเรียนไม่สำเร็จ กรุณาลองใหม่');
+    const student = classroom?.students?.find((s) => s.id === studentId);
+    const sessionIndex = indexRecords(allRecords.filter((r) => r.session_id === sessionId));
+    const previous = student ? findStudentRecord(sessionIndex, student) : sessionIndex.get(studentId);
+    const optimistic: AttendanceRecord = {
+      id: previous?.id || `pending-${sessionId}-${studentId}`,
+      session_id: sessionId,
+      student_id: previous?.student_id || studentId,
+      status,
+      checked_at: status === 'absent' ? null : new Date().toISOString(),
+    };
+    attendanceVersionRef.current++;
+    setAllRecords((prev) => upsertRecord(prev, optimistic));
+    const rollback = () => {
+      attendanceVersionRef.current++;
+      setAllRecords((prev) => {
+        const without = prev.filter((r) => !(r.session_id === sessionId && r.student_id === optimistic.student_id));
+        return previous ? [...without, previous] : without;
+      });
+      setNotice('บันทึกสถานะการเข้าเรียนไม่สำเร็จ กรุณาลองใหม่');
+    };
+    try {
+      const response = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'record', classroomId, sessionId, studentId, status }),
+      });
+      if (!response.ok) return rollback();
+      const { record } = (await response.json()) as { record: AttendanceRecord };
+      attendanceVersionRef.current++;
+      // The server may store the canonical users.id instead of the roster id.
+      setAllRecords((prev) =>
+        upsertRecord(
+          prev.filter((r) => !(r.session_id === sessionId && r.student_id === optimistic.student_id)),
+          record
+        )
+      );
+    } catch {
+      rollback();
+    }
   };
 
   const sessionAction = async (sessionId: string, action: 'close' | 'extend') => {
     const target = sessions.find((s) => s.id === sessionId);
     if (!target) return;
-    activeSessionIdRef.current = sessionId;
-    await fetch('/api/attendance', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action,
-        classroomId,
-        sessionId,
-        ...(action === 'extend' ? { lateUntilMinutes: target.late_until_minutes + 10 } : {}),
-      }),
-    });
-    await loadAttendance(sessionId);
+    const fields: Partial<AttendanceSession> =
+      action === 'extend'
+        ? { late_until_minutes: target.late_until_minutes + 10, status: 'open', closed_at: null }
+        : { status: 'closed', closed_at: new Date().toISOString() };
+    patchSession(sessionId, fields);
+    try {
+      const response = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          classroomId,
+          sessionId,
+          ...(action === 'extend' ? { lateUntilMinutes: fields.late_until_minutes } : {}),
+        }),
+      });
+      if (!response.ok) throw new Error();
+    } catch {
+      patchSession(sessionId, target);
+      setNotice(action === 'close' ? 'ปิดรับเช็คชื่อไม่สำเร็จ' : 'ขยายเวลาไม่สำเร็จ');
+    }
   };
 
   // Export Attendance CSV
@@ -875,12 +981,7 @@ export default function ClassroomWorkspacePage() {
     const rows = [
       ['นักเรียน', 'รหัสนักเรียน', 'สถานะ', 'เวลาที่เช็ค'],
       ...(classroom.students || []).map((student) => {
-        const record = records.find(
-          (item) =>
-            (student.id && item.student_id === student.id) ||
-            (student.line_uid && item.student_id === student.line_uid) ||
-            (student.student_id && item.student_id === student.student_id)
-        );
+        const record = findStudentRecord(recordIndex, student);
         return [
           `${student.first_name} ${student.last_name}`,
           student.student_id || '',
@@ -1052,17 +1153,11 @@ export default function ClassroomWorkspacePage() {
   const attendanceCounts = useMemo(() => {
     const counts: Record<string, number> = { on_time: 0, late: 0, absent: 0, excused: 0 };
     (classroom?.students || []).forEach((student) => {
-      const record = records.find(
-        (item) =>
-          (student.id && item.student_id === student.id) ||
-          (student.line_uid && item.student_id === student.line_uid) ||
-          (student.student_id && item.student_id === student.student_id)
-      );
-      const status = record?.status || 'absent';
+      const status = findStudentRecord(recordIndex, student)?.status || 'absent';
       counts[status] = (counts[status] || 0) + 1;
     });
     return counts;
-  }, [classroom?.students, records]);
+  }, [classroom?.students, recordIndex]);
 
   // Loading skeleton
   if (loading && !classroom) {
@@ -1621,7 +1716,7 @@ export default function ClassroomWorkspacePage() {
               classroom={classroom}
               sessions={sessions}
               session={session}
-              records={records}
+              recordIndex={recordIndex}
               counts={attendanceCounts}
               title={attendanceTitle}
               setTitle={setAttendanceTitle}
@@ -1635,7 +1730,7 @@ export default function ClassroomWorkspacePage() {
               update={updateAttendanceRecord}
               action={sessionAction}
               exportCsv={exportAttendance}
-              selectSession={loadAttendanceSession}
+              selectSession={setSelectedSessionId}
               onUpdateSession={handleUpdateSession}
               onDeleteSession={handleDeleteSession}
               isUpdatingSession={isUpdatingSession}
@@ -2584,7 +2679,7 @@ function AttendancePanel({
   classroom,
   sessions,
   session,
-  records,
+  recordIndex,
   counts,
   title,
   setTitle,
@@ -2606,7 +2701,7 @@ function AttendancePanel({
   classroom: Classroom;
   sessions: AttendanceSession[];
   session: AttendanceSession | null;
-  records: AttendanceRecord[];
+  recordIndex: Map<string, AttendanceRecord>;
   counts: Record<string, number>;
   title: string;
   setTitle: (v: string) => void;
@@ -2683,16 +2778,10 @@ function AttendancePanel({
       if (!matchQuery) return false;
       if (statusFilter === 'all') return true;
 
-      const record = records.find(
-        (r) =>
-          (student.id && r.student_id === student.id) ||
-          (student.line_uid && r.student_id === student.line_uid) ||
-          (student.student_id && r.student_id === student.student_id)
-      );
-      const studentStatus = record?.status || 'absent';
+      const studentStatus = findStudentRecord(recordIndex, student)?.status || 'absent';
       return studentStatus === statusFilter;
     });
-  }, [classroom.students, records, rosterSearch, statusFilter]);
+  }, [classroom.students, recordIndex, rosterSearch, statusFilter]);
 
   return (
     <section className="max-w-4xl mx-auto space-y-6">
@@ -3025,12 +3114,7 @@ function AttendancePanel({
                   {/* Student Roster Table/Cards */}
                   <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
                     {filteredStudents.map((student) => {
-                      const record = records.find(
-                        (r) =>
-                          (student.id && r.student_id === student.id) ||
-                          (student.line_uid && r.student_id === student.line_uid) ||
-                          (student.student_id && r.student_id === student.student_id)
-                      );
+                      const record = findStudentRecord(recordIndex, student);
                       const isSessionOpen = item.status === 'open';
                       const currentStatus = record?.status || (isSessionOpen ? 'idle' : 'absent');
 

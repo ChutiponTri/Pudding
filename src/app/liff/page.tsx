@@ -69,6 +69,11 @@ const statusLabels: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 /** Width of the LIFF column. Fixed bars use it so they line up with the page on iPad/desktop. */
+// A course's posts/attendance cached this recently are reused without a refetch.
+const COURSE_CACHE_FRESH_MS = 15000;
+const courseCacheTimestamp = () => Date.now();
+const isFreshCourseCache = (fetchedAt: number) => courseCacheTimestamp() - fetchedAt < COURSE_CACHE_FRESH_MS;
+
 const FRAME = "max-w-md md:max-w-2xl lg:max-w-3xl";
 const CARD = "rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/70 dark:ring-slate-800 shadow-sm shadow-slate-900/[0.03]";
 const INPUT = "w-full h-12 px-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-line focus:bg-white dark:focus:bg-slate-900 outline-none transition-all";
@@ -240,13 +245,18 @@ export default function LiffStudentPage() {
   const [courseAttendanceRecords, setCourseAttendanceRecords] = useState<Record<string, string>>({});
   const [selectedTermKey, setSelectedTermKey] = useState("current");
 
+  // Per-classroom cache: reopening a course shows its last posts/attendance
+  // instantly (never the previous course's), then revalidates in the
+  // background unless the cached copy is only a few seconds old.
+  const courseCacheRef = useRef(
+    new Map<string, { posts: ClassroomPost[]; sessions: typeof courseAttendance; records: Record<string, string>; fetchedAt: number }>()
+  );
   const loadClassroomPosts = async (classroom: Classroom | null, lineUid: string) => {
-    if (!classroom) {
-      setClassroomPosts([]);
-      setCourseAttendance([]);
-      setCourseAttendanceRecords({});
-      return;
-    }
+    const cached = classroom ? courseCacheRef.current.get(classroom.id) : undefined;
+    setClassroomPosts(cached?.posts || []);
+    setCourseAttendance(cached?.sessions || []);
+    setCourseAttendanceRecords(cached?.records || {});
+    if (!classroom || (cached && isFreshCourseCache(cached.fetchedAt))) return;
     try {
       const [response, attendanceResponse] = await Promise.all([
         fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroom.id)}&lineUid=${encodeURIComponent(lineUid)}`, { cache: "no-store" }),
@@ -256,11 +266,20 @@ export default function LiffStudentPage() {
         response.ok ? response.json() : Promise.resolve({ posts: [] }),
         attendanceResponse.ok ? attendanceResponse.json() : Promise.resolve(null),
       ]);
-      setClassroomPosts(posts.posts || []);
-      if (attendance) {
-        setCourseAttendance(attendance.sessions || []);
-        setCourseAttendanceRecords(Object.fromEntries((attendance.records || []).map((record: { session_id: string; status: string }) => [record.session_id, record.status])));
-      }
+      const entry = {
+        posts: posts.posts || [],
+        sessions: attendance ? attendance.sessions || [] : cached?.sessions || [],
+        records: attendance
+          ? Object.fromEntries((attendance.records || []).map((record: { session_id: string; status: string }) => [record.session_id, record.status]))
+          : cached?.records || {},
+        fetchedAt: courseCacheTimestamp(),
+      };
+      courseCacheRef.current.set(classroom.id, entry);
+      // The student moved on to another course while this was loading.
+      if (selectedClassroomIdRef.current !== classroom.id) return;
+      setClassroomPosts(entry.posts);
+      setCourseAttendance(entry.sessions);
+      setCourseAttendanceRecords(entry.records);
     } catch (error) {
       console.warn("Failed to load classroom posts:", error);
     }
@@ -341,6 +360,8 @@ export default function LiffStudentPage() {
       const checkedSessionId = json.session?.id || sessionId;
       if (checkedSessionId) {
         setActiveAttendanceList((prev) => prev.filter((item) => item.session.id !== checkedSessionId));
+        const cachedCourse = courseCacheRef.current.get(targetClassroomId);
+        if (cachedCourse) cachedCourse.records = { ...cachedCourse.records, [checkedSessionId]: json.status };
         if (selectedClassroom?.id === targetClassroomId) {
           setCourseAttendanceRecords((prev) => ({ ...prev, [checkedSessionId]: json.status }));
         }
