@@ -31,7 +31,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
     if (!teacherId) return;
     try {
       setLoading(true);
-      const data = await dataService.getClassrooms(teacherId);
+      const data = await dataService.getClassrooms(teacherId, { withRoster: false });
       setClassrooms(data);
     } catch (err) {
       console.warn('Failed to load classrooms for sidebar:', err);

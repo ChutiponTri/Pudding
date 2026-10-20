@@ -1,87 +1,69 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { fallbackStore } from '@/lib/classroom/storageFallback';
 import { getAssignmentWindow, QUIZ_SUBMIT_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { parseTrueFalse } from '@/lib/utils/trueFalse';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/**
+ * GET /api/submissions?assignmentIds=a,b[&studentIds=x,y][&students=0]
+ * Submissions for the given assignments, with each student's profile attached
+ * unless students=0 (counts and scores only).
+ */
 export async function GET(request: NextRequest) {
-  const assignmentId = request.nextUrl.searchParams.get('assignmentId');
-  const assignmentIds = (request.nextUrl.searchParams.get('assignmentIds') || '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean);
-  const requestedAssignmentIds = assignmentIds.length > 0
-    ? assignmentIds
-    : assignmentId
-      ? [assignmentId]
-      : [];
+  const params = request.nextUrl.searchParams;
+  const list = (value: string | null) => (value || '').split(',').map((id) => id.trim()).filter(Boolean);
+  const assignmentIds = list(params.get('assignmentIds') || params.get('assignmentId'));
+  const studentIds = list(params.get('studentIds'));
+  const withStudents = params.get('students') !== '0';
 
-  if (requestedAssignmentIds.length === 0) {
-    return NextResponse.json({ submissions: fallbackStore.getSubmissions() });
+  if (assignmentIds.length === 0) {
+    return NextResponse.json({ error: 'assignmentIds is required' }, { status: 400 });
   }
 
-  let dbSubmissions: any[] = [];
+  let supabase: ReturnType<typeof createServiceSupabaseClient>;
   try {
-    const supabase = createServiceSupabaseClient();
-    const { data, error } = await supabase
-      .from('submissions')
-      .select('*')
-      .in('assignment_id', requestedAssignmentIds);
-    if (!error && data) {
-      dbSubmissions = data;
-    }
-  } catch (err) {
-    console.warn('GET /api/submissions supabase error:', err);
+    supabase = createServiceSupabaseClient();
+  } catch (configErr) {
+    console.error('[GET /api/submissions] Supabase is not configured:', configErr);
+    return NextResponse.json({ error: 'Database is not configured' }, { status: 503 });
   }
 
-  const localSubmissions = requestedAssignmentIds.flatMap((id) => fallbackStore.getSubmissions(id));
-  const merged = new Map<string, any>();
-
-  // Database fields win over the per-instance file cache, which can be stale
-  // (e.g. written by a different server instance). The cache still contributes
-  // extras the table lacks, such as the student snapshot.
-  for (const s of localSubmissions) merged.set(s.id, s);
-  for (const s of dbSubmissions) merged.set(s.id, { ...merged.get(s.id), ...s });
+  let query = supabase.from('submissions').select('*').in('assignment_id', assignmentIds);
+  if (studentIds.length > 0) query = query.in('student_id', studentIds);
+  const { data, error } = await query;
+  if (error) {
+    console.error('[GET /api/submissions] query failed:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  const submissions = (data || []) as Array<Record<string, any>>;
+  if (!withStudents || submissions.length === 0) {
+    return NextResponse.json({ submissions });
+  }
 
   // Attach each student's real profile. submissions.student_id is users.id
   // (usually the LINE user id), so without this the teacher UI showed the raw
   // LINE id instead of the student's name, student number and photo.
-  const studentIds = [...new Set([...merged.values()].map((s) => s.student_id).filter(Boolean))];
-  if (studentIds.length > 0) {
-    try {
-      const supabase = createServiceSupabaseClient();
-      const { data: users } = await supabase
-        .from('users')
-        .select('id, first_name, last_name, student_id, avatar_url, line_uid, email, institution')
-        .or(`id.in.(${studentIds.map((id) => `"${id}"`).join(',')}),line_uid.in.(${studentIds.map((id) => `"${id}"`).join(',')})`);
-      const byId = new Map<string, any>();
-      for (const user of users || []) {
-        byId.set(user.id, user);
-        if (user.line_uid) byId.set(user.line_uid, user);
-      }
-      for (const [id, submission] of merged) {
-        const profile = byId.get(submission.student_id);
-        if (profile) {
-          merged.set(id, {
-            ...submission,
-            // Only non-empty profile fields override the cached snapshot.
-            student: {
-              ...(submission.student || {}),
-              ...Object.fromEntries(Object.entries(profile).filter(([, value]) => value != null && value !== '')),
-              role: 'student',
-            },
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('GET /api/submissions student lookup failed:', err);
-    }
-  }
+  const ids = [...new Set(submissions.map((s) => s.student_id).filter(Boolean))] as string[];
+  const quoted = ids.map((id) => `"${id.replace(/["\\]/g, '')}"`).join(',');
+  const { data: users, error: usersError } = await supabase
+    .from('users')
+    .select('id, first_name, last_name, student_id, avatar_url, line_uid, email, institution')
+    .or(`id.in.(${quoted}),line_uid.in.(${quoted})`);
+  if (usersError) console.warn('[GET /api/submissions] student lookup failed:', usersError.message);
 
-  return NextResponse.json({ submissions: [...merged.values()] });
+  const byId = new Map<string, Record<string, any>>();
+  for (const user of users || []) {
+    byId.set(user.id, user);
+    if (user.line_uid) byId.set(user.line_uid, user);
+  }
+  return NextResponse.json({
+    submissions: submissions.map((submission) => {
+      const profile = byId.get(submission.student_id);
+      return profile ? { ...submission, student: { ...profile, role: 'student' } } : submission;
+    }),
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -226,7 +208,6 @@ export async function POST(request: NextRequest) {
         const studentText = (studentAns?.answer_text || '').trim();
 
         let questionScore: number | undefined = undefined;
-        let aiScore: number | undefined = undefined;
 
         if (q.type === 'multiple_choice' || q.type === 'true_false') {
           const ideal = (q.ideal_answer || '').trim();
@@ -245,9 +226,8 @@ export async function POST(request: NextRequest) {
             questionScore = 0;
           }
         } else {
-          // Subjective / file upload question: provide initial evaluation score or mark as pending
+          // Written / file answers wait for the teacher.
           allGraded = false;
-          aiScore = Math.max(1, Math.round(Number(q.max_score || 5) * 0.8));
         }
 
         scoredAnswers.push({
@@ -255,7 +235,6 @@ export async function POST(request: NextRequest) {
           answer_text: studentText,
           file_url: studentAns?.file_url || null,
           teacher_score: questionScore,
-          ai_mock_score: aiScore,
         });
       }
 
@@ -283,7 +262,7 @@ export async function POST(request: NextRequest) {
       is_flagged_suspicious: isSuspicious,
       total_score: calculatedTotalScore,
       max_total_score: assignmentMaxScore,
-      answers: scoredAnswers.length > 0 ? scoredAnswers : answers,
+      answers: scoredAnswers,
     };
 
     try {
@@ -304,39 +283,21 @@ export async function POST(request: NextRequest) {
       if (subErr) throw subErr;
       console.log('[POST /api/submissions] Supabase submissions upsert succeeded:', subId);
 
-      // Upsert submission answers (and ensure question exists)
-      const answersToSave = scoredAnswers.length > 0 ? scoredAnswers : answers;
-      for (const ans of answersToSave) {
-        if (ans.question_id) {
-          if (scoredAnswers.length === 0) {
-            const { data: existingQ } = await supabase
-              .from('questions')
-              .select('id')
-              .eq('id', ans.question_id)
-              .maybeSingle();
-
-            if (!existingQ) {
-              const { error: questionError } = await supabase.from('questions').insert({
-                id: ans.question_id,
-                assignment_id,
-                question_text: 'คำถามข้อนี้',
-                type: 'short_answer',
-                max_score: 5,
-              });
-              if (questionError) throw questionError;
-            }
-          }
-
-          const { error: answerError } = await supabase.from('submission_answers').upsert({
+      // Save every answer in one request. Only answers to this assignment's
+      // questions are kept; anything else would break the question foreign key.
+      if (scoredAnswers.length > 0) {
+        const { error: answerError } = await supabase.from('submission_answers').upsert(
+          scoredAnswers.map((ans) => ({
             id: `ans-${subId}-${ans.question_id}`,
             submission_id: subId,
             question_id: ans.question_id,
             text_answer: ans.answer_text || '',
             file_url: ans.file_url || null,
             teacher_score: ans.teacher_score !== undefined ? ans.teacher_score : null,
-          }, { onConflict: 'submission_id,question_id' });
-          if (answerError) throw answerError;
-        }
+          })),
+          { onConflict: 'submission_id,question_id' }
+        );
+        if (answerError) throw answerError;
       }
 
       const events = antiCheating.events || [];
@@ -362,10 +323,6 @@ export async function POST(request: NextRequest) {
         detail: dbErr instanceof Error ? dbErr.message : (dbErr as any)?.message || 'Supabase write failed',
       }, { status: 503 });
     }
-
-    // Keep the local cache only after the database acknowledged the write, so a
-    // failed submission never shows up as "submitted" to the teacher.
-    fallbackStore.saveSubmission(submissionRecord);
 
     return NextResponse.json({ success: true, submission: submissionRecord });
   } catch (error: any) {

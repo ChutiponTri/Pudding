@@ -3,11 +3,13 @@
 import React, { useState, useEffect, use, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import {
   Assignment,
   Classroom,
+  ClassroomTeacher,
   Question,
   Submission,
   SubmissionAnswer,
@@ -102,6 +104,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const assignmentId = resolvedParams.id;
 
   const { t, language } = useLanguage();
+  const { user: clerkUser } = useUser();
 
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -136,20 +139,21 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   const loadAllData = async () => {
     try {
-      const { assignment: asg, questions: qs } = await dataService.getAssignmentById(assignmentId);
+      // Assignment and submissions load together; the classroom roster follows
+      // as soon as the assignment says which classroom it belongs to.
+      const [{ assignment: asg, questions: qs }, subs] = await Promise.all([
+        dataService.getAssignmentById(assignmentId),
+        dataService.getSubmissions(assignmentId),
+      ]);
       setAssignment(asg);
       setQuestions(qs);
+      setSubmissions(subs);
       if (asg) {
         setOverrideStatus(asg.status_override || 'auto');
         // Suggest the current extension, or two days from now at 23:59.
         setExtendedDateTime(asg.extended_until || daysFromNowAt(2, 23, 59));
-        if (asg.classroom_id) {
-          dataService.getClassroomById(asg.classroom_id).then(setClassroom).catch(() => setClassroom(null));
-        }
+        if (asg.classroom_id) setClassroom(await dataService.getClassroomById(asg.classroom_id));
       }
-
-      const subs = await dataService.getSubmissions(assignmentId);
-      setSubmissions(subs);
     } catch (err) {
       console.error(err);
     } finally {
@@ -157,24 +161,26 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     }
   };
 
+  const refreshSubmissions = () =>
+    dataService
+      .getSubmissions(assignmentId)
+      .then(setSubmissions)
+      .catch((err) => console.warn('Refreshing submissions failed:', err));
+
   useEffect(() => {
     loadAllData();
+  }, [assignmentId]);
 
-    // 1. Polling interval every 3.5 seconds when active
+  useEffect(() => {
+    // Background refresh for new submissions (paused while grading or hidden).
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible' && !isGradingWorkspaceOpen && !isAuditModalOpen) {
-        dataService.getSubmissions(assignmentId).then((subs) => {
-          setSubmissions(subs);
-        });
+        refreshSubmissions();
       }
-    }, 3500);
+    }, 15000);
 
-    // 2. Broadcast Channel & window events for instant sync
-    const handleSubmissionEvent = () => {
-      dataService.getSubmissions(assignmentId).then((subs) => {
-        setSubmissions(subs);
-      });
-    };
+    // Same-browser events refresh instantly.
+    const handleSubmissionEvent = () => refreshSubmissions();
 
     window.addEventListener('pudding-submission-created', handleSubmissionEvent);
     let bc: BroadcastChannel | null = null;
@@ -253,18 +259,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     setIsGradingWorkspaceOpen(true);
   };
 
-  // Next Student in Workspace
-  const handleNextStudent = async () => {
-    if (!gradingSubmission) return;
-    const ordered = rosterRows.flatMap((row) => (row.submission ? [row.submission] : []));
-    const currentIndex = ordered.findIndex((s) => s.id === gradingSubmission.id);
-    if (currentIndex >= 0 && currentIndex < ordered.length - 1) {
-      const nextSub = ordered[currentIndex + 1];
-      await handleOpenGrading(nextSub);
-    } else {
-      setIsGradingWorkspaceOpen(false);
-    }
-  };
 
   // Every enrolled student, with their submission if any, then submissions from
   // students no longer on the roster. Roster entries may carry users.id, the
@@ -286,6 +280,24 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       if (!used.has(sub.id)) rows.push({ key: sub.id, student: sub.student, submission: sub });
     }
     return rows;
+  })();
+
+  // Grading order: roster order, students with a submission only.
+  const gradingOrder = rosterRows.flatMap((row) => (row.submission ? [row.submission] : []));
+  const gradingIndex = gradingSubmission ? gradingOrder.findIndex((s) => s.id === gradingSubmission.id) : -1;
+
+  // The signed-in teacher grades with their role in this classroom.
+  const grader: ClassroomTeacher | null = (() => {
+    if (!clerkUser || !classroom) return null;
+    const entry = classroom.teachers?.find((teacher) => teacher.teacher_id === clerkUser.id);
+    if (!entry && classroom.teacher_id !== clerkUser.id) return null;
+    return {
+      teacher_id: clerkUser.id,
+      name: entry?.name || clerkUser.fullName || `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || (language === 'th' ? 'คุณครู' : 'Teacher'),
+      email: entry?.email || clerkUser.primaryEmailAddress?.emailAddress,
+      avatar_url: clerkUser.imageUrl || entry?.avatar_url,
+      role: entry?.role || 'primary',
+    };
   })();
 
   const isSuspicious = (sub: Submission) =>
@@ -322,6 +334,14 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         </div>
       )}
 
+      {classroom && clerkUser && !grader && (
+        <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-xs font-semibold text-rose-700 dark:text-rose-300">
+          {language === 'th'
+            ? 'บัญชีนี้ไม่ได้อยู่ในรายชื่อผู้สอนของห้องเรียนนี้ จึงดูได้แต่ตรวจให้คะแนนไม่ได้'
+            : 'Your account is not a teacher of this classroom, so you can view but not grade.'}
+        </div>
+      )}
+
       {/* Top Breadcrumb & Assignment Header */}
       <div className="space-y-4">
         <Suspense fallback={<span className="block h-4" />}>
@@ -344,7 +364,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     : t('assignment_creator.mode_assignment')}
                 </span>
                 <span className="text-xs text-slate-400 font-mono">
-                  {assignment?.classroom_name || 'มัธยมศึกษาปีที่ 4/1'}
+                  {classroom?.name || assignment?.classroom_name || ''}
                 </span>
                 {assignment?.sample_work_title && (
                   <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-[11px] font-semibold border border-blue-200 dark:border-blue-900/50">
@@ -757,8 +777,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                       <td className="py-3.5 px-4 sm:px-6 text-right">
                         <button
                           type="button"
+                          disabled={!grader}
                           onClick={() => handleOpenGrading(sub)}
-                          className={`px-3.5 py-1.5 rounded-xl font-bold transition-all shadow-xs flex items-center gap-1.5 ml-auto cursor-pointer whitespace-nowrap ${
+                          className={`px-3.5 py-1.5 rounded-xl font-bold transition-all shadow-xs flex items-center gap-1.5 ml-auto cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${
                             isGraded
                               ? 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:bg-slate-50'
                               : 'bg-amber-500 hover:bg-amber-600 text-slate-950'
@@ -788,30 +809,30 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       )}
 
       {/* Single-Page Continuous Grading Workspace Modal */}
-      {isGradingWorkspaceOpen && gradingSubmission && (
+      {isGradingWorkspaceOpen && gradingSubmission && grader && (
         <GradingWorkspace
           key={gradingSubmission.id}
           submission={gradingSubmission}
           questions={questions}
           initialAnswers={gradingAnswers}
+          grader={grader}
+          studentPosition={gradingIndex >= 0 ? { index: gradingIndex, total: gradingOrder.length } : undefined}
           onClose={() => {
             setIsGradingWorkspaceOpen(false);
-            loadAllData();
+            refreshSubmissions();
           }}
-          onNextStudent={handleNextStudent}
-          onSaveGrade={async (subId, qId, score, comment, teacherId, teacherName, teacherRole) => {
-            await dataService.saveTeacherGrade(
-              subId,
-              qId,
-              score,
-              comment,
-              teacherId,
-              teacherName,
-              teacherRole as TeacherRole
-            );
-            const refreshed = await dataService.getSubmissions(assignmentId);
-            setSubmissions(refreshed);
-          }}
+          onPrevStudent={gradingIndex > 0 ? () => handleOpenGrading(gradingOrder[gradingIndex - 1]) : undefined}
+          onNextStudent={
+            gradingIndex >= 0 && gradingIndex < gradingOrder.length - 1
+              ? () => {
+                  refreshSubmissions();
+                  handleOpenGrading(gradingOrder[gradingIndex + 1]);
+                }
+              : undefined
+          }
+          onSaveGrade={(subId, qId, score, comment, teacherId, teacherName, teacherRole) =>
+            dataService.saveTeacherGrade(subId, qId, score, comment, teacherId, teacherName, teacherRole as TeacherRole)
+          }
         />
       )}
     </div>

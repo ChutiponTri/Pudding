@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
+import { Avatar } from '@/components/Avatar';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser, SignInButton } from '@clerk/nextjs';
 import Link from 'next/link';
@@ -65,11 +66,11 @@ function TeacherInviteContent() {
         clerkUser.username ||
         (inviteRole === 'researcher' ? 'ครูตรวจวิจัย' : 'ครูผู้ช่วย');
       const teacherEmail =
-        clerkUser.primaryEmailAddress?.emailAddress || `${clerkUser.id}@pudding.ac.th`;
+        clerkUser.primaryEmailAddress?.emailAddress || undefined;
 
       const currentTeachers = course.teachers || [];
       const alreadyTeacherIndex = currentTeachers.findIndex(
-        (t) => t.teacher_id === clerkUser.id || t.email === teacherEmail
+        (t) => t.teacher_id === clerkUser.id || (!!teacherEmail && t.email === teacherEmail)
       );
 
       let updatedTeachers = [...currentTeachers];
@@ -239,11 +240,7 @@ function TeacherInviteContent() {
           ) : isSignedIn ? (
             <div className="space-y-3">
               <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs">
-                <img
-                  src={clerkUser.imageUrl || 'https://images.unsplash.com/photo-1534528741775?w=100'}
-                  alt=""
-                  className="w-8 h-8 rounded-full object-cover"
-                />
+                <Avatar src={clerkUser.imageUrl} name={clerkUser.fullName} className="w-8 h-8 text-[10px]" />
                 <div className="min-w-0 flex-1">
                   <p className="font-bold text-slate-900 dark:text-white truncate">
                     {clerkUser.fullName || clerkUser.username || 'คุณครู'}

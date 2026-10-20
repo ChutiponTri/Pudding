@@ -245,5 +245,19 @@ BEGIN
   END IF;
 END $$;
 
+-- ==============================================================================
+-- Indexes for scoped reads
+-- Pages load only the signed-in teacher's (or student's) rows: by owner id, by
+-- co-teacher / roster membership inside JSONB, and submissions by student.
+-- ==============================================================================
+CREATE INDEX IF NOT EXISTS idx_courses_primary_teacher ON public.courses(primary_teacher_id);
+CREATE INDEX IF NOT EXISTS idx_classrooms_teacher ON public.classrooms(teacher_id);
+CREATE INDEX IF NOT EXISTS idx_courses_teachers_gin ON public.courses USING GIN (teachers jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_classrooms_teachers_gin ON public.classrooms USING GIN (teachers jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_classrooms_students_gin ON public.classrooms USING GIN (students jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_classrooms_pending_students_gin ON public.classrooms USING GIN (pending_students jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_submissions_assignment_student ON public.submissions(assignment_id, student_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_records_classroom_student ON public.attendance_records(classroom_id, student_id);
+
 -- Make PostgREST pick up the new columns immediately.
 NOTIFY pgrst, 'reload schema';

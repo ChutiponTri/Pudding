@@ -1,50 +1,42 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import {
-  ClassroomTeacher,
-  Question,
-  Submission,
-  SubmissionAnswer,
-  TeacherGradeRecord,
-  TeacherRole,
-} from '@/types/database';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ClassroomTeacher, Question, Submission, SubmissionAnswer, TeacherRole } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { Avatar } from '@/components/Avatar';
 import {
-  Sparkles,
+  AlertCircle,
+  Award,
+  Check,
   CheckCircle2,
-  FileText,
-  Image as ImageIcon,
-  ZoomIn,
-  ZoomOut,
-  RotateCw,
-  ExternalLink,
   ChevronLeft,
   ChevronRight,
-  Save,
-  Check,
-  UploadCloud,
-  Loader2,
-  BookOpen,
-  Award,
-  AlertCircle,
-  Users,
-  ShieldCheck,
-  Settings2,
-  Plus,
-  Trash2,
-  MessageSquare,
-  X,
-  Compass,
+  ExternalLink,
+  FileText,
   FlaskConical,
-  GraduationCap,
+  Loader2,
+  Minus,
+  Plus,
+  RotateCw,
+  Save,
+  Settings2,
+  Sparkles,
+  Trash2,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 
 interface GradingWorkspaceProps {
   submission: Submission;
   questions: Question[];
   initialAnswers: Record<string, SubmissionAnswer>;
+  /** The signed-in teacher and their role in this classroom. */
+  grader: ClassroomTeacher;
+  /** Position of this student in the grading order, e.g. 3 of 25. */
+  studentPosition?: { index: number; total: number };
   onClose: () => void;
+  onPrevStudent?: () => void;
   onNextStudent?: () => void;
   onSaveGrade: (
     submissionId: string,
@@ -57,883 +49,650 @@ interface GradingWorkspaceProps {
   ) => Promise<void>;
 }
 
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
 interface QuestionGradeState {
-  score: number | string;
+  score: string;
   comment: string;
-  isSaving: boolean;
-  saveSuccess: boolean;
+  /** Last saved values, to know what changed. */
+  savedScore: string;
+  savedComment: string;
+  status: SaveStatus;
 }
 
-const DEFAULT_PRESET_TEMPLATES = [
-  { id: 'p1', category: 'praise', text: 'ดีเยี่ยม เข้าใจประเด็นชัดเจนและครอบคลุมนิยาม' },
-  { id: 'p2', category: 'reasoning', text: 'ลำดับเหตุผลและวิธีทำถูกต้องสมบูรณ์ เป็นระเบียบเรียบร้อย' },
-  { id: 'p3', category: 'missing', text: 'ขาดการแสดงขั้นตอนวิธีคิดอย่างละเอียด ควรแจกแจงกรณีเพิ่มเติม' },
-  { id: 'p4', category: 'missing', text: 'ควรยกตัวอย่างประพจน์ประกอบอย่างน้อย 1 รูปแบบตามโจทย์' },
-  { id: 'p5', category: 'improvement', text: 'ควรปรับปรุงลายมือและจัดระเบียบตารางค่าความจริงให้อ่านง่ายขึ้น' },
-  { id: 'p6', category: 'integrity', text: 'ตรวจพบข้อความวางจากภายนอก ควรเรียบเรียงและสรุปด้วยความเข้าใจของตนเอง' },
+type Preset = { id: string; category: string; text: string };
+
+/** Subject-neutral starter comments; teachers add their own in "จัดการ". */
+const DEFAULT_PRESETS: Preset[] = [
+  { id: 'p1', category: 'praise', text: 'ดีมาก ตอบครบถ้วนและตรงประเด็น' },
+  { id: 'p2', category: 'reasoning', text: 'แสดงวิธีคิดและเหตุผลได้ชัดเจน' },
+  { id: 'p3', category: 'missing', text: 'ควรอธิบายขั้นตอนหรือเหตุผลเพิ่มเติม' },
+  { id: 'p4', category: 'missing', text: 'ควรยกตัวอย่างประกอบให้ชัดเจนขึ้น' },
+  { id: 'p5', category: 'improvement', text: 'ควรตรวจทานความถูกต้องอีกครั้งก่อนส่ง' },
+  { id: 'p6', category: 'integrity', text: 'ควรเรียบเรียงคำตอบด้วยความเข้าใจและสำนวนของตนเอง' },
 ];
+
+const isPdf = (url: string) => /\.pdf($|\?)/i.test(url);
+const roundHalf = (n: number) => Math.round(n * 2) / 2;
 
 export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   submission,
   questions,
   initialAnswers,
+  grader,
+  studentPosition,
   onClose,
+  onPrevStudent,
   onNextStudent,
   onSaveGrade,
 }) => {
   const { t, language } = useLanguage();
+  const th = language === 'th';
+  const isResearcher = grader.role === 'researcher';
 
-  // Co-Teacher / Research Grader Switcher
-  const availableTeachers: ClassroomTeacher[] = [
-    {
-      teacher_id: 'teacher-tippanan',
-      name: 'ครูธิปนรรจ์ พรายหนู',
-      email: 'tippanan.p@pudding.ac.th',
-      avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100',
-      role: 'primary',
-    },
-    {
-      teacher_id: 'teacher-somchai',
-      name: 'ครูสมชาย วิทยากร (TA)',
-      email: 'somchai.w@pudding.ac.th',
-      avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100',
-      role: 'assistant',
-    },
-    {
-      teacher_id: 'teacher-researcher-01',
-      name: 'ดร.พงศ์พิสุทธิ์ (ผู้วิจัย)',
-      email: 'pongpisut.research@edu.ac.th',
-      avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100',
-      role: 'researcher',
-    },
-  ];
-
-  const [activeTeacher, setActiveTeacher] = useState<ClassroomTeacher>(availableTeachers[0]);
-
-  // Master local answers state
   const [answers, setAnswers] = useState<Record<string, SubmissionAnswer>>(initialAnswers);
 
-  // Prefill each question with the grade this teacher already saved, so editing starts from it
-  const buildGradeStates = (teacher: ClassroomTeacher, source: Record<string, SubmissionAnswer>) => {
+  // Prefill with what this grader saved before, so editing starts from it.
+  const [grades, setGrades] = useState<Record<string, QuestionGradeState>>(() => {
     const states: Record<string, QuestionGradeState> = {};
     for (const q of questions) {
-      const ans = source[q.id];
-      const ownRecord = ans?.co_grades?.[teacher.teacher_id];
-      if (teacher.role === 'researcher') {
-        const resGrade = ans?.research_grades?.[teacher.teacher_id] ?? ownRecord;
-        states[q.id] = {
-          score: resGrade?.score ?? '',
-          comment: resGrade?.comment ?? '',
-          isSaving: false,
-          saveSuccess: false,
-        };
-      } else {
-        // Primary or TA: official grade
-        states[q.id] = {
-          score: ans?.teacher_score ?? ownRecord?.score ?? ans?.ai_mock_score ?? '',
-          comment: ans?.teacher_comment ?? ownRecord?.comment ?? '',
-          isSaving: false,
-          saveSuccess: false,
-        };
-      }
+      const ans = initialAnswers[q.id];
+      const own = ans?.co_grades?.[grader.teacher_id];
+      const saved = isResearcher
+        ? ans?.research_grades?.[grader.teacher_id] ?? own
+        : { score: ans?.teacher_score ?? own?.score, comment: ans?.teacher_comment ?? own?.comment };
+      const score = saved?.score != null ? String(saved.score) : '';
+      const comment = saved?.comment ?? '';
+      states[q.id] = { score, comment, savedScore: score, savedComment: comment, status: 'idle' };
     }
     return states;
-  };
+  });
 
-  // Per-question in-line grade & feedback state
-  const [questionGrades, setQuestionGrades] = useState<Record<string, QuestionGradeState>>(() =>
-    buildGradeStates(availableTeachers[0], initialAnswers)
-  );
-
-  // Image zoom/rotation controls per question
   const [imageControls, setImageControls] = useState<Record<string, { zoom: number; rotate: number }>>({});
-
-  // Custom Suggestion Templates
-  const [suggestionPresets, setSuggestionPresets] = useState(DEFAULT_PRESET_TEMPLATES);
-  const [isPresetModalOpen, setIsPresetModalOpen] = useState(false);
-  const [newPresetText, setNewPresetText] = useState('');
-  const [focusedQuestionId, setFocusedQuestionId] = useState<string | null>(null);
-
-  // Global saving state
   const [isSavingAll, setIsSavingAll] = useState(false);
 
-  // Active Grader switch handler
-  const handleTeacherSwitch = (teacher: ClassroomTeacher) => {
-    setActiveTeacher(teacher);
-    setQuestionGrades(buildGradeStates(teacher, answers));
-  };
-
-  // Score change
-  const handleScoreChange = (qId: string, value: number | string) => {
-    setQuestionGrades((prev) => ({
-      ...prev,
-      [qId]: { ...prev[qId], score: value },
-    }));
-  };
-
-  // Comment change
-  const handleCommentChange = (qId: string, value: string) => {
-    setQuestionGrades((prev) => ({
-      ...prev,
-      [qId]: { ...prev[qId], comment: value },
-    }));
-  };
-
-  // Accept AI Score & Feedback for single question
-  const handleAcceptAIScore = (qId: string) => {
-    const ans = answers[qId];
-    if (ans?.ai_mock_score != null) {
-      setQuestionGrades((prev) => ({
-        ...prev,
-        [qId]: {
-          ...prev[qId],
-          score: ans.ai_mock_score!,
-          comment: prev[qId]?.comment ? prev[qId].comment : ans.ai_feedback || '',
-        },
-      }));
-    }
-  };
-
-  // Insert suggestion chip into textarea
-  const handleInsertSuggestion = (qId: string, chipText: string) => {
-    const current = questionGrades[qId]?.comment || '';
-    const updated = current ? `${current} ${chipText}` : chipText;
-    handleCommentChange(qId, updated);
-  };
-
-  // Context-Aware Autocomplete Ranking
-  const getContextualSuggestions = (currentText: string) => {
-    const textLower = currentText.toLowerCase().trim();
-    if (!textLower) return suggestionPresets;
-
-    return [...suggestionPresets].sort((a, b) => {
-      let aScore = 0;
-      let bScore = 0;
-
-      // Positive keywords
-      if (textLower.includes('ดี') || textLower.includes('ยอด') || textLower.includes('เก่ง') || textLower.includes('ชัด')) {
-        if (a.category === 'praise') aScore += 5;
-        if (b.category === 'praise') bScore += 5;
-      }
-      // Missing requirements
-      if (textLower.includes('ขาด') || textLower.includes('ตก') || textLower.includes('หล่น') || textLower.includes('ยัง')) {
-        if (a.category === 'missing') aScore += 5;
-        if (b.category === 'missing') bScore += 5;
-      }
-      // Improvement & handwriting
-      if (textLower.includes('ปรับ') || textLower.includes('ควร') || textLower.includes('ลายมือ') || textLower.includes('เขียน')) {
-        if (a.category === 'improvement') aScore += 5;
-        if (b.category === 'improvement') bScore += 5;
-      }
-      // Integrity & external paste
-      if (textLower.includes('วาง') || textLower.includes('ลอก') || textLower.includes('ก๊อป') || textLower.includes('ทุจริต') || textLower.includes('ai')) {
-        if (a.category === 'integrity') aScore += 5;
-        if (b.category === 'integrity') bScore += 5;
-      }
-
-      return bScore - aScore;
-    });
-  };
-
-  // Image controls per question
-  const getControls = (qId: string) => imageControls[qId] || { zoom: 1, rotate: 0 };
-  const updateControls = (qId: string, zoom: number, rotate: number) => {
-    setImageControls((prev) => ({
-      ...prev,
-      [qId]: { zoom, rotate },
-    }));
-  };
-
-  // Save single question grade
-  const handleSaveQuestion = async (q: Question) => {
-    const gradeState = questionGrades[q.id];
-    if (!gradeState) return;
-
-    const numScore = Number(gradeState.score);
-    if (isNaN(numScore) || numScore < 0 || numScore > q.max_score) {
-      alert(
-        language === 'th'
-          ? `ข้อที่ ${q.question_text.slice(0, 20)}: กรุณากรอกคะแนนระหว่าง 0 ถึง ${q.max_score}`
-          : `Please enter a score between 0 and ${q.max_score}`
-      );
-      return;
-    }
-
-    setQuestionGrades((prev) => ({
-      ...prev,
-      [q.id]: { ...prev[q.id], isSaving: true },
-    }));
-
+  // Feedback chips: per teacher, remembered in this browser.
+  const presetsKey = `pudding_feedback_presets_${grader.teacher_id}`;
+  const [presets, setPresets] = useState<Preset[]>(() => {
     try {
-      await onSaveGrade(
-        submission.id,
-        q.id,
-        numScore,
-        gradeState.comment,
-        activeTeacher.teacher_id,
-        activeTeacher.name,
-        activeTeacher.role
-      );
+      const stored = typeof window !== 'undefined' ? localStorage.getItem(presetsKey) : null;
+      return stored ? (JSON.parse(stored) as Preset[]) : DEFAULT_PRESETS;
+    } catch {
+      return DEFAULT_PRESETS;
+    }
+  });
+  const updatePresets = (next: Preset[]) => {
+    setPresets(next);
+    try {
+      localStorage.setItem(presetsKey, JSON.stringify(next));
+    } catch {}
+  };
+  const [isPresetModalOpen, setIsPresetModalOpen] = useState(false);
+  const [newPresetText, setNewPresetText] = useState('');
 
-      // update local answers cache: TA can award official scores, Researcher stores into research_grades only
-      const isOfficial = activeTeacher.role === 'primary' || activeTeacher.role === 'assistant';
-      const isResearcher = activeTeacher.role === 'researcher';
-      const existing = answers[q.id] || {
-        id: `ans-${Date.now()}`,
-        submission_id: submission.id,
-        question_id: q.id,
-      };
+  const isDirty = (g?: QuestionGradeState) => !!g && (g.score !== g.savedScore || g.comment !== g.savedComment);
+  const dirtyQuestions = questions.filter((q) => isDirty(grades[q.id]));
+  const gradedCount = questions.filter((q) => grades[q.id]?.savedScore !== '').length;
+  const maxTotal = questions.reduce((sum, q) => sum + Number(q.max_score || 0), 0);
+  const runningTotal = roundHalf(questions.reduce((sum, q) => sum + (Number(grades[q.id]?.score) || 0), 0));
 
-      const newCoGrades = { ...(existing.co_grades || {}) };
-      newCoGrades[activeTeacher.teacher_id] = {
-        teacher_id: activeTeacher.teacher_id,
-        teacher_name: activeTeacher.name,
-        teacher_role: activeTeacher.role,
-        score: numScore,
-        comment: gradeState.comment,
+  const setGrade = (qId: string, patch: Partial<QuestionGradeState>) =>
+    setGrades((prev) => ({ ...prev, [qId]: { ...prev[qId], ...patch, status: patch.status ?? 'idle' } }));
+
+  const stepScore = (q: Question, delta: number) => {
+    const current = Number(grades[q.id]?.score) || 0;
+    setGrade(q.id, { score: String(Math.min(q.max_score, Math.max(0, roundHalf(current + delta)))) });
+  };
+
+  const insertPreset = (qId: string, text: string) => {
+    const current = grades[qId]?.comment || '';
+    setGrade(qId, { comment: current ? `${current} ${text}` : text });
+  };
+
+  // Rank chips by words already typed (praise, missing work, improvement, integrity).
+  const rankedPresets = (text: string) => {
+    const lower = text.toLowerCase();
+    if (!lower.trim()) return presets;
+    const hints: Record<string, string[]> = {
+      praise: ['ดี', 'ยอด', 'เก่ง', 'ชัด'],
+      missing: ['ขาด', 'ตก', 'หล่น', 'ยัง'],
+      improvement: ['ปรับ', 'ควร', 'ลายมือ', 'เขียน'],
+      integrity: ['วาง', 'ลอก', 'ก๊อป', 'ทุจริต', 'ai'],
+    };
+    const weight = (p: Preset) => (hints[p.category]?.some((w) => lower.includes(w)) ? 1 : 0);
+    return [...presets].sort((a, b) => weight(b) - weight(a));
+  };
+
+  /** Save one question; returns false when the score is invalid or saving failed. */
+  const saveQuestion = async (q: Question): Promise<boolean> => {
+    const g = grades[q.id];
+    if (!g || !isDirty(g)) return true;
+    if (g.score.trim() === '') {
+      alert(th ? `ข้อที่ ${questions.indexOf(q) + 1}: กรุณาใส่คะแนนก่อนบันทึก` : `Question ${questions.indexOf(q) + 1}: enter a score first`);
+      return false;
+    }
+    const score = Number(g.score);
+    if (Number.isNaN(score) || score < 0 || score > q.max_score) {
+      alert(th ? `ข้อที่ ${questions.indexOf(q) + 1}: คะแนนต้องอยู่ระหว่าง 0 ถึง ${q.max_score}` : `Question ${questions.indexOf(q) + 1}: score must be 0–${q.max_score}`);
+      return false;
+    }
+
+    setGrade(q.id, { status: 'saving' });
+    try {
+      await onSaveGrade(submission.id, q.id, score, g.comment, grader.teacher_id, grader.name, grader.role);
+      const record = {
+        teacher_id: grader.teacher_id,
+        teacher_name: grader.name,
+        teacher_role: grader.role,
+        score,
+        comment: g.comment,
         graded_at: new Date().toISOString(),
       };
-
-      const updatedResearchGrades = isResearcher
-        ? {
-            ...(existing.research_grades || {}),
-            [activeTeacher.teacher_id]: {
-              teacher_id: activeTeacher.teacher_id,
-              teacher_name: activeTeacher.name,
-              teacher_role: activeTeacher.role,
-              score: numScore,
-              comment: gradeState.comment,
-              graded_at: new Date().toISOString(),
-            },
-          }
-        : existing.research_grades;
-
-      setAnswers((prev) => ({
-        ...prev,
-        [q.id]: {
-          ...existing,
-          teacher_score: isOfficial ? numScore : existing.teacher_score,
-          teacher_comment: isOfficial ? gradeState.comment : existing.teacher_comment,
-          co_grades: newCoGrades,
-          research_grades: updatedResearchGrades,
-        },
-      }));
-
-      setQuestionGrades((prev) => ({
-        ...prev,
-        [q.id]: { ...prev[q.id], isSaving: false, saveSuccess: true },
-      }));
-
-      setTimeout(() => {
-        setQuestionGrades((prev) => ({
+      setAnswers((prev) => {
+        const existing = prev[q.id] || ({ id: `ans-${submission.id}-${q.id}`, submission_id: submission.id, question_id: q.id } as SubmissionAnswer);
+        return {
           ...prev,
-          [q.id]: { ...prev[q.id], saveSuccess: false },
-        }));
-      }, 2500);
+          [q.id]: {
+            ...existing,
+            teacher_score: isResearcher ? existing.teacher_score : score,
+            teacher_comment: isResearcher ? existing.teacher_comment : g.comment,
+            co_grades: { ...(existing.co_grades || {}), [grader.teacher_id]: record },
+            research_grades: isResearcher ? { ...(existing.research_grades || {}), [grader.teacher_id]: record } : existing.research_grades,
+          },
+        };
+      });
+      setGrades((prev) => ({
+        ...prev,
+        [q.id]: { ...prev[q.id], score: String(score), savedScore: String(score), savedComment: g.comment, status: 'saved' },
+      }));
+      return true;
     } catch (err) {
       console.error(err);
-      alert(err instanceof Error ? `บันทึกคะแนนไม่สำเร็จ: ${err.message}` : 'บันทึกคะแนนไม่สำเร็จ');
-      setQuestionGrades((prev) => ({
-        ...prev,
-        [q.id]: { ...prev[q.id], isSaving: false },
-      }));
+      setGrade(q.id, { status: 'error' });
+      alert(err instanceof Error ? `${th ? 'บันทึกคะแนนไม่สำเร็จ' : 'Could not save'}: ${err.message}` : th ? 'บันทึกคะแนนไม่สำเร็จ' : 'Could not save');
+      return false;
     }
   };
 
-  // Save all questions and proceed to next student
-  const handleSaveAllAndNext = async () => {
+  /** Save every changed question in order; stops at the first problem. */
+  const saveAll = async (): Promise<boolean> => {
     setIsSavingAll(true);
     try {
-      for (const q of questions) {
-        const gradeState = questionGrades[q.id];
-        const numScore = Number(gradeState?.score ?? 0);
-        if (!isNaN(numScore)) {
-          await onSaveGrade(
-            submission.id,
-            q.id,
-            numScore,
-            gradeState?.comment || '',
-            activeTeacher.teacher_id,
-            activeTeacher.name,
-            activeTeacher.role
-          );
+      for (const q of dirtyQuestions) {
+        if (!(await saveQuestion(q))) {
+          document.getElementById(`question-card-${q.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return false;
         }
       }
-
-      if (onNextStudent) {
-        onNextStudent();
-      } else {
-        onClose();
-      }
-    } catch (err) {
-      console.error(err);
-      alert(err instanceof Error ? `บันทึกคะแนนไม่สำเร็จ: ${err.message}` : 'บันทึกคะแนนไม่สำเร็จ');
+      return true;
     } finally {
       setIsSavingAll(false);
     }
   };
 
-  // Inter-Rater Reliability (IRR) statistics summary
-  const irrSummary = useMemo(() => {
-    let pairCount = 0;
-    let totalDelta = 0;
+  const confirmLeave = () =>
+    dirtyQuestions.length === 0 ||
+    confirm(th ? `มี ${dirtyQuestions.length} ข้อที่ยังไม่บันทึก ต้องการออกโดยไม่บันทึกหรือไม่?` : `${dirtyQuestions.length} unsaved question(s). Leave without saving?`);
 
-    for (const q of questions) {
-      const ans = answers[q.id];
-      const primaryGrade = ans?.teacher_score;
-      const coGrade = ans?.co_grades?.['teacher-somchai']?.score;
-
-      if (primaryGrade !== undefined && coGrade !== undefined) {
-        pairCount += 1;
-        totalDelta += Math.abs(primaryGrade - coGrade);
-      }
-    }
-
-    const avgDelta = pairCount > 0 ? totalDelta / pairCount : 0;
-    return {
-      pairCount,
-      avgDelta: Math.round(avgDelta * 10) / 10,
-      isHighAgreement: avgDelta <= 0.5,
-    };
-  }, [questions, answers]);
-
-  const scrollToQuestion = (idx: number) => {
-    const el = document.getElementById(`question-card-${idx}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+  const handleClose = () => confirmLeave() && onClose();
+  const handlePrev = () => onPrevStudent && confirmLeave() && onPrevStudent();
+  const handleSaveAndNext = async () => {
+    if (!(await saveAll())) return;
+    if (onNextStudent) onNextStudent();
+    else onClose();
   };
 
-  const graderButtons = availableTeachers.map((tchr) => {
-    const isSelected = activeTeacher.teacher_id === tchr.teacher_id;
-    return (
-      <button
-        key={tchr.teacher_id}
-        type="button"
-        onClick={() => handleTeacherSwitch(tchr)}
-        className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
-          isSelected
-            ? 'bg-amber-500 text-slate-950 shadow-xs'
-            : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700'
-        }`}
-      >
-        <img
-          src={tchr.avatar_url}
-          alt=""
-          className="w-4 h-4 rounded-full object-cover"
-        />
-        <span>
-          {tchr.name} ({tchr.role === 'primary' ? 'เจ้าของวิชา' : tchr.role === 'assistant' ? 'TA' : 'ผู้วิจัย'})
-        </span>
-      </button>
-    );
+  // Ctrl/⌘+S saves, Ctrl/⌘+Enter saves and moves on, Esc closes.
+  const shortcuts = useRef({ saveAll, handleSaveAndNext, handleClose });
+  useEffect(() => {
+    shortcuts.current = { saveAll, handleSaveAndNext, handleClose };
   });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        shortcuts.current.saveAll();
+      } else if (mod && e.key === 'Enter') {
+        e.preventDefault();
+        shortcuts.current.handleSaveAndNext();
+      } else if (e.key === 'Escape' && !isPresetModalOpen) {
+        shortcuts.current.handleClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isPresetModalOpen]);
+
+  // Agreement between this grader and the other graders, for research.
+  const agreement = useMemo(() => {
+    let pairs = 0;
+    let delta = 0;
+    for (const q of questions) {
+      const records = Object.values(answers[q.id]?.co_grades || {});
+      const mine = records.find((r) => r.teacher_id === grader.teacher_id);
+      for (const other of records) {
+        if (!mine || other.teacher_id === grader.teacher_id) continue;
+        pairs += 1;
+        delta += Math.abs(mine.score - other.score);
+      }
+    }
+    const avg = pairs ? Math.round((delta / pairs) * 10) / 10 : 0;
+    return { pairs, avg, high: avg <= 0.5 };
+  }, [answers, questions, grader.teacher_id]);
+
+  const roleLabel = (role: TeacherRole) =>
+    role === 'primary' ? (th ? 'ครูประจำวิชา' : 'Teacher') : role === 'assistant' ? 'TA' : th ? 'ผู้ตรวจวิจัย' : 'Researcher';
+  const typeLabel = (type: Question['type']) =>
+    ({
+      multiple_choice: th ? 'ปรนัย' : 'Multiple choice',
+      true_false: th ? 'ถูก/ผิด' : 'True/false',
+      short_answer: th ? 'เขียนตอบสั้น' : 'Short answer',
+      essay: th ? 'เรียงความ' : 'Essay',
+      file_upload: th ? 'อัปโหลดไฟล์' : 'File upload',
+    } as Record<string, string>)[type] || type;
+
+  const studentName = `${submission.student?.first_name || ''} ${submission.student?.last_name || ''}`.trim() || (th ? 'นักเรียน' : 'Student');
+  const isLast = !onNextStudent;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-slate-100/90 dark:bg-slate-950/95 backdrop-blur-md overflow-hidden animate-in fade-in transition-colors">
-      {/* Top Floating App Bar */}
-      <header className="min-h-16 px-3 sm:px-6 pt-[env(safe-area-inset-top)] border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-2 shrink-0 shadow-xs">
-        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+    <div className="fixed inset-0 z-50 flex flex-col bg-slate-100 dark:bg-slate-950 animate-in fade-in">
+      {/* ── Header: who is being graded, progress, and who is grading ── */}
+      <header className="pt-[env(safe-area-inset-top)] bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shrink-0">
+        <div className="min-h-16 px-3 sm:px-6 flex items-center gap-3">
           <button
             type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
+            onClick={handleClose}
+            title={th ? 'ปิด (Esc)' : 'Close (Esc)'}
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
           >
-            <ChevronLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('common.close')}</span>
+            <X className="w-5 h-5" />
           </button>
 
-          <div className="h-5 w-px bg-slate-200 dark:border-slate-800 hidden sm:block" />
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <Avatar
+              src={submission.student?.avatar_url}
+              firstName={submission.student?.first_name}
+              lastName={submission.student?.last_name}
+              className="w-9 h-9 text-xs"
+            />
+            <div className="min-w-0">
+              <p className="text-sm font-black text-slate-900 dark:text-white truncate">{studentName}</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                {submission.student?.student_id ? `${th ? 'รหัส' : 'ID'} ${submission.student.student_id}` : ''}
+                {studentPosition ? `${submission.student?.student_id ? ' · ' : ''}${th ? 'คนที่' : 'Student'} ${studentPosition.index + 1}/${studentPosition.total}` : ''}
+              </p>
+            </div>
+          </div>
 
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <h2 className="hidden md:block text-sm font-black text-slate-900 dark:text-white shrink-0">
-                {t('grading.workspace.title')}
-              </h2>
-              <span className="truncate text-xs px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-900">
-                {submission.student?.first_name} {submission.student?.last_name}
+          {/* Progress */}
+          <div className="hidden md:flex flex-col items-end gap-1 shrink-0 w-44">
+            <div className="flex items-baseline gap-2 text-xs">
+              <span className="text-slate-500 dark:text-slate-400">{th ? 'ตรวจแล้ว' : 'Graded'} {gradedCount}/{questions.length}</span>
+              <span className="font-black text-slate-900 dark:text-white tabular-nums">
+                {runningTotal}/{maxTotal}
               </span>
-              <span className="text-xs text-slate-400 font-mono hidden sm:inline">
-                {submission.student?.student_id ? `รหัส ${submission.student.student_id}` : ''}
-              </span>
+            </div>
+            <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-emerald-500 rounded-full transition-all"
+                style={{ width: `${questions.length ? (gradedCount / questions.length) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Grader */}
+          <div className="hidden sm:flex items-center gap-2 pl-3 ml-1 border-l border-slate-200 dark:border-slate-800 shrink-0">
+            <Avatar src={grader.avatar_url} name={grader.name} className="w-8 h-8 text-[10px]" />
+            <div className="leading-tight">
+              <p className="text-xs font-bold text-slate-900 dark:text-white max-w-36 truncate">{grader.name}</p>
+              <p className={`text-[10px] font-bold ${isResearcher ? 'text-purple-600 dark:text-purple-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                {roleLabel(grader.role)}
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Center: Co-Teaching / Grader Persona Selector */}
-        <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
-            <Users className="w-3.5 h-3.5 text-amber-500" />
-            <span>{t('grading.workspace.active_grader')}:</span>
-          </span>
-          <div className="flex items-center gap-1">
-            {graderButtons}
-          </div>
-        </div>
-
-        {/* Right Action Buttons */}
-        <div className="flex items-center gap-3 shrink-0">
-          {onNextStudent && (
-            <button
-              type="button"
-              disabled={isSavingAll}
-              onClick={handleSaveAllAndNext}
-              className="px-4 py-2 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-900 dark:hover:bg-slate-100 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md cursor-pointer disabled:opacity-50"
-            >
-              {isSavingAll ? <Loader2 className="w-4 h-4 animate-spin text-amber-400" /> : <Save className="w-4 h-4 text-amber-400" />}
-              <span className="hidden sm:inline">{t('grading.workspace.save_all_and_next')}</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      </header>
-
-      {/* Grader persona selector for phones and iPads (it lives in the header on desktop) */}
-      {availableTeachers.length > 0 && (
-        <div className="lg:hidden px-3 sm:px-6 py-2 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 flex items-center gap-2 overflow-x-auto scrollbar-none shrink-0">
-          <Users className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-          {graderButtons}
-        </div>
-      )}
-
-      {/* Student Publication Notice Banner */}
-      <div
-        className={`px-3 sm:px-6 py-2.5 border-b flex items-center justify-between gap-2 text-xs transition-colors ${
-          activeTeacher.role === 'researcher'
-            ? 'bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-900/50 text-purple-950 dark:text-purple-200'
-            : activeTeacher.role === 'assistant'
-            ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900/50 text-blue-950 dark:text-blue-200'
-            : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200'
-        }`}
-      >
-        <div className="flex items-center gap-2 font-medium">
-          {activeTeacher.role === 'researcher' ? (
-            <>
-              <FlaskConical className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
-              <span>🔬 <b>โหมดตรวจงานวิจัย (Research Mode):</b> ช่องนี้เก็บเพื่อการวิจัยเท่านั้น จะไม่แสดงต่อนักเรียน และไม่กระทบต่อคะแนนทางการของวิชา</span>
-            </>
-          ) : activeTeacher.role === 'assistant' ? (
-            <>
-              <GraduationCap className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-              <span>🎓 <b>ครูผู้ช่วยสอน (Teaching Assistant):</b> ตรวจและให้คะแนนทางการแก่นักเรียนได้จริง (ไม่มีสิทธิ์แก้ไขรายวิชา)</span>
-            </>
-          ) : (
-            <>
-              <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-              <span>👑 <b>ครูเจ้าของวิชา (Primary Owner):</b> ตรวจและให้คะแนนทางการ และจัดการเนื้อหาและโครงสร้างวิชาได้</span>
-            </>
-          )}
-        </div>
-
-        {irrSummary.pairCount > 0 && (
-          <div className="hidden sm:flex items-center gap-2 font-mono text-[11px] font-bold">
-            <span>{t('grading.workspace.irr_panel_title')}:</span>
-            <span className="px-2 py-0.5 rounded bg-amber-200/60 dark:bg-amber-900/60 text-amber-950 dark:text-amber-200">
-              Δ {irrSummary.avgDelta} คะแนน ({irrSummary.isHighAgreement ? t('grading.workspace.irr_agreement_high') : t('grading.workspace.irr_agreement_moderate')})
+        {isResearcher && (
+          <div className="px-3 sm:px-6 py-2 bg-purple-50 dark:bg-purple-950/40 border-t border-purple-200 dark:border-purple-900/50 text-xs text-purple-900 dark:text-purple-200 flex items-center gap-2">
+            <FlaskConical className="w-4 h-4 shrink-0" />
+            <span>
+              {th
+                ? 'โหมดตรวจเพื่อการวิจัย: คะแนนของคุณเก็บแยกไว้ ไม่แสดงต่อนักเรียน และไม่เปลี่ยนคะแนนจริงของวิชา'
+                : 'Research mode: your scores are stored separately and never shown to students or change official grades.'}
             </span>
           </div>
         )}
-      </div>
+      </header>
 
-      {/* Main Single-Page Workspace: Vertical Continuous Scroll View */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Sticky Mini-Map / Jump Navigation */}
-        <aside className="w-48 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/70 p-4 hidden md:flex flex-col justify-between overflow-y-auto">
-          <div className="space-y-3">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              {language === 'th' ? 'สารบัญคำถาม (Mini-Map)' : 'Question Jump'}
-            </span>
-            <div className="space-y-1.5">
-              {questions.map((q, idx) => {
-                const ans = answers[q.id];
-                const isGraded = ans?.teacher_score != null;
-                return (
-                  <button
-                    key={q.id}
-                    type="button"
-                    onClick={() => scrollToQuestion(idx)}
-                    className="w-full px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left cursor-pointer"
-                  >
-                    <span className="truncate">ข้อที่ {idx + 1}</span>
-                    {isGraded ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+        {/* ── Question list ── */}
+        <aside className="w-52 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 hidden md:flex flex-col gap-3 overflow-y-auto">
+          <span className="px-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">{th ? 'ข้อสอบ' : 'Questions'}</span>
+          <nav className="space-y-1">
+            {questions.map((q, idx) => {
+              const g = grades[q.id];
+              const dirty = isDirty(g);
+              const saved = g?.savedScore !== '';
+              return (
+                <button
+                  key={q.id}
+                  type="button"
+                  onClick={() => document.getElementById(`question-card-${q.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  className="w-full px-3 py-2 rounded-xl text-xs font-semibold flex items-center justify-between gap-2 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${dirty ? 'bg-amber-500' : saved ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                    />
+                    {th ? 'ข้อ' : 'Q'} {idx + 1}
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-400 tabular-nums">
+                    {g?.score !== '' ? g?.score : '–'}/{q.max_score}
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+          <div className="mt-auto space-y-2 text-[11px]">
+            <p className="px-1 text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{th ? 'บันทึกแล้ว' : 'Saved'}</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />{th ? 'ยังไม่บันทึก' : 'Unsaved'}</span>
+            </p>
+            {agreement.pairs > 0 && (
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                <span className="font-bold block">{th ? 'เทียบกับผู้ตรวจอื่น' : 'vs. other graders'}</span>
+                <span>Δ {agreement.avg} · {agreement.high ? t('grading.workspace.irr_agreement_high') : t('grading.workspace.irr_agreement_moderate')}</span>
+              </div>
+            )}
+            {submission.is_flagged_suspicious && (
+              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 space-y-0.5">
+                <span className="font-bold flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {th ? 'พฤติกรรมน่าสงสัย' : 'Integrity alert'}
+                </span>
+                <p>{th ? `สลับแท็บ ${submission.tab_switch_count} ครั้ง (${submission.total_time_away_seconds} วินาที)` : `${submission.tab_switch_count} tab switches (${submission.total_time_away_seconds}s)`}</p>
+              </div>
+            )}
           </div>
-
-          {/* Quick Integrity Pill */}
-          {submission.is_flagged_suspicious && (
-            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-[11px] space-y-1">
-              <span className="font-bold block flex items-center gap-1">
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span>แจ้งเตือนพฤติกรรม</span>
-              </span>
-              <p>สลับแท็บ {submission.tab_switch_count} ครั้ง ({submission.total_time_away_seconds}s)</p>
-            </div>
-          )}
         </aside>
 
-        {/* Center: VERTICAL CONTINUOUS SCROLL VIEW */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 bg-slate-50 dark:bg-slate-950">
-          <div className="max-w-4xl mx-auto space-y-8">
+        {/* ── Questions ── */}
+        <main className="flex-1 overflow-y-auto p-3 sm:p-6">
+          <div className="max-w-3xl mx-auto space-y-5 pb-6">
             {questions.map((q, idx) => {
               const ans = answers[q.id];
-              const gradeState = questionGrades[q.id] || {
-                score: '',
-                comment: '',
-                isSaving: false,
-                saveSuccess: false,
-              };
-              const controls = getControls(q.id);
-              const contextualChips = getContextualSuggestions(gradeState.comment);
+              const g = grades[q.id];
+              const dirty = isDirty(g);
+              const controls = imageControls[q.id] || { zoom: 1, rotate: 0 };
+              const setControls = (zoom: number, rotate: number) => setImageControls((prev) => ({ ...prev, [q.id]: { zoom, rotate } }));
+              const otherGrades = Object.values(ans?.co_grades || {}).filter((r) => r.teacher_id !== grader.teacher_id);
+              const isObjective = q.type === 'multiple_choice' || q.type === 'true_false';
 
               return (
-                <div
+                <section
                   key={q.id}
-                  id={`question-card-${idx}`}
-                  className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm p-4 sm:p-6 space-y-6 transition-all scroll-mt-6"
+                  id={`question-card-${q.id}`}
+                  className={`bg-white dark:bg-slate-900 rounded-3xl border shadow-xs p-4 sm:p-6 space-y-4 scroll-mt-4 transition-colors ${
+                    dirty ? 'border-amber-300 dark:border-amber-800' : 'border-slate-200 dark:border-slate-800'
+                  }`}
                 >
-                  {/* Question Header & Standard Tag */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
-                    <div className="flex items-center gap-3">
-                      <span className="w-9 h-9 rounded-2xl bg-amber-500 text-slate-950 font-black text-sm flex items-center justify-center shadow-xs">
+                  {/* Question header */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 font-black text-sm flex items-center justify-center shrink-0">
                         {idx + 1}
                       </span>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-sm text-slate-900 dark:text-white">
-                            {t('grading.workspace.question_nav')} {idx + 1}
+                      <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          {typeLabel(q.type)}
+                        </span>
+                        {q.indicator?.code && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono">
+                            {q.indicator.code}
                           </span>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase">
-                            {q.type}
-                          </span>
-                          {q.indicator?.code && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono">
-                              {q.indicator.code}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                          {q.rubric_criteria || '-'}
-                        </p>
+                        )}
+                        <span className="text-[11px] text-slate-400">{th ? `เต็ม ${q.max_score} คะแนน` : `${q.max_score} pts`}</span>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono">
-                        {t('common.points')}: {q.max_score}
-                      </span>
-                    </div>
+                    <span className="shrink-0 text-[11px] font-bold">
+                      {g?.status === 'saving' ? (
+                        <span className="text-slate-400 flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" />{th ? 'กำลังบันทึก' : 'Saving'}</span>
+                      ) : dirty ? (
+                        <span className="text-amber-600 dark:text-amber-400">{th ? 'ยังไม่บันทึก' : 'Unsaved'}</span>
+                      ) : g?.savedScore !== '' ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />{th ? 'บันทึกแล้ว' : 'Saved'}</span>
+                      ) : null}
+                    </span>
                   </div>
 
-                  {/* Question Text Prompt */}
-                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/60 text-xs font-medium text-slate-800 dark:text-slate-200 leading-relaxed">
-                    {q.question_text}
-                  </div>
+                  <p className="text-sm font-medium text-slate-900 dark:text-slate-100 leading-relaxed whitespace-pre-wrap">{q.question_text}</p>
+                  {q.rubric_criteria && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                      <span className="font-bold">{th ? 'เกณฑ์: ' : 'Rubric: '}</span>
+                      {q.rubric_criteria}
+                    </p>
+                  )}
 
-                  {/* Student Response Display (Text or File Attachment) */}
-                  <div className="space-y-3">
+                  {/* Student answer */}
+                  <div className="space-y-2">
                     <span className="text-xs font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
                       <FileText className="w-4 h-4 text-emerald-600" />
-                      <span>{t('grading.workspace.student_answer_tab')}</span>
+                      {t('grading.workspace.student_answer_tab')}
                     </span>
 
-                    {/* If File Upload Submission */}
                     {ans?.file_url ? (
-                      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-950 overflow-hidden space-y-3 p-4">
-                        <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200 dark:border-slate-800">
-                          <span className="font-semibold text-slate-500 dark:text-slate-400">
-                            {t('grading.workspace.student_file_tab')}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateControls(q.id, Math.max(0.6, controls.zoom - 0.2), controls.rotate)
-                              }
-                              className="p-1.5 rounded-lg bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                              title="Zoom Out"
-                            >
-                              <ZoomOut className="w-3.5 h-3.5" />
-                            </button>
-                            <span className="font-mono text-[11px] text-slate-400">
-                              {Math.round(controls.zoom * 100)}%
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateControls(q.id, Math.min(2.0, controls.zoom + 0.2), controls.rotate)
-                              }
-                              className="p-1.5 rounded-lg bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                              title="Zoom In"
-                            >
-                              <ZoomIn className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateControls(q.id, controls.zoom, (controls.rotate + 90) % 360)
-                              }
-                              className="p-1.5 rounded-lg bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                              title="Rotate"
-                            >
-                              <RotateCw className="w-3.5 h-3.5" />
-                            </button>
-                            <a
-                              href={ans.file_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="p-1.5 rounded-lg bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 hover:bg-slate-200"
-                              title="Open original"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          </div>
+                      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 overflow-hidden">
+                        <div className="flex items-center justify-end gap-1.5 px-3 py-2 border-b border-slate-200 dark:border-slate-800">
+                          {!isPdf(ans.file_url) && (
+                            <>
+                              <button type="button" onClick={() => setControls(Math.max(0.6, controls.zoom - 0.2), controls.rotate)} className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer" title={th ? 'ย่อ' : 'Zoom out'}>
+                                <ZoomOut className="w-4 h-4" />
+                              </button>
+                              <span className="font-mono text-[11px] text-slate-400 w-10 text-center">{Math.round(controls.zoom * 100)}%</span>
+                              <button type="button" onClick={() => setControls(Math.min(2, controls.zoom + 0.2), controls.rotate)} className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer" title={th ? 'ขยาย' : 'Zoom in'}>
+                                <ZoomIn className="w-4 h-4" />
+                              </button>
+                              <button type="button" onClick={() => setControls(controls.zoom, (controls.rotate + 90) % 360)} className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer" title={th ? 'หมุน' : 'Rotate'}>
+                                <RotateCw className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                          <a href={ans.file_url} target="_blank" rel="noreferrer" className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-amber-600 dark:text-amber-400" title={t('grading.workspace.open_original_file')}>
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
                         </div>
-
-                        <div className="flex items-center justify-center p-2 overflow-auto max-h-[500px]">
-                          <div
-                            className="transition-transform duration-200 rounded-xl overflow-hidden shadow-md"
-                            style={{
-                              transform: `scale(${controls.zoom}) rotate(${controls.rotate}deg)`,
-                            }}
-                          >
+                        {isPdf(ans.file_url) ? (
+                          <iframe src={ans.file_url} title={`answer-${idx + 1}`} className="w-full h-[480px] bg-white" />
+                        ) : (
+                          <div className="flex items-center justify-center p-3 overflow-auto max-h-[480px]">
                             <img
                               src={ans.file_url}
-                              alt="Submission"
-                              className="max-h-[450px] object-contain select-none"
+                              alt=""
+                              className="max-h-[440px] object-contain select-none rounded-lg transition-transform duration-200"
+                              style={{ transform: `scale(${controls.zoom}) rotate(${controls.rotate}deg)` }}
                             />
                           </div>
-                        </div>
+                        )}
                       </div>
                     ) : ans?.text_answer ? (
-                      /* Text response */
-                      <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 text-xs font-mono leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap select-all">
+                      <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap">
                         {ans.text_answer}
                       </div>
                     ) : (
-                      /* Empty */
                       <div className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-400">
-                        {t('grading.workspace.no_file_uploaded')}
+                        {th ? 'นักเรียนไม่ได้ตอบข้อนี้' : 'No answer for this question'}
                       </div>
+                    )}
+                    {isObjective && q.ideal_answer && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        <span className="font-bold">{th ? 'เฉลย: ' : 'Answer key: '}</span>
+                        {q.ideal_answer}
+                      </p>
                     )}
                   </div>
 
-                  {/* ASAG AI Mockup Evaluation Card */}
-                  {ans?.ai_mock_score != null && (
-                    <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/40 dark:to-purple-950/30 border border-indigo-200 dark:border-indigo-900/50 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                          <span className="text-xs font-bold text-indigo-900 dark:text-indigo-200">
-                            {t('grading.workspace.ai_section_title')}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-black text-indigo-700 dark:text-indigo-300 font-mono">
-                            {ans.ai_mock_score} / {q.max_score} {t('common.points')}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleAcceptAIScore(q.id)}
-                            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer"
-                          >
-                            <Check className="w-3 h-3" />
-                            <span>{t('grading.workspace.accept_ai_score')}</span>
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-xs text-indigo-900/80 dark:text-indigo-200/80 leading-relaxed">
-                        {ans.ai_feedback}
-                      </p>
+                  {/* Other graders */}
+                  {otherGrades.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {otherGrades.map((r) => (
+                        <span key={r.teacher_id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
+                          <Award className="w-3 h-3 text-amber-500" />
+                          {r.teacher_name} ({roleLabel(r.teacher_role)}):
+                          <b className="font-mono text-slate-900 dark:text-white">{r.score}/{q.max_score}</b>
+                        </span>
+                      ))}
                     </div>
                   )}
 
-                  {/* Co-Teaching Independent Grades Comparison (IRR Data) */}
-                  {ans?.co_grades && Object.keys(ans.co_grades).length > 1 && (
-                    <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/60 dark:border-amber-900/40 space-y-2">
-                      <span className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
-                        <Award className="w-3.5 h-3.5 text-amber-600" />
-                        <span>การประเมินของผู้ร่วมตรวจ (Research Multi-Grading):</span>
+                  {/* Grading panel */}
+                  <div className={`p-3 sm:p-4 rounded-2xl space-y-3 ${isResearcher ? 'bg-purple-50/70 dark:bg-purple-950/30' : 'bg-amber-50/60 dark:bg-amber-950/20'}`}>
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 w-full sm:w-auto">
+                        {isResearcher ? (th ? 'คะแนนวิจัย' : 'Research score') : t('grading.workspace.teacher_score_label')}
                       </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                        {Object.values(ans.co_grades).map((record) => (
-                          <div
-                            key={record.teacher_id}
-                            className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200/50 dark:border-slate-800 flex items-center justify-between"
-                          >
-                            <div>
-                              <span className="font-bold text-slate-800 dark:text-slate-200 block">
-                                {record.teacher_name}
-                              </span>
-                              <span className="text-[10px] text-slate-400">
-                                {record.teacher_role === 'primary' ? 'Primary Owner' : 'Assistant / IRR'}
-                              </span>
-                            </div>
-                            <span className="font-mono font-black text-sm text-slate-900 dark:text-white">
-                              {record.score} / {q.max_score}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* IN-LINE SCORE INPUT & TEACHER FEEDBACK COMPONENT */}
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-4">
-                    {/* Research Grader Banner if activeTeacher is researcher */}
-                    {activeTeacher.role === 'researcher' && (
-                      <div className="p-3 rounded-2xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-xs text-purple-900 dark:text-purple-200 flex items-start gap-2.5">
-                        <FlaskConical className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0 mt-0.5" />
-                        <div>
-                          <span className="font-bold block">
-                            🔬 ช่องคะแนนสำหรับครูตรวจงานวิจัย (Research Mode - IRR)
-                          </span>
-                          <span className="text-[11px] text-purple-700 dark:text-purple-300 leading-relaxed block mt-0.5">
-                            คะแนนในช่องนี้จะถูกเก็บไว้เฉพาะเพื่อการศึกษาวิจัยความเที่ยงตรง (IRR) จะไม่แสดงในฝั่งนักเรียน และไม่ทับซ้อนกับคะแนนจริงของครูผู้สอนหลักหรือ TA
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                          {activeTeacher.role === 'researcher'
-                            ? (language === 'th' ? 'คะแนนการวิจัย (Research Score):' : 'Research Score:')
-                            : activeTeacher.role === 'assistant'
-                            ? (language === 'th' ? 'คะแนนที่ให้ (โดย TA):' : 'Assigned Score (by TA):')
-                            : t('grading.workspace.teacher_score_label') + ':'}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            step="0.5"
-                            min="0"
-                            max={q.max_score}
-                            value={gradeState.score}
-                            onChange={(e) => handleScoreChange(q.id, e.target.value)}
-                            className="w-20 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono font-black text-base text-center focus:outline-hidden focus:border-amber-500"
-                            placeholder="0.0"
-                          />
-                          <span className="text-xs text-slate-400 font-mono">
-                            / {q.max_score}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Quick Score Preset Pills */}
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleScoreChange(q.id, q.max_score)}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-mono text-xs font-bold hover:bg-emerald-200 transition-colors"
-                        >
-                          เต็ม ({q.max_score})
+                      <div className="flex items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 overflow-hidden">
+                        <button type="button" onClick={() => stepScore(q, -0.5)} className="px-2.5 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="-0.5">
+                          <Minus className="w-4 h-4" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleScoreChange(q.id, Math.max(0, q.max_score - 1))}
-                          className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono text-xs font-bold hover:bg-slate-200"
-                        >
-                          {Math.max(0, q.max_score - 1)}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleScoreChange(q.id, 0)}
-                          className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-300 font-mono text-xs font-bold hover:bg-rose-200"
-                        >
-                          0
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.5"
+                          min="0"
+                          max={q.max_score}
+                          value={g?.score ?? ''}
+                          onChange={(e) => setGrade(q.id, { score: e.target.value })}
+                          placeholder="–"
+                          className="w-16 py-1.5 bg-transparent text-center font-mono font-black text-lg text-slate-900 dark:text-white focus:outline-hidden [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                        <button type="button" onClick={() => stepScore(q, 0.5)} className="px-2.5 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="+0.5">
+                          <Plus className="w-4 h-4" />
                         </button>
                       </div>
-                    </div>
-
-                    {/* SMART ADAPTIVE SUGGESTION BAR (iOS KEYBOARD STYLE) */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                        <span className="font-bold flex items-center gap-1">
-                          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                          <span>{t('grading.suggestions.title')}</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setIsPresetModalOpen(true)}
-                          className="hover:underline flex items-center gap-1 text-amber-600 dark:text-amber-400 font-semibold cursor-pointer"
-                        >
-                          <Settings2 className="w-3 h-3" />
-                          <span>{t('grading.suggestions.manage_templates')}</span>
-                        </button>
-                      </div>
-
-                      {/* Horizontal Scrolling Chips Bar */}
-                      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
-                        {contextualChips.map((preset) => (
+                      <span className="text-sm text-slate-400 font-mono">/ {q.max_score}</span>
+                      <div className="flex items-center gap-1.5 sm:ml-auto">
+                        {[
+                          { label: '0', value: 0, cls: 'bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-300' },
+                          { label: th ? 'ครึ่ง' : 'Half', value: roundHalf(q.max_score / 2), cls: 'bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300' },
+                          { label: th ? 'เต็ม' : 'Full', value: q.max_score, cls: 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300' },
+                        ].map((chip) => (
                           <button
-                            key={preset.id}
+                            key={chip.label}
                             type="button"
-                            onClick={() => handleInsertSuggestion(q.id, preset.text)}
-                            className="px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-amber-100 dark:hover:bg-amber-950 hover:text-amber-900 dark:hover:text-amber-200 text-slate-700 dark:text-slate-300 text-xs font-semibold whitespace-nowrap transition-all border border-slate-200 dark:border-slate-700 cursor-pointer shadow-xs active:scale-95 shrink-0"
+                            onClick={() => setGrade(q.id, { score: String(chip.value) })}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer hover:opacity-80 ${chip.cls}`}
                           >
-                            + {preset.text}
+                            {chip.label}
                           </button>
                         ))}
                       </div>
-
-                      {/* Teacher Feedback Textarea */}
-                      <textarea
-                        rows={2}
-                        value={gradeState.comment}
-                        onFocus={() => setFocusedQuestionId(q.id)}
-                        onChange={(e) => handleCommentChange(q.id, e.target.value)}
-                        placeholder={t('grading.workspace.teacher_comment_placeholder')}
-                        className="w-full px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 leading-relaxed"
-                      />
                     </div>
 
-                    {/* Question Action Save Button */}
-                    <div className="flex items-center justify-between pt-1">
-                      {gradeState.saveSuccess ? (
-                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 animate-in fade-in">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>{t('grading.workspace.saved_success')}</span>
-                        </span>
-                      ) : (
-                        <div />
-                      )}
+                    <textarea
+                      rows={2}
+                      value={g?.comment ?? ''}
+                      onChange={(e) => setGrade(q.id, { comment: e.target.value })}
+                      placeholder={th ? 'คำแนะนำถึงนักเรียน (ไม่บังคับ)' : 'Feedback for the student (optional)'}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 leading-relaxed"
+                    />
 
+                    <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none -mx-1 px-1">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      {rankedPresets(g?.comment || '').map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => insertPreset(q.id, preset.text)}
+                          className="px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 hover:bg-amber-100 dark:hover:bg-amber-950 text-slate-700 dark:text-slate-300 text-[11px] font-semibold whitespace-nowrap border border-slate-200 dark:border-slate-700 cursor-pointer shrink-0"
+                        >
+                          + {preset.text}
+                        </button>
+                      ))}
                       <button
                         type="button"
-                        disabled={gradeState.isSaving}
-                        onClick={() => handleSaveQuestion(q)}
-                        className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-transform active:scale-95 disabled:opacity-50"
+                        onClick={() => setIsPresetModalOpen(true)}
+                        title={t('grading.suggestions.manage_templates')}
+                        className="p-1.5 rounded-full text-slate-400 hover:text-amber-600 hover:bg-white dark:hover:bg-slate-800 cursor-pointer shrink-0"
                       >
-                        {gradeState.isSaving ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Save className="w-3.5 h-3.5" />
-                        )}
-                        <span>{t('grading.workspace.save_grade')}</span>
+                        <Settings2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
+
+                    {dirty && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          disabled={g?.status === 'saving' || isSavingAll}
+                          onClick={() => saveQuestion(q)}
+                          className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-400 text-amber-700 dark:text-amber-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer hover:bg-amber-50 dark:hover:bg-amber-950/40 disabled:opacity-50"
+                        >
+                          {g?.status === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                          {th ? 'บันทึกข้อนี้' : 'Save this question'}
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
+                </section>
               );
             })}
           </div>
         </main>
       </div>
 
-      {/* MANAGE CUSTOM FEEDBACK PRESET TEMPLATES MODAL */}
-      {isPresetModalOpen && (
-        <div
-          className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setIsPresetModalOpen(false)}
+      {/* ── Action bar: always in the same place ── */}
+      <footer className="shrink-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-3 sm:px-6 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] flex items-center gap-2 sm:gap-3">
+        {onPrevStudent ? (
+          <button
+            type="button"
+            onClick={handlePrev}
+            disabled={isSavingAll}
+            className="px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center gap-1 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <span className="hidden sm:inline">{th ? 'คนก่อนหน้า' : 'Previous'}</span>
+          </button>
+        ) : (
+          <span />
+        )}
+
+        <span className={`flex-1 text-xs font-semibold truncate ${dirtyQuestions.length ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}`}>
+          {dirtyQuestions.length
+            ? th ? `ยังไม่บันทึก ${dirtyQuestions.length} ข้อ` : `${dirtyQuestions.length} unsaved`
+            : gradedCount === questions.length
+            ? th ? 'บันทึกครบทุกข้อแล้ว' : 'All questions saved'
+            : th ? `ตรวจแล้ว ${gradedCount}/${questions.length} ข้อ` : `${gradedCount}/${questions.length} graded`}
+          <span className="hidden lg:inline text-slate-400 font-normal"> · Ctrl+S {th ? 'บันทึก' : 'save'} · Ctrl+Enter {th ? 'บันทึกแล้วไปต่อ' : 'save & next'}</span>
+        </span>
+
+        <button
+          type="button"
+          onClick={saveAll}
+          disabled={isSavingAll || dirtyQuestions.length === 0}
+          className="px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
         >
+          {isSavingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          <span className="hidden sm:inline">{th ? 'บันทึก' : 'Save'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={handleSaveAndNext}
+          disabled={isSavingAll}
+          className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+        >
+          {isLast ? <Check className="w-4 h-4" /> : null}
+          <span>
+            {isLast
+              ? th ? 'บันทึกแล้วปิด' : 'Save & close'
+              : th ? 'บันทึกแล้วไปคนถัดไป' : 'Save & next'}
+          </span>
+          {!isLast && <ChevronRight className="w-4 h-4" />}
+        </button>
+      </footer>
+
+      {/* Manage feedback chips */}
+      {isPresetModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs" onClick={() => setIsPresetModalOpen(false)}>
           <div
             className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
@@ -941,65 +700,47 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-500" />
-                <span>{t('grading.suggestions.manage_templates')}</span>
+                {t('grading.suggestions.manage_templates')}
               </h3>
-              <button
-                type="button"
-                onClick={() => setIsPresetModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded"
-              >
+              <button type="button" onClick={() => setIsPresetModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Existing Presets List */}
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {suggestionPresets.map((preset) => (
-                <div
-                  key={preset.id}
-                  className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 text-xs"
-                >
-                  <span className="text-slate-800 dark:text-slate-200 font-medium truncate">
-                    {preset.text}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSuggestionPresets(suggestionPresets.filter((p) => p.id !== preset.id))
-                    }
-                    className="p-1 text-slate-400 hover:text-rose-500 rounded shrink-0"
-                  >
+              {presets.map((preset) => (
+                <div key={preset.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-800 dark:text-slate-200 font-medium">{preset.text}</span>
+                  <button type="button" onClick={() => updatePresets(presets.filter((p) => p.id !== preset.id))} className="p-1 text-slate-400 hover:text-rose-500 rounded shrink-0 cursor-pointer">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ))}
             </div>
 
-            {/* Add New Preset */}
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+            <form
+              className="pt-2 border-t border-slate-100 dark:border-slate-800 flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newPresetText.trim()) return;
+                updatePresets([...presets, { id: `preset-${Date.now()}`, category: 'custom', text: newPresetText.trim() }]);
+                setNewPresetText('');
+              }}
+            >
               <input
                 type="text"
                 value={newPresetText}
                 onChange={(e) => setNewPresetText(e.target.value)}
-                placeholder="พิมพ์ข้อความแม่แบบใหม่ เช่น ตอบตรงประเด็นดีมาก..."
-                className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                placeholder={th ? 'ข้อความใหม่ เช่น ตอบตรงประเด็นดีมาก' : 'New comment'}
+                className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
               />
-              <button
-                type="button"
-                onClick={() => {
-                  if (newPresetText.trim()) {
-                    setSuggestionPresets([
-                      ...suggestionPresets,
-                      { id: `preset-${Date.now()}`, category: 'custom', text: newPresetText.trim() },
-                    ]);
-                    setNewPresetText('');
-                  }
-                }}
-                className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs"
-              >
-                {t('grading.suggestions.add_new_chip')}
+              <button type="submit" className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs cursor-pointer shrink-0">
+                {th ? 'เพิ่ม' : 'Add'}
               </button>
-            </div>
+            </form>
+            <button type="button" onClick={() => updatePresets(DEFAULT_PRESETS)} className="text-[11px] text-slate-400 hover:text-slate-600 underline cursor-pointer">
+              {th ? 'คืนค่าเริ่มต้น' : 'Reset to defaults'}
+            </button>
           </div>
         </div>
       )}

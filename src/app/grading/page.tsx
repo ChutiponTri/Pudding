@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import {
@@ -49,6 +50,7 @@ import {
 
 function GradingHubContent() {
   const { t, language } = useLanguage();
+  const { user: clerkUser } = useUser();
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -76,20 +78,16 @@ function GradingHubContent() {
   }, [legacyAssignmentId, router, searchParams]);
 
   // Load Initial Data
-  const loadInitialData = async () => {
+  const loadInitialData = async (teacherId: string) => {
     setLoading(true);
     try {
-      const [crs, cls, asg] = await Promise.all([
-        dataService.getCourses(),
-        dataService.getClassrooms(),
-        dataService.getAssignments(),
-      ]);
+      // Only this teacher's courses, sections, work and submission counts.
+      const [crs, cls] = await Promise.all([dataService.getCourses(teacherId), dataService.getClassrooms(teacherId)]);
+      const asg = await dataService.getAssignmentsByClassroomIds(cls.map((c) => c.id));
+      const subs = await dataService.getSubmissionsByAssignmentIds(asg.map((a) => a.id), { includeStudents: false });
       setCourses(crs);
       setClassrooms(cls);
       setAssignments(asg);
-
-      // One request for every assignment's submissions.
-      const subs = await dataService.getSubmissionsByAssignmentIds(asg.map((a) => a.id));
       setAllSubmissions(subs);
     } catch (err) {
       console.error('Error loading grading hub data:', err);
@@ -99,8 +97,8 @@ function GradingHubContent() {
   };
 
   useEffect(() => {
-    loadInitialData();
-  }, []);
+    if (clerkUser?.id) loadInitialData(clerkUser.id);
+  }, [clerkUser?.id]);
 
   // Selected Course
   const selectedCourse = useMemo(() => {

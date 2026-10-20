@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { Avatar } from '@/components/Avatar';
 import {
   CheckCircle2,
   Clock,
@@ -38,7 +39,7 @@ interface RealLineStudent {
   first_name?: string;
   last_name?: string;
   line_uid: string;
-  avatar: string;
+  avatar?: string;
   student_id?: string;
   institution?: string;
   email?: string;
@@ -478,7 +479,7 @@ export default function LiffStudentPage() {
           first_name: syncedUser.first_name,
           last_name: syncedUser.last_name,
           line_uid: profile.userId,
-          avatar: profile.pictureUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120",
+          avatar: profile.pictureUrl || undefined,
           student_id: activeStudentId,
           institution: syncedUser.institution,
           email: syncedUser.email,
@@ -613,17 +614,23 @@ export default function LiffStudentPage() {
       const seq = ++loadSeq;
       if (isInitial) setIsLoadingData(true);
       try {
-        const [allClasses, institutions, allAssigns] = await Promise.all([
-          dataService.getClassrooms(),
-          dataService.getRegisteredInstitutions(),
-          dataService.getAssignments(),
-        ]);
-        setRegisteredInstitutions(institutions);
-
         // Check URL params for invite code or classId
         const params = new URLSearchParams(window.location.search);
         const codeParam = params.get("code");
         const classIdParam = params.get("classId");
+
+        // Only the student's own classrooms are fetched; an invite link adds the
+        // one classroom it points to.
+        const [myClasses, institutions, linkedClass] = await Promise.all([
+          dataService.getStudentClassrooms({ id: currentStudent.id, line_uid: currentStudent.line_uid }),
+          isInitial ? dataService.getRegisteredInstitutions() : Promise.resolve(null),
+          classIdParam
+            ? dataService.getClassroomById(classIdParam)
+            : codeParam
+            ? dataService.findClassroomByInviteCode(codeParam)
+            : Promise.resolve(null),
+        ]);
+        if (institutions) setRegisteredInstitutions(institutions);
         if (isInitial) {
           const assignmentParam = params.get("assignmentId") || undefined;
           const viewParam = params.get("view");
@@ -631,11 +638,7 @@ export default function LiffStudentPage() {
           if (assignmentParam || view) pendingDeepLinkRef.current = { assignmentId: assignmentParam, view };
         }
 
-        // Filter ONLY classrooms that this student has actually enrolled in
-        let enrolled = allClasses.filter((c) =>
-          c.students?.some((s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid) ||
-          c.pending_students?.some((s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid)
-        );
+        let enrolled = myClasses;
 
         // Default to Overview (null) unless a specific class was requested via URL
         // link. Background refreshes keep the classroom the student has open.
@@ -649,11 +652,7 @@ export default function LiffStudentPage() {
           if (processedEnrollRef.current !== enrollKey) {
             processedEnrollRef.current = enrollKey;
 
-            const matched = allClasses.find(
-              (c) =>
-                (classIdParam && c.id === classIdParam) ||
-                (codeParam && c.invite_code?.toLowerCase() === codeParam.toLowerCase())
-            );
+            const matched = linkedClass;
             if (matched) {
               const firstName = currentStudent.first_name || currentStudent.name.split(" ")[0] || "นักเรียน";
               const lastName = currentStudent.last_name || currentStudent.name.split(" ").slice(1).join(" ") || "";
@@ -706,12 +705,15 @@ export default function LiffStudentPage() {
 
         // Single-beat unified data loading: filter assignments and load student submissions together
         const enrolledClassIds = new Set(enrolled.map((c) => c.id));
-        const relevantAssigns = (allAssigns || []).filter((a) => a && enrolledClassIds.has(a.classroom_id));
+        const relevantAssigns = await dataService.getAssignmentsByClassroomIds([...enrolledClassIds]);
 
-        // Fetch all submission statuses in one request. The old per-assignment
-        // loop caused N API calls (and another direct DB call per assignment).
+        // This student's submissions only, in one request.
         const allSubmissions = await dataService.getSubmissionsByAssignmentIds(
-          relevantAssigns.map((assignment) => assignment.id)
+          relevantAssigns.map((assignment) => assignment.id),
+          {
+            studentIds: [currentStudent.id, currentStudent.line_uid, currentStudent.student_id || ''],
+            includeStudents: false,
+          }
         );
         const subMap: Record<string, Submission> = {};
         for (const submission of allSubmissions) {
@@ -779,7 +781,7 @@ export default function LiffStudentPage() {
         if (refreshTimer) clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => loadData(false), 800);
       },
-      { pollIntervalMs: 10000 }
+      { pollIntervalMs: 15000, classroomIds: () => [...enrolledClassroomIdsRef.current] }
     );
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
@@ -987,10 +989,7 @@ export default function LiffStudentPage() {
   // Join Classroom via Invite Code
   const handleJoinClassroom = async () => {
     if (!joinInviteCode.trim() || !currentStudent) return;
-    const allClasses = await dataService.getClassrooms();
-    const matched = allClasses.find(
-      (c) => c.invite_code?.toLowerCase() === joinInviteCode.trim().toLowerCase()
-    );
+    const matched = await dataService.findClassroomByInviteCode(joinInviteCode.trim());
     if (matched) {
       const firstName = currentStudent.first_name || currentStudent.name.split(" ")[0] || "นักเรียน";
       const lastName = currentStudent.last_name || currentStudent.name.split(" ").slice(1).join(" ") || "";
@@ -1036,8 +1035,7 @@ export default function LiffStudentPage() {
       setTimeout(() => setJoinMessage(null), 3500);
 
       // Refresh assignments for this new classroom
-      const allAssigns = await dataService.getAssignments();
-      const relevant = allAssigns.filter((a) => a.classroom_id === matched.id);
+      const relevant = await dataService.getAssignmentsByClassroomId(matched.id);
       setAssignments((prev) => [...prev.filter((a) => a.classroom_id !== matched.id), ...relevant]);
     } else {
       setJoinMessage("ไม่พบห้องเรียนจากรหัสที่ระบุ กรุณาตรวจสอบรหัสอีกครั้ง");
@@ -1304,7 +1302,7 @@ export default function LiffStudentPage() {
               className="flex items-center gap-2 min-w-0 bg-black/15 hover:bg-black/25 pl-1 pr-3 py-1 rounded-full transition-colors cursor-pointer"
               title="แก้ไขข้อมูลนักเรียน"
             >
-              <img src={currentStudent.avatar} alt="" className="w-7 h-7 rounded-full object-cover ring-2 ring-white/50 shrink-0" />
+              <Avatar src={currentStudent.avatar} firstName={currentStudent.first_name} lastName={currentStudent.last_name} name={currentStudent.name} className="w-7 h-7 text-[10px] ring-2 ring-white/50" />
               <span className="min-w-0 text-left leading-tight">
                 <span className="block max-w-28 sm:max-w-44 truncate text-xs font-bold">
                   {currentStudent.first_name || currentStudent.name}

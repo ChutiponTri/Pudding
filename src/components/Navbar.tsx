@@ -65,7 +65,9 @@ export const Navbar: React.FC = () => {
         email: user.primaryEmailAddress?.emailAddress,
       }).catch((err: unknown) => console.error("Error syncing clerk user:", err));
     }
-  }, [isSignedIn, user]);
+    // Once per signed-in user, not on every Clerk object refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSignedIn, user?.id]);
 
   if (pathname.startsWith('/liff')) {
     return null;

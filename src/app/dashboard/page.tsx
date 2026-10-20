@@ -1,8 +1,8 @@
 'use client';
 import { useUser } from '@clerk/nextjs';
-
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
+import { Avatar } from '@/components/Avatar';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dataService } from '@/lib/supabase/dataService';
@@ -110,18 +110,6 @@ export default function DashboardPage() {
   const [indicators, setIndicators] = useState<LearningIndicator[]>([]);
   const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
 
-  // Automatically sync Clerk user into Supabase users table on dashboard load
-  useEffect(() => {
-    if (clerkUser) {
-      dataService.syncClerkUser({
-        id: clerkUser.id,
-        firstName: clerkUser.firstName,
-        lastName: clerkUser.lastName,
-        imageUrl: clerkUser.imageUrl,
-        email: clerkUser.primaryEmailAddress?.emailAddress,
-      }).catch((err) => console.error("Error syncing clerk user from dashboard:", err));
-    }
-  }, [clerkUser]);
   const [loading, setLoading] = useState(true);
 
   // Compute default academic period (e.g., Oct 2026 -> Semester 1 / 2026)
@@ -215,22 +203,28 @@ export default function DashboardPage() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  // Classroom ids for realtime filtering, kept in a ref so the subscription
+  // does not restart on every reload.
+  const myClassroomIdsRef = useRef<string[]>([]);
+
   const loadAllData = async () => {
+    const teacherId = clerkUser?.id;
+    if (!teacherId) return;
     try {
-      const teacherId = clerkUser?.id;
-      const [crs, cls, as, ind, subs] = await Promise.all([
+      // Everything is filtered by teacher on the server; only this teacher's
+      // assignments and submissions are fetched (scores only, no profiles).
+      const [crs, myClassrooms, ind, profile] = await Promise.all([
         dataService.getCourses(teacherId),
         dataService.getClassrooms(teacherId),
-        dataService.getAssignments(),
         dataService.getLearningIndicators(),
-        dataService.getAllSubmissions(),
+        dataService.getUserById(teacherId),
       ]);
-
-      const myClassrooms = teacherId ? cls.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId)) : cls;
-      const myClassroomIds = new Set(myClassrooms.map((c) => c.id));
-      const myAssignments = teacherId ? as.filter((a) => myClassroomIds.has(a.classroom_id)) : as;
-      const myAssignmentIds = new Set(myAssignments.map((a) => a.id));
-      const mySubmissions = teacherId ? subs.filter((s) => myAssignmentIds.has(s.assignment_id)) : subs;
+      myClassroomIdsRef.current = myClassrooms.map((c) => c.id);
+      const myAssignments = await dataService.getAssignmentsByClassroomIds(myClassroomIdsRef.current);
+      const mySubmissions = await dataService.getSubmissionsByAssignmentIds(
+        myAssignments.map((a) => a.id),
+        { includeStudents: false }
+      );
 
       setCourses(crs);
       setClassrooms(myClassrooms);
@@ -244,36 +238,23 @@ export default function DashboardPage() {
       setIndicators(ind);
       setAllSubmissions(mySubmissions);
 
-      if (teacherId) {
-        const profile = await dataService.getUserById(teacherId);
-        if (profile) {
-          setTeacherProfile(profile);
-          // Pre-fill name from profile or fall back to Clerk data
-          setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
-          setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
-          // Do NOT pre-fill institution — teacher must actively choose/confirm it
-          setTeacherInstitutionInput('');
-          if (!profile.institution || !profile.first_name || !profile.last_name) {
-            // Prompt teacher to complete their profile on first visit
-            setIsProfileRequired(true);
-            setIsInstitutionModalOpen(true);
-          }
+      if (profile) {
+        setTeacherProfile(profile);
+        // Pre-fill name from profile or fall back to Clerk data
+        setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
+        setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
+        // Do NOT pre-fill institution — teacher must actively choose/confirm it
+        setTeacherInstitutionInput('');
+        if (!profile.institution || !profile.first_name || !profile.last_name) {
+          // Prompt teacher to complete their profile on first visit
+          setIsProfileRequired(true);
+          setIsInstitutionModalOpen(true);
         }
       }
 
+      // The open roster dialog shows the freshly loaded (already hydrated) classroom.
       if (managingClassroom) {
-        try {
-          const roster = await dataService.getClassroomRoster(managingClassroom.id);
-          if (roster.classroom) {
-            setManagingClassroom(roster.classroom);
-          } else {
-            const refreshed = myClassrooms.find((c) => c.id === managingClassroom.id) || null;
-            setManagingClassroom(refreshed);
-          }
-        } catch {
-          const refreshed = myClassrooms.find((c) => c.id === managingClassroom.id) || null;
-          setManagingClassroom(refreshed);
-        }
+        setManagingClassroom(myClassrooms.find((c) => c.id === managingClassroom.id) || null);
       }
     } catch (err) {
       console.error(err);
@@ -361,9 +342,13 @@ export default function DashboardPage() {
 
   // Real-time subscription for instant dashboard updates & notifications when students join
   useEffect(() => {
-    const teacherId = clerkUser?.id || 'teacher-default';
+    const teacherId = clerkUser?.id;
+    if (!teacherId) return;
+    // Realtime and the fallback poll often fire together; reload once per burst.
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
     const unsub = dataService.subscribeToClassroomChanges(teacherId, (payload: any) => {
-      loadAllData();
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(loadAllData, 600);
       if (payload?.eventType === 'LOCAL_SYNC') {
         const { student, autoAdmit, action, source } = payload.detail || {};
 
@@ -396,9 +381,12 @@ export default function DashboardPage() {
           showToast(`🎉 ${studentName} ได้เข้าร่วมห้องเรียน`);
         }
       }
-    });
+    }, { classroomIds: () => myClassroomIdsRef.current });
 
-    return unsub;
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      unsub();
+    };
   }, [clerkUser?.id, language]);
 
   // Dynamically collect all available semester options across current period, courses, and classrooms
@@ -631,10 +619,11 @@ export default function DashboardPage() {
     if (!courseCodeInput.trim() || !courseNameInput.trim()) return;
 
     const academicYearStr = formatAcademicPeriod(courseSemesterInput, courseYearInput, language);
-    const currentTeacherId = clerkUser?.id || "teacher-default";
+    const currentTeacherId = clerkUser?.id;
+    if (!currentTeacherId) return;
     const currentTeacherName = `${clerkUser?.firstName || ""} ${clerkUser?.lastName || ""}`.trim() || clerkUser?.username || "คุณครู";
-    const currentTeacherEmail = clerkUser?.primaryEmailAddress?.emailAddress || "teacher@pudding.ac.th";
-    const currentTeacherAvatar = clerkUser?.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150";
+    const currentTeacherEmail = clerkUser?.primaryEmailAddress?.emailAddress || undefined;
+    const currentTeacherAvatar = clerkUser?.imageUrl || undefined;
 
     const frameworkProblem = getFrameworkProblem(courseCreationMode, courseIndicatorsDraft, courseLessonPlanDraft, language);
     if (frameworkProblem) {
@@ -770,7 +759,8 @@ export default function DashboardPage() {
       });
       showToast(language === 'th' ? 'แก้ไขห้องเรียนเรียบร้อย' : 'Classroom updated');
     } else {
-      const currentTeacherId = clerkUser?.id || "teacher-default";
+      const currentTeacherId = clerkUser?.id;
+    if (!currentTeacherId) return;
       const currentTeacherName = `${clerkUser?.firstName || ""} ${clerkUser?.lastName || ""}`.trim() || clerkUser?.username || "คุณครู";
       await dataService.createClassroom({
         course_id: selectedCourseForClass,
@@ -780,7 +770,7 @@ export default function DashboardPage() {
           {
             teacher_id: currentTeacherId,
             name: currentTeacherName,
-            email: clerkUser?.primaryEmailAddress?.emailAddress || "teacher@pudding.ac.th",
+            email: clerkUser?.primaryEmailAddress?.emailAddress || undefined,
             role: "primary",
           }
         ],
@@ -1070,7 +1060,7 @@ export default function DashboardPage() {
     const newTeacher: ClassroomTeacher = {
       teacher_id: tchr.id,
       name: fullName,
-      email: tchr.email || `${tchr.id}@pudding.ac.th`,
+      email: tchr.email || undefined,
       avatar_url: tchr.avatar_url,
       role: newCoTeacherRole,
       institution: tchr.institution,
@@ -1393,19 +1383,14 @@ export default function DashboardPage() {
                   >
                     <div className="flex -space-x-1.5 overflow-hidden">
                       {course.teachers?.map((tchr, i) => (
-                        <img
-                          key={i}
-                          src={tchr.avatar_url || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100'}
-                          alt={tchr.name}
-                          className="w-5 h-5 rounded-full object-cover ring-1 ring-white dark:ring-slate-900"
-                        />
+                        <Avatar key={i} src={tchr.avatar_url} name={tchr.name} className="w-5 h-5 ring-1 ring-white dark:ring-slate-900 text-[10px]" />
                       ))}
                     </div>
                     <span>{course.teachers?.length || 1} {language === 'th' ? 'ครูผู้สอน' : 'Teachers'}</span>
                   </button>
 
                   {/* Learning Indicators Settings - Only Course Owner */}
-                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') ? (
+                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id) ? (
                     <>
                       <button
                         type="button"
@@ -1434,7 +1419,7 @@ export default function DashboardPage() {
                   )}
 
                   {/* Add Classroom Section Under This Course - Only Course Owner */}
-                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') && (
+                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id) && (
                     <button
                       type="button"
                       onClick={() => handleOpenCreateClassModal(course)}
@@ -1446,7 +1431,7 @@ export default function DashboardPage() {
                   )}
 
                   {/* Delete Course Button - Only Course Owner */}
-                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') && (
+                  {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id) && (
                     <button
                       type="button"
                       onClick={() => handleDeleteCourse(course)}
@@ -1488,7 +1473,7 @@ export default function DashboardPage() {
                                 {cls.invite_code || 'OMU'}
                               </span>
                               {/* Only Course/Classroom Owner Can Edit/Delete Section */}
-                              {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id || course.primary_teacher_id === 'teacher-default') ? (
+                              {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id) ? (
                                 <div className="flex items-center gap-1">
                                   <button
                                     type="button"
@@ -2105,11 +2090,7 @@ export default function DashboardPage() {
                     className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={tchr.avatar_url || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100'}
-                        alt=""
-                        className="w-9 h-9 rounded-full object-cover shrink-0"
-                      />
+                      <Avatar src={tchr.avatar_url} name={tchr.name} className="w-9 h-9 text-[10px]" />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
@@ -2250,11 +2231,7 @@ export default function DashboardPage() {
                         className="p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 transition-colors"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <img
-                            src={tchr.avatar_url || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100'}
-                            alt=""
-                            className="w-7 h-7 rounded-full object-cover shrink-0"
-                          />
+                          <Avatar src={tchr.avatar_url} name={tchr.name} className="w-7 h-7 text-[10px]" />
                           <div className="min-w-0">
                             <span className="font-bold text-xs text-slate-900 dark:text-white block truncate">
                               {`${tchr.first_name || ''} ${tchr.last_name || ''}`.trim() || tchr.name || 'ครูผู้สอน'}
@@ -3069,11 +3046,7 @@ export default function DashboardPage() {
                           className="w-full p-2 rounded-xl text-left text-xs hover:bg-amber-50 dark:hover:bg-amber-950/60 flex items-center justify-between gap-2 transition-colors cursor-pointer"
                         >
                           <div className="flex items-center gap-2">
-                            <img
-                              src={found.avatar_url || 'https://images.unsplash.com/photo-1534528741775?w=100'}
-                              alt=""
-                              className="w-6 h-6 rounded-full object-cover"
-                            />
+                            <Avatar src={found.avatar_url} firstName={found.first_name} lastName={found.last_name} className="w-6 h-6 text-[10px]" />
                             <div>
                               <span className="font-bold text-slate-900 dark:text-white block">
                                 {found.first_name} {found.last_name}
@@ -3100,11 +3073,7 @@ export default function DashboardPage() {
                       className="p-3 rounded-xl bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3"
                     >
                       <div className="flex items-center gap-2.5">
-                        <img
-                          src={std.avatar_url || 'https://images.unsplash.com/photo-1534528741775?w=100'}
-                          alt=""
-                          className="w-7 h-7 rounded-full object-cover"
-                        />
+                        <Avatar src={std.avatar_url} firstName={std.first_name} lastName={std.last_name} className="w-7 h-7 text-[10px]" />
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-bold text-xs text-slate-900 dark:text-white">
@@ -3174,11 +3143,7 @@ export default function DashboardPage() {
                         className="p-3.5 rounded-2xl bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-900/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                       >
                         <div className="flex items-center gap-3">
-                          <img
-                            src={std.avatar_url || 'https://images.unsplash.com/photo-1534528741775?w=100'}
-                            alt=""
-                            className="w-10 h-10 rounded-2xl object-cover ring-2 ring-amber-400 shrink-0"
-                          />
+                          <Avatar src={std.avatar_url} firstName={std.first_name} lastName={std.last_name} className="w-10 h-10 rounded-2xl ring-2 ring-amber-400 text-[10px]" />
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-bold text-xs text-slate-900 dark:text-white">

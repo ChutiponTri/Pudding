@@ -176,9 +176,6 @@ export interface SubmissionAnswer {
   question?: Question;
   text_answer?: string;
   file_url?: string;
-  ai_mock_score?: number;
-  ai_confidence?: number; // 0.0 - 1.0 (e.g. 0.94 = 94%)
-  ai_feedback?: string;
   teacher_score?: number; // Student-facing official score (from primary teacher or TA)
   teacher_comment?: string; // Student-facing official comment
   research_grades?: Record<string, TeacherGradeRecord>; // teacher_id -> separate evaluation for Research/IRR only (not visible to students)

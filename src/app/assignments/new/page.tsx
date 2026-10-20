@@ -111,11 +111,13 @@ function NewAssignmentContent() {
   const lastQuestionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    async function init() {
+    const teacherId = clerkUser?.id;
+    if (!teacherId) return;
+    async function init(teacherId: string) {
       try {
         const [crs, cls, ind] = await Promise.all([
-          dataService.getCourses(),
-          dataService.getClassrooms(),
+          dataService.getCourses(teacherId),
+          dataService.getClassrooms(teacherId, { withRoster: false }),
           dataService.getLearningIndicators(),
         ]);
         setCourses(crs);
@@ -167,8 +169,8 @@ function NewAssignmentContent() {
         setLoading(false);
       }
     }
-    init();
-  }, [urlClassroomId]);
+    init(teacherId);
+  }, [urlClassroomId, clerkUser?.id]);
 
   const handleCourseChange = (courseId: string) => {
     setSelectedCourseId(courseId);
@@ -263,7 +265,11 @@ function NewAssignmentContent() {
 
     setIsSubmitting(true);
     try {
-      const primaryClassId = selectedClassroomIds[0] || classrooms[0]?.id || 'class-401';
+      const primaryClassId = selectedClassroomIds[0] || classrooms[0]?.id;
+      if (!primaryClassId) {
+        alert(language === 'th' ? 'กรุณาเลือกห้องเรียนก่อนสร้างงาน' : 'Please choose a classroom first');
+        return;
+      }
       const targetClass = classrooms.find((c) => c.id === primaryClassId);
       const selectedCourse = courses.find((course) => course.id === selectedCourseId);
       if (selectedCourse?.indicator_mode === 'competency' && (selectedCourse.lesson_plans || []).length === 0) {
@@ -307,7 +313,7 @@ function NewAssignmentContent() {
           const formData = new FormData();
           formData.append("file", sampleWorkFile);
           formData.append("assignment_id", created.assignment.id);
-          formData.append("student_id", clerkUser?.id || "teacher");
+          formData.append("student_id", clerkUser?.id || "");
           formData.append("purpose", "sample");
           const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
           const uploadJson = await uploadRes.json();

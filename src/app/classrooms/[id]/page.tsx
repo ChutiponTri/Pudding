@@ -8,7 +8,6 @@ import { dataService } from '@/lib/supabase/dataService';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { formatDateTime } from '@/lib/utils/datetime';
-import { defaultTeachersList } from '@/lib/supabase/mockData';
 import { Assignment, Classroom, ClassroomTeacher, Submission } from '@/types/database';
 import {
   ArrowLeft,
@@ -105,7 +104,6 @@ export default function ClassroomWorkspacePage() {
   const search = useSearchParams();
   const classroomId = params.id;
 
-  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [classroom, setClassroom] = useState<Classroom | null>(null);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
@@ -161,8 +159,6 @@ export default function ClassroomWorkspacePage() {
 
   // People Tab: Add Teacher & Add Student Modals
   const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
-  const [newTeacherName, setNewTeacherName] = useState('');
-  const [newTeacherEmail, setNewTeacherEmail] = useState('');
   const [newTeacherRole, setNewTeacherRole] = useState<'primary' | 'assistant' | 'researcher'>('assistant');
   const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
   const [teacherSearchResults, setTeacherSearchResults] = useState<any[]>([]);
@@ -309,15 +305,13 @@ export default function ClassroomWorkspacePage() {
     setLoading(true);
     try {
       // Fire all requests concurrently in parallel
-      const [allClasses, classAssignments, postsRes, attRes] = await Promise.all([
-        dataService.getClassrooms(),
+      const [current, classAssignments, postsRes, attRes] = await Promise.all([
+        dataService.getClassroomById(classroomId),
         dataService.getAssignmentsByClassroomId(classroomId),
         fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' }),
         fetch(`/api/attendance?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' }),
       ]);
 
-      const current = allClasses.find((item) => item.id === classroomId) || null;
-      setClassrooms(allClasses);
       setClassroom(current);
       setAssignments(classAssignments);
 
@@ -399,7 +393,8 @@ export default function ClassroomWorkspacePage() {
       .finally(() => setGradesLoading(false));
   }, [tab, assignments]);
 
-  // Realtime Polling & Broadcast listener (Every 3.5s when teacher is viewing)
+  // Background refresh while the teacher is viewing (every 10s, paused when
+  // the tab is hidden), plus instant refresh on same-browser events.
   useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -413,7 +408,7 @@ export default function ClassroomWorkspacePage() {
             .catch(() => {});
         }
       }
-    }, 3500);
+    }, 10000);
 
     const handleRealtimeEvent = () => {
       loadAttendance();
@@ -832,30 +827,8 @@ export default function ClassroomWorkspacePage() {
   // ----------------------------------------------------
   const teachersList: ClassroomTeacher[] = useMemo(() => {
     if (!classroom) return [];
-    if (classroom.teachers && classroom.teachers.length > 0) {
-      return classroom.teachers;
-    }
-    return defaultTeachersList;
+    return classroom.teachers || [];
   }, [classroom]);
-
-  const handleAddTeacher = async (name: string, email: string, role: 'primary' | 'assistant' | 'researcher') => {
-    if (!name.trim() || !classroom) return;
-    const newT: ClassroomTeacher = {
-      teacher_id: `t-${Date.now()}`,
-      name: name.trim(),
-      email: email.trim() || undefined,
-      role,
-    };
-    const updated = [...teachersList, newT];
-    await dataService.updateClassroom(classroom.id, { teachers: updated });
-    setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
-    setNotice(
-      `เพิ่ม ${role === 'primary' ? 'ครูประจำวิชา' : role === 'assistant' ? 'TA ผู้ช่วยสอน' : 'ผู้ตรวจวิจัย (IRR)'} "${name.trim()}" เรียบร้อยแล้ว`
-    );
-    setShowAddTeacherModal(false);
-    setNewTeacherName('');
-    setNewTeacherEmail('');
-  };
 
   const handleRemoveTeacher = async (teacherId: string) => {
     if (!classroom) return;
@@ -1911,6 +1884,20 @@ export default function ClassroomWorkspacePage() {
               </button>
             </div>
 
+            {/* Role first, then pick a teacher who has an account */}
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 block mb-1">หน้าที่ / บทบาท</label>
+              <select
+                value={newTeacherRole}
+                onChange={(e) => setNewTeacherRole(e.target.value as any)}
+                className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
+              >
+                <option value="primary">ครูประจำวิชา (Primary)</option>
+                <option value="assistant">TA (ผู้ช่วยสอน)</option>
+                <option value="researcher">วิจัย (ผู้ตรวจวิจัย / IRR Evaluator)</option>
+              </select>
+            </div>
+
             {/* Quick Search Teachers */}
             <div className="space-y-2">
               <label className="text-[11px] font-bold text-slate-400 block">ค้นหาอาจารย์/ผู้สอนที่มีในระบบ</label>
@@ -1953,58 +1940,17 @@ export default function ClassroomWorkspacePage() {
               )}
             </div>
 
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3">
-              <p className="text-[11px] font-bold text-slate-400">หรือ กรอกข้อมูลผู้สอนด้วยตนเอง</p>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">ชื่อ-นามสกุลครูผู้สอน *</label>
-                <input
-                  value={newTeacherName}
-                  onChange={(e) => setNewTeacherName(e.target.value)}
-                  placeholder="เช่น ครูอัญชลี รัตนโชติ"
-                  className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">อีเมลผู้สอน</label>
-                <input
-                  type="email"
-                  value={newTeacherEmail}
-                  onChange={(e) => setNewTeacherEmail(e.target.value)}
-                  placeholder="anchalee.r@school.ac.th"
-                  className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-slate-50 dark:bg-slate-800"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 block mb-1">หน้าที่ / บทบาท</label>
-                <select
-                  value={newTeacherRole}
-                  onChange={(e) => setNewTeacherRole(e.target.value as any)}
-                  className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
-                >
-                  <option value="primary">ครูประจำวิชา (Primary)</option>
-                  <option value="assistant">TA (ผู้ช่วยสอน)</option>
-                  <option value="researcher">วิจัย (ผู้ตรวจวิจัย / IRR Evaluator)</option>
-                </select>
-              </div>
-            </div>
+            <p className="text-[11px] text-slate-400">
+              ผู้สอนต้องมีบัญชีในระบบก่อน (เข้าสู่ระบบครั้งแรกแล้ว) จึงจะค้นหาและตรวจงานได้
+            </p>
 
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowAddTeacherModal(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
-              >
-                ยกเลิก
-              </button>
-              <button
-                type="button"
-                disabled={!newTeacherName.trim()}
-                onClick={() => handleAddTeacher(newTeacherName, newTeacherEmail, newTeacherRole)}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer disabled:opacity-40"
-              >
-                เพิ่มผู้สอน
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowAddTeacherModal(false)}
+              className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+            >
+              ปิด
+            </button>
           </div>
         </div>
       )}

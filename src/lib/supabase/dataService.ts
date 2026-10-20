@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   Assignment,
   Classroom,
@@ -13,29 +14,51 @@ import {
   TeacherRole,
   User,
 } from '@/types/database';
-import { createClient, isSupabaseConfigured } from './client';
+import { createClient } from './client';
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 
-// Local storage key for persistent interactive testing when Supabase is not configured
-const STORAGE_PREFIX = 'pudding_';
-const LEGACY_STORAGE_PREFIX = 'omurice_';
+/**
+ * Browser data access. Supabase is the only source of truth: every read is
+ * scoped on the server (by teacher, classroom or student) so pages download
+ * only what they show, and every failed write throws instead of pretending.
+ */
+
+/** Columns the UI needs from users; avoids shipping whole rows. */
+const USER_FIELDS = 'id, first_name, last_name, student_id, institution, avatar_url, email, line_uid, role, is_line_connected';
+
+/** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
+const IN_CHUNK = 150;
 
 let registeredInstitutionsCache: { value: string[]; expiresAt: number } | null = null;
 let registeredInstitutionsRequest: Promise<string[]> | null = null;
 
-function getStoredOr<T>(key: string, defaultValue: T): T {
-  if (typeof window === 'undefined') return defaultValue;
-  try {
-    const item = localStorage.getItem(STORAGE_PREFIX + key) || localStorage.getItem(LEGACY_STORAGE_PREFIX + key);
-    return item ? JSON.parse(item) : defaultValue;
-  } catch {
-    return defaultValue;
-  }
+function chunk<T>(items: T[], size = IN_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** Quote a value for a PostgREST `in.(…)` / `or=(…)` filter. */
+function pgValue(value: string): string {
+  return `"${value.replace(/["\\]/g, '')}"`;
 }
 
 /**
- * Turns a Supabase write error into a readable message. A missing column means
+ * Value for a JSONB `contains` filter. supabase-js turns a JS array into a
+ * Postgres array literal, which JSONB columns reject, so send JSON text.
+ */
+function jsonArray(item: Record<string, string>): string {
+  return JSON.stringify([item]);
+}
+
+/** Strip characters that would break an `or=(…ilike…)` filter. */
+function searchTerm(value: string): string {
+  return value.replace(/[,()%*\\"]/g, ' ').trim();
+}
+
+/**
+ * Turns a Supabase error into a readable message. A missing column means
  * the database is behind the app (the latest migration has not been run).
  */
 function toDatabaseError(error: { code?: string; message?: string }, table: string): Error {
@@ -46,18 +69,228 @@ function toDatabaseError(error: { code?: string; message?: string }, table: stri
   return new Error(error.message || `บันทึกข้อมูล ${table} ไม่สำเร็จ`);
 }
 
-function setStored<T>(key: string, value: T): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
-  } catch {
-    // ignore
+function uniqueById<T extends { id: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true)));
+}
+
+function byCreatedDesc<T extends { created_at?: string }>(a: T, b: T): number {
+  return (b.created_at || '').localeCompare(a.created_at || '');
+}
+
+function isTeacherOf(record: { teacher_id?: string; primary_teacher_id?: string; teachers?: { teacher_id: string }[] }, teacherId: string) {
+  return record.teacher_id === teacherId || record.primary_teacher_id === teacherId || !!record.teachers?.some((t) => t.teacher_id === teacherId);
+}
+
+/** Load users referenced by id, LINE id or school number, in a few batched requests. */
+async function fetchUsersByKeys(supabase: SupabaseClient, keys: Array<string | undefined | null>): Promise<Map<string, User>> {
+  const unique = [...new Set(keys.filter((k): k is string => !!k && !!k.trim()))];
+  const map = new Map<string, User>();
+  if (unique.length === 0) return map;
+
+  const results = await Promise.all(
+    chunk(unique).map((part) => {
+      const list = part.map(pgValue).join(',');
+      return supabase
+        .from('users')
+        .select(USER_FIELDS)
+        .or(`id.in.(${list}),line_uid.in.(${list}),student_id.in.(${list})`);
+    })
+  );
+  for (const { data } of results) {
+    for (const u of (data || []) as User[]) {
+      map.set(u.id, u);
+      if (u.line_uid) map.set(u.line_uid, u);
+      if (u.student_id) map.set(u.student_id, u);
+    }
   }
+  return map;
+}
+
+type EnrollmentLink = { classroom_id: string; student_id: string; status: string };
+
+/** What roster subscribers receive. */
+export type ClassroomChangeEvent = {
+  type?: 'classrooms' | 'classroom_students';
+  eventType?: string;
+  detail?: {
+    classroomId?: string;
+    studentId?: string;
+    student?: Partial<User>;
+    autoAdmit?: boolean;
+    action?: string;
+    source?: string;
+  };
+  payload?: unknown;
+};
+
+type RowChange<T> = { eventType?: string; new?: Partial<T>; old?: Partial<T> };
+
+function mergeStudent(raw: User, db: User | undefined, status: 'active' | 'pending_approval'): User {
+  return {
+    ...raw,
+    id: db?.id || raw.id,
+    first_name: db?.first_name || raw.first_name || '',
+    last_name: db?.last_name || raw.last_name || '',
+    student_id: db?.student_id || raw.student_id,
+    institution: db?.institution || raw.institution,
+    avatar_url: db?.avatar_url || raw.avatar_url,
+    email: db?.email || raw.email,
+    line_uid: db?.line_uid || raw.line_uid,
+    role: 'student',
+    enrollment_status: status,
+  };
+}
+
+/**
+ * Fill in each classroom's roster from the users table. The classroom row keeps
+ * a JSON snapshot of students; classroom_students holds relational enrolments.
+ * Only users referenced by these classrooms are fetched.
+ */
+async function hydrateClassrooms(supabase: SupabaseClient, rows: Classroom[]): Promise<Classroom[]> {
+  if (rows.length === 0) return [];
+  const ids = rows.map((c) => c.id);
+
+  const linkResults = await Promise.all(
+    chunk(ids).map((part) =>
+      supabase.from('classroom_students').select('classroom_id, student_id, status').in('classroom_id', part)
+    )
+  );
+  const links = linkResults.flatMap((r) => (r.data || []) as EnrollmentLink[]);
+
+  const keys: string[] = links.map((l) => l.student_id);
+  for (const cls of rows) {
+    for (const s of [...(cls.students || []), ...(cls.pending_students || [])]) {
+      keys.push(s.id, s.line_uid || '', s.student_id || '');
+    }
+  }
+  const users = await fetchUsersByKeys(supabase, keys);
+  const lookup = (s: User) => users.get(s.id) || (s.line_uid ? users.get(s.line_uid) : undefined) || (s.student_id ? users.get(s.student_id) : undefined);
+
+  const linksByClass = new Map<string, EnrollmentLink[]>();
+  for (const link of links) {
+    const list = linksByClass.get(link.classroom_id) || [];
+    list.push(link);
+    linksByClass.set(link.classroom_id, list);
+  }
+
+  return rows.map((cls) => {
+    const active: User[] = [];
+    const pending: User[] = [];
+    const seenActive = new Set<string>();
+    const seenPending = new Set<string>();
+
+    for (const s of (cls.students || []) as User[]) {
+      const merged = mergeStudent(s, lookup(s), 'active');
+      if (!seenActive.has(merged.id)) {
+        seenActive.add(merged.id);
+        active.push(merged);
+      }
+    }
+    for (const s of (cls.pending_students || []) as User[]) {
+      const merged = mergeStudent(s, lookup(s), 'pending_approval');
+      if (!seenActive.has(merged.id) && !seenPending.has(merged.id)) {
+        seenPending.add(merged.id);
+        pending.push(merged);
+      }
+    }
+    for (const link of linksByClass.get(cls.id) || []) {
+      const u = users.get(link.student_id);
+      if (!u) continue;
+      if (link.status === 'pending_approval') {
+        if (!seenActive.has(u.id) && !seenPending.has(u.id)) {
+          seenPending.add(u.id);
+          pending.push({ ...u, enrollment_status: 'pending_approval' });
+        }
+      } else if (!seenActive.has(u.id)) {
+        seenActive.add(u.id);
+        const idx = pending.findIndex((p) => p.id === u.id);
+        if (idx >= 0) pending.splice(idx, 1);
+        active.push({ ...u, enrollment_status: 'active' });
+      }
+    }
+
+    let semester = cls.semester;
+    let yearCe = cls.year_ce;
+    if (!semester || !yearCe) {
+      const parsed = parseAcademicPeriod(cls.academic_year);
+      if (parsed) {
+        semester = semester ?? parsed.semester;
+        yearCe = yearCe ?? parsed.yearCE;
+      }
+    }
+
+    return { ...cls, semester, year_ce: yearCe, students: active, pending_students: pending, student_count: active.length };
+  });
+}
+
+/** Make sure a teacher row exists before inserting rows that reference it. */
+async function ensureTeacherUser(
+  supabase: SupabaseClient,
+  teacherId: string | undefined,
+  teachers: Array<{ teacher_id: string; name?: string; email?: string; avatar_url?: string }> | undefined
+) {
+  if (!teacherId) return;
+  const { data: exists } = await supabase.from('users').select('id').eq('id', teacherId).maybeSingle();
+  if (exists) return;
+  const teacher = teachers?.find((t) => t.teacher_id === teacherId) || teachers?.[0];
+  const [first, ...rest] = (teacher?.name || 'คุณครู').trim().split(' ');
+  await supabase.from('users').upsert({
+    id: teacherId,
+    first_name: first || 'คุณครู',
+    last_name: rest.join(' '),
+    role: 'teacher',
+    email: teacher?.email || null,
+    avatar_url: teacher?.avatar_url || null,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+/** Classrooms whose JSON roster contains the student (by users.id or LINE id). */
+async function findClassroomsContainingStudent(supabase: SupabaseClient, keys: string[]): Promise<Classroom[]> {
+  const unique = [...new Set(keys.filter(Boolean))];
+  const queries = unique.flatMap((key) => [
+    supabase.from('classrooms').select('*').contains('students', jsonArray({ id: key })),
+    supabase.from('classrooms').select('*').contains('pending_students', jsonArray({ id: key })),
+    supabase.from('classrooms').select('*').contains('students', jsonArray({ line_uid: key })),
+    supabase.from('classrooms').select('*').contains('pending_students', jsonArray({ line_uid: key })),
+  ]);
+  const results = await Promise.all(queries);
+  return uniqueById(results.flatMap((r) => (r.data || []) as Classroom[]));
+}
+
+function notifyLocal(eventName: string, detail: unknown) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(eventName, { detail }));
+  try {
+    const bc = new BroadcastChannel('pudding_classroom_sync');
+    bc.postMessage({ type: 'LOCAL_SYNC', detail });
+    bc.close();
+  } catch {}
+}
+
+function broadcastRealtime(event: string, payload: Record<string, unknown>) {
+  try {
+    const channel = createClient().channel('pudding_realtime_broadcast');
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        channel.send({ type: 'broadcast', event, payload });
+        setTimeout(() => createClient().removeChannel(channel), 1000);
+      }
+    });
+  } catch {}
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, { cache: 'no-store' });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+  return json as T;
 }
 
 export const dataService = {
   // ==========================================
-  // CLERK AUTH USER SYNC
+  // USERS
   // ==========================================
   async syncLineStudentUser(student: {
     line_uid: string;
@@ -69,354 +302,114 @@ export const dataService = {
     institution?: string;
     email?: string | null;
   }): Promise<User> {
+    const supabase = createClient();
     const lineUid = student.line_uid.trim();
-    const userId = lineUid;
-    let firstName = student.first_name?.trim() || "";
-    let lastName = student.last_name?.trim() || "";
-    let finalStudentId: string | null = student.student_id?.trim() || null;
-    let finalInstitution: string | null = student.institution?.trim() || null;
+    let firstName = student.first_name?.trim() || '';
+    let lastName = student.last_name?.trim() || '';
+    let studentCode: string | null = student.student_id?.trim() || null;
+    let institution: string | null = student.institution?.trim() || null;
 
     if (!firstName) {
-      const names = student.name.trim().split(" ");
-      firstName = names[0] || "นักเรียน";
-      lastName = names.slice(1).join(" ") || "";
+      const names = student.name.trim().split(' ');
+      firstName = names[0] || 'นักเรียน';
+      lastName = names.slice(1).join(' ');
     }
 
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        // Check if student already exists and preserve real first_name, last_name, student_id, institution
-        const { data: existingUserById } = await supabase
-          .from("users")
-          .select("*")
-          .eq("id", lineUid)
-          .maybeSingle();
+    // LINE userId is the stable identity across LIFF in LINE and an external
+    // browser; reuse an older row found by line_uid before creating anything.
+    const { data: existingRows, error: readError } = await supabase
+      .from('users')
+      .select('*')
+      .or(`id.eq.${pgValue(lineUid)},line_uid.eq.${pgValue(lineUid)}`)
+      .limit(2);
+    if (readError) throw toDatabaseError(readError, 'users');
+    const existing = (existingRows || []).find((u) => u.id === lineUid) || existingRows?.[0];
 
-        // LINE userId is the stable identity across LIFF in LINE and an external browser.
-        // Reuse an older row found by line_uid before creating/upserting anything.
-        const { data: existingUserByLineUid } = await supabase
-          .from("users")
-          .select("*")
-          .eq("line_uid", lineUid)
-          .limit(1)
-          .maybeSingle();
-        const existingUser = existingUserById || existingUserByLineUid;
-        const canonicalUserId = existingUser?.id || userId;
-
-        if (existingUser) {
-          if (existingUser.first_name && !student.first_name) firstName = existingUser.first_name;
-          if (existingUser.last_name && !student.last_name) lastName = existingUser.last_name;
-          if (existingUser.student_id && !student.student_id) finalStudentId = existingUser.student_id;
-          if (existingUser.institution && !student.institution) finalInstitution = existingUser.institution;
-        }
-
-        const userPayload: Record<string, any> = {
-          id: canonicalUserId,
-          first_name: firstName,
-          last_name: lastName,
-          avatar_url: student.avatar || null,
-          role: "student",
-          line_uid: lineUid,
-          is_line_connected: true,
-          updated_at: new Date().toISOString(),
-        };
-
-        const existingEmail = typeof existingUser?.email === "string" ? existingUser.email.trim() : "";
-        const suppliedEmail = student.email?.trim() || "";
-        if (suppliedEmail || existingEmail) userPayload.email = suppliedEmail || existingEmail;
-
-        if (finalStudentId) {
-          userPayload.student_id = finalStudentId;
-        }
-        if (finalInstitution) {
-          userPayload.institution = finalInstitution;
-        }
-
-        await supabase.from("users").upsert(userPayload);
-        console.log("Synced real LINE student to Supabase:", userId, firstName, "student_id:", finalStudentId);
-
-        const returnedUser: User = {
-          id: canonicalUserId,
-          first_name: firstName,
-          last_name: lastName,
-          student_id: finalStudentId || undefined,
-          institution: finalInstitution || undefined,
-          avatar_url: userPayload.avatar_url,
-          email: userPayload.email,
-          role: "student",
-          line_uid: lineUid,
-          is_line_connected: true,
-        };
-        setStored("line_student_" + lineUid, returnedUser);
-        return returnedUser;
-      } catch (err) {
-        console.error("Error syncing LINE student to Supabase:", err);
-      }
+    if (existing) {
+      if (existing.first_name && !student.first_name) firstName = existing.first_name;
+      if (existing.last_name && !student.last_name) lastName = existing.last_name;
+      if (existing.student_id && !student.student_id) studentCode = existing.student_id;
+      if (existing.institution && !student.institution) institution = existing.institution;
     }
 
-    const localUsers = getStoredOr<User[]>('users', []);
-    const existingLocalUser = localUsers.find((user) => user.line_uid === lineUid);
-    const userRecord: User = {
-      id: existingLocalUser?.id || userId,
-      first_name: existingLocalUser?.first_name || firstName,
-      last_name: existingLocalUser?.last_name || lastName,
-      student_id: finalStudentId || existingLocalUser?.student_id || undefined,
-      institution: finalInstitution || existingLocalUser?.institution || undefined,
-      avatar_url: student.avatar || undefined,
-      role: "student",
+    const payload: Record<string, unknown> = {
+      id: existing?.id || lineUid,
+      first_name: firstName,
+      last_name: lastName,
+      avatar_url: student.avatar || null,
+      role: 'student',
+      line_uid: lineUid,
+      is_line_connected: true,
+      updated_at: new Date().toISOString(),
+    };
+    const email = student.email?.trim() || (typeof existing?.email === 'string' ? existing.email.trim() : '');
+    if (email) payload.email = email;
+    if (studentCode) payload.student_id = studentCode;
+    if (institution) payload.institution = institution;
+
+    const { error } = await supabase.from('users').upsert(payload);
+    if (error) throw toDatabaseError(error, 'users');
+
+    return {
+      id: payload.id as string,
+      first_name: firstName,
+      last_name: lastName,
+      student_id: studentCode || undefined,
+      institution: institution || undefined,
+      avatar_url: (payload.avatar_url as string) || undefined,
+      email: (payload.email as string) || undefined,
+      role: 'student',
       line_uid: lineUid,
       is_line_connected: true,
     };
-    if (student.email?.trim() || existingLocalUser?.email) userRecord.email = student.email?.trim() || existingLocalUser?.email;
-    setStored("line_student_" + lineUid, userRecord);
-    return userRecord;
   },
 
   async updateStudentProfile(
     userId: string,
-    data: {
-      first_name: string;
-      last_name: string;
-      student_id: string;
-      institution: string;
-      email?: string | null;
-    }
+    data: { first_name: string; last_name: string; student_id: string; institution: string; email?: string | null }
   ): Promise<boolean> {
-    const fn = data.first_name.trim();
-    const ln = data.last_name.trim();
-    const sid = data.student_id.trim();
-    const inst = data.institution.trim();
-    const email = data.email?.trim() || null;
-
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        await supabase
-          .from("users")
-          .update({
-            first_name: fn,
-            last_name: ln,
-            student_id: sid,
-            institution: inst,
-            email,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", userId);
-
-        // Also update any enrolled classrooms with updated student info
-        const { data: classrooms } = await supabase.from("classrooms").select("id, students, pending_students");
-        if (classrooms) {
-          for (const cls of classrooms) {
-            let touched = false;
-            const updatedStudents = ((cls.students || []) as any[]).map((s) => {
-              if (s.id === userId || s.line_uid === userId) {
-                touched = true;
-                return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst, email };
-              }
-              return s;
-            });
-            const updatedPending = ((cls.pending_students || []) as any[]).map((s) => {
-              if (s.id === userId || s.line_uid === userId) {
-                touched = true;
-                return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst, email };
-              }
-              return s;
-            });
-            if (touched) {
-              await supabase
-                .from("classrooms")
-                .update({ students: updatedStudents, pending_students: updatedPending })
-                .eq("id", cls.id);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Error in updateStudentProfile:", err);
-      }
-    }
-
-    // Local storage sync: line_student_*, users list, and enrolled classrooms
-    const storedStudent = getStoredOr<User | null>("line_student_" + userId, null);
-    const updatedStudentObj: User = {
-      id: userId,
-      role: 'student',
-      first_name: fn,
-      last_name: ln,
-      student_id: sid,
-      institution: inst,
-      line_uid: storedStudent?.line_uid || userId,
-      avatar_url: storedStudent?.avatar_url,
-      email: data.email === undefined ? storedStudent?.email : email || undefined,
+    const supabase = createClient();
+    const fields = {
+      first_name: data.first_name.trim(),
+      last_name: data.last_name.trim(),
+      student_id: data.student_id.trim(),
+      institution: data.institution.trim(),
+      email: data.email?.trim() || null,
     };
-    setStored("line_student_" + userId, updatedStudentObj);
 
-    // Sync into local users table
-    const localUsers = getStoredOr<User[]>('users', []);
-    const existingUserIndex = localUsers.findIndex((u) => u.id === userId || u.line_uid === userId || (u.student_id && u.student_id === sid));
-    if (existingUserIndex >= 0) {
-      localUsers[existingUserIndex] = {
-        ...localUsers[existingUserIndex],
-        first_name: fn,
-        last_name: ln,
-        student_id: sid,
-        institution: inst,
-        email: email || undefined,
-      };
-    } else {
-      localUsers.push(updatedStudentObj);
-    }
-    setStored('users', localUsers);
-
-    // Sync into local classrooms list
-    const localClassrooms = getStoredOr<Classroom[]>('classrooms', []);
-    let localTouched = false;
-    const updatedClassrooms = localClassrooms.map((cls) => {
-      let clsUpdated = false;
-      const students = (cls.students || []).map((s) => {
-        if (s.id === userId || s.line_uid === userId || (s.student_id && s.student_id === sid)) {
-          clsUpdated = true;
-          return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst, email: email || undefined };
-        }
-        return s;
-      });
-      const pending_students = (cls.pending_students || []).map((s) => {
-        if (s.id === userId || s.line_uid === userId || (s.student_id && s.student_id === sid)) {
-          clsUpdated = true;
-          return { ...s, first_name: fn, last_name: ln, student_id: sid, institution: inst, email: email || undefined };
-        }
-        return s;
-      });
-      if (clsUpdated) {
-        localTouched = true;
-        return { ...cls, students, pending_students };
-      }
-      return cls;
-    });
-    if (localTouched) {
-      setStored('classrooms', updatedClassrooms);
+    const { error } = await supabase.from('users').update({ ...fields, updated_at: new Date().toISOString() }).eq('id', userId);
+    if (error) {
+      console.error('updateStudentProfile error:', error);
+      return false;
     }
 
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('pudding_student_enrolled', {
-          detail: { studentId: userId, student: updatedStudentObj },
-        })
-      );
-      try {
-        const bc = new BroadcastChannel('pudding_classroom_sync');
-        bc.postMessage({ type: 'LOCAL_SYNC', detail: { studentId: userId, student: updatedStudentObj } });
-        bc.close();
-      } catch {}
-    }
+    // Keep the roster snapshots of the student's classrooms in step.
+    const classrooms = await findClassroomsContainingStudent(supabase, [userId]);
+    const patch = (s: User) => (s.id === userId || s.line_uid === userId ? { ...s, ...fields, email: fields.email || undefined } : s);
+    await Promise.all(
+      classrooms.map((cls) =>
+        supabase
+          .from('classrooms')
+          .update({ students: (cls.students || []).map(patch), pending_students: (cls.pending_students || []).map(patch) })
+          .eq('id', cls.id)
+      )
+    );
 
+    notifyLocal('pudding_student_enrolled', { studentId: userId, student: { id: userId, role: 'student', ...fields } });
     return true;
   },
 
-  async updateStudentId(userId: string, newStudentId: string): Promise<boolean> {
-    const trimmed = newStudentId.trim();
-    if (!trimmed) return false;
-
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const { error } = await supabase
-          .from("users")
-          .update({
-            student_id: trimmed,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", userId);
-
-        if (error) {
-          console.error("Supabase updateStudentId error:", error.message);
-          return false;
-        }
-
-        // Also update any enrolled classrooms with updated student_id
-        const { data: classrooms } = await supabase.from("classrooms").select("id, students");
-        if (classrooms) {
-          for (const cls of classrooms) {
-            const stdList = (cls.students || []) as any[];
-            let touched = false;
-            const updated = stdList.map((s) => {
-              if (s.id === userId || s.line_uid === userId) {
-                touched = true;
-                return { ...s, student_id: trimmed };
-              }
-              return s;
-            });
-            if (touched) {
-              await supabase.from("classrooms").update({ students: updated }).eq("id", cls.id);
-            }
-          }
-        }
-        return true;
-      } catch (err) {
-        console.error("Error in updateStudentId:", err);
-        return false;
-      }
-    }
-    return true;
-  },
-
-  async updateTeacherInstitution(userId: string, institution: string): Promise<boolean> {
-    const trimmed = institution.trim();
-    if (!trimmed) return false;
-
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        await supabase
-          .from("users")
-          .update({
-            institution: trimmed,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", userId);
-      } catch (err) {
-        console.error("Error updating teacher institution:", err);
-      }
-    }
-
-    const storedUser = getStoredOr<User | null>("clerk_user_" + userId, null);
-    if (storedUser) {
-      setStored("clerk_user_" + userId, { ...storedUser, institution: trimmed });
-    }
-    return true;
-  },
-
-  async updateTeacherProfile(
-    userId: string,
-    profile: { first_name: string; last_name: string; institution: string }
-  ): Promise<boolean> {
+  async updateTeacherProfile(userId: string, profile: { first_name: string; last_name: string; institution: string }): Promise<boolean> {
     const fn = profile.first_name.trim();
     const ln = profile.last_name.trim();
     const inst = profile.institution.trim();
     if (!fn || !ln || !inst) return false;
-
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        await supabase
-          .from('users')
-          .update({ first_name: fn, last_name: ln, institution: inst, updated_at: new Date().toISOString() })
-          .eq('id', userId);
-      } catch (err) {
-        console.error('Error updating teacher profile:', err);
-      }
-    }
-
-    // Update local cache
-    const storedUser = getStoredOr<User | null>('clerk_user_' + userId, null);
-    if (storedUser) {
-      setStored('clerk_user_' + userId, { ...storedUser, first_name: fn, last_name: ln, institution: inst });
-    }
-    const storedTeacher = getStoredOr<User | null>('teacher_profile_' + userId, null);
-    if (storedTeacher) {
-      setStored('teacher_profile_' + userId, { ...storedTeacher, first_name: fn, last_name: ln, institution: inst });
-    }
-    const users = getStoredOr<User[]>('users', []);
-    setStored('users', users.map((u) => u.id === userId ? { ...u, first_name: fn, last_name: ln, institution: inst } : u));
+    const { error } = await createClient()
+      .from('users')
+      .update({ first_name: fn, last_name: ln, institution: inst, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+    if (error) throw toDatabaseError(error, 'users');
+    registeredInstitutionsCache = null;
     return true;
   },
 
@@ -428,1285 +421,66 @@ export const dataService = {
     email?: string | null;
     institution?: string | null;
   }): Promise<User> {
-    const defaultUser: User = {
+    const supabase = createClient();
+    const { data: existing } = await supabase.from('users').select('first_name, last_name, institution').eq('id', clerkUser.id).maybeSingle();
+
+    const record: Record<string, unknown> = {
       id: clerkUser.id,
-      clerk_id: clerkUser.id,
-      first_name: clerkUser.firstName || "คุณครู",
-      last_name: clerkUser.lastName || "",
-      avatar_url: clerkUser.imageUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150",
-      email: clerkUser.email || "",
-      institution: clerkUser.institution || undefined,
-      role: "teacher",
+      // Names edited in the app win over Clerk's profile.
+      first_name: existing?.first_name || clerkUser.firstName || 'คุณครู',
+      last_name: existing?.last_name || clerkUser.lastName || '',
+      avatar_url: clerkUser.imageUrl || null,
+      email: clerkUser.email || '',
+      role: 'teacher',
+      institution: clerkUser.institution || existing?.institution || null,
+      updated_at: new Date().toISOString(),
     };
 
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const { data: existingUser } = await supabase
-          .from("users")
-          .select("*")
-          .eq("id", clerkUser.id)
-          .maybeSingle();
-
-        const userRecord: Record<string, any> = {
-          id: clerkUser.id,
-          // Preserve names already set in DB — don't overwrite with Clerk's stale data
-          first_name: existingUser?.first_name || defaultUser.first_name,
-          last_name: existingUser?.last_name || defaultUser.last_name,
-          avatar_url: defaultUser.avatar_url,
-          email: defaultUser.email,
-          role: "teacher",
-          institution: clerkUser.institution || existingUser?.institution || null,
-          updated_at: new Date().toISOString(),
-        };
-
-        // Try upserting with clerk_id first
-        let { data, error } = await supabase.from("users").upsert({
-          ...userRecord,
-          clerk_id: clerkUser.id,
-        }).select().single();
-
-        // Fallback without clerk_id column if not in schema cache
-        if (error && error.message.includes("clerk_id")) {
-          const fallback = await supabase.from("users").upsert(userRecord).select().single();
-          data = fallback.data;
-          error = fallback.error;
-        }
-
-        if (error) {
-          console.error("Supabase user sync error:", error.message);
-        } else if (data) {
-          console.log("Successfully synced Clerk user to Supabase:", data.id, data.first_name);
-          return data as User;
-        }
-      } catch (err) {
-        console.error("Error syncing Clerk user to Supabase:", err);
-      }
+    let { data, error } = await supabase.from('users').upsert({ ...record, clerk_id: clerkUser.id }).select().single();
+    // Older databases have no clerk_id column.
+    if (error && error.message.includes('clerk_id')) {
+      ({ data, error } = await supabase.from('users').upsert(record).select().single());
     }
-
-    setStored("clerk_user_" + clerkUser.id, defaultUser);
-    return defaultUser;
-  },
-  // ==============================================================================
-  // COURSES
-  // ==============================================================================
-  async getCourses(teacherId?: string): Promise<Course[]> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      let query = supabase.from('courses').select('*').order('created_at', { ascending: false });
-      const { data, error } = await query;
-      if (!error && data) {
-        const all = data as Course[];
-        if (teacherId) {
-          return all.filter((c) => c.primary_teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
-        }
-        return all;
-      }
-      if (error && error.code !== 'PGRST205') {
-        console.warn('Supabase getCourses error:', error.message);
-      }
-      return [];
-    }
-    const stored = getStoredOr<Course[]>('courses', []);
-    if (teacherId) {
-      return stored.filter((c) => c.primary_teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
-    }
-    return stored;
-  },
-
-  async getCourseById(id: string): Promise<Course | null> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase.from('courses').select('*').eq('id', id).single();
-      if (!error && data) return data as Course;
-    }
-    const courses = await this.getCourses();
-    return courses.find((c) => c.id === id) || null;
-  },
-
-  async createCourse(data: Omit<Course, 'id' | 'created_at'>): Promise<Course> {
-    const id = `course-${Date.now()}`;
-    const newCourse: Course = {
-      ...data,
-      id,
-      created_at: new Date().toISOString(),
-    };
-
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      
-      // Ensure primary teacher exists in users table before inserting to prevent foreign key errors
-      if (newCourse.primary_teacher_id) {
-        try {
-          const { data: userExists } = await supabase
-            .from("users")
-            .select("id")
-            .eq("id", newCourse.primary_teacher_id)
-            .maybeSingle();
-
-          if (!userExists) {
-            const primaryObj = newCourse.teachers?.find((t) => t.teacher_id === newCourse.primary_teacher_id) || newCourse.teachers?.[0];
-            const nameParts = (primaryObj?.name || "คุณครู").trim().split(" ");
-            await supabase.from("users").upsert({
-              id: newCourse.primary_teacher_id,
-              first_name: nameParts[0] || "คุณครู",
-              last_name: nameParts.slice(1).join(" ") || "",
-              role: "teacher",
-              email: primaryObj?.email || null,
-              avatar_url: primaryObj?.avatar_url || null,
-              updated_at: new Date().toISOString(),
-            });
-            console.log("Auto-created teacher record in users table:", newCourse.primary_teacher_id);
-          }
-        } catch (uErr) {
-          console.warn("Pre-checking teacher in users table notice:", uErr);
-        }
-      }
-
-      const { error } = await supabase.from('courses').insert(newCourse);
-      if (error) {
-        console.error('Supabase createCourse error:', error);
-        throw toDatabaseError(error, 'courses');
-      }
-    }
-
-    const courses = getStoredOr<Course[]>('courses', []);
-    const updated = [newCourse, ...courses.filter((c) => c.id !== id)];
-    setStored('courses', updated);
-    return newCourse;
-  },
-
-  async updateCourse(id: string, data: Partial<Course>): Promise<Course | null> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { error } = await supabase.from('courses').update(data).eq('id', id);
-      if (error) {
-        // Surface the failure; otherwise the UI reports success while the
-        // change was never saved.
-        console.error('Supabase updateCourse error:', error);
-        throw toDatabaseError(error, 'courses');
-      }
-    }
-
-    const courses = await this.getCourses();
-    const index = courses.findIndex((c) => c.id === id);
-    if (index === -1) return null;
-
-    const updatedCourse = { ...courses[index], ...data };
-    courses[index] = updatedCourse;
-    setStored('courses', courses);
-
-    // If teachers are updated, sync to all classrooms under this course
-    if (data.teachers) {
-      try {
-        const classrooms = await this.getClassrooms();
-        const related = classrooms.filter((cls) => cls.course_id === id);
-        for (const cls of related) {
-          await this.updateClassroom(cls.id, { teachers: data.teachers });
-        }
-      } catch (err) {
-        console.warn('Sync teachers to classrooms error:', err);
-      }
-    }
-
-    return updatedCourse;
-  },
-
-  async deleteCourse(id: string): Promise<void> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { error } = await supabase.from('courses').delete().eq('id', id);
-      if (error) console.error('Supabase deleteCourse error:', error);
-    }
-
-    const courses = await this.getCourses();
-    const updated = courses.filter((c) => c.id !== id);
-    setStored('courses', updated);
-  },
-
-  async getSavedTeacherIndicators(teacherId?: string): Promise<CourseLearningIndicator[]> {
-    const key = `saved_indicators_${teacherId || 'default'}`;
-    const stored = getStoredOr<CourseLearningIndicator[]>(key, []);
-    if (stored.length > 0) return stored;
-
-    // Collect from existing courses as initial default if available
-    const courses = await this.getCourses(teacherId);
-    const collected: CourseLearningIndicator[] = [];
-    const seen = new Set<string>();
-
-    for (const c of courses) {
-      for (const ind of c.indicators || []) {
-        if (ind.title && !seen.has(ind.title.trim())) {
-          seen.add(ind.title.trim());
-          collected.push(ind);
-        }
-      }
-    }
-    if (collected.length > 0) {
-      setStored(key, collected);
-      return collected;
-    }
-
-    // Default indicators bank for quick selection
-    const defaultBank: CourseLearningIndicator[] = [
-      { id: 'lib-1', code: 'ท 1.1 ม.4/1', title: 'อ่านออกเสียงบทร้อยแก้วและบทร้อยกรองได้อย่างถูกต้อง ไพเราะ และเหมาะสมกับเรื่องที่อ่าน', weight: 0, order_index: 1 },
-      { id: 'lib-2', code: 'ท 1.1 ม.4/2', title: 'ตีความ แปลความ และขยายความเรื่องที่อ่านได้อย่างมีวิจารณญาณ', weight: 0, order_index: 2 },
-      { id: 'lib-3', code: 'ท 2.1 ม.4/1', title: 'เขียนสื่อสารในรูปแบบต่างๆ เช่น บรรยาย พรรณนา อธิบาย ได้ตรงตามวัตถุประสงค์', weight: 0, order_index: 3 },
-      { id: 'lib-4', code: 'ท 3.1 ม.4/1', title: 'สรุปแนวคิดและแสดงความคิดเห็นจากเรื่องที่ฟังและดูอย่างมีเหตุผล', weight: 0, order_index: 4 },
-      { id: 'lib-5', code: 'ค 1.1 ม.4/1', title: 'เข้าใจและใช้ความรู้เกี่ยวกับเซตและความน่าจะเป็นในการสื่อสารและแก้ปัญหา', weight: 0, order_index: 5 },
-    ];
-    setStored(key, defaultBank);
-    return defaultBank;
-  },
-
-  async saveTeacherIndicators(newIndicators: CourseLearningIndicator[], teacherId?: string): Promise<void> {
-    const key = `saved_indicators_${teacherId || 'default'}`;
-    const existing = await this.getSavedTeacherIndicators(teacherId);
-    const merged = [...existing];
-    const seen = new Set(existing.map((e) => (e.title || '').trim().toLowerCase()));
-
-    for (const ind of newIndicators) {
-      if (ind.title && ind.title.trim() && !seen.has(ind.title.trim().toLowerCase())) {
-        seen.add(ind.title.trim().toLowerCase());
-        merged.push({
-          id: `saved-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          code: ind.code || '',
-          title: ind.title.trim(),
-          weight: ind.weight || 0,
-          order_index: merged.length + 1,
-        });
-      }
-    }
-    setStored(key, merged);
-  },
-
-  async updateCourseIndicators(courseId: string, indicators: CourseLearningIndicator[]): Promise<Course | null> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { error } = await supabase.from('courses').update({ indicators }).eq('id', courseId);
-      if (error) throw toDatabaseError(error, 'courses');
-    }
-
-    const courses = await this.getCourses();
-    const index = courses.findIndex((c) => c.id === courseId);
-    if (index === -1) return null;
-
-    courses[index].indicators = indicators;
-    setStored('courses', courses);
-
-    // Save non-empty indicators to library for reuse in other courses
-    const validIndicators = indicators.filter((i) => i.title && i.title.trim());
-    if (validIndicators.length > 0) {
-      await this.saveTeacherIndicators(validIndicators, courses[index].primary_teacher_id);
-    }
-
-    // Also sync flat learning indicators for questions builder
-    const flatIndicators: LearningIndicator[] = indicators.map((ind) => ({
-      id: ind.id,
-      code: ind.code,
-      title: ind.title,
-      subject: courses[index].name,
-      teacher_id: courses[index].primary_teacher_id,
-      weight: ind.weight || 0,
-      order_index: ind.order_index,
-    }));
-    setStored('learning_indicators', flatIndicators);
-
-    return courses[index];
-  },
-
-  // ==============================================================================
-  // CLASSROOMS
-  // ==============================================================================
-  // ==============================================================================
-  // CLASSROOMS
-  // ==============================================================================
-  async getClassrooms(teacherId?: string): Promise<Classroom[]> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase.from('classrooms').select('*').order('created_at', { ascending: false });
-      if (!error && data) {
-        let all = data as Classroom[];
-
-        // Hydrate all students with real names, student IDs, and institutions from `users` table
-        try {
-          const { data: usersData } = await supabase.from('users').select('*');
-          if (usersData && usersData.length > 0) {
-            const userMap = new Map<string, User>();
-            for (const u of usersData) {
-              userMap.set(u.id, u as User);
-              if (u.line_uid) userMap.set(u.line_uid, u as User);
-              if (u.student_id) userMap.set(u.student_id, u as User);
-              if (u.email) userMap.set(u.email, u as User);
-            }
-
-            all = all.map((cls) => {
-              const students = (cls.students || []).map((s) => {
-                const real = userMap.get(s.id) || (s.line_uid ? userMap.get(s.line_uid) : null) || (s.student_id ? userMap.get(s.student_id) : null);
-                if (real) {
-                  return {
-                    ...s,
-                    first_name: real.first_name || s.first_name,
-                    last_name: real.last_name || s.last_name,
-                    student_id: real.student_id || s.student_id,
-                    institution: real.institution || s.institution,
-                    avatar_url: real.avatar_url || s.avatar_url,
-                  };
-                }
-                return s;
-              });
-
-              const pending_students = (cls.pending_students || []).map((s) => {
-                const real = userMap.get(s.id) || (s.line_uid ? userMap.get(s.line_uid) : null) || (s.student_id ? userMap.get(s.student_id) : null);
-                if (real) {
-                  return {
-                    ...s,
-                    first_name: real.first_name || s.first_name,
-                    last_name: real.last_name || s.last_name,
-                    student_id: real.student_id || s.student_id,
-                    institution: real.institution || s.institution,
-                    avatar_url: real.avatar_url || s.avatar_url,
-                  };
-                }
-                return s;
-              });
-
-              let sem = cls.semester;
-              let yr = cls.year_ce;
-              if (!sem || !yr) {
-                const parsed = parseAcademicPeriod(cls.academic_year);
-                if (parsed) {
-                  sem = sem ?? parsed.semester;
-                  yr = yr ?? parsed.yearCE;
-                }
-              }
-
-              return {
-                ...cls,
-                semester: sem,
-                year_ce: yr,
-                students,
-                pending_students,
-                student_count: students.length,
-              };
-            });
-
-            // Also merge any students recorded in classroom_students relational junction table
-            try {
-              const { data: csLinks } = await supabase.from('classroom_students').select('*');
-              if (csLinks && csLinks.length > 0) {
-                const csMap = new Map<string, Array<{ student_id: string; status: string }>>();
-                for (const link of csLinks) {
-                  const list = csMap.get(link.classroom_id) || [];
-                  list.push(link);
-                  csMap.set(link.classroom_id, list);
-                }
-
-                all = all.map((cls) => {
-                  const links = csMap.get(cls.id) || [];
-                  const existingStudentIds = new Set((cls.students || []).map((s) => s.id));
-                  const existingPendingIds = new Set((cls.pending_students || []).map((s) => s.id));
-                  const extraStudents = [...(cls.students || [])];
-                  const extraPending = [...(cls.pending_students || [])];
-
-                  for (const link of links) {
-                    const u = userMap.get(link.student_id);
-                    if (u) {
-                      if (link.status === 'pending_approval') {
-                        if (!existingPendingIds.has(u.id)) {
-                          extraPending.push(u);
-                          existingPendingIds.add(u.id);
-                        }
-                      } else {
-                        if (!existingStudentIds.has(u.id)) {
-                          extraStudents.push(u);
-                          existingStudentIds.add(u.id);
-                        }
-                      }
-                    }
-                  }
-                  return {
-                    ...cls,
-                    students: extraStudents,
-                    pending_students: extraPending,
-                    student_count: extraStudents.length,
-                  };
-                });
-              }
-            } catch (csErr) {
-              console.warn('Hydrating classroom_students in getClassrooms error:', csErr);
-            }
-          }
-        } catch (uErr) {
-          console.warn('Hydrating users in getClassrooms error:', uErr);
-        }
-
-        if (teacherId) {
-          return all.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
-        }
-        return all;
-      }
-      if (error && error.code !== 'PGRST205') {
-        console.warn('Supabase getClassrooms error:', error.message);
-      }
-      return [];
-    }
-
-    // Local / Offline storage fallback: hydrate students from local users & classrooms
-    const stored = getStoredOr<Classroom[]>('classrooms', []);
-    const localUsers = getStoredOr<User[]>('users', []);
-    const localUserMap = new Map<string, User>();
-    for (const u of localUsers) {
-      localUserMap.set(u.id, u);
-      if (u.line_uid) localUserMap.set(u.line_uid, u);
-      if (u.student_id) localUserMap.set(u.student_id, u);
-      if (u.email) localUserMap.set(u.email, u);
-    }
-    const hydrated = stored.map((cls) => {
-      const students = (cls.students || []).map((s) => {
-        const real =
-          localUserMap.get(s.id) ||
-          (s.line_uid ? localUserMap.get(s.line_uid) : null) ||
-          (s.student_id ? localUserMap.get(s.student_id) : null);
-        if (real) {
-          return {
-            ...s,
-            first_name: real.first_name || s.first_name,
-            last_name: real.last_name || s.last_name,
-            student_id: real.student_id || s.student_id,
-            institution: real.institution || s.institution,
-            avatar_url: real.avatar_url || s.avatar_url,
-          };
-        }
-        return s;
-      });
-
-      const pending_students = (cls.pending_students || []).map((s) => {
-        const real =
-          localUserMap.get(s.id) ||
-          (s.line_uid ? localUserMap.get(s.line_uid) : null) ||
-          (s.student_id ? localUserMap.get(s.student_id) : null);
-        if (real) {
-          return {
-            ...s,
-            first_name: real.first_name || s.first_name,
-            last_name: real.last_name || s.last_name,
-            student_id: real.student_id || s.student_id,
-            institution: real.institution || s.institution,
-            avatar_url: real.avatar_url || s.avatar_url,
-          };
-        }
-        return s;
-      });
-
-      let sem = cls.semester;
-      let yr = cls.year_ce;
-      if (!sem || !yr) {
-        const parsed = parseAcademicPeriod(cls.academic_year);
-        if (parsed) {
-          sem = sem ?? parsed.semester;
-          yr = yr ?? parsed.yearCE;
-        }
-      }
-
-      return {
-        ...cls,
-        semester: sem,
-        year_ce: yr,
-        students,
-        pending_students,
-        student_count: students.length,
-      };
-    });
-
-    if (teacherId) {
-      return hydrated.filter((c) => c.teacher_id === teacherId || c.teachers?.some((t) => t.teacher_id === teacherId));
-    }
-    return hydrated;
-  },
-
-  async getClassroomRoster(classroomId: string): Promise<{
-    classroom: Classroom | null;
-    students: User[];
-    pending_students: User[];
-  }> {
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const { data: clsData, error: clsErr } = await supabase
-          .from('classrooms')
-          .select('*')
-          .eq('id', classroomId)
-          .maybeSingle();
-
-        if (clsData && !clsErr) {
-          // Fetch all users to accurately map real first_name, last_name, student_id, institution
-          const { data: usersData } = await supabase.from('users').select('*');
-          const userMap = new Map<string, User>();
-          (usersData || []).forEach((u: any) => {
-            const userObj = u as User;
-            userMap.set(u.id, userObj);
-            if (u.line_uid) userMap.set(u.line_uid, userObj);
-            if (u.student_id) {
-              userMap.set(u.student_id, userObj);
-              userMap.set(`std_${u.student_id}`, userObj);
-            }
-          });
-
-          // Fetch relational records from classroom_students table
-          const { data: csLinks } = await supabase
-            .from('classroom_students')
-            .select('*')
-            .eq('classroom_id', classroomId);
-
-          const studentList: User[] = [];
-          const pendingList: User[] = [];
-          const seenActiveIds = new Set<string>();
-          const seenPendingIds = new Set<string>();
-
-          // Process active students stored in classrooms table
-          const rawStudents = (clsData.students || []) as User[];
-          const rawPending = (clsData.pending_students || []) as User[];
-
-          for (const s of rawStudents) {
-            const dbUser =
-              userMap.get(s.id) ||
-              (s.line_uid ? userMap.get(s.line_uid) : null) ||
-              (s.student_id ? userMap.get(s.student_id) : null);
-
-            const merged: User = {
-              ...s,
-              id: dbUser?.id || s.id,
-              first_name: dbUser?.first_name || s.first_name || '',
-              last_name: dbUser?.last_name || s.last_name || '',
-              name: s.name || (dbUser?.first_name ? `${dbUser.first_name} ${dbUser.last_name || ''}`.trim() : 'นักเรียน'),
-              student_id: dbUser?.student_id || s.student_id,
-              institution: dbUser?.institution || s.institution,
-              avatar_url: dbUser?.avatar_url || s.avatar_url,
-              email: dbUser?.email || s.email,
-              line_uid: dbUser?.line_uid || s.line_uid,
-              role: 'student',
-              enrollment_status: 'active',
-            };
-            if (!seenActiveIds.has(merged.id)) {
-              seenActiveIds.add(merged.id);
-              studentList.push(merged);
-            }
-          }
-
-          for (const s of rawPending) {
-            const dbUser =
-              userMap.get(s.id) ||
-              (s.line_uid ? userMap.get(s.line_uid) : null) ||
-              (s.student_id ? userMap.get(s.student_id) : null);
-
-            const merged: User = {
-              ...s,
-              id: dbUser?.id || s.id,
-              first_name: dbUser?.first_name || s.first_name || '',
-              last_name: dbUser?.last_name || s.last_name || '',
-              name: s.name || (dbUser?.first_name ? `${dbUser.first_name} ${dbUser.last_name || ''}`.trim() : 'นักเรียน'),
-              student_id: dbUser?.student_id || s.student_id,
-              institution: dbUser?.institution || s.institution,
-              avatar_url: dbUser?.avatar_url || s.avatar_url,
-              email: dbUser?.email || s.email,
-              line_uid: dbUser?.line_uid || s.line_uid,
-              role: 'student',
-              enrollment_status: 'pending_approval',
-            };
-            if (!seenActiveIds.has(merged.id) && !seenPendingIds.has(merged.id)) {
-              seenPendingIds.add(merged.id);
-              pendingList.push(merged);
-            }
-          }
-
-          // Merge any relational records from classroom_students table
-          for (const link of csLinks || []) {
-            const u = userMap.get(link.student_id);
-            if (u) {
-              if (link.status === 'pending_approval') {
-                if (!seenActiveIds.has(u.id) && !seenPendingIds.has(u.id)) {
-                  seenPendingIds.add(u.id);
-                  pendingList.push({ ...u, enrollment_status: 'pending_approval' });
-                }
-              } else {
-                if (!seenActiveIds.has(u.id)) {
-                  seenActiveIds.add(u.id);
-                  const pIdx = pendingList.findIndex((p) => p.id === u.id);
-                  if (pIdx >= 0) pendingList.splice(pIdx, 1);
-                  studentList.push({ ...u, enrollment_status: 'active' });
-                }
-              }
-            }
-          }
-
-          let sem = clsData.semester;
-          let yr = clsData.year_ce;
-          if (!sem || !yr) {
-            const parsed = parseAcademicPeriod(clsData.academic_year);
-            if (parsed) {
-              sem = sem ?? parsed.semester;
-              yr = yr ?? parsed.yearCE;
-            }
-          }
-
-          const hydratedCls: Classroom = {
-            ...clsData,
-            semester: sem,
-            year_ce: yr,
-            students: studentList,
-            pending_students: pendingList,
-            student_count: studentList.length,
-          };
-
-          return { classroom: hydratedCls, students: studentList, pending_students: pendingList };
-        }
-      } catch (err) {
-        console.warn('getClassroomRoster Supabase error:', err);
-      }
-    }
-
-    // Local / Offline fallback
-    const classrooms = await this.getClassrooms();
-    const found = classrooms.find((c) => c.id === classroomId) || null;
-    return {
-      classroom: found,
-      students: found?.students || [],
-      pending_students: found?.pending_students || [],
-    };
-  },
-
-  async getClassroomById(id: string): Promise<Classroom | null> {
-    const roster = await this.getClassroomRoster(id);
-    return roster.classroom;
-  },
-
-  async createClassroom(
-    data: Omit<Classroom, 'id' | 'created_at' | 'student_count' | 'students'>
-  ): Promise<Classroom> {
-    const id = `class-${Date.now()}`;
-    const codeNum = Math.floor(100 + Math.random() * 900);
-    const newClassroom: Classroom = {
-      ...data,
-      id,
-      student_count: 0,
-      students: [],
-      pending_students: [],
-      invite_code: `OMU-${codeNum}`,
-      created_at: new Date().toISOString(),
-    };
-
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-
-      if (newClassroom.teacher_id) {
-        try {
-          const { data: userExists } = await supabase
-            .from("users")
-            .select("id")
-            .eq("id", newClassroom.teacher_id)
-            .maybeSingle();
-
-          if (!userExists) {
-            const teacherObj = newClassroom.teachers?.find((t) => t.teacher_id === newClassroom.teacher_id) || newClassroom.teachers?.[0];
-            const nameParts = (teacherObj?.name || "คุณครู").trim().split(" ");
-            await supabase.from("users").upsert({
-              id: newClassroom.teacher_id,
-              first_name: nameParts[0] || "คุณครู",
-              last_name: nameParts.slice(1).join(" ") || "",
-              role: "teacher",
-              email: teacherObj?.email || null,
-              avatar_url: teacherObj?.avatar_url || null,
-              updated_at: new Date().toISOString(),
-            });
-          }
-        } catch (uErr) {
-          console.warn("Pre-checking teacher in users for classroom notice:", uErr);
-        }
-      }
-
-      const { error } = await supabase.from('classrooms').insert(newClassroom);
-      if (error) {
-        console.error('Supabase createClassroom error:', error);
-        throw error;
-      }
-    }
-
-    const classrooms = getStoredOr<Classroom[]>('classrooms', []);
-    const updated = [newClassroom, ...classrooms.filter((c) => c.id !== id)];
-    setStored('classrooms', updated);
-    return newClassroom;
-  },
-
-  async updateClassroom(id: string, data: Partial<Classroom>): Promise<Classroom | null> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { error } = await supabase.from('classrooms').update(data).eq('id', id);
-      if (error) console.error('Supabase updateClassroom error:', error);
-    }
-
-    const classrooms = await this.getClassrooms();
-    const index = classrooms.findIndex((c) => c.id === id);
-    if (index === -1) return null;
-
-    const updatedClassroom = { ...classrooms[index], ...data };
-    classrooms[index] = updatedClassroom;
-    setStored('classrooms', classrooms);
-    return updatedClassroom;
-  },
-
-  async deleteClassroom(id: string): Promise<void> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { error } = await supabase.from('classrooms').delete().eq('id', id);
-      if (error) console.error('Supabase deleteClassroom error:', error);
-    }
-
-    const classrooms = await this.getClassrooms();
-    const updated = classrooms.filter((c) => c.id !== id);
-    setStored('classrooms', updated);
-  },
-
-  async addStudentToClassroom(
-    classroomId: string,
-    studentData: Omit<User, "id" | "role"> & { id?: string },
-    options: { autoAdmit?: boolean } = {}
-  ): Promise<User> {
-    const autoAdmit = options.autoAdmit ?? true;
-    const studentId =
-      studentData.id ||
-      studentData.line_uid ||
-      (studentData.student_id ? `std_${studentData.student_id.trim()}` : `std-${Date.now()}`);
-
-    const newStudent: User = {
-      ...studentData,
-      id: studentId,
-      role: "student",
-      enrollment_status: autoAdmit ? 'active' : 'pending_approval',
-      is_line_connected: Boolean(studentData.line_uid),
-      avatar_url:
-        studentData.avatar_url ||
-        `https://images.unsplash.com/photo-${1534528741775 + Math.floor(Math.random() * 100)}?w=100`,
-    };
-
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        // 1. Upsert into users table
-        await supabase.from("users").upsert({
-          id: newStudent.id,
-          first_name: newStudent.first_name,
-          last_name: newStudent.last_name,
-          student_id: newStudent.student_id,
-          institution: newStudent.institution,
-          role: "student",
-          email: newStudent.email,
-          avatar_url: newStudent.avatar_url,
-          line_uid: newStudent.line_uid || null,
-          is_line_connected: Boolean(newStudent.line_uid),
-          updated_at: new Date().toISOString(),
-        });
-
-        // 2. Link in classroom_students table
-        await supabase.from("classroom_students").upsert({
-          id: `cs_${classroomId}_${newStudent.id}`,
-          classroom_id: classroomId,
-          student_id: newStudent.id,
-          status: autoAdmit ? "active" : "pending_approval",
-          joined_via: newStudent.line_uid ? "line_liff" : "invite_code",
-        });
-      } catch (err) {
-        console.error("Supabase addStudentToClassroom error:", err);
-      }
-    }
-
-    const classrooms = await this.getClassrooms();
-    const classroom = classrooms.find((c) => c.id === classroomId);
-    if (classroom) {
-      const currentStudents = classroom.students || [];
-      const currentPending = classroom.pending_students || [];
-
-      if (autoAdmit) {
-        // Direct Active Enrollment
-        const exists = currentStudents.some(
-          (s) =>
-            s.id === newStudent.id ||
-            (s.line_uid && s.line_uid === newStudent.line_uid) ||
-            (s.student_id && newStudent.student_id && s.student_id.trim() === newStudent.student_id.trim())
-        );
-        const updatedStudents = exists
-          ? currentStudents.map((s) =>
-              s.id === newStudent.id ||
-              (s.line_uid && s.line_uid === newStudent.line_uid) ||
-              (s.student_id && newStudent.student_id && s.student_id.trim() === newStudent.student_id.trim())
-                ? newStudent
-                : s
-            )
-          : [newStudent, ...currentStudents];
-        
-        classroom.students = updatedStudents;
-        classroom.pending_students = currentPending.filter((p) => p.id !== newStudent.id && p.line_uid !== newStudent.line_uid);
-        classroom.student_count = updatedStudents.length;
-      } else {
-        // Pending Teacher Admission (Admit Required)
-        const alreadyActive = currentStudents.some(
-          (s) => s.id === newStudent.id || (s.line_uid && s.line_uid === newStudent.line_uid)
-        );
-        if (!alreadyActive) {
-          const pendingExists = currentPending.some(
-            (p) => p.id === newStudent.id || (p.line_uid && p.line_uid === newStudent.line_uid)
-          );
-          classroom.pending_students = pendingExists
-            ? currentPending.map((p) => (p.id === newStudent.id ? newStudent : p))
-            : [newStudent, ...currentPending];
-        }
-      }
-
-      if (isSupabaseConfigured) {
-        try {
-          const supabase = createClient();
-          await supabase
-            .from("classrooms")
-            .update({
-              student_count: classroom.students?.length || 0,
-              students: classroom.students || [],
-              pending_students: classroom.pending_students || [],
-            })
-            .eq("id", classroomId);
-        } catch (err) {
-          console.error("Error updating classroom count in Supabase:", err);
-        }
-      }
-      setStored("classrooms", classrooms);
-    }
-
-    // Broadcast instant event across tabs/windows and Supabase Realtime
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const liveChannel = supabase.channel('pudding_realtime_broadcast');
-        liveChannel.subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            liveChannel.send({
-              type: 'broadcast',
-              event: 'student_enrolled',
-              payload: { classroomId, student: newStudent, autoAdmit },
-            });
-          }
-        });
-      } catch {}
-    }
-
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent("pudding_student_enrolled", {
-          detail: { classroomId, student: newStudent, autoAdmit },
-        })
-      );
-      try {
-        const bc = new BroadcastChannel("pudding_classroom_sync");
-        bc.postMessage({ type: "LOCAL_SYNC", detail: { classroomId, student: newStudent, autoAdmit } });
-        bc.close();
-      } catch {}
-    }
-
-    return newStudent;
-  },
-
-  async admitStudentToClassroom(classroomId: string, studentId: string): Promise<boolean> {
-    const classrooms = await this.getClassrooms();
-    const classroom = classrooms.find((c) => c.id === classroomId);
-    if (!classroom) return false;
-
-    const currentPending = classroom.pending_students || [];
-    const studentToAdmit = currentPending.find((s) => s.id === studentId || s.line_uid === studentId);
-    if (!studentToAdmit) return false;
-
-    const remainingPending = currentPending.filter((s) => s.id !== studentId && s.line_uid !== studentId);
-    const existingStudents = classroom.students || [];
-    const updatedStudents = existingStudents.some((s) => s.id === studentToAdmit.id || s.line_uid === studentToAdmit.line_uid)
-      ? existingStudents
-      : [studentToAdmit, ...existingStudents];
-
-    classroom.students = updatedStudents;
-    classroom.pending_students = remainingPending;
-    classroom.student_count = updatedStudents.length;
-
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        await supabase
-          .from("classroom_students")
-          .update({ status: "active" })
-          .match({ classroom_id: classroomId, student_id: studentToAdmit.id });
-
-        await supabase
-          .from("classrooms")
-          .update({
-            students: updatedStudents,
-            pending_students: remainingPending,
-            student_count: updatedStudents.length,
-          })
-          .eq("id", classroomId);
-
-        const liveChannel = supabase.channel('pudding_realtime_broadcast');
-        liveChannel.subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            liveChannel.send({
-              type: 'broadcast',
-              event: 'student_admitted',
-              payload: { classroomId, student: studentToAdmit, action: 'admitted' },
-            });
-          }
-        });
-      } catch (err) {
-        console.error("admitStudentToClassroom error:", err);
-      }
-    }
-
-    setStored("classrooms", classrooms);
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent("pudding_student_admitted", {
-          detail: { classroomId, student: studentToAdmit, action: "admitted" },
-        })
-      );
-      try {
-        const bc = new BroadcastChannel("pudding_classroom_sync");
-        bc.postMessage({ type: "LOCAL_SYNC", detail: { classroomId, student: studentToAdmit, action: "admitted" } });
-        bc.close();
-      } catch {}
-    }
-    return true;
-  },
-
-  async rejectStudentFromClassroom(classroomId: string, studentId: string): Promise<boolean> {
-    const classrooms = await this.getClassrooms();
-    const classroom = classrooms.find((c) => c.id === classroomId);
-    if (!classroom) return false;
-
-    const remainingPending = (classroom.pending_students || []).filter((s) => s.id !== studentId && s.line_uid !== studentId);
-    classroom.pending_students = remainingPending;
-
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        await supabase
-          .from("classroom_students")
-          .delete()
-          .match({ classroom_id: classroomId, student_id: studentId });
-
-        await supabase
-          .from("classrooms")
-          .update({
-            pending_students: remainingPending,
-          })
-          .eq("id", classroomId);
-
-        const liveChannel = supabase.channel('pudding_realtime_broadcast');
-        liveChannel.subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            liveChannel.send({
-              type: 'broadcast',
-              event: 'student_rejected',
-              payload: { classroomId, studentId, action: 'rejected' },
-            });
-          }
-        });
-      } catch (err) {
-        console.error("rejectStudentFromClassroom error:", err);
-      }
-    }
-
-    setStored("classrooms", classrooms);
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent("pudding_student_rejected", {
-          detail: { classroomId, studentId, action: "rejected" },
-        })
-      );
-      try {
-        const bc = new BroadcastChannel("pudding_classroom_sync");
-        bc.postMessage({ type: "LOCAL_SYNC", detail: { classroomId, studentId, action: "rejected" } });
-        bc.close();
-      } catch {}
-    }
-    return true;
-  },
-
-  async removeStudentFromClassroom(classroomId: string, studentId: string): Promise<void> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      await supabase
-        .from('classroom_students')
-        .delete()
-        .match({ classroom_id: classroomId, student_id: studentId });
-    }
-
-    const classrooms = await this.getClassrooms();
-    const classroom = classrooms.find((c) => c.id === classroomId);
-    if (classroom && classroom.students) {
-      classroom.students = classroom.students.filter((s) => s.id !== studentId);
-      classroom.student_count = classroom.students.length;
-
-      if (isSupabaseConfigured) {
-        const supabase = createClient();
-        await supabase
-          .from('classrooms')
-          .update({
-            student_count: classroom.students.length,
-            students: classroom.students,
-          })
-          .eq('id', classroomId);
-      }
-
-      setStored('classrooms', classrooms);
-    }
-  },
-
-  async searchStudentsByInstitution(queryOrInst?: string, instOrQuery?: string): Promise<User[]> {
-    let query = '';
-    let institution = '';
-
-    if (queryOrInst && instOrQuery) {
-      query = queryOrInst;
-      institution = instOrQuery;
-    } else if (queryOrInst) {
-      query = queryOrInst;
-    }
-
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        let req = supabase.from('users').select('*').eq('role', 'student');
-        if (institution) {
-          req = req.eq('institution', institution);
-        }
-        const { data } = await req.limit(50);
-        if (data) {
-          const q = query.toLowerCase().trim();
-          if (!q) return data as User[];
-          return (data as User[]).filter(
-            (u) =>
-              (u.first_name && u.first_name.toLowerCase().includes(q)) ||
-              (u.last_name && u.last_name.toLowerCase().includes(q)) ||
-              (u.student_id && u.student_id.toLowerCase().includes(q)) ||
-              (u.email && u.email.toLowerCase().includes(q))
-          );
-        }
-      } catch (err) {
-        console.warn('searchStudentsByInstitution error:', err);
-      }
-    }
-
-    // Local / offline fallback: search from stored users & classrooms
-    const users = getStoredOr<User[]>('users', []).filter((u) => u.role === 'student');
-    const classrooms = getStoredOr<Classroom[]>('classrooms', []);
-    const studentMap = new Map<string, User>();
-
-    users.forEach((u) => studentMap.set(u.id, u));
-    classrooms.forEach((c) => {
-      (c.students || []).forEach((s) => {
-        if (!studentMap.has(s.id)) {
-          studentMap.set(s.id, {
-            id: s.id,
-            email: s.email,
-            first_name: s.first_name || '',
-            last_name: s.last_name || '',
-            student_id: s.student_id,
-            role: 'student',
-            institution: s.institution,
-            avatar_url: s.avatar_url,
-          });
-        }
-      });
-    });
-
-    let results = Array.from(studentMap.values());
-    if (!institution) return [];
-    results = results.filter((s) => s.institution === institution);
-    const q = query.toLowerCase().trim();
-    if (q) {
-      results = results.filter(
-        (u) =>
-          u.first_name.toLowerCase().includes(q) ||
-          u.last_name.toLowerCase().includes(q) ||
-          (u.student_id && u.student_id.toLowerCase().includes(q))
-      );
-    }
-    return results;
-  },
-
-  async updateClassroomStudent(
-    classroomId: string,
-    studentId: string,
-    teacherId: string,
-    data: { first_name: string; last_name: string; student_id: string }
-  ): Promise<boolean> {
-    const classroom = (await this.getClassrooms()).find((item) => item.id === classroomId);
-    if (!classroom || (classroom.teacher_id !== teacherId && !classroom.teachers?.some((teacher) => teacher.teacher_id === teacherId))) {
-      return false;
-    }
-    const firstName = data.first_name.trim();
-    const lastName = data.last_name.trim();
-    const studentCode = data.student_id.trim();
-    if (!firstName || !lastName || !studentCode) return false;
-
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { error } = await supabase.from('users').update({
-        first_name: firstName,
-        last_name: lastName,
-        student_id: studentCode,
-        updated_at: new Date().toISOString(),
-      }).eq('id', studentId);
-      if (error) throw error;
-    }
-
-    const classrooms = await this.getClassrooms();
-    const target = classrooms.find((item) => item.id === classroomId);
-    if (!target) return false;
-    const update = (student: User): User => student.id === studentId
-      ? { ...student, first_name: firstName, last_name: lastName, student_id: studentCode }
-      : student;
-    target.students = (target.students || []).map(update);
-    target.pending_students = (target.pending_students || []).map(update);
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      await supabase.from('classrooms').update({ students: target.students, pending_students: target.pending_students }).eq('id', classroomId);
-    }
-    setStored('classrooms', classrooms);
-    return true;
-  },
-
-  async searchTeachers(query?: string, institution?: string): Promise<User[]> {
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.from('users').select('*').eq('role', 'teacher').limit(50);
-        if (data && data.length > 0) {
-          const q = (query || '').toLowerCase().trim();
-            let list = data as User[];
-            if (q) {
-            list = list.filter(
-              (u) =>
-                `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase().includes(q) ||
-                (u.email || '').toLowerCase().includes(q) ||
-                (u.institution || '').toLowerCase().includes(q)
-            );
-          }
-          if (institution) {
-            list.sort((a, b) => {
-              const aMatch = a.institution === institution ? 1 : 0;
-              const bMatch = b.institution === institution ? 1 : 0;
-              return bMatch - aMatch;
-            });
-          }
-          return list;
-        }
-      } catch (err) {
-        console.warn('searchTeachers error:', err);
-      }
-    }
-
-    // Local records may still be used for an explicitly offline session, but
-    // never inject sample teachers into production search results.
-    const localUsers = getStoredOr<User[]>('users', []).filter((u) => u.role === 'teacher');
-    const combined: User[] = [...localUsers];
-
-    const q = (query || '').toLowerCase().trim();
-    let results = combined;
-    if (q) {
-      results = results.filter(
-        (u) =>
-          `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase().includes(q) ||
-          (u.email || '').toLowerCase().includes(q) ||
-          (u.institution || '').toLowerCase().includes(q)
-      );
-    }
-    if (institution) {
-      results.sort((a, b) => {
-        const aMatch = a.institution === institution ? 1 : 0;
-        const bMatch = b.institution === institution ? 1 : 0;
-        return bMatch - aMatch;
-      });
-    }
-    return results;
-  },
-
-  async saveResearchGrade(answerId: string, grade: TeacherGradeRecord): Promise<void> {
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const { data: existing } = await supabase
-          .from('submission_answers')
-          .select('research_grades')
-          .eq('id', answerId)
-          .maybeSingle();
-
-        const currentMap = existing?.research_grades || {};
-        const updatedMap = {
-          ...currentMap,
-          [grade.teacher_id]: grade,
-        };
-
-        await supabase
-          .from('submission_answers')
-          .update({
-            research_grades: updatedMap,
-          })
-          .eq('id', answerId);
-      } catch (err) {
-        console.error('saveResearchGrade error:', err);
-      }
-    }
+    if (error) throw toDatabaseError(error, 'users');
+    return data as User;
   },
 
   async getUserById(id: string): Promise<User | null> {
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase.from('users').select('*').eq('id', id).maybeSingle();
-        if (!error && data) return data as User;
-      } catch (err) {
-        console.warn('getUserById error:', err);
-      }
+    const { data, error } = await createClient().from('users').select('*').eq('id', id).maybeSingle();
+    if (error) {
+      console.warn('getUserById error:', error.message);
+      return null;
     }
-    const users = getStoredOr<User[]>('users', []);
-    const found = users.find((u) => u.id === id);
-    if (found) return found;
-
-    // Check stored profiles
-    const storedTeacher = getStoredOr<User | null>('teacher_profile_' + id, null);
-    if (storedTeacher) return storedTeacher;
-    const storedStudent = getStoredOr<User | null>('line_student_' + id, null);
-    if (storedStudent) return storedStudent;
-    return null;
+    return (data as User) || null;
   },
 
-  async updateUserInstitution(userId: string, institution: string): Promise<boolean> {
-    const inst = institution.trim();
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        await supabase
-          .from('users')
-          .update({ institution: inst, updated_at: new Date().toISOString() })
-          .eq('id', userId);
-      } catch (err) {
-        console.error('updateUserInstitution error:', err);
-      }
+  async searchStudentsByInstitution(query?: string, institution?: string): Promise<User[]> {
+    let req = createClient().from('users').select(USER_FIELDS).eq('role', 'student');
+    if (institution) req = req.eq('institution', institution);
+    const q = searchTerm(query || '');
+    if (q) req = req.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,student_id.ilike.%${q}%,email.ilike.%${q}%`);
+    const { data, error } = await req.order('first_name').limit(50);
+    if (error) {
+      console.warn('searchStudentsByInstitution error:', error.message);
+      return [];
     }
+    return (data || []) as User[];
+  },
 
-    const users = getStoredOr<User[]>('users', []);
-    const updatedUsers = users.map((u) => (u.id === userId ? { ...u, institution: inst } : u));
-    setStored('users', updatedUsers);
-
-    const storedTeacher = getStoredOr<User | null>('teacher_profile_' + userId, null);
-    if (storedTeacher) {
-      setStored('teacher_profile_' + userId, { ...storedTeacher, institution: inst });
+  async searchTeachers(query?: string, institution?: string): Promise<User[]> {
+    let req = createClient().from('users').select(USER_FIELDS).eq('role', 'teacher');
+    const q = searchTerm(query || '');
+    if (q) req = req.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,email.ilike.%${q}%,institution.ilike.%${q}%`);
+    const { data, error } = await req.order('first_name').limit(50);
+    if (error) {
+      console.warn('searchTeachers error:', error.message);
+      return [];
     }
-    return true;
+    const list = (data || []) as User[];
+    if (institution) {
+      list.sort((a, b) => Number(b.institution === institution) - Number(a.institution === institution));
+    }
+    return list;
   },
 
   async getRegisteredInstitutions(): Promise<string[]> {
@@ -1716,33 +490,14 @@ export const dataService = {
     if (registeredInstitutionsRequest) return registeredInstitutionsRequest;
 
     registeredInstitutionsRequest = (async () => {
-    const set = new Set<string>();
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const { data } = await supabase.from('users').select('institution');
-        if (data && data.length > 0) {
-          data.forEach((d: { institution?: string | null }) => {
-            if (d.institution && d.institution.trim()) {
-              set.add(d.institution.trim());
-            }
-          });
-        }
-      } catch (e) {
-        console.warn('getRegisteredInstitutions error:', e);
+      const { data, error } = await createClient().from('users').select('institution').not('institution', 'is', null).neq('institution', '');
+      if (error) {
+        console.warn('getRegisteredInstitutions error:', error.message);
+        return [];
       }
-    }
-
-    const users = getStoredOr<User[]>('users', []);
-    users.forEach((u) => {
-      if (u.institution && u.institution.trim()) {
-        set.add(u.institution.trim());
-      }
-    });
-
-    const value = Array.from(set);
-    registeredInstitutionsCache = { value, expiresAt: Date.now() + 5 * 60 * 1000 };
-    return value;
+      const value = [...new Set((data || []).map((d: { institution: string }) => d.institution.trim()).filter(Boolean))];
+      registeredInstitutionsCache = { value, expiresAt: Date.now() + 5 * 60 * 1000 };
+      return value;
     })();
 
     try {
@@ -1752,135 +507,417 @@ export const dataService = {
     }
   },
 
-  subscribeToClassroomChanges(
-    arg1?: string | ((payload: any) => void),
-    arg2?: (payload: any) => void,
-    options: { pollIntervalMs?: number } = {}
-  ) {
-    const teacherId = typeof arg1 === 'string' ? arg1 : 'all';
-    const onClassroomUpdate = typeof arg1 === 'function' ? arg1 : (arg2 || (() => {}));
+  // ==============================================================================
+  // COURSES
+  // ==============================================================================
+  async getCourses(teacherId?: string): Promise<Course[]> {
+    const supabase = createClient();
+    if (!teacherId) {
+      const { data, error } = await supabase.from('courses').select('*').order('created_at', { ascending: false });
+      if (error) throw toDatabaseError(error, 'courses');
+      return (data || []) as Course[];
+    }
+    const [own, shared] = await Promise.all([
+      supabase.from('courses').select('*').eq('primary_teacher_id', teacherId),
+      supabase.from('courses').select('*').contains('teachers', jsonArray({ teacher_id: teacherId })),
+    ]);
+    if (own.error || shared.error) throw toDatabaseError((own.error || shared.error)!, 'courses');
+    return uniqueById([...(own.data || []), ...(shared.data || [])] as Course[]).sort(byCreatedDesc);
+  },
 
-    let supabaseChannel: any = null;
-    let supabaseBroadcastChannel: any = null;
+  async getCourseById(id: string): Promise<Course | null> {
+    const { data, error } = await createClient().from('courses').select('*').eq('id', id).maybeSingle();
+    if (error) throw toDatabaseError(error, 'courses');
+    return (data as Course) || null;
+  },
 
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        // 1. Postgres changes channel
-        supabaseChannel = supabase
-          .channel(`teacher_${teacherId}_classrooms_${Date.now()}`)
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'classrooms' },
-            (payload) => onClassroomUpdate({ type: 'classrooms', payload })
-          )
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'classroom_students' },
-            async (payload: any) => {
-              let studentObj: User | null = null;
-              if (payload?.new?.student_id) {
-                try {
-                  const { data: u } = await supabase.from('users').select('*').eq('id', payload.new.student_id).maybeSingle();
-                  if (u) studentObj = u as User;
-                } catch {}
-              }
-              const isAutoAdmitted = payload?.new?.status === 'active';
-              const action = payload?.eventType === 'UPDATE' && isAutoAdmitted ? 'admitted' : undefined;
-              onClassroomUpdate({
-                type: 'classroom_students',
-                eventType: 'LOCAL_SYNC',
-                detail: {
-                  classroomId: payload?.new?.classroom_id,
-                  student: studentObj || { id: payload?.new?.student_id, first_name: 'นักเรียน', last_name: '' },
-                  autoAdmit: isAutoAdmitted,
-                  action,
-                },
-                payload,
-              });
-            }
-          )
-          .subscribe();
+  async createCourse(data: Omit<Course, 'id' | 'created_at'>): Promise<Course> {
+    const supabase = createClient();
+    const newCourse: Course = { ...data, id: `course-${Date.now()}`, created_at: new Date().toISOString() };
+    await ensureTeacherUser(supabase, newCourse.primary_teacher_id, newCourse.teachers);
+    const { error } = await supabase.from('courses').insert(newCourse);
+    if (error) throw toDatabaseError(error, 'courses');
+    return newCourse;
+  },
 
-        // 2. Direct WebSockets Broadcast channel for instant cross-device delivery
-        supabaseBroadcastChannel = supabase.channel('pudding_realtime_broadcast');
-        supabaseBroadcastChannel
-          .on('broadcast', { event: 'student_enrolled' }, (event: any) => {
-            onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.payload });
-          })
-          .on('broadcast', { event: 'student_admitted' }, (event: any) => {
-            onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.payload });
-          })
-          .on('broadcast', { event: 'student_rejected' }, (event: any) => {
-            onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.payload });
-          })
-          .subscribe();
-      } catch (subErr) {
-        console.warn('Realtime subscription error:', subErr);
+  async updateCourse(id: string, data: Partial<Course>): Promise<Course | null> {
+    const supabase = createClient();
+    const { data: updated, error } = await supabase.from('courses').update(data).eq('id', id).select().maybeSingle();
+    if (error) throw toDatabaseError(error, 'courses');
+
+    // Co-teachers apply to every section of the course.
+    if (data.teachers) {
+      const { error: clsError } = await supabase.from('classrooms').update({ teachers: data.teachers }).eq('course_id', id);
+      if (clsError) console.warn('Sync teachers to classrooms error:', clsError.message);
+    }
+    return (updated as Course) || null;
+  },
+
+  async deleteCourse(id: string): Promise<void> {
+    const { error } = await createClient().from('courses').delete().eq('id', id);
+    if (error) throw toDatabaseError(error, 'courses');
+  },
+
+  /** Indicators the teacher has used in any of their courses, for quick reuse. */
+  async getSavedTeacherIndicators(teacherId?: string): Promise<CourseLearningIndicator[]> {
+    if (!teacherId) return [];
+    const courses = await this.getCourses(teacherId);
+    const seen = new Set<string>();
+    const collected: CourseLearningIndicator[] = [];
+    for (const course of courses) {
+      for (const ind of course.indicators || []) {
+        const key = ind.title?.trim().toLowerCase();
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          collected.push(ind);
+        }
       }
     }
+    return collected;
+  },
 
-    const handleLocalEvent = (e: any) => {
-      onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: e.detail });
+  async updateCourseIndicators(courseId: string, indicators: CourseLearningIndicator[]): Promise<Course | null> {
+    return this.updateCourse(courseId, { indicators });
+  },
+
+  // ==============================================================================
+  // CLASSROOMS
+  // ==============================================================================
+  /**
+   * A teacher's classrooms (owned or co-taught). Rosters are filled in from the
+   * users table unless `withRoster: false` (lists that only show class names).
+   */
+  async getClassrooms(teacherId?: string, options: { withRoster?: boolean } = {}): Promise<Classroom[]> {
+    const supabase = createClient();
+    let rows: Classroom[];
+    if (teacherId) {
+      const [own, shared] = await Promise.all([
+        supabase.from('classrooms').select('*').eq('teacher_id', teacherId),
+        supabase.from('classrooms').select('*').contains('teachers', jsonArray({ teacher_id: teacherId })),
+      ]);
+      if (own.error || shared.error) throw toDatabaseError((own.error || shared.error)!, 'classrooms');
+      rows = uniqueById([...(own.data || []), ...(shared.data || [])] as Classroom[]).sort(byCreatedDesc);
+    } else {
+      const { data, error } = await supabase.from('classrooms').select('*').order('created_at', { ascending: false });
+      if (error) throw toDatabaseError(error, 'classrooms');
+      rows = (data || []) as Classroom[];
+    }
+    return options.withRoster === false ? rows : hydrateClassrooms(supabase, rows);
+  },
+
+  /** Classrooms a student belongs to or has asked to join. */
+  async getStudentClassrooms(student: { id: string; line_uid?: string }): Promise<Classroom[]> {
+    const supabase = createClient();
+    const keys = [student.id, student.line_uid || ''].filter(Boolean);
+    const [fromRoster, links] = await Promise.all([
+      findClassroomsContainingStudent(supabase, keys),
+      supabase.from('classroom_students').select('classroom_id').in('student_id', keys),
+    ]);
+    const known = new Set(fromRoster.map((c) => c.id));
+    const extraIds = [...new Set((links.data || []).map((l: { classroom_id: string }) => l.classroom_id))].filter((id) => !known.has(id));
+    let extra: Classroom[] = [];
+    if (extraIds.length) {
+      const { data } = await supabase.from('classrooms').select('*').in('id', extraIds);
+      extra = (data || []) as Classroom[];
+    }
+    return hydrateClassrooms(supabase, [...fromRoster, ...extra].sort(byCreatedDesc));
+  },
+
+  async findClassroomByInviteCode(code: string): Promise<Classroom | null> {
+    const supabase = createClient();
+    const { data, error } = await supabase.from('classrooms').select('*').ilike('invite_code', searchTerm(code)).limit(1).maybeSingle();
+    if (error || !data) return null;
+    const [hydrated] = await hydrateClassrooms(supabase, [data as Classroom]);
+    return hydrated;
+  },
+
+  async getClassroomRoster(classroomId: string): Promise<{ classroom: Classroom | null; students: User[]; pending_students: User[] }> {
+    const supabase = createClient();
+    const { data, error } = await supabase.from('classrooms').select('*').eq('id', classroomId).maybeSingle();
+    if (error) throw toDatabaseError(error, 'classrooms');
+    if (!data) return { classroom: null, students: [], pending_students: [] };
+    const [classroom] = await hydrateClassrooms(supabase, [data as Classroom]);
+    return { classroom, students: classroom.students || [], pending_students: classroom.pending_students || [] };
+  },
+
+  async getClassroomById(id: string): Promise<Classroom | null> {
+    return (await this.getClassroomRoster(id)).classroom;
+  },
+
+  async createClassroom(data: Omit<Classroom, 'id' | 'created_at' | 'student_count' | 'students'>): Promise<Classroom> {
+    const supabase = createClient();
+    const inviteCode = `PD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const newClassroom: Classroom = {
+      ...data,
+      id: `class-${Date.now()}`,
+      student_count: 0,
+      students: [],
+      pending_students: [],
+      invite_code: inviteCode,
+      created_at: new Date().toISOString(),
+    };
+    await ensureTeacherUser(supabase, newClassroom.teacher_id, newClassroom.teachers);
+    const { error } = await supabase.from('classrooms').insert(newClassroom);
+    if (error) throw toDatabaseError(error, 'classrooms');
+    return newClassroom;
+  },
+
+  async updateClassroom(id: string, data: Partial<Classroom>): Promise<Classroom | null> {
+    const { data: updated, error } = await createClient().from('classrooms').update(data).eq('id', id).select().maybeSingle();
+    if (error) throw toDatabaseError(error, 'classrooms');
+    return (updated as Classroom) || null;
+  },
+
+  async deleteClassroom(id: string): Promise<void> {
+    const { error } = await createClient().from('classrooms').delete().eq('id', id);
+    if (error) throw toDatabaseError(error, 'classrooms');
+  },
+
+  async addStudentToClassroom(
+    classroomId: string,
+    studentData: Omit<User, 'id' | 'role'> & { id?: string },
+    options: { autoAdmit?: boolean } = {}
+  ): Promise<User> {
+    const supabase = createClient();
+    const autoAdmit = options.autoAdmit ?? true;
+    const studentId =
+      studentData.id || studentData.line_uid || (studentData.student_id ? `std_${studentData.student_id.trim()}` : `std-${Date.now()}`);
+    const newStudent: User = {
+      ...studentData,
+      id: studentId,
+      role: 'student',
+      enrollment_status: autoAdmit ? 'active' : 'pending_approval',
+      is_line_connected: Boolean(studentData.line_uid),
     };
 
+    const [userResult, linkResult, classResult] = await Promise.all([
+      supabase.from('users').upsert({
+        id: newStudent.id,
+        first_name: newStudent.first_name,
+        last_name: newStudent.last_name,
+        student_id: newStudent.student_id,
+        institution: newStudent.institution,
+        role: 'student',
+        email: newStudent.email,
+        avatar_url: newStudent.avatar_url || null,
+        line_uid: newStudent.line_uid || null,
+        is_line_connected: Boolean(newStudent.line_uid),
+        updated_at: new Date().toISOString(),
+      }),
+      supabase.from('classroom_students').upsert({
+        id: `cs_${classroomId}_${newStudent.id}`,
+        classroom_id: classroomId,
+        student_id: newStudent.id,
+        status: autoAdmit ? 'active' : 'pending_approval',
+        joined_via: newStudent.line_uid ? 'line_liff' : 'invite_code',
+      }),
+      supabase.from('classrooms').select('students, pending_students').eq('id', classroomId).maybeSingle(),
+    ]);
+    if (userResult.error) throw toDatabaseError(userResult.error, 'users');
+    if (linkResult.error) throw toDatabaseError(linkResult.error, 'classroom_students');
+    if (classResult.error || !classResult.data) throw new Error('ไม่พบห้องเรียนนี้');
+
+    const sameStudent = (s: User) =>
+      s.id === newStudent.id ||
+      (!!s.line_uid && s.line_uid === newStudent.line_uid) ||
+      (!!s.student_id && !!newStudent.student_id && s.student_id.trim() === newStudent.student_id.trim());
+    let students = (classResult.data.students || []) as User[];
+    let pending = (classResult.data.pending_students || []) as User[];
+
+    if (autoAdmit) {
+      students = students.some(sameStudent) ? students.map((s) => (sameStudent(s) ? newStudent : s)) : [newStudent, ...students];
+      pending = pending.filter((p) => !sameStudent(p));
+    } else if (!students.some(sameStudent)) {
+      pending = pending.some(sameStudent) ? pending.map((p) => (sameStudent(p) ? newStudent : p)) : [newStudent, ...pending];
+    }
+
+    const { error } = await supabase
+      .from('classrooms')
+      .update({ students, pending_students: pending, student_count: students.length })
+      .eq('id', classroomId);
+    if (error) throw toDatabaseError(error, 'classrooms');
+
+    const detail = { classroomId, student: newStudent, autoAdmit };
+    broadcastRealtime('student_enrolled', detail);
+    notifyLocal('pudding_student_enrolled', detail);
+    return newStudent;
+  },
+
+  async admitStudentToClassroom(classroomId: string, studentId: string): Promise<boolean> {
+    const supabase = createClient();
+    const { classroom } = await this.getClassroomRoster(classroomId);
+    if (!classroom) return false;
+    const pendingList = classroom.pending_students || [];
+    const student = pendingList.find((s) => s.id === studentId || s.line_uid === studentId);
+    if (!student) return false;
+
+    const remaining = pendingList.filter((s) => s.id !== studentId && s.line_uid !== studentId);
+    const current = classroom.students || [];
+    const students = current.some((s) => s.id === student.id || (!!s.line_uid && s.line_uid === student.line_uid))
+      ? current
+      : [{ ...student, enrollment_status: 'active' as const }, ...current];
+
+    const [linkResult, classResult] = await Promise.all([
+      supabase.from('classroom_students').update({ status: 'active' }).match({ classroom_id: classroomId, student_id: student.id }),
+      supabase.from('classrooms').update({ students, pending_students: remaining, student_count: students.length }).eq('id', classroomId),
+    ]);
+    if (classResult.error) throw toDatabaseError(classResult.error, 'classrooms');
+    if (linkResult.error) console.warn('admitStudentToClassroom link warning:', linkResult.error.message);
+
+    const detail = { classroomId, student, action: 'admitted' };
+    broadcastRealtime('student_admitted', detail);
+    notifyLocal('pudding_student_admitted', detail);
+    return true;
+  },
+
+  async rejectStudentFromClassroom(classroomId: string, studentId: string): Promise<boolean> {
+    const supabase = createClient();
+    const { data, error } = await supabase.from('classrooms').select('pending_students').eq('id', classroomId).maybeSingle();
+    if (error || !data) return false;
+    const remaining = ((data.pending_students || []) as User[]).filter((s) => s.id !== studentId && s.line_uid !== studentId);
+
+    const [linkResult, classResult] = await Promise.all([
+      supabase.from('classroom_students').delete().match({ classroom_id: classroomId, student_id: studentId }),
+      supabase.from('classrooms').update({ pending_students: remaining }).eq('id', classroomId),
+    ]);
+    if (classResult.error) throw toDatabaseError(classResult.error, 'classrooms');
+    if (linkResult.error) console.warn('rejectStudentFromClassroom link warning:', linkResult.error.message);
+
+    const detail = { classroomId, studentId, action: 'rejected' };
+    broadcastRealtime('student_rejected', detail);
+    notifyLocal('pudding_student_rejected', detail);
+    return true;
+  },
+
+  async removeStudentFromClassroom(classroomId: string, studentId: string): Promise<void> {
+    const supabase = createClient();
+    const { data, error } = await supabase.from('classrooms').select('students, pending_students').eq('id', classroomId).maybeSingle();
+    if (error) throw toDatabaseError(error, 'classrooms');
+    const keep = (s: User) => s.id !== studentId && s.line_uid !== studentId;
+    const students = ((data?.students || []) as User[]).filter(keep);
+    const pending = ((data?.pending_students || []) as User[]).filter(keep);
+
+    const [linkResult, classResult] = await Promise.all([
+      supabase.from('classroom_students').delete().match({ classroom_id: classroomId, student_id: studentId }),
+      supabase.from('classrooms').update({ students, pending_students: pending, student_count: students.length }).eq('id', classroomId),
+    ]);
+    if (classResult.error) throw toDatabaseError(classResult.error, 'classrooms');
+    if (linkResult.error) console.warn('removeStudentFromClassroom link warning:', linkResult.error.message);
+  },
+
+  /**
+   * Notify when rosters change. Uses Supabase Realtime, plus a light fallback
+   * poll (classroom ids + roster ids only) for projects without Realtime.
+   * Pass `classroomIds` so events about other classrooms are ignored.
+   */
+  subscribeToClassroomChanges(
+    arg1?: string | ((event: ClassroomChangeEvent) => void),
+    arg2?: (event: ClassroomChangeEvent) => void,
+    options: { pollIntervalMs?: number; classroomIds?: () => string[] } = {}
+  ) {
+    const teacherId = typeof arg1 === 'string' ? arg1 : undefined;
+    const onUpdate = typeof arg1 === 'function' ? arg1 : arg2 || (() => {});
+    const supabase = createClient();
+
+    const inScope = (classroomId?: string, row?: { teacher_id?: string; teachers?: { teacher_id: string }[] }) => {
+      if (!options.classroomIds) return true;
+      if (classroomId && options.classroomIds().includes(classroomId)) return true;
+      return !!teacherId && !!row && isTeacherOf(row, teacherId);
+    };
+
+    const channel = supabase
+      .channel(`classrooms_${teacherId || 'student'}_${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'classrooms' }, (change) => {
+        const payload = change as RowChange<Classroom>;
+        const row = payload.new?.id ? payload.new : payload.old;
+        if (inScope(row?.id, row)) onUpdate({ type: 'classrooms', payload });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'classroom_students' }, async (change) => {
+        const payload = change as RowChange<EnrollmentLink>;
+        const classroomId = payload?.new?.classroom_id || payload?.old?.classroom_id;
+        if (!inScope(classroomId)) return;
+        let student: User | null = null;
+        if (payload?.new?.student_id) {
+          const { data } = await supabase.from('users').select(USER_FIELDS).eq('id', payload.new.student_id).maybeSingle();
+          student = (data as User) || null;
+        }
+        const autoAdmit = payload?.new?.status === 'active';
+        onUpdate({
+          type: 'classroom_students',
+          eventType: 'LOCAL_SYNC',
+          detail: {
+            classroomId,
+            student: student || { id: payload?.new?.student_id, first_name: 'นักเรียน', last_name: '' },
+            autoAdmit,
+            action: payload?.eventType === 'UPDATE' && autoAdmit ? 'admitted' : undefined,
+          },
+          payload,
+        });
+      })
+      .subscribe();
+
+    const broadcast = supabase.channel('pudding_realtime_broadcast');
+    const onBroadcast = (event: { payload?: ClassroomChangeEvent['detail'] }) => {
+      if (inScope(event.payload?.classroomId)) onUpdate({ eventType: 'LOCAL_SYNC', detail: event.payload });
+    };
+    broadcast
+      .on('broadcast', { event: 'student_enrolled' }, onBroadcast)
+      .on('broadcast', { event: 'student_admitted' }, onBroadcast)
+      .on('broadcast', { event: 'student_rejected' }, onBroadcast)
+      .subscribe();
+
+    const handleLocalEvent = (e: Event) => onUpdate({ eventType: 'LOCAL_SYNC', detail: (e as CustomEvent).detail });
     let bc: BroadcastChannel | null = null;
-    let pollInterval: NodeJS.Timeout | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     if (typeof window !== 'undefined') {
       window.addEventListener('pudding_student_enrolled', handleLocalEvent);
       window.addEventListener('pudding_student_admitted', handleLocalEvent);
       window.addEventListener('pudding_student_rejected', handleLocalEvent);
-
       try {
         bc = new BroadcastChannel('pudding_classroom_sync');
-        bc.onmessage = (event) => {
-          onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: event.data?.detail || event.data });
-        };
+        bc.onmessage = (event) => onUpdate({ eventType: 'LOCAL_SYNC', detail: event.data?.detail || event.data });
       } catch {}
 
-      // Fast state fingerprint comparison (runs every 2.5s for instant sync across any device)
-      let lastKnownFingerprint = '';
-      pollInterval = setInterval(async () => {
-        if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      // Fallback poll: compares roster ids only, never the full hydrated data.
+      if (options.classroomIds) {
+        let lastFingerprint = '';
+        pollTimer = setInterval(async () => {
+          if (document.visibilityState !== 'visible') return;
+          const ids = options.classroomIds!();
+          if (ids.length === 0) return;
           try {
-            const currentClasses = await this.getClassrooms();
-            const fingerprint = currentClasses
-              .map((c) => `${c.id}:s[${(c.students || []).map((s) => s.id).join(',')}]:p[${(c.pending_students || []).map((p) => p.id).join(',')}]`)
-              .join('|');
-
-            if (lastKnownFingerprint && fingerprint !== lastKnownFingerprint) {
-              onClassroomUpdate({ eventType: 'LOCAL_SYNC', detail: { source: 'poll' } });
+            const [cls, links] = await Promise.all([
+              supabase.from('classrooms').select('id, students, pending_students').in('id', ids),
+              supabase.from('classroom_students').select('classroom_id, student_id, status').in('classroom_id', ids),
+            ]);
+            const fingerprint = JSON.stringify([
+              ((cls.data || []) as Classroom[]).map((c) => [c.id, (c.students || []).map((s) => s.id), (c.pending_students || []).map((s) => s.id)]),
+              (links.data || []).map((l: EnrollmentLink) => `${l.classroom_id}:${l.student_id}:${l.status}`).sort(),
+            ]);
+            if (lastFingerprint && fingerprint !== lastFingerprint) {
+              onUpdate({ eventType: 'LOCAL_SYNC', detail: { source: 'poll' } });
             }
-            lastKnownFingerprint = fingerprint;
+            lastFingerprint = fingerprint;
           } catch {}
-        }
-      }, options.pollIntervalMs ?? 2500);
+        }, options.pollIntervalMs ?? 15000);
+      }
     }
 
     return () => {
-      if (supabaseChannel && isSupabaseConfigured) {
-        try {
-          const supabase = createClient();
-          supabase.removeChannel(supabaseChannel);
-          if (supabaseBroadcastChannel) {
-            supabase.removeChannel(supabaseBroadcastChannel);
-          }
-        } catch {}
-      }
+      try {
+        supabase.removeChannel(channel);
+        supabase.removeChannel(broadcast);
+      } catch {}
       if (typeof window !== 'undefined') {
         window.removeEventListener('pudding_student_enrolled', handleLocalEvent);
         window.removeEventListener('pudding_student_admitted', handleLocalEvent);
         window.removeEventListener('pudding_student_rejected', handleLocalEvent);
       }
-      if (bc) {
-        try {
-          bc.close();
-        } catch {}
-      }
-      if (pollInterval) {
-        clearInterval(pollInterval);
-      }
+      try {
+        bc?.close();
+      } catch {}
+      if (pollTimer) clearInterval(pollTimer);
     };
   },
 
@@ -1888,56 +925,55 @@ export const dataService = {
   // LEARNING INDICATORS
   // ==============================================================================
   async getLearningIndicators(): Promise<LearningIndicator[]> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase.from('learning_indicators').select('*').order('order_index');
-      if (!error && data) return data as LearningIndicator[];
+    const { data, error } = await createClient().from('learning_indicators').select('*').order('order_index');
+    if (error) {
+      console.warn('getLearningIndicators error:', error.message);
+      return [];
     }
-    return getStoredOr<LearningIndicator[]>('learning_indicators', []);
+    return (data || []) as LearningIndicator[];
   },
 
   // ==============================================================================
   // ASSIGNMENTS
   // ==============================================================================
-  async getAssignments(): Promise<Assignment[]> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase.from('assignments').select('*').order('created_at', { ascending: false });
-      if (!error && data) return data as Assignment[];
-    }
-    return getStoredOr<Assignment[]>('assignments', []);
+  async getAssignmentsByClassroomIds(classroomIds: string[]): Promise<Assignment[]> {
+    const ids = [...new Set(classroomIds.filter(Boolean))];
+    if (ids.length === 0) return [];
+    const supabase = createClient();
+    const results = await Promise.all(chunk(ids).map((part) => supabase.from('assignments').select('*').in('classroom_id', part)));
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw toDatabaseError(failed.error, 'assignments');
+    return results.flatMap((r) => (r.data || []) as Assignment[]).sort(byCreatedDesc);
+  },
+
+  async getAssignmentsByClassroomId(classroomId: string): Promise<Assignment[]> {
+    return this.getAssignmentsByClassroomIds([classroomId]);
   },
 
   async getQuestions(assignmentId: string): Promise<Question[]> {
-    const { questions } = await this.getAssignmentById(assignmentId);
-    return questions;
+    const { data, error } = await createClient().from('questions').select('*').eq('assignment_id', assignmentId);
+    if (error) throw toDatabaseError(error, 'questions');
+    return (data || []) as Question[];
   },
 
   async getAssignmentById(id: string): Promise<{ assignment: Assignment | null; questions: Question[] }> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data: assignData } = await supabase.from('assignments').select('*').eq('id', id).single();
-      const { data: qData } = await supabase.from('questions').select('*').eq('assignment_id', id);
-      if (assignData) {
-        return {
-          assignment: assignData as Assignment,
-          questions: (qData || []) as Question[],
-        };
-      }
-    }
-
-    const assignments = getStoredOr<Assignment[]>('assignments', []);
-    const assignment = assignments.find((a) => a.id === id) || null;
-    const allQuestions = getStoredOr<Question[]>('questions', []);
-    const questions = allQuestions.filter((q) => q.assignment_id === id);
-
-    return { assignment, questions };
+    const supabase = createClient();
+    const [assignmentResult, questionsResult] = await Promise.all([
+      supabase.from('assignments').select('*').eq('id', id).maybeSingle(),
+      supabase.from('questions').select('*').eq('assignment_id', id),
+    ]);
+    if (assignmentResult.error) throw toDatabaseError(assignmentResult.error, 'assignments');
+    return {
+      assignment: (assignmentResult.data as Assignment) || null,
+      questions: (questionsResult.data || []) as Question[],
+    };
   },
 
   async createAssignment(
     assignmentData: Omit<Assignment, 'id' | 'created_at'>,
     questionsData: Omit<Question, 'id' | 'assignment_id'>[]
   ): Promise<{ assignment: Assignment; questions: Question[] }> {
+    const supabase = createClient();
     const id = `assign-${Date.now()}`;
     const newAssignment: Assignment = {
       ...assignmentData,
@@ -1945,35 +981,24 @@ export const dataService = {
       status_override: assignmentData.status_override || 'auto',
       created_at: new Date().toISOString(),
     };
+    const newQuestions: Question[] = questionsData.map((q, idx) => ({ ...q, id: `q-${Date.now()}-${idx}`, assignment_id: id }));
 
-    const newQuestions: Question[] = questionsData.map((q, idx) => ({
-      ...q,
-      id: `q-${Date.now()}-${idx}`,
-      assignment_id: id,
-    }));
-
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      let { error: assignError } = await supabase.from('assignments').insert(newAssignment);
-      // If group_name column doesn't exist yet in Supabase schema, retry without it
-      if (assignError && assignError.message?.includes('group_name')) {
-        const { group_name, ...withoutGroup } = newAssignment;
-        await supabase.from('assignments').insert(withoutGroup);
-      }
-      if (newQuestions.length > 0) {
-        await supabase.from('questions').insert(newQuestions);
+    let { error } = await supabase.from('assignments').insert(newAssignment);
+    // Databases without the group_name column yet still accept the assignment.
+    if (error && error.message?.includes('group_name')) {
+      const { group_name: _unused, ...withoutGroup } = newAssignment;
+      ({ error } = await supabase.from('assignments').insert(withoutGroup));
+    }
+    if (error) throw toDatabaseError(error, 'assignments');
+    if (newQuestions.length > 0) {
+      const { error: qError } = await supabase.from('questions').insert(newQuestions);
+      if (qError) {
+        await supabase.from('assignments').delete().eq('id', id);
+        throw toDatabaseError(qError, 'questions');
       }
     }
 
-    // Always update local store
-    const assignments = getStoredOr<Assignment[]>('assignments', []);
-    setStored('assignments', [newAssignment, ...assignments]);
-
-    const questions = getStoredOr<Question[]>('questions', []);
-    setStored('questions', [...questions, ...newQuestions]);
-
-    // Record the creation in the classroom timeline and notify the LINE group.
-    // This is intentionally best-effort so assignment creation is not blocked by an optional timeline table.
+    // Timeline post + LINE notification; best effort so creation is not blocked.
     if (typeof window !== 'undefined' && assignmentData.classroom_id) {
       fetch('/api/classrooms/posts', {
         method: 'POST',
@@ -1984,54 +1009,31 @@ export const dataService = {
           body: `${assignmentData.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${assignmentData.title} (${assignmentData.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${formatDateTime(assignmentData.due_date, 'th', SCHOOL_TIME_ZONE)})`,
           metadata: { assignmentId: id, dueDate: assignmentData.due_date, groupName: assignmentData.group_name || (assignmentData.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
         }),
-      }).catch((error) => console.warn('Unable to publish assignment activity:', error));
+      }).catch((err) => console.warn('Unable to publish assignment activity:', err));
     }
 
     return { assignment: newAssignment, questions: newQuestions };
   },
 
-  async getAssignmentsByClassroomId(classroomId: string): Promise<Assignment[]> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase.from('assignments').select('*').eq('classroom_id', classroomId).order('created_at', { ascending: false });
-      if (!error && data) return data as Assignment[];
-    }
-    const assignments = getStoredOr<Assignment[]>('assignments', []);
-    return assignments.filter((a) => a.classroom_id === classroomId);
-  },
-
   async updateAssignment(id: string, data: Partial<Omit<Assignment, 'id' | 'created_at'>>): Promise<Assignment | null> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      let { error } = await supabase.from('assignments').update(data).eq('id', id);
-      if (error && error.message?.includes('group_name')) {
-        const { group_name, ...withoutGroup } = data;
-        await supabase.from('assignments').update(withoutGroup).eq('id', id);
-      }
+    const supabase = createClient();
+    let { data: updated, error } = await supabase.from('assignments').update(data).eq('id', id).select().maybeSingle();
+    if (error && error.message?.includes('group_name')) {
+      const { group_name: _unused, ...withoutGroup } = data;
+      ({ data: updated, error } = await supabase.from('assignments').update(withoutGroup).eq('id', id).select().maybeSingle());
     }
-    const assignments = getStoredOr<Assignment[]>('assignments', []);
-    const index = assignments.findIndex((assignment) => assignment.id === id);
-    if (index === -1) return null;
-    assignments[index] = { ...assignments[index], ...data };
-    setStored('assignments', assignments);
-    return assignments[index];
+    if (error) throw toDatabaseError(error, 'assignments');
+    return (updated as Assignment) || null;
   },
 
   async deleteAssignment(id: string): Promise<boolean> {
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        await supabase.from('questions').delete().eq('assignment_id', id);
-        await supabase.from('submissions').delete().eq('assignment_id', id);
-        await supabase.from('assignments').delete().eq('id', id);
-      } catch (err) {
-        console.warn('deleteAssignment Supabase error:', err);
-      }
-    }
-    const assignments = getStoredOr<Assignment[]>('assignments', []);
-    setStored('assignments', assignments.filter((a) => a.id !== id));
-    const questions = getStoredOr<Question[]>('questions', []);
-    setStored('questions', questions.filter((q) => q.assignment_id !== id));
+    const supabase = createClient();
+    await Promise.all([
+      supabase.from('questions').delete().eq('assignment_id', id),
+      supabase.from('submissions').delete().eq('assignment_id', id),
+    ]);
+    const { error } = await supabase.from('assignments').delete().eq('id', id);
+    if (error) throw toDatabaseError(error, 'assignments');
     return true;
   },
 
@@ -2039,23 +1041,7 @@ export const dataService = {
     assignmentId: string,
     override: { status_override: SubmissionOverrideStatus; extended_until?: string }
   ): Promise<Assignment | null> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      await supabase.from('assignments').update(override).eq('id', assignmentId);
-    }
-
-    const assignments = await this.getAssignments();
-    const index = assignments.findIndex((a) => a.id === assignmentId);
-    if (index === -1) return null;
-
-    assignments[index] = {
-      ...assignments[index],
-      status_override: override.status_override,
-      extended_until: override.extended_until,
-    };
-
-    setStored('assignments', assignments);
-    return assignments[index];
+    return this.updateAssignment(assignmentId, override);
   },
 
   // ==============================================================================
@@ -2069,252 +1055,114 @@ export const dataService = {
     student_last_name?: string;
     student_avatar?: string;
     line_uid?: string;
-    answers: Array<{
-      question_id: string;
-      answer_text?: string;
-      file_url?: string;
-    }>;
+    answers: Array<{ question_id: string; answer_text?: string; file_url?: string }>;
     antiCheating: {
       tab_switch_count: number;
       away_time_seconds: number;
       events: Array<{
-        event_type: "tab_hidden" | "window_blur" | "tab_visible" | "window_focus";
+        event_type: 'tab_hidden' | 'window_blur' | 'tab_visible' | 'window_focus';
         timestamp: string;
         duration_seconds: number;
         details?: string;
       }>;
     };
   }): Promise<Submission> {
-    let subId = `sub-${payload.assignment_id}-${payload.student_id}`;
-    const isSuspicious = payload.antiCheating.tab_switch_count >= 3 || payload.antiCheating.away_time_seconds >= 30;
+    const firstName = payload.student_first_name || payload.student_name.split(' ')[0] || 'นักเรียน';
+    const lastName = payload.student_last_name || payload.student_name.split(' ').slice(1).join(' ');
 
-    const firstName = payload.student_first_name || (payload.student_name ? payload.student_name.split(' ')[0] : 'นักเรียน');
-    const lastName = payload.student_last_name || (payload.student_name ? payload.student_name.split(' ').slice(1).join(' ') : '');
-
-    const submission: Submission = {
-      id: subId,
-      assignment_id: payload.assignment_id,
-      student_id: payload.student_id,
-      student: {
-        id: payload.student_id,
-        first_name: firstName,
-        last_name: lastName,
+    const res = await fetch('/api/submissions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        assignment_id: payload.assignment_id,
         student_id: payload.student_id,
-        line_uid: payload.line_uid || payload.student_id,
-        role: 'student',
-        email: '',
-        avatar_url: payload.student_avatar,
-      },
-      status: "submitted",
-      started_at: new Date(Date.now() - (payload.antiCheating.away_time_seconds * 1000 + 120000)).toISOString(),
-      submitted_at: new Date().toISOString(),
-      time_spent_seconds: 120 + payload.antiCheating.away_time_seconds,
-      tab_switch_count: payload.antiCheating.tab_switch_count,
-      total_time_away_seconds: payload.antiCheating.away_time_seconds,
-      is_flagged_suspicious: isSuspicious,
-      total_score: undefined,
-    };
-
-    // 1. Post to Server API (Uses Supabase service role + file persistence)
-    try {
-      const res = await fetch('/api/submissions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          assignment_id: payload.assignment_id,
-          student_id: payload.student_id,
-          student_name: payload.student_name,
-          student_first_name: firstName,
-          student_last_name: lastName,
-          student_avatar: payload.student_avatar,
-          line_uid: payload.line_uid,
-          answers: payload.answers,
-          antiCheating: payload.antiCheating,
-        }),
-      });
-      const resData = await res.json().catch(() => ({}));
-      console.log('[submitStudentWork] /api/submissions response:', res.status, resData);
-      if (!res.ok || !resData?.submission) {
-        throw new Error(resData?.error || resData?.detail || `ส่งงานไม่สำเร็จ (${res.status})`);
-      }
-      // Mirror the server's canonical row (id, users.id, on-time/late status) so
-      // the local cache matches what the teacher portal reads.
-      subId = resData.submission.id || subId;
-      submission.id = subId;
-      submission.student_id = resData.submission.student_id || submission.student_id;
-      submission.status = resData.submission.status || submission.status;
-      submission.submitted_at = resData.submission.submitted_at || submission.submitted_at;
-      submission.total_score = resData.submission.total_score ?? undefined;
-      submission.max_total_score = resData.submission.max_total_score;
-    } catch (apiErr) {
-      console.error('submitStudentWork /api/submissions failed:', apiErr);
-      throw apiErr instanceof Error ? apiErr : new Error('ไม่สามารถส่งงานไปยังเซิร์ฟเวอร์ได้');
+        student_name: payload.student_name,
+        student_first_name: firstName,
+        student_last_name: lastName,
+        student_avatar: payload.student_avatar,
+        line_uid: payload.line_uid,
+        answers: payload.answers,
+        antiCheating: payload.antiCheating,
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.submission) {
+      throw new Error(json?.error || json?.detail || `ส่งงานไม่สำเร็จ (${res.status})`);
     }
+    const submission = json.submission as Submission;
 
-    // The server is the single source of truth. Only persist a local copy after
-    // it has acknowledged the submission, so a failed request cannot look sent.
-    const submissions = getStoredOr<Submission[]>("submissions", []);
-    const existingIdx = submissions.findIndex((s) => s.id === subId);
-    if (existingIdx !== -1) {
-      submissions[existingIdx] = submission;
-    } else {
-      submissions.push(submission);
-    }
-    setStored("submissions", submissions);
-
-    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>("submission_answers", {});
-    allAnswers[subId] = allAnswers[subId] || {};
-    for (const ans of payload.answers) {
-      allAnswers[subId][ans.question_id] = {
-        id: `ans-${subId}-${ans.question_id}`,
-        submission_id: subId,
-        question_id: ans.question_id,
-        text_answer: ans.answer_text,
-        file_url: ans.file_url,
-      };
-    }
-    setStored("submission_answers", allAnswers);
-
-    // 4. Trigger Realtime Broadcast across browser windows
     if (typeof window !== 'undefined') {
       try {
         window.dispatchEvent(new CustomEvent('pudding-submission-created', { detail: { submission } }));
-        if ('BroadcastChannel' in window) {
-          const bc = new BroadcastChannel('pudding-realtime');
-          bc.postMessage({ type: 'submission_created', submission });
-          bc.close();
-        }
+        const bc = new BroadcastChannel('pudding-realtime');
+        bc.postMessage({ type: 'submission_created', submission });
+        bc.close();
       } catch {}
     }
-
     return submission;
   },
 
-  async getAllSubmissions(): Promise<Submission[]> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase.from("submissions").select("*");
-      if (!error && data) return data as Submission[];
-    }
-    return getStoredOr<Submission[]>("submissions", []);
-  },
-
   async getSubmissions(assignmentId: string): Promise<Submission[]> {
-    let serverSubmissions: Submission[] = [];
-    try {
-      const res = await fetch(`/api/submissions?assignmentId=${encodeURIComponent(assignmentId)}`, {
-        cache: 'no-store',
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.submissions && Array.isArray(json.submissions)) {
-          serverSubmissions = json.submissions;
-        }
-      }
-    } catch {}
-
-    let directDbSubmissions: Submission[] = [];
-    if (isSupabaseConfigured) {
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase
-          .from('submissions')
-          .select('*')
-          .eq('assignment_id', assignmentId);
-        if (!error && data) directDbSubmissions = data as Submission[];
-      } catch {}
-    }
-
-    const localStored = getStoredOr<Submission[]>('submissions', []).filter((s) => s.assignment_id === assignmentId);
-
-    // Merge all unique by id
-    const seen = new Set<string>();
-    const merged: Submission[] = [];
-    for (const s of [...serverSubmissions, ...directDbSubmissions, ...localStored]) {
-      if (!seen.has(s.id)) {
-        seen.add(s.id);
-        merged.push(s);
-      }
-    }
-
-    if (merged.length > 0) return merged;
-
-    return [];
+    return this.getSubmissionsByAssignmentIds([assignmentId]);
   },
 
-  async getSubmissionsByAssignmentIds(assignmentIds: string[]): Promise<Submission[]> {
+  /**
+   * Submissions for many assignments in one or a few requests. The API attaches
+   * each student's profile; pass `includeStudents: false` when only counts and
+   * scores are needed, and `studentIds` to fetch one student's work.
+   */
+  async getSubmissionsByAssignmentIds(
+    assignmentIds: string[],
+    options: { studentIds?: string[]; includeStudents?: boolean } = {}
+  ): Promise<Submission[]> {
     const ids = [...new Set(assignmentIds.filter(Boolean))];
     if (ids.length === 0) return [];
+    const extra = new URLSearchParams();
+    if (options.studentIds?.length) extra.set('studentIds', [...new Set(options.studentIds.filter(Boolean))].join(','));
+    if (options.includeStudents === false) extra.set('students', '0');
 
-    let serverSubmissions: Submission[] = [];
-    let serverOk = false;
-    try {
-      const res = await fetch(`/api/submissions?assignmentIds=${encodeURIComponent(ids.join(','))}`, {
-        cache: 'no-store',
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (Array.isArray(json.submissions)) {
-          serverSubmissions = json.submissions;
-          serverOk = true;
-        }
-      }
-    } catch (error) {
-      console.warn('Bulk submission fetch failed:', error);
-    }
-
-    if (!serverOk && isSupabaseConfigured) {
-      try {
-        const { data, error } = await createClient().from('submissions').select('*').in('assignment_id', ids);
-        if (!error && data) serverSubmissions = data as Submission[];
-      } catch {}
-    }
-
-    const localStored = getStoredOr<Submission[]>('submissions', []).filter((s) => ids.includes(s.assignment_id));
-    const seen = new Set<string>();
-    return [...serverSubmissions, ...localStored].filter((submission) => {
-      if (seen.has(submission.id)) return false;
-      seen.add(submission.id);
-      return true;
-    });
+    const parts = await Promise.all(
+      chunk(ids, 80).map((part) => {
+        const params = new URLSearchParams(extra);
+        params.set('assignmentIds', part.join(','));
+        return fetchJson<{ submissions: Submission[] }>(`/api/submissions?${params}`);
+      })
+    );
+    return uniqueById(parts.flatMap((p) => p.submissions || []));
   },
 
   async getSubmissionEvents(submissionId: string): Promise<SubmissionEvent[]> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('submission_events')
-        .select('*')
-        .eq('submission_id', submissionId)
-        .order('created_at', { ascending: true });
-      if (!error && data) return data as SubmissionEvent[];
-    }
-
-    const allEvents = getStoredOr<Record<string, SubmissionEvent[]>>('submission_events', {});
-    return allEvents[submissionId] || [];
+    const { data, error } = await createClient()
+      .from('submission_events')
+      .select('*')
+      .eq('submission_id', submissionId)
+      .order('created_at', { ascending: true });
+    if (error) throw toDatabaseError(error, 'submission_events');
+    return (data || []) as SubmissionEvent[];
   },
 
   async getSubmissionAnswers(submissionId: string): Promise<Record<string, SubmissionAnswer>> {
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('submission_answers')
-        .select('*')
-        .eq('submission_id', submissionId);
-      if (!error && data) {
-        const mapped: Record<string, SubmissionAnswer> = {};
-        for (const ans of data) {
-          mapped[ans.question_id] = ans as SubmissionAnswer;
-        }
-        return mapped;
-      }
-    }
+    const { data, error } = await createClient().from('submission_answers').select('*').eq('submission_id', submissionId);
+    if (error) throw toDatabaseError(error, 'submission_answers');
+    const mapped: Record<string, SubmissionAnswer> = {};
+    for (const ans of (data || []) as SubmissionAnswer[]) mapped[ans.question_id] = ans;
+    return mapped;
+  },
 
-    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>(
-      'submission_answers',
-      {}
+  /** All answer rows for many submissions in one query (used by the student LIFF). */
+  async getAnswersForSubmissions(submissionIds: string[]): Promise<SubmissionAnswer[]> {
+    const ids = [...new Set(submissionIds.filter(Boolean))];
+    if (ids.length === 0) return [];
+    const supabase = createClient();
+    const results = await Promise.all(
+      chunk(ids).map((part) =>
+        supabase
+          .from('submission_answers')
+          .select('id, submission_id, question_id, teacher_score, teacher_comment, graded_at')
+          .in('submission_id', part)
+      )
     );
-    return allAnswers[submissionId] || {};
+    return results.flatMap((r) => (r.data || []) as SubmissionAnswer[]);
   },
 
   async saveTeacherGrade(
@@ -2322,16 +1170,17 @@ export const dataService = {
     questionId: string,
     teacherScore: number,
     teacherComment: string,
-    teacherId: string = '',
-    teacherName: string = '',
+    teacherId: string,
+    teacherName: string,
     teacherRole: TeacherRole = 'primary'
   ): Promise<void> {
-    // TA or primary teacher gives the official (student-facing) score; a
+    const supabase = createClient();
+    // Primary teacher or TA gives the official (student-facing) score; a
     // researcher's grade is stored for research only.
     const isOfficial = teacherRole === 'primary' || teacherRole === 'assistant';
     const isResearcher = teacherRole === 'researcher';
     const gradedAt = new Date().toISOString();
-    const newGradeRecord: TeacherGradeRecord = {
+    const record: TeacherGradeRecord = {
       teacher_id: teacherId,
       teacher_name: teacherName,
       teacher_role: teacherRole,
@@ -2340,95 +1189,40 @@ export const dataService = {
       graded_at: gradedAt,
     };
 
-    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>('submission_answers', {});
-    let existing: Partial<SubmissionAnswer> = allAnswers[submissionId]?.[questionId] || {};
-    let totalAwarded: number | null = null;
+    // The row may not exist yet (e.g. a question the student skipped); reuse it
+    // when it does, because UNIQUE(submission_id, question_id) forbids a second.
+    const { data: row, error: readError } = await supabase
+      .from('submission_answers')
+      .select('*')
+      .eq('submission_id', submissionId)
+      .eq('question_id', questionId)
+      .maybeSingle();
+    if (readError) throw toDatabaseError(readError, 'submission_answers');
+    const existing = (row || {}) as Partial<SubmissionAnswer>;
 
-    if (isSupabaseConfigured) {
-      const supabase = createClient();
-      // The database row is the source of truth. The browser cache may not have
-      // it (another device, or a LIFF submission), and inventing a new row id
-      // would collide with UNIQUE(submission_id, question_id) and drop the grade.
-      const { data: dbRow, error: readError } = await supabase
-        .from('submission_answers')
-        .select('*')
-        .eq('submission_id', submissionId)
-        .eq('question_id', questionId)
-        .maybeSingle();
-      if (readError) throw toDatabaseError(readError, 'submission_answers');
-      if (dbRow) existing = dbRow as SubmissionAnswer;
-
-      const { error: writeError } = await supabase.from('submission_answers').upsert({
+    const { error: writeError } = await supabase.from('submission_answers').upsert(
+      {
         id: existing.id || `ans-${submissionId}-${questionId}`,
         submission_id: submissionId,
         question_id: questionId,
         teacher_score: isOfficial ? teacherScore : existing.teacher_score ?? null,
         teacher_comment: isOfficial ? teacherComment : existing.teacher_comment ?? null,
-        co_grades: { ...(existing.co_grades || {}), [teacherId]: newGradeRecord },
-        research_grades: isResearcher
-          ? { ...(existing.research_grades || {}), [teacherId]: newGradeRecord }
-          : existing.research_grades || {},
+        co_grades: { ...(existing.co_grades || {}), [teacherId]: record },
+        research_grades: isResearcher ? { ...(existing.research_grades || {}), [teacherId]: record } : existing.research_grades || {},
         graded_at: isOfficial ? gradedAt : existing.graded_at ?? null,
         updated_at: gradedAt,
-      }, { onConflict: 'submission_id,question_id' });
-      if (writeError) throw toDatabaseError(writeError, 'submission_answers');
-
-      if (isOfficial) {
-        // Total = sum of official scores across every answer of this submission.
-        const { data: rows, error: totalError } = await supabase
-          .from('submission_answers')
-          .select('teacher_score')
-          .eq('submission_id', submissionId);
-        if (totalError) throw toDatabaseError(totalError, 'submission_answers');
-        totalAwarded = Math.round((rows || []).reduce((sum, row) => sum + Number(row.teacher_score ?? 0), 0) * 10) / 10;
-        const { error: submissionError } = await supabase
-          .from('submissions')
-          .update({ total_score: totalAwarded })
-          .eq('id', submissionId);
-        if (submissionError) throw toDatabaseError(submissionError, 'submissions');
-      }
-    }
-
-    // Keep the local cache in step with what was saved.
-    allAnswers[submissionId] = allAnswers[submissionId] || {};
-    allAnswers[submissionId][questionId] = {
-      ...(existing as SubmissionAnswer),
-      id: existing.id || `ans-${submissionId}-${questionId}`,
-      submission_id: submissionId,
-      question_id: questionId,
-      teacher_score: isOfficial ? teacherScore : existing.teacher_score,
-      teacher_comment: isOfficial ? teacherComment : existing.teacher_comment,
-      graded_at: isOfficial ? gradedAt : existing.graded_at,
-      co_grades: { ...(existing.co_grades || {}), [teacherId]: newGradeRecord },
-      research_grades: isResearcher
-        ? { ...(existing.research_grades || {}), [teacherId]: newGradeRecord }
-        : existing.research_grades,
-    };
-    setStored('submission_answers', allAnswers);
+      },
+      { onConflict: 'submission_id,question_id' }
+    );
+    if (writeError) throw toDatabaseError(writeError, 'submission_answers');
 
     if (isOfficial) {
-      if (totalAwarded === null) {
-        totalAwarded = Math.round(
-          Object.values(allAnswers[submissionId]).reduce((sum, ans) => sum + (ans.teacher_score ?? 0), 0) * 10
-        ) / 10;
-      }
-      const submissions = getStoredOr<Submission[]>('submissions', []);
-      setStored('submissions', submissions.map((sub) => (sub.id === submissionId ? { ...sub, total_score: totalAwarded! } : sub)));
+      // Total = sum of official scores across every answer of this submission.
+      const { data: rows, error: totalError } = await supabase.from('submission_answers').select('teacher_score').eq('submission_id', submissionId);
+      if (totalError) throw toDatabaseError(totalError, 'submission_answers');
+      const total = Math.round((rows || []).reduce((sum, r) => sum + Number(r.teacher_score ?? 0), 0) * 10) / 10;
+      const { error: subError } = await supabase.from('submissions').update({ total_score: total }).eq('id', submissionId);
+      if (subError) throw toDatabaseError(subError, 'submissions');
     }
-  },
-
-  /** All answer rows for many submissions in one query (used by the student LIFF). */
-  async getAnswersForSubmissions(submissionIds: string[]): Promise<SubmissionAnswer[]> {
-    const ids = [...new Set(submissionIds.filter(Boolean))];
-    if (ids.length === 0) return [];
-    if (isSupabaseConfigured) {
-      const { data, error } = await createClient()
-        .from('submission_answers')
-        .select('id, submission_id, question_id, teacher_score, teacher_comment, graded_at')
-        .in('submission_id', ids);
-      if (!error && data) return data as SubmissionAnswer[];
-    }
-    const allAnswers = getStoredOr<Record<string, Record<string, SubmissionAnswer>>>('submission_answers', {});
-    return ids.flatMap((id) => Object.values(allAnswers[id] || {}));
   },
 };

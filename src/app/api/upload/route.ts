@@ -57,11 +57,13 @@ export async function POST(req: NextRequest) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
 
-    let publicUrl = '';
+    if (!isR2Configured) {
+      console.error('File upload rejected: Cloudflare R2 is not configured');
+      return NextResponse.json({ error: 'ระบบจัดเก็บไฟล์ยังไม่พร้อมใช้งาน กรุณาติดต่อผู้ดูแลระบบ' }, { status: 503 });
+    }
 
-    if (isR2Configured) {
-      // Execute Cloudflare R2 Upload via AWS S3 SDK PutObjectCommand
-      const uploadCommand = new PutObjectCommand({
+    await r2Client.send(
+      new PutObjectCommand({
         Bucket: R2_BUCKET_NAME,
         Key: uniqueKey,
         Body: buffer,
@@ -71,17 +73,9 @@ export async function POST(req: NextRequest) {
           'student-id': studentId,
           'original-filename': encodeURIComponent(file.name),
         },
-      });
-
-      await r2Client.send(uploadCommand);
-      publicUrl = `${R2_PUBLIC_URL}/${uniqueKey}`;
-    } else {
-      // Graceful fallback for local development / testing without live Cloudflare credentials
-      // Return a base64 data URL or simulated R2 URL
-      const base64Data = buffer.toString('base64');
-      const dataUri = `data:${file.type};base64,${base64Data}`;
-      publicUrl = dataUri;
-    }
+      })
+    );
+    const publicUrl = `${R2_PUBLIC_URL}/${uniqueKey}`;
 
     return NextResponse.json({
       success: true,
@@ -90,10 +84,6 @@ export async function POST(req: NextRequest) {
       filename: file.name,
       contentType: file.type,
       sizeBytes: file.size,
-      r2Configured: isR2Configured,
-      message: isR2Configured
-        ? 'File successfully stored in Cloudflare R2'
-        : 'File handled in preview/mock mode (configure R2 credentials in .env.local for production Cloudflare bucket storage)',
     });
   } catch (error) {
     console.error('Cloudflare R2 upload error:', error);
