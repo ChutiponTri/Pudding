@@ -675,10 +675,13 @@ export default function LiffStudentPage() {
                 (s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid
               );
 
+              // Already-enrolled students are simply opening their course via a
+              // deep link, so no banner is needed.
               if (isAlreadyActive) {
-                setJoinMessage(`🎉 คุณอยู่ในห้องเรียน "${matched.name}" เรียบร้อยแล้ว!`);
+                // nothing to do
               } else if (isAlreadyPending) {
                 setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+                setTimeout(() => setJoinMessage(null), 3500);
               } else {
                 await dataService.addStudentToClassroom(
                   matched.id,
@@ -695,6 +698,7 @@ export default function LiffStudentPage() {
                   { autoAdmit: false }
                 );
                 setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+                setTimeout(() => setJoinMessage(null), 3500);
               }
 
               active = matched;
