@@ -309,7 +309,7 @@ async function handleBotJoined(supabase: ServiceClient, groupId: string, replyTo
   }
 
   if (matches.length === 1) {
-    await promptLink(replyToken, matches[0], `เชื่อมกลุ่มนี้กับห้องเรียน ${classroomLabel(matches[0])}?\n(เฉพาะคุณครูที่กดเชื่อมในเว็บเท่านั้นที่กดยืนยันได้)`);
+    await promptLink(replyToken, matches[0], `เชื่อมกลุ่มนี้กับห้องเรียน ${classroomLabel(matches[0])}?\n(เฉพาะคุณครูเจ้าของวิชาเท่านั้นที่กดยืนยันได้)`);
   } else if (matches.length > 1) {
     await replySafely(replyToken, 'คุณครูที่กด “เชื่อม LINE Group” ในเว็บ กรุณาพิมพ์ข้อความใดก็ได้ในกลุ่มนี้เพื่อเชื่อมห้องเรียน');
   } else {
