@@ -5,8 +5,9 @@ import { Loader2 } from 'lucide-react';
 
 /**
  * Instructions for linking a classroom to a LINE group without a pairing code:
- * the teacher taps "เชื่อม LINE Group", then adds Pudding Bot to the group, and
- * the webhook links it because the teacher is a member of that group.
+ * the teacher taps "เชื่อม LINE Group", adds Pudding Bot to the group, then taps
+ * the bot's confirm button or sends any message there. Only that teacher's
+ * LINE account can complete the link.
  */
 export const LineGroupConnectSteps: React.FC<{
   status: 'disconnected' | 'waiting' | 'connected';
@@ -25,7 +26,8 @@ export const LineGroupConnectSteps: React.FC<{
     ) : null,
     <>กดปุ่ม <b>เชื่อม LINE Group</b> ด้านล่าง</>,
     <>เปิดกลุ่ม LINE ของห้องเรียน แล้วเชิญ <b>Pudding Bot</b> เข้ากลุ่ม (ต้องเป็นกลุ่มที่คุณครูอยู่)</>,
-    <>ระบบจะเชื่อมกลุ่มกับห้องเรียนนี้ให้อัตโนมัติ ไม่ต้องพิมพ์รหัส</>,
+    <>กด <b>เชื่อมกลุ่ม</b> ในข้อความของบอท หรือพิมพ์ข้อความใดก็ได้ในกลุ่ม ด้วยบัญชี LINE ของคุณครูเอง (ไม่ต้องพิมพ์รหัส)</>,
+    <>ถ้ากลุ่มนี้เคยเชื่อมกับห้องเรียนอื่น (เช่น ภาคเรียนก่อน) บอทจะถามยืนยันก่อนย้ายกลุ่มมาห้องนี้</>,
   ].filter(Boolean);
 
   return (
@@ -47,7 +49,7 @@ export const LineGroupConnectSteps: React.FC<{
           <div className="space-y-0.5">
             <p className="font-bold">กำลังรอให้เพิ่ม Pudding Bot เข้ากลุ่ม...</p>
             <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
-              ถ้าเพิ่มบอทไว้ในกลุ่มแล้ว ให้พิมพ์ข้อความใดก็ได้ในกลุ่ม ระบบจะเชื่อมทันที (รอได้ 15 นาที)
+              ถ้าเพิ่มบอทไว้ในกลุ่มแล้ว ให้คุณครูพิมพ์ข้อความใดก็ได้ในกลุ่ม ระบบจะเชื่อมทันที (รอได้ 15 นาที)
             </p>
           </div>
         </div>

@@ -24,6 +24,31 @@ export async function replyLineText(replyToken: string, text: string): Promise<v
   await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages: [{ type: 'text', text }] });
 }
 
+export interface LinePostbackChoice {
+  label: string;
+  data: string;
+  displayText?: string;
+}
+
+/** Two-button yes/no prompt; the tap comes back to the webhook as a postback event. */
+export async function replyLineConfirm(
+  replyToken: string,
+  text: string,
+  yes: LinePostbackChoice,
+  no: LinePostbackChoice
+): Promise<void> {
+  const action = (choice: LinePostbackChoice) => ({ type: 'postback', label: choice.label, data: choice.data, displayText: choice.displayText || choice.label });
+  await sendLineMessage(LINE_REPLY_ENDPOINT, {
+    replyToken,
+    messages: [{
+      type: 'template',
+      altText: text.slice(0, 400),
+      // LINE caps confirm-template text at 240 characters.
+      template: { type: 'confirm', text: text.length > 240 ? `${text.slice(0, 239)}…` : text, actions: [action(yes), action(no)] },
+    }],
+  });
+}
+
 const LINE_API_BASE = 'https://api.line.me/v2/bot';
 
 function lineAuthHeaders(): Record<string, string> {

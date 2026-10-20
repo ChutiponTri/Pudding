@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS public.classrooms (
 
 CREATE INDEX IF NOT EXISTS idx_classrooms_course ON public.classrooms(course_id);
 CREATE INDEX IF NOT EXISTS idx_classrooms_invite_code ON public.classrooms(invite_code);
+-- A LINE group belongs to at most one classroom.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_classrooms_line_group_id_unique ON public.classrooms(line_group_id) WHERE line_group_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.classroom_posts (
   id TEXT PRIMARY KEY,

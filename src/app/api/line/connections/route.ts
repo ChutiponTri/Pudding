@@ -91,9 +91,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'connected' });
   }
 
-  // "create": record that this teacher wants to connect this classroom. When the
-  // bot joins a LINE group, the webhook links the group to the waiting classroom
-  // whose teacher is a member of that group. No pairing code is involved.
+  // "create": record which teacher wants to connect this classroom. Only that
+  // teacher's own message or confirm tap in a LINE group links it (see the
+  // webhook), so other teachers or students in the group cannot. No pairing code.
   if (classroom.line_group_id) {
     return NextResponse.json({ status: 'connected', groupName: classroom.line_group_name || undefined });
   }
@@ -103,28 +103,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'บัญชีครูยังไม่ได้เชื่อม LINE กรุณาเข้าสู่ระบบด้วย LINE' }, { status: 409 });
   }
 
-  // One pending request per teacher, so a new group can never match an older,
-  // forgotten request for a different classroom.
-  const { data: waitingClasses } = await service
-    .from('classrooms')
-    .select('id, teacher_id, teachers')
-    .eq('line_connection_status', 'waiting')
-    .neq('id', classroomId);
-  const myOtherWaiting = (waitingClasses || [])
-    .filter((item) => item.teacher_id === userId || (item.teachers || []).some((t: { teacher_id?: string }) => t.teacher_id === userId))
-    .map((item) => item.id);
-  if (myOtherWaiting.length > 0) {
-    await service.from('classrooms').update({
-      line_connection_status: 'disconnected',
-      line_connection_token_expires_at: null,
-    }).in('id', myOtherWaiting);
-  }
+  // One pending request per teacher, so their next group message can never
+  // match an older, forgotten request for a different classroom.
+  const { error: cancelError } = await service.from('classrooms').update({
+    line_connection_status: 'disconnected',
+    line_connection_token: null,
+    line_connection_token_hash: null,
+    line_connection_token_expires_at: null,
+  }).eq('line_connection_status', 'waiting').eq('line_connection_token', userId).neq('id', classroomId);
+  if (cancelError) console.warn('Could not cancel older LINE connect requests:', cancelError);
 
   const expiresAt = new Date(Date.now() + CONNECT_INTENT_TTL_MS).toISOString();
   const { error } = await supabase.from('classrooms').update({
     line_connection_status: 'waiting',
     line_connection_token_hash: null,
-    line_connection_token: null,
+    line_connection_token: userId,
     line_connection_token_expires_at: expiresAt,
   }).eq('id', classroomId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
