@@ -202,7 +202,7 @@ export const Navbar: React.FC = () => {
                             {item.title}
                           </p>
                           <span className="text-[10px] text-slate-400 whitespace-nowrap">
-                            {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5 leading-relaxed">

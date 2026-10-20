@@ -14,6 +14,11 @@ import {
 
 type PresetKind = 'deadline' | 'start' | 'none';
 
+const pad = (n: number) => String(n).padStart(2, '0');
+const HOURS = Array.from({ length: 24 }, (_, i) => pad(i));
+// Every 5 minutes, plus :59 for "end of day" deadlines.
+const MINUTES = [...Array.from({ length: 12 }, (_, i) => pad(i * 5)), '59'];
+
 interface DateTimeFieldProps {
   /** Full ISO string, or '' when empty. */
   value: string;
@@ -32,8 +37,8 @@ interface DateTimeFieldProps {
 }
 
 /**
- * Date + time picker that is easy to use on phones and desktops: separate date
- * and time boxes that open the native picker on any click, quick-pick chips,
+ * Date + time picker that is easy to use on phones and desktops: a native date
+ * box that opens on any click, 24-hour hour/minute selects, quick-pick chips,
  * and a readable summary of the chosen moment. Works in ISO so callers never
  * handle timezone-less strings.
  */
@@ -110,15 +115,22 @@ export function DateTimeField({
         ]
       : [];
 
+  const [hour, minute] = (time || defaultTime).split(':');
+  // Keep a saved time like 10:07 selectable even though it is off the 5-minute grid.
+  const minuteOptions = MINUTES.includes(minute) ? MINUTES : [...MINUTES, minute].sort();
+
   const isPast = warnPast && !!value && new Date(value).getTime() < now;
   const focus = accent === 'emerald' ? 'focus:border-emerald-500' : 'focus:border-amber-500';
   const icon = accent === 'emerald' ? 'text-emerald-500' : 'text-amber-500';
+  const focusWithin = accent === 'emerald' ? 'focus-within:border-emerald-500' : 'focus-within:border-amber-500';
+  const selectBase =
+    'py-2.5 bg-transparent text-sm font-semibold tabular-nums text-slate-900 dark:text-white focus:outline-hidden cursor-pointer';
   const inputBase = `w-full pl-9 pr-2 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-900 dark:text-white focus:outline-hidden ${focus} cursor-pointer`;
 
   return (
     <div className={`space-y-2 ${className}`}>
-      <div className="flex items-stretch gap-2">
-        <div className="relative flex-1 min-w-0">
+      <div className="flex flex-wrap items-stretch gap-2">
+        <div className="relative flex-1 min-w-36">
           <Calendar className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${icon}`} />
           <input
             type="date"
@@ -126,20 +138,40 @@ export function DateTimeField({
             onClick={openPicker}
             onChange={(e) => commit(e.target.value, time)}
             aria-label={th ? 'วันที่' : 'Date'}
-            className={inputBase}
+            className={`${inputBase} min-w-0 appearance-none`}
           />
         </div>
-        <div className="relative w-32 shrink-0">
-          <Clock className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${icon}`} />
-          <input
-            type="time"
-            step={300}
-            value={time}
-            onClick={openPicker}
-            onChange={(e) => commit(date || toLocalDateValue(new Date().toISOString()), e.target.value)}
-            aria-label={th ? 'เวลา' : 'Time'}
-            className={inputBase}
-          />
+        {/* Hour/minute selects instead of <input type="time">, which shows AM/PM in some locales. */}
+        <div
+          className={`flex items-center gap-1 pl-3 pr-1 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 ${focusWithin}`}
+        >
+          <Clock className={`w-4 h-4 shrink-0 pointer-events-none ${icon}`} />
+          <select
+            value={hour}
+            onChange={(e) => commit(date || toLocalDateValue(new Date().toISOString()), `${e.target.value}:${minute}`)}
+            aria-label={th ? 'ชั่วโมง' : 'Hour'}
+            className={selectBase}
+          >
+            {HOURS.map((h) => (
+              <option key={h} value={h}>
+                {h}
+              </option>
+            ))}
+          </select>
+          <span className="text-sm font-bold text-slate-400">:</span>
+          <select
+            value={minute}
+            onChange={(e) => commit(date || toLocalDateValue(new Date().toISOString()), `${hour}:${e.target.value}`)}
+            aria-label={th ? 'นาที' : 'Minute'}
+            className={selectBase}
+          >
+            {minuteOptions.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          {th && <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 pr-1">น.</span>}
         </div>
         {allowEmpty && value && (
           <button
@@ -168,7 +200,7 @@ export function DateTimeField({
         </div>
       )}
 
-      <p className={`text-[11px] font-semibold ${isPast ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+      <p className={`text-[11px] font-semibold break-words ${isPast ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
         {value ? (
           <>
             {formatDateTime(value, language)} <span className="opacity-80">({formatRelative(value, language, now)})</span>
