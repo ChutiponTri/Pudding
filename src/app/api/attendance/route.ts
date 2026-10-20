@@ -75,8 +75,10 @@ export async function GET(request: NextRequest) {
 
   if (!classroomId) return NextResponse.json({ error: 'classroomId is required' }, { status: 400 });
 
-  let sessionQuery = supabase.from('attendance_sessions').select('*').eq('classroom_id', classroomId).order('starts_at', { ascending: false });
-  if (sessionId) sessionQuery = sessionQuery.eq('id', sessionId);
+  // Builders mutate on .eq(), so each query gets a fresh one.
+  const sessionsQuery = () =>
+    supabase.from('attendance_sessions').select('*').eq('classroom_id', classroomId).order('starts_at', { ascending: false });
+  const sessionQuery = sessionId ? sessionsQuery().eq('id', sessionId) : sessionsQuery();
 
   const context = await getTeacherContext(classroomId);
 
@@ -92,7 +94,9 @@ export async function GET(request: NextRequest) {
 
   if (!context.classroom) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const { data: sessions, error } = await sessionQuery;
+  // Teachers always get every session; `sessionId` only picks which one's
+  // records to return (filtering the list made other classes vanish).
+  const { data: sessions, error } = await sessionsQuery();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const selectedSession = (sessionId ? sessions?.find((s) => s.id === sessionId) : sessions?.[0]) || null;
   let records: unknown[] = [];

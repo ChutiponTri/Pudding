@@ -2752,33 +2752,48 @@ function AttendancePanel({
           return (
             <div
               key={item.id}
-              className={`rounded-3xl border transition-all overflow-hidden ${
-                isExpanded
-                  ? 'border-emerald-400 dark:border-emerald-700 shadow-md bg-white dark:bg-slate-900'
-                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
+              className={`rounded-3xl border transition-all overflow-hidden bg-white dark:bg-slate-900 ${
+                isOpen
+                  ? 'border-emerald-400 dark:border-emerald-700 shadow-lg shadow-emerald-500/15 ring-1 ring-emerald-400/40'
+                  : isExpanded
+                    ? 'border-emerald-400 dark:border-emerald-700 shadow-md'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
               }`}
             >
-              {/* Session Header Card (Always visible, click to toggle collapse) */}
+              {/* Session Header Card (Always visible, click to toggle collapse).
+                  An open session gets the live-banner treatment. */}
               <div
                 onClick={() => toggleSession(item.id)}
-                className="p-4 flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none"
+                className={`p-4 flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none ${
+                  isOpen
+                    ? 'bg-linear-to-r from-emerald-500/15 via-emerald-500/5 to-teal-500/15 border-l-4 border-emerald-500'
+                    : ''
+                }`}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1 sm:min-w-48">
-                  <span
-                    className={`text-[10px] font-black px-2.5 py-0.5 rounded-full shrink-0 ${
-                      isOpen
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                    }`}
-                  >
-                    {isOpen ? '🟢 เปิดรับอยู่' : '⚪ ปิดแล้ว'}
-                  </span>
-                  <div>
-                    <h4 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                      <span>{item.title}</span>
-                    </h4>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      {new Date(item.starts_at).toLocaleString('th-TH')} • ตรงเวลา {item.on_time_until_minutes}m / สาย {item.late_until_minutes}m
+                  {isOpen ? (
+                    <span className="relative flex w-3 h-3 shrink-0">
+                      <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                      <span className="relative inline-flex w-3 h-3 rounded-full bg-emerald-500" />
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full shrink-0 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                      ⚪ ปิดแล้ว
+                    </span>
+                  )}
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {isOpen && (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-black text-[10px] shadow-xs">
+                          กำลังเปิดรับเช็คชื่อ
+                        </span>
+                      )}
+                      <h4 className="text-sm font-black text-slate-900 dark:text-white">{item.title}</h4>
+                    </div>
+                    <p className={`text-[11px] mt-0.5 ${isOpen ? 'text-emerald-800/80 dark:text-emerald-300/80' : 'text-slate-400'}`}>
+                      {isOpen
+                        ? `เริ่มเมื่อ ${new Date(item.starts_at).toLocaleTimeString('th-TH')} • ตรงเวลาภายใน ${item.on_time_until_minutes} นาที • สายได้ถึง ${item.late_until_minutes} นาที`
+                        : `${new Date(item.starts_at).toLocaleString('th-TH')} • ตรงเวลา ${item.on_time_until_minutes}m / สาย ${item.late_until_minutes}m`}
                     </p>
                   </div>
                 </div>
@@ -2789,16 +2804,16 @@ function AttendancePanel({
                       <button
                         type="button"
                         onClick={() => action(item.id, 'extend')}
-                        className="px-2.5 py-1 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-100 cursor-pointer shadow-xs"
+                        className="px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-50 cursor-pointer shadow-xs"
                       >
                         +10 นาที
                       </button>
                       <button
                         type="button"
                         onClick={() => action(item.id, 'close')}
-                        className="px-2.5 py-1 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 cursor-pointer shadow-xs"
+                        className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 cursor-pointer shadow-xs"
                       >
-                        ปิดรับ
+                        ปิดรับเช็คชื่อ
                       </button>
                     </>
                   )}
@@ -2806,7 +2821,11 @@ function AttendancePanel({
                   <button
                     type="button"
                     onClick={() => toggleSession(item.id)}
-                    className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer ${
+                      isOpen
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                        : 'border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
+                    }`}
                   >
                     <span>{isExpanded ? 'ย่อกลับ' : 'ดูรายชื่อ'}</span>
                     {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
