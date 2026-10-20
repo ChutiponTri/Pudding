@@ -352,6 +352,9 @@ export default function ClassroomWorkspacePage() {
       if (!response.ok) return;
       const result = await response.json();
       setSessions(result.sessions || []);
+      // The teacher switched sessions while this request was in flight: keep
+      // their selection instead of snapping back to the old one.
+      if (targetSessionId && activeSessionIdRef.current !== targetSessionId) return;
       if (result.session) {
         setSession(result.session);
         activeSessionIdRef.current = result.session.id;
@@ -373,6 +376,7 @@ export default function ClassroomWorkspacePage() {
       );
       if (!response.ok) return;
       const result = await response.json();
+      if (activeSessionIdRef.current !== sessionId) return;
       setSession(result.session || null);
       setRecords(result.records || []);
     } catch (e) {
@@ -757,38 +761,51 @@ export default function ClassroomWorkspacePage() {
         setNotice('สร้างคาบเช็คชื่อไม่สำเร็จ');
         return;
       }
+      const { session: created } = (await response.json()) as { session: AttendanceSession };
       setNotice('เปิดคาบเช็คชื่อแล้ว และส่งแจ้งเตือนเข้า LINE Group');
-      await loadAttendance();
-      await loadWorkspace();
+      // Show and select the new session right away, then sync in the background.
+      activeSessionIdRef.current = created.id;
+      setSessions((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
+      setSession(created);
+      setRecords([]);
+      loadAttendance(created.id);
+      fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => json && setPosts(json.posts || []))
+        .catch(() => {});
     } catch {
       setNotice('เกิดข้อผิดพลาดในการเปิดคาบเช็คชื่อ');
     }
   };
 
-  const updateAttendanceRecord = async (studentId: string, status: AttendanceStatus) => {
-    if (!session) return;
+  // Both handlers take the session explicitly: the parent `session` can lag
+  // behind the card the teacher clicked, which used to write to the wrong class.
+  const updateAttendanceRecord = async (sessionId: string, studentId: string, status: AttendanceStatus) => {
+    activeSessionIdRef.current = sessionId;
     const response = await fetch('/api/attendance', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'record', classroomId, sessionId: session.id, studentId, status }),
+      body: JSON.stringify({ action: 'record', classroomId, sessionId, studentId, status }),
     });
-    if (response.ok) await loadAttendance(session.id);
+    if (response.ok) await loadAttendance(sessionId);
     else setNotice('บันทึกสถานะการเข้าเรียนไม่สำเร็จ กรุณาลองใหม่');
   };
 
-  const sessionAction = async (action: 'close' | 'extend') => {
-    if (!session) return;
+  const sessionAction = async (sessionId: string, action: 'close' | 'extend') => {
+    const target = sessions.find((s) => s.id === sessionId);
+    if (!target) return;
+    activeSessionIdRef.current = sessionId;
     await fetch('/api/attendance', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         action,
         classroomId,
-        sessionId: session.id,
-        ...(action === 'extend' ? { lateUntilMinutes: session.late_until_minutes + 10 } : {}),
+        sessionId,
+        ...(action === 'extend' ? { lateUntilMinutes: target.late_until_minutes + 10 } : {}),
       }),
     });
-    await loadAttendance(session.id);
+    await loadAttendance(sessionId);
   };
 
   // Export Attendance CSV
@@ -2504,8 +2521,8 @@ function AttendancePanel({
   late: number;
   setLate: (v: number) => void;
   create: () => void;
-  update: (id: string, status: AttendanceStatus) => void;
-  action: (a: 'close' | 'extend') => void;
+  update: (sessionId: string, studentId: string, status: AttendanceStatus) => void;
+  action: (sessionId: string, a: 'close' | 'extend') => void;
   exportCsv: () => void;
   selectSession: (id: string) => void;
   onUpdateSession?: (
@@ -2538,7 +2555,16 @@ function AttendancePanel({
     }
   }, [session?.id]);
 
-  const activeOpenSession = sessions.find((s) => s.status === 'open');
+  // Open sessions sit right under the controls/overview; finished ones follow
+  // in class order (class 1, class 2, ...).
+  const orderedSessions = useMemo(() => {
+    const byStart = (a: AttendanceSession, b: AttendanceSession) =>
+      new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
+    return [
+      ...sessions.filter((s) => s.status === 'open').sort((a, b) => byStart(b, a)),
+      ...sessions.filter((s) => s.status !== 'open').sort(byStart),
+    ];
+  }, [sessions]);
 
   const toggleSession = (sessionId: string) => {
     if (expandedSessionId === sessionId) {
@@ -2608,58 +2634,6 @@ function AttendancePanel({
           </button>
         </div>
       </div>
-
-      {/* 2. Active Session Live Banner (Prominently featured when open) */}
-      {activeOpenSession && (
-        <div className="p-4 sm:p-5 rounded-3xl bg-linear-to-r from-emerald-500/10 via-emerald-500/5 to-teal-500/10 border border-emerald-300 dark:border-emerald-800 shadow-sm flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-black text-[10px]">
-                  กำลังเปิดรับเช็คชื่อ 🟢
-                </span>
-                <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                  {activeOpenSession.title}
-                </h3>
-              </div>
-              <p className="text-xs text-slate-500 mt-1">
-                เริ่มเมื่อ {new Date(activeOpenSession.starts_at).toLocaleTimeString('th-TH')} • ตรงเวลาภายใน {activeOpenSession.on_time_until_minutes} นาที • สายได้ถึง {activeOpenSession.late_until_minutes} นาที
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                selectSession(activeOpenSession.id);
-                action('extend');
-              }}
-              className="px-3.5 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-50 cursor-pointer shadow-xs"
-            >
-              +10 นาที
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                selectSession(activeOpenSession.id);
-                action('close');
-              }}
-              className="px-3.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold cursor-pointer shadow-xs"
-            >
-              ปิดรับเช็คชื่อ
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleSession(activeOpenSession.id)}
-              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer shadow-xs"
-            >
-              {expandedSessionId === activeOpenSession.id ? 'ซ่อนรายชื่อ' : 'ดูรายชื่อนักเรียน'}
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* 3. Collapsible New Session Creation Form */}
       {showCreateForm && (
@@ -2771,7 +2745,7 @@ function AttendancePanel({
           <span className="text-[11px] text-slate-400">คลิกที่คาบเพื่อ ย่อ/ขยาย ดูรายชื่อ</span>
         </div>
 
-        {sessions.map((item) => {
+        {orderedSessions.map((item) => {
           const isExpanded = expandedSessionId === item.id;
           const isOpen = item.status === 'open';
 
@@ -2814,20 +2788,14 @@ function AttendancePanel({
                     <>
                       <button
                         type="button"
-                        onClick={() => {
-                          selectSession(item.id);
-                          action('extend');
-                        }}
+                        onClick={() => action(item.id, 'extend')}
                         className="px-2.5 py-1 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-100 cursor-pointer shadow-xs"
                       >
                         +10 นาที
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          selectSession(item.id);
-                          action('close');
-                        }}
+                        onClick={() => action(item.id, 'close')}
                         className="px-2.5 py-1 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 cursor-pointer shadow-xs"
                       >
                         ปิดรับ
@@ -2988,7 +2956,7 @@ function AttendancePanel({
                                 <button
                                   key={stKey}
                                   type="button"
-                                  onClick={() => update(student.id, stKey as AttendanceStatus)}
+                                  onClick={() => update(item.id, student.id, stKey as AttendanceStatus)}
                                   className={`px-2.5 py-2 sm:py-1 rounded-lg text-[11px] sm:text-[10px] font-bold border transition-all cursor-pointer ${
                                     isActive
                                       ? `${activeCls} font-black shadow-xs ring-1 ring-current`

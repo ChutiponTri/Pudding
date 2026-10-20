@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { auth } from '@clerk/nextjs/server';
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
@@ -240,19 +240,23 @@ export async function POST(request: NextRequest) {
     });
     if (postError) console.warn('Attendance timeline post failed:', postError.message);
 
-    if (classroom.line_group_id) {
-      try {
-        await pushLineGroupText(
-          classroom.line_group_id,
-          withLiffLink(
-            `⏰ เปิดคาบเช็คชื่อ\nห้อง: ${classroom.name || 'ห้องเรียน'}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
-            'กดเพื่อเช็คชื่อ',
-            { classroomId, view: 'attendance' }
-          )
-        );
-      } catch (err) {
-        console.error('Attendance LINE push failed:', err);
-      }
+    // Push to LINE after responding so the teacher sees the new session immediately.
+    const lineGroupId = classroom.line_group_id;
+    if (lineGroupId) {
+      after(async () => {
+        try {
+          await pushLineGroupText(
+            lineGroupId,
+            withLiffLink(
+              `⏰ เปิดคาบเช็คชื่อ\nห้อง: ${classroom.name || 'ห้องเรียน'}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
+              'กดเพื่อเช็คชื่อ',
+              { classroomId, view: 'attendance' }
+            )
+          );
+        } catch (err) {
+          console.error('Attendance LINE push failed:', err);
+        }
+      });
     }
     return NextResponse.json({ session }, { status: 201 });
   }
