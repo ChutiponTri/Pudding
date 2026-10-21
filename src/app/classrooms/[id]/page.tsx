@@ -1644,12 +1644,15 @@ export default function ClassroomWorkspacePage() {
                         const itemWindow = getAssignmentWindow(item);
                         const itemStatus = getAssignmentStatus(itemWindow, item.is_exam);
                         const isClosed = itemStatus.tone === 'closed';
+                        const isLate = itemStatus.tone === 'late';
                         return (
                           <div
                             key={item.id}
                             className={`p-3.5 rounded-2xl border hover:border-amber-400 transition-all space-y-2 ${
                               isClosed
                                 ? 'border-rose-200 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/20'
+                                : isLate
+                                ? 'border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20'
                                 : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850'
                             }`}
                           >

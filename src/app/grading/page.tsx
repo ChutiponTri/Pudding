@@ -470,8 +470,8 @@ function GradingHubContent() {
                         {/* Submission status override badge */}
                         <div className="text-right shrink-0">
                           {(() => {
-                            const status = getAssignmentStatus(getAssignmentWindow(item.assignment), item.assignment.is_exam);
-                            const Icon = status.tone === 'closed' ? Lock : status.tone === 'extended' ? Unlock : Clock;
+                            const status = getAssignmentStatus(getAssignmentWindow(item.assignment), item.assignment.is_exam, language);
+                            const Icon = status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : Clock;
                             return (
                               <span
                                 className={`px-2.5 py-1 rounded-full border text-[11px] font-bold flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`}

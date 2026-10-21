@@ -43,30 +43,43 @@ export function getAssignmentWindow(
   };
 }
 
-export type AssignmentStatusTone = 'open' | 'extended' | 'closed';
+export type AssignmentStatusTone = 'open' | 'late' | 'closed';
 
 /**
- * Status badge shared by the teacher portal and the student LIFF app. Past the
- * deadline an assignment is shown as closed; homework still takes late work,
- * so `note` says so.
+ * Teacher-facing acceptance state, kept to three short labels:
+ * accepting, accepting late work (homework past its deadline), closed.
  */
-export function getAssignmentStatus(window: ReturnType<typeof getAssignmentWindow>, isExam?: boolean) {
-  if (window.isForceClosed) {
-    return { tone: 'closed' as AssignmentStatusTone, label: 'ปิดรับแล้ว', note: 'คุณครูปิดรับงานนี้แล้ว' };
+export function getAssignmentStatus(
+  window: ReturnType<typeof getAssignmentWindow>,
+  isExam?: boolean,
+  language: 'th' | 'en' = 'th'
+) {
+  const th = language === 'th';
+  if (!window.acceptsSubmissions) {
+    return {
+      tone: 'closed' as AssignmentStatusTone,
+      label: th ? 'ปิดรับงาน' : 'Closed',
+      note: window.isForceClosed
+        ? th ? 'คุณครูปิดรับงานแล้ว' : 'Closed by the teacher'
+        : th ? 'หมดเวลาทำข้อสอบ' : 'Quiz time is over',
+    };
   }
-  if (window.isPastDeadline) {
-    return isExam
-      ? { tone: 'closed' as AssignmentStatusTone, label: 'ปิดแล้ว · หมดเวลา', note: 'หมดเวลาทำข้อสอบ' }
-      : { tone: 'closed' as AssignmentStatusTone, label: 'ปิดแล้ว · เลยกำหนดส่ง', note: 'ยังส่งได้ แต่จะบันทึกว่าส่งช้า' };
+  if (window.isPastDeadline && !isExam) {
+    return {
+      tone: 'late' as AssignmentStatusTone,
+      label: th ? 'รับงานส่งช้า' : 'Accepting late',
+      note: th ? 'เลยกำหนดส่งแล้ว งานที่ส่งจะถูกบันทึกว่าส่งช้า' : 'Past due; new work is marked late',
+    };
   }
-  if (window.isExtended) {
-    return { tone: 'extended' as AssignmentStatusTone, label: 'ขยายเวลา', note: '' };
-  }
-  return { tone: 'open' as AssignmentStatusTone, label: 'เปิดรับอยู่', note: '' };
+  return {
+    tone: 'open' as AssignmentStatusTone,
+    label: th ? 'เปิดรับงาน' : 'Accepting',
+    note: window.isExtended ? (th ? 'ขยายเวลาส่งแล้ว' : 'Deadline extended') : '',
+  };
 }
 
 export const ASSIGNMENT_STATUS_CLASSES: Record<AssignmentStatusTone, string> = {
   open: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900',
-  extended: 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-900',
+  late: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900',
   closed: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-900',
 };

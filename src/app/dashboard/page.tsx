@@ -1370,21 +1370,24 @@ export default function DashboardPage() {
             >
               {/* Course Header */}
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-                <div className="flex items-start gap-3 sm:gap-4 min-w-0">
-                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-linear-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
-                    <BookOpen className="w-6 h-6 sm:w-7 sm:h-7" />
+                <div className="min-w-0 space-y-2">
+                  {/* Icon is as tall as the code + name block, so the two read as one unit. */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-12 h-12 rounded-xl bg-linear-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-sm shadow-amber-500/20 shrink-0">
+                      <BookOpen className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0 flex flex-col justify-center gap-0.5">
+                      <span className="font-mono text-xs font-bold tracking-wide text-amber-700 dark:text-amber-400 leading-none">
+                        {course.code}
+                      </span>
+                      <h3 className="text-lg sm:text-xl font-black leading-tight tracking-tight text-slate-900 dark:text-white break-words">
+                        {course.name}
+                      </h3>
+                    </div>
                   </div>
-                  <div className="space-y-1.5 min-w-0">
-                    <span className="inline-block px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-900 dark:text-amber-300 font-mono text-sm font-bold tracking-wide border border-amber-200 dark:border-amber-900">
-                      {course.code}
-                    </span>
-                    <h3 className="text-xl sm:text-2xl font-black leading-tight tracking-tight text-slate-900 dark:text-white break-words">
-                      {course.name}
-                    </h3>
-                    {course.description && (
-                      <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{course.description}</p>
-                    )}
-                  </div>
+                  {course.description && (
+                    <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed pl-15 max-sm:pl-0">{course.description}</p>
+                  )}
                 </div>
 
                 {/* Course Control Actions: Rubrics, Co-Teachers, Clone to other term, Add Section & Delete Course */}

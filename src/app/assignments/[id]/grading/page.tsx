@@ -325,7 +325,27 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const gradedTotal = submissions.filter((s) => s.total_score != null).length;
   const missingTotal = rosterRows.filter((row) => !row.submission).length;
 
-  const assignmentStatus = assignment ? getAssignmentStatus(getAssignmentWindow(assignment), assignment.is_exam) : null;
+  const assignmentWindow = assignment ? getAssignmentWindow(assignment) : null;
+  const assignmentStatus = assignment && assignmentWindow ? getAssignmentStatus(assignmentWindow, assignment.is_exam, language) : null;
+  const deadlineLabel = formatDateTime(
+    assignmentWindow?.deadline != null ? new Date(assignmentWindow.deadline).toISOString() : assignment?.due_date,
+    language
+  );
+  const th = language === 'th';
+  // What "auto" actually does right now: homework keeps taking late work, a quiz closes.
+  const autoBannerText = !assignment
+    ? ''
+    : assignment.is_exam
+    ? assignmentWindow?.isPastDeadline
+      ? th ? 'อัตโนมัติ: หมดเวลาแล้ว ปิดรับคำตอบ' : 'Automatic: time is up, answers are closed'
+      : th ? `อัตโนมัติ: เปิดรับคำตอบถึง ${deadlineLabel} แล้วปิดรับทันที` : `Automatic: open until ${deadlineLabel}, then closes`
+    : assignmentWindow?.isPastDeadline
+    ? th
+      ? 'อัตโนมัติ: เลยกำหนดส่งแล้ว ยังรับงานส่งช้าอยู่ (บันทึกว่าส่งช้า) — กด "ล็อกปิดรับงานทันที" หากต้องการหยุดรับ'
+      : 'Automatic: past due, still accepting late work (marked late). Use "Close now" to stop.'
+    : th
+    ? `อัตโนมัติ: เปิดรับงานถึง ${deadlineLabel} หลังจากนั้นยังรับงานส่งช้าได้`
+    : `Automatic: open until ${deadlineLabel}; late work accepted after that`;
 
   return (
     <div className="space-y-8 pb-20">
@@ -352,9 +372,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         </Suspense>
 
         <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
+          <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 md:gap-6">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
                 <span
                   className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
                     assignment?.is_exam
@@ -384,37 +404,41 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               </p>
             </div>
 
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <span className="text-xs text-slate-400 block font-medium">
-                  {assignment?.is_exam ? (language === 'th' ? 'ปิดรับคำตอบ' : 'Closes') : t('grading.due_date')}
-                </span>
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                  {formatDateTime(assignment?.due_date, language)}
-                </span>
-                {assignmentStatus && (
-                  <>
-                    <span
-                      className={`mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-black ${ASSIGNMENT_STATUS_CLASSES[assignmentStatus.tone]}`}
-                    >
-                      {assignmentStatus.tone === 'closed' && <Lock className="w-3 h-3" />}
-                      <span>{assignmentStatus.label}</span>
-                    </span>
-                    {assignmentStatus.note && <span className="block text-[10px] text-slate-400 mt-0.5">{assignmentStatus.note}</span>}
-                  </>
+            {assignmentStatus && (
+              <div className="w-full md:w-auto md:min-w-64 shrink-0 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2.5">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                    {th ? 'สถานะการรับงาน' : 'Submissions'}
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-black whitespace-nowrap ${ASSIGNMENT_STATUS_CLASSES[assignmentStatus.tone]}`}
+                  >
+                    {assignmentStatus.tone === 'closed' ? <Lock className="w-3.5 h-3.5" /> : assignmentStatus.tone === 'late' ? <Unlock className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
+                    <span>{assignmentStatus.label}</span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4 pt-2.5 border-t border-slate-200/80 dark:border-slate-700/80">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5" />
+                    {assignment?.is_exam ? (th ? 'ปิดรับคำตอบ' : 'Closes') : t('grading.due_date')}
+                  </span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 text-right">{deadlineLabel}</span>
+                </div>
+                {assignmentStatus.note && (
+                  <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{assignmentStatus.note}</p>
                 )}
               </div>
-            </div>
+            )}
           </div>
 
           {/* INTERACTIVE MANUAL SUBMISSION CONTROL PANEL */}
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="flex items-start gap-2 min-w-0">
+                <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
                   <Clock className="w-4 h-4" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-xs font-bold text-slate-900 dark:text-white">
                     {t('submission_control.title')}
                   </h3>
@@ -425,7 +449,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               </div>
 
               {/* Status Action Buttons */}
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                 {/* 1. Automated */}
                 <button
                   type="button"
@@ -496,7 +520,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
             {/* Current Active Status Indicator Banner */}
             <div
-              className={`px-3.5 py-2 rounded-xl text-xs font-medium flex items-center justify-between ${
+              className={`px-3.5 py-2.5 rounded-xl text-xs font-medium flex flex-wrap items-start sm:items-center justify-between gap-x-3 gap-y-1.5 ${
                 overrideStatus === 'force_closed'
                   ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-900/60'
                   : overrideStatus === 'extended'
@@ -504,19 +528,19 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   : 'bg-emerald-100/70 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-900/50'
               }`}
             >
-              <div className="flex items-center gap-2">
-                {overrideStatus === 'force_closed' && <Lock className="w-4 h-4 text-rose-600" />}
-                {overrideStatus === 'extended' && <Unlock className="w-4 h-4 text-amber-600" />}
-                {overrideStatus === 'auto' && <Clock className="w-4 h-4 text-emerald-600" />}
-                <span>
+              <div className="flex items-start gap-2 min-w-0 flex-1">
+                {overrideStatus === 'force_closed' && <Lock className="w-4 h-4 text-rose-600 shrink-0" />}
+                {overrideStatus === 'extended' && <Unlock className="w-4 h-4 text-amber-600 shrink-0" />}
+                {overrideStatus === 'auto' && <Clock className="w-4 h-4 text-emerald-600 shrink-0" />}
+                <span className="min-w-0 break-words leading-relaxed">
                   {overrideStatus === 'force_closed'
                     ? t('submission_control.status_banner_closed')
                     : overrideStatus === 'extended'
                     ? t('submission_control.status_banner_extended').replace(
                         '{time}',
                         formatDateTime(assignment?.extended_until || extendedDateTime, language)
-                      )
-                    : t('submission_control.status_banner_auto')}
+                      ) + (assignment?.is_exam ? '' : th ? ' (หลังจากนั้นรับงานส่งช้า)' : ' (late work accepted after that)')
+                    : autoBannerText}
                 </span>
               </div>
 
@@ -524,7 +548,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 <button
                   type="button"
                   onClick={() => handleSetOverride('auto')}
-                  className="text-[11px] underline font-bold hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                  className="text-[11px] underline font-bold hover:text-slate-900 dark:hover:text-white cursor-pointer shrink-0 ml-6 sm:ml-0"
                 >
                   {t('submission_control.btn_reset_auto')}
                 </button>
