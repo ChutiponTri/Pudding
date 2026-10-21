@@ -19,7 +19,6 @@ import {
   AlertCircle,
   Loader2,
   Sparkles,
-  Edit2,
   School,
   Megaphone,
   CalendarDays,
@@ -28,7 +27,11 @@ import {
   Menu,
   X,
   LayoutGrid,
+  Sun,
+  Moon,
+  UserCog,
 } from "lucide-react";
+import { useTheme } from "@/lib/theme/ThemeContext";
 import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
@@ -425,6 +428,28 @@ export default function LiffStudentPage() {
   // Join Classroom Code Modal
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
   const [isNavOpen, setIsNavOpen] = useState(false);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const { theme, toggleTheme } = useTheme();
+
+  // Close the profile menu on an outside tap or Escape.
+  useEffect(() => {
+    if (!isProfileMenuOpen) return;
+    const onPointer = (event: MouseEvent | TouchEvent) => {
+      if (!profileMenuRef.current?.contains(event.target as Node)) setIsProfileMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsProfileMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("touchstart", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("touchstart", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [isProfileMenuOpen]);
   useEffect(() => {
     if (!isNavOpen) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setIsNavOpen(false);
@@ -1337,40 +1362,84 @@ export default function LiffStudentPage() {
           </button>
           </div>
 
-          <div className="flex items-center gap-1 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
             <button
               type="button"
-              onClick={() => {
-                setInputFirstName(currentStudent.first_name || "");
-                setInputLastName(currentStudent.last_name || "");
-                setInputStudentId(currentStudent.student_id || "");
-                setInputInstitution(currentStudent.institution || "");
-                setInputEmail(currentStudent.email || "");
-                setIsFirstTimeStudentId(false);
-                setIsStudentIdModalOpen(true);
-              }}
-              className="flex items-center gap-2 min-w-0 bg-black/15 hover:bg-black/25 pl-1 pr-3 py-1 rounded-full transition-colors cursor-pointer"
-              title="แก้ไขข้อมูลนักเรียน"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "เปลี่ยนเป็นโหมดสว่าง" : "เปลี่ยนเป็นโหมดมืด"}
+              title={theme === "dark" ? "โหมดสว่าง" : "โหมดมืด"}
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-black/15 hover:bg-black/25 transition-colors cursor-pointer shrink-0"
             >
-              <Avatar src={currentStudent.avatar} firstName={currentStudent.first_name} lastName={currentStudent.last_name} name={currentStudent.name} className="w-7 h-7 text-[10px] ring-2 ring-white/50" />
-              <span className="min-w-0 text-left leading-tight">
-                <span className="block max-w-28 sm:max-w-44 truncate text-xs font-bold">
-                  {currentStudent.first_name || currentStudent.name}
-                </span>
-                <span className="block text-[10px] text-emerald-50/90 font-medium truncate">
-                  {currentStudent.student_id ? `รหัส ${currentStudent.student_id}` : 'แตะเพื่อใส่รหัส'}
-                </span>
-              </span>
-              <Edit2 className="w-3 h-3 text-emerald-50/80 shrink-0" />
+              {theme === "dark" ? <Sun className="w-4.5 h-4.5 text-amber-200" /> : <Moon className="w-4.5 h-4.5" />}
             </button>
-            <button
-              onClick={handleLineLogout}
-              title="ออกจากระบบ"
-              aria-label="ออกจากระบบ"
-              className="w-10 h-10 flex items-center justify-center rounded-full text-emerald-50 hover:text-white hover:bg-black/15 transition-colors cursor-pointer shrink-0"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
+
+            <div ref={profileMenuRef} className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsProfileMenuOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={isProfileMenuOpen}
+                aria-label="โปรไฟล์ของฉัน"
+                title={`${currentStudent.first_name || currentStudent.name || ""} ${currentStudent.last_name || ""}`.trim()}
+                className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-black/15 transition-colors cursor-pointer"
+              >
+                <Avatar src={currentStudent.avatar} firstName={currentStudent.first_name} lastName={currentStudent.last_name} name={currentStudent.name} className="w-8 h-8 text-[11px] ring-2 ring-white/70" />
+              </button>
+
+              {isProfileMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xl shadow-slate-900/15 ring-1 ring-slate-200 dark:ring-slate-800 overflow-hidden animate-in fade-in slide-in-from-top-1"
+                >
+                  <div className="p-4 flex items-center gap-3 bg-emerald-50/70 dark:bg-emerald-950/30 border-b border-slate-100 dark:border-slate-800">
+                    <Avatar src={currentStudent.avatar} firstName={currentStudent.first_name} lastName={currentStudent.last_name} name={currentStudent.name} className="w-11 h-11 text-sm shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold truncate">
+                        {`${currentStudent.first_name || currentStudent.name || ""} ${currentStudent.last_name || ""}`.trim()}
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                        {currentStudent.student_id ? `รหัส ${currentStudent.student_id}` : "ยังไม่ได้ใส่รหัสนักเรียน"}
+                      </p>
+                      {currentStudent.institution && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">🏫 {currentStudent.institution}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="p-1.5">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false);
+                        setInputFirstName(currentStudent.first_name || "");
+                        setInputLastName(currentStudent.last_name || "");
+                        setInputStudentId(currentStudent.student_id || "");
+                        setInputInstitution(currentStudent.institution || "");
+                        setInputEmail(currentStudent.email || "");
+                        setIsFirstTimeStudentId(false);
+                        setIsStudentIdModalOpen(true);
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      <UserCog className="w-4.5 h-4.5 text-line" />
+                      <span>แก้ไขข้อมูลส่วนตัว</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsProfileMenuOpen(false);
+                        handleLineLogout();
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                    >
+                      <LogOut className="w-4.5 h-4.5" />
+                      <span>ออกจากระบบ</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1656,7 +1725,7 @@ export default function LiffStudentPage() {
                       <WorkShortcut
                         key={hw.id}
                         tone={hwWindow.isPastDeadline ? "rose" : "amber"}
-                        badge={hwWindow.isPastDeadline ? "เลยกำหนด" : "การบ้าน"}
+                        badge={hwWindow.isPastDeadline ? "🔒 ปิดแล้ว · ส่งช้าได้" : "การบ้าน"}
                         title={hw.title}
                         meta={`${hwClass?.name || 'รายวิชา'} • ${formatTimeLeft(hwWindow.deadline)}`}
                         action="ส่งงาน"
@@ -1822,6 +1891,7 @@ export default function LiffStudentPage() {
                           (!assignment.is_exam && Boolean(submission.submitted_at && window_.deadline && new Date(submission.submitted_at).getTime() > window_.deadline))
                         );
                         const isClosed = !isSubmitted && !window_.acceptsSubmissions;
+                        const isPastDue = !isSubmitted && !isClosed && window_.isPastDeadline;
 
                         return (
                           <button
@@ -1856,7 +1926,9 @@ export default function LiffStudentPage() {
                                 ) : isSubmitted ? (
                                   <Pill tone="sky">รอตรวจ</Pill>
                                 ) : isClosed ? (
-                                  <Pill tone="slate">ปิดรับแล้ว</Pill>
+                                  <Pill tone="rose">🔒 ปิดรับแล้ว</Pill>
+                                ) : isPastDue ? (
+                                  <Pill tone="rose">🔒 ปิดแล้ว</Pill>
                                 ) : (
                                   <Pill tone="amber">ยังไม่ส่ง</Pill>
                                 )}
@@ -1875,7 +1947,7 @@ export default function LiffStudentPage() {
                                 ) : isClosed ? (
                                   <span className="font-semibold text-slate-500">{window_.isQuizClosed ? 'หมดเวลาทำข้อสอบ' : 'คุณครูปิดรับงานแล้ว'}</span>
                                 ) : window_.isPastDeadline ? (
-                                  <span className="font-semibold text-rose-600">เลยกำหนด (ยังส่งได้)</span>
+                                  <span className="font-semibold text-rose-600">เลยกำหนดส่ง • ยังส่งได้ แต่จะบันทึกว่าส่งช้า</span>
                                 ) : (
                                   <span className="truncate">
                                     {window_.isExtended ? 'ขยายเวลา • ' : ''}{formatTimeLeft(window_.deadline)}
@@ -2107,6 +2179,16 @@ export default function LiffStudentPage() {
                   </span>
                 </div>
                 <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white leading-snug">{activeAssignment.title}</h1>
+                {getAssignmentWindow(activeAssignment).isPastDeadline && (
+                  <div role="status" className="flex items-start gap-2 p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/50 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-700 dark:text-rose-300 text-xs font-bold">
+                    <span aria-hidden>🔒</span>
+                    <span>
+                      {activeAssignment.is_exam
+                        ? "ข้อสอบนี้ปิดแล้ว (หมดเวลา)"
+                        : "งานนี้ปิดแล้ว (เลยกำหนดส่ง) — ยังส่งได้ แต่จะถูกบันทึกว่าส่งช้า"}
+                    </span>
+                  </div>
+                )}
                 {activeAssignment.description && (
                   <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap">{activeAssignment.description}</p>
                 )}

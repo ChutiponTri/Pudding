@@ -261,3 +261,11 @@ CREATE INDEX IF NOT EXISTS idx_attendance_records_classroom_student ON public.at
 
 -- Make PostgREST pick up the new columns immediately.
 NOTIFY pgrst, 'reload schema';
+
+-- ==========================================
+-- Multiple LINE reminders per assignment
+-- ==========================================
+-- Every selected reminder offset (minutes before the deadline).
+-- reminder_offset_minutes keeps the earliest one for older code.
+ALTER TABLE public.assignments
+ADD COLUMN IF NOT EXISTS reminder_offsets_minutes INTEGER[];

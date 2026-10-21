@@ -42,3 +42,31 @@ export function getAssignmentWindow(
     acceptsSubmissions: !isForceClosed && !isQuizClosed,
   };
 }
+
+export type AssignmentStatusTone = 'open' | 'extended' | 'closed';
+
+/**
+ * Status badge shared by the teacher portal and the student LIFF app. Past the
+ * deadline an assignment is shown as closed; homework still takes late work,
+ * so `note` says so.
+ */
+export function getAssignmentStatus(window: ReturnType<typeof getAssignmentWindow>, isExam?: boolean) {
+  if (window.isForceClosed) {
+    return { tone: 'closed' as AssignmentStatusTone, label: 'ปิดรับแล้ว', note: 'คุณครูปิดรับงานนี้แล้ว' };
+  }
+  if (window.isPastDeadline) {
+    return isExam
+      ? { tone: 'closed' as AssignmentStatusTone, label: 'ปิดแล้ว · หมดเวลา', note: 'หมดเวลาทำข้อสอบ' }
+      : { tone: 'closed' as AssignmentStatusTone, label: 'ปิดแล้ว · เลยกำหนดส่ง', note: 'ยังส่งได้ แต่จะบันทึกว่าส่งช้า' };
+  }
+  if (window.isExtended) {
+    return { tone: 'extended' as AssignmentStatusTone, label: 'ขยายเวลา', note: '' };
+  }
+  return { tone: 'open' as AssignmentStatusTone, label: 'เปิดรับอยู่', note: '' };
+}
+
+export const ASSIGNMENT_STATUS_CLASSES: Record<AssignmentStatusTone, string> = {
+  open: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900',
+  extended: 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-900',
+  closed: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-900',
+};

@@ -107,6 +107,9 @@ async function fetchUsersByKeys(supabase: SupabaseClient, keys: Array<string | u
   return map;
 }
 
+/** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes'] as const;
+
 type EnrollmentLink = { classroom_id: string; student_id: string; status: string };
 
 /** What roster subscribers receive. */
@@ -983,11 +986,14 @@ export const dataService = {
     };
     const newQuestions: Question[] = questionsData.map((q, idx) => ({ ...q, id: `q-${Date.now()}-${idx}`, assignment_id: id }));
 
-    let { error } = await supabase.from('assignments').insert(newAssignment);
-    // Databases without the group_name column yet still accept the assignment.
-    if (error && error.message?.includes('group_name')) {
-      const { group_name: _unused, ...withoutGroup } = newAssignment;
-      ({ error } = await supabase.from('assignments').insert(withoutGroup));
+    // Databases without the newer optional columns still accept the assignment.
+    let row: Partial<Assignment> = newAssignment;
+    let { error } = await supabase.from('assignments').insert(row);
+    for (const column of OPTIONAL_ASSIGNMENT_COLUMNS) {
+      if (!error?.message?.includes(column)) continue;
+      const { [column]: _unused, ...rest } = row;
+      row = rest;
+      ({ error } = await supabase.from('assignments').insert(row));
     }
     if (error) throw toDatabaseError(error, 'assignments');
     if (newQuestions.length > 0) {
@@ -1017,10 +1023,13 @@ export const dataService = {
 
   async updateAssignment(id: string, data: Partial<Omit<Assignment, 'id' | 'created_at'>>): Promise<Assignment | null> {
     const supabase = createClient();
-    let { data: updated, error } = await supabase.from('assignments').update(data).eq('id', id).select().maybeSingle();
-    if (error && error.message?.includes('group_name')) {
-      const { group_name: _unused, ...withoutGroup } = data;
-      ({ data: updated, error } = await supabase.from('assignments').update(withoutGroup).eq('id', id).select().maybeSingle());
+    let patch = data;
+    let { data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle();
+    for (const column of OPTIONAL_ASSIGNMENT_COLUMNS) {
+      if (!error?.message?.includes(column)) continue;
+      const { [column]: _unused, ...rest } = patch;
+      patch = rest;
+      ({ data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle());
     }
     if (error) throw toDatabaseError(error, 'assignments');
     return (updated as Assignment) || null;

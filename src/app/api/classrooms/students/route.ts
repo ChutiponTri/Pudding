@@ -5,12 +5,12 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type RosterEntry = { id?: string; line_uid?: string; student_id?: string; first_name?: string; last_name?: string };
+type RosterEntry = { id?: string; line_uid?: string; student_id?: string; first_name?: string; last_name?: string; institution?: string };
 type ClassroomRow = { id: string; teacher_id?: string | null; teachers?: Array<{ teacher_id?: string }> | null; students?: RosterEntry[] | null; pending_students?: RosterEntry[] | null };
 
 /**
- * Teacher corrects a student's name / surname / student number (students
- * sometimes mistype them when joining from LIFF).
+ * Teacher corrects a student's name / surname / student number / school
+ * (students sometimes mistype them when joining from LIFF).
  *
  * Only a teacher of `classroomId` may do this, and only for a student of that
  * classroom. The users row is the source of truth; the roster snapshots kept
@@ -26,6 +26,8 @@ export async function PATCH(request: NextRequest) {
   const firstName = typeof body.firstName === 'string' ? body.firstName.trim() : '';
   const lastName = typeof body.lastName === 'string' ? body.lastName.trim() : '';
   const studentNumber = typeof body.studentNumber === 'string' ? body.studentNumber.trim() : '';
+  // Omitted (older clients) leaves the school unchanged.
+  const institution = typeof body.institution === 'string' ? body.institution.trim() : undefined;
   if (!classroomId || !studentKey) return NextResponse.json({ error: 'classroomId and studentId are required' }, { status: 400 });
   if (!firstName || !lastName) return NextResponse.json({ error: 'กรุณากรอกชื่อและนามสกุล' }, { status: 400 });
 
@@ -63,7 +65,8 @@ export async function PATCH(request: NextRequest) {
   }
   if (!enrolled) return NextResponse.json({ error: 'Student is not in this classroom' }, { status: 404 });
 
-  const fields = { first_name: firstName, last_name: lastName, student_id: studentNumber || null };
+  const fields: Record<string, string | null> = { first_name: firstName, last_name: lastName, student_id: studentNumber || null };
+  if (institution !== undefined) fields.institution = institution || null;
   if (user) {
     const { error } = await supabase.from('users').update({ ...fields, updated_at: new Date().toISOString() }).eq('id', user.id);
     if (error) {
@@ -84,7 +87,10 @@ export async function PATCH(request: NextRequest) {
   );
   const rows = new Map<string, ClassroomRow>();
   for (const { data } of containing) for (const row of (data || []) as ClassroomRow[]) rows.set(row.id, row);
-  const patch = (entry: RosterEntry) => (isSameStudent(entry) ? { ...entry, ...fields, student_id: studentNumber || undefined } : entry);
+  const patch = (entry: RosterEntry) =>
+    isSameStudent(entry)
+      ? { ...entry, ...fields, student_id: studentNumber || undefined, ...(institution !== undefined ? { institution: institution || undefined } : {}) }
+      : entry;
   await Promise.all(
     [...rows.values()].map((row) =>
       supabase

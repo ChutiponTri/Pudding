@@ -115,6 +115,8 @@ export interface Assignment {
   reminder_cron: string;
   /** Minutes before due_date when the LINE reminder worker should run. */
   reminder_offset_minutes?: number;
+  /** Every selected reminder (minutes before the deadline); reminder_offset_minutes holds the earliest. */
+  reminder_offsets_minutes?: number[];
   line_last_reminded_at?: string;
   total_points?: number;
   status_override?: SubmissionOverrideStatus;

@@ -44,6 +44,7 @@ import {
   Calendar,
   Layers,
 } from 'lucide-react';
+import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 
 /**
  * Back button that returns to wherever the teacher came from. Links into this
@@ -324,6 +325,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const gradedTotal = submissions.filter((s) => s.total_score != null).length;
   const missingTotal = rosterRows.filter((row) => !row.submission).length;
 
+  const assignmentStatus = assignment ? getAssignmentStatus(getAssignmentWindow(assignment), assignment.is_exam) : null;
+
   return (
     <div className="space-y-8 pb-20">
       {/* Toast Notice */}
@@ -389,6 +392,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
                   {formatDateTime(assignment?.due_date, language)}
                 </span>
+                {assignmentStatus && (
+                  <>
+                    <span
+                      className={`mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-black ${ASSIGNMENT_STATUS_CLASSES[assignmentStatus.tone]}`}
+                    >
+                      {assignmentStatus.tone === 'closed' && <Lock className="w-3 h-3" />}
+                      <span>{assignmentStatus.label}</span>
+                    </span>
+                    {assignmentStatus.note && <span className="block text-[10px] text-slate-400 mt-0.5">{assignmentStatus.note}</span>}
+                  </>
+                )}
               </div>
             </div>
           </div>

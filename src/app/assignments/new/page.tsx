@@ -68,10 +68,16 @@ function NewAssignmentContent() {
   const [isExam, setIsExam] = useState(false);
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
+  const [existingGroups, setExistingGroups] = useState<string[]>([]);
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState(() => daysFromNowAt(7, 23, 59));
   const reminderCron = 'relative_due_date';
-  const [reminderOffsetMinutes, setReminderOffsetMinutes] = useState(24 * 60);
+  const [reminderOffsets, setReminderOffsets] = useState<number[]>([24 * 60]);
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Conditional Sample Work / Guidelines (Assignment Mode only)
   const [sampleWorkTitle, setSampleWorkTitle] = useState("");
@@ -100,7 +106,7 @@ function NewAssignmentContent() {
       indicator_id: '',
       type: 'short_answer',
       question_text: '',
-      options: ['ตัวเลือก ก', 'ตัวเลือก ข', 'ตัวเลือก ค', 'ตัวเลือก ง'],
+      options: ['', '', '', ''],
       ideal_answer: '',
       rubric_criteria: '',
       max_score: 5,
@@ -172,6 +178,25 @@ function NewAssignmentContent() {
     init(teacherId);
   }, [urlClassroomId, clerkUser?.id]);
 
+  // Groups already used in the selected classrooms, offered as one-tap choices.
+  const selectedClassroomKey = selectedClassroomIds.join(',');
+  useEffect(() => {
+    const ids = selectedClassroomKey ? selectedClassroomKey.split(',') : [];
+    if (!ids.length) return;
+    let cancelled = false;
+    dataService
+      .getAssignmentsByClassroomIds(ids)
+      .then((list) => {
+        if (cancelled) return;
+        const names = new Set(list.map((a) => a.group_name?.trim()).filter((name): name is string => !!name));
+        setExistingGroups([...names].sort((a, b) => a.localeCompare(b, 'th')));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClassroomKey]);
+
   const handleCourseChange = (courseId: string) => {
     setSelectedCourseId(courseId);
     const matchingClasses = classrooms.filter((c) => c.course_id === courseId);
@@ -198,7 +223,7 @@ function NewAssignmentContent() {
     });
   };
 
-  const reminderOptions = [
+  const allReminderOptions = [
     { value: 24 * 60, label: language === 'th' ? '24 ชั่วโมงก่อนกำหนดส่ง' : '24 hours before due' },
     { value: 12 * 60, label: language === 'th' ? '12 ชั่วโมงก่อนกำหนดส่ง' : '12 hours before due' },
     { value: 6 * 60, label: language === 'th' ? '6 ชั่วโมงก่อนกำหนดส่ง' : '6 hours before due' },
@@ -206,6 +231,16 @@ function NewAssignmentContent() {
     { value: 60, label: language === 'th' ? '1 ชั่วโมงก่อนกำหนดส่ง' : '1 hour before due' },
     { value: 30, label: language === 'th' ? '30 นาทีก่อนกำหนดส่ง' : '30 minutes before due' },
   ];
+  // A reminder can't be earlier than "now": only offer offsets that fit before the due date.
+  // `clock` ticks each minute so the list shrinks while the form stays open.
+  const minutesUntilDue = dueDate ? Math.floor((new Date(dueDate).getTime() - clock) / 60000) : Infinity;
+  const reminderOptions = allReminderOptions.filter((option) => option.value < minutesUntilDue);
+  // Selected reminders that still fit, earliest first.
+  const effectiveReminderOffsets = reminderOffsets
+    .filter((offset) => reminderOptions.some((option) => option.value === offset))
+    .sort((a, b) => b - a);
+  const toggleReminderOffset = (offset: number) =>
+    setReminderOffsets((prev) => (prev.includes(offset) ? prev.filter((value) => value !== offset) : [...prev, offset]));
 
   const handleAddQuestion = (type: QuestionType = 'short_answer') => {
     // Use courseIndicators first, fall back to global indicators
@@ -216,7 +251,7 @@ function NewAssignmentContent() {
         indicator_id: defaultIndId,
         type,
         question_text: '',
-        options: ['ตัวเลือก ก', 'ตัวเลือก ข', 'ตัวเลือก ค', 'ตัวเลือก ง'],
+        options: ['', '', '', ''],
         ideal_answer: '',
         rubric_criteria: '',
         max_score: 5,
@@ -266,6 +301,17 @@ function NewAssignmentContent() {
       alert(language === 'th' ? 'กำหนดส่งต้องเป็นเวลาในอนาคต' : 'The due date must be in the future');
       return;
     }
+    const incompleteChoice = questions.findIndex(
+      (q) => q.type === 'multiple_choice' && q.options.filter((opt) => opt.trim()).length < 2
+    );
+    if (incompleteChoice !== -1) {
+      alert(
+        language === 'th'
+          ? `ข้อที่ ${incompleteChoice + 1}: กรุณากรอกตัวเลือกอย่างน้อย 2 ตัวเลือก`
+          : `Question ${incompleteChoice + 1}: please fill in at least 2 options`
+      );
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -293,7 +339,8 @@ function NewAssignmentContent() {
           is_exam: isExam,
           due_date: dueDate || daysFromNowAt(7, 23, 59),
           reminder_cron: reminderCron,
-          reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? reminderOffsetMinutes : 0,
+          reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
+          reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
           total_points: totalPoints,
           status_override: 'auto',
           sample_work_title: !isExam ? sampleWorkTitle : undefined,
@@ -304,7 +351,7 @@ function NewAssignmentContent() {
           type: q.type,
           question_text: q.question_text || 'คำถามข้อนี้',
           indicator_id: q.indicator_id,
-          options: q.type === 'multiple_choice' ? q.options : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : undefined,
+          options: q.type === 'multiple_choice' ? q.options.map((opt) => opt.trim()).filter(Boolean) : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : undefined,
           ideal_answer: q.ideal_answer,
           rubric_criteria: q.rubric_criteria,
           max_score: Number(q.max_score) || 5,
@@ -334,7 +381,7 @@ function NewAssignmentContent() {
       alert(
         isExam
           ? (language === 'th' ? 'สร้างแบบทดสอบสำเร็จ!' : 'Quiz created successfully!')
-          : !selectedClassroomsLineReady
+          : !selectedClassroomsLineReady || !effectiveReminderOffsets.length
           ? (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')
           : language === 'th'
           ? 'สร้างการบ้านสำเร็จ! ตั้งเวลาเตือนส่งงานผ่าน LINE เรียบร้อย'
@@ -518,8 +565,41 @@ function NewAssignmentContent() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">หมวดหมู่การแสดงผล</label>
-              <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={isExam ? 'เช่น สอบกลางภาค' : 'เช่น ใบงานบทที่ 1'} className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500" />
+              <label htmlFor="assignment-group" className="text-xs font-bold text-slate-700 dark:text-slate-300">หมวดหมู่การแสดงผล</label>
+              <input
+                id="assignment-group"
+                type="text"
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+                placeholder={existingGroups.length ? 'เลือกหมวดหมู่ด้านล่าง หรือพิมพ์ชื่อหมวดหมู่ใหม่' : isExam ? 'เช่น สอบกลางภาค' : 'เช่น ใบงานบทที่ 1'}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500"
+              />
+              {existingGroups.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">หมวดหมู่ที่มีอยู่แล้ว:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {existingGroups.map((name) => {
+                      const selected = groupName.trim() === name;
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setGroupName(selected ? '' : name)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer inline-flex items-center gap-1 ${
+                            selected
+                              ? 'bg-amber-500 text-slate-950 border-amber-600'
+                              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-amber-400'
+                          }`}
+                        >
+                          {selected ? <Check className="w-3 h-3" /> : <Layers className="w-3 h-3" />}
+                          <span>{name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Description */}
@@ -557,14 +637,34 @@ function NewAssignmentContent() {
                 <Clock className="w-3.5 h-3.5 text-emerald-500" />
                 <span>{t('assignment_creator.fields.line_reminder_label')}</span>
               </label>
-              {selectedClassroomsLineReady ? (
-                <select
-                  value={reminderOffsetMinutes}
-                  onChange={(event) => setReminderOffsetMinutes(Number(event.target.value))}
-                  className="w-full px-3 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
-                >
-                  {reminderOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
+              {selectedClassroomsLineReady && reminderOptions.length === 0 ? (
+                <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300">
+                  {language === 'th'
+                    ? 'เหลือเวลาก่อนกำหนดส่งไม่ถึง 30 นาที จึงไม่สามารถตั้งเวลาเตือนได้'
+                    : 'Less than 30 minutes until the due date, so no reminder can be scheduled.'}
+                </div>
+              ) : selectedClassroomsLineReady ? (
+                <div className="flex flex-wrap gap-2" role="group" aria-label={t('assignment_creator.fields.line_reminder_label')}>
+                  {reminderOptions.map((option) => {
+                    const selected = effectiveReminderOffsets.includes(option.value);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => toggleReminderOffset(option.value)}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer inline-flex items-center gap-1.5 ${
+                          selected
+                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                            : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-slate-700 dark:text-slate-200 hover:border-emerald-400'
+                        }`}
+                      >
+                        {selected && <Check className="w-3.5 h-3.5" />}
+                        <span>{option.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               ) : (
                 <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
                   <p>ห้องเรียนที่เลือกยังไม่ได้เชื่อมต่อ LINE Bot จึงยังตั้งเวลาทวงงานไม่ได้</p>
@@ -575,7 +675,9 @@ function NewAssignmentContent() {
               )}
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {selectedClassroomsLineReady
-                  ? 'ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน ณ เวลานี้ แล้วส่งสรุปเข้า LINE group ของห้องเรียน'
+                  ? effectiveReminderOffsets.length
+                    ? `เลือกได้หลายเวลา (เลือกแล้ว ${effectiveReminderOffsets.length}) — ทุกครั้งระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน`
+                    : 'ไม่ได้เลือกเวลาเตือน ระบบจะไม่ส่งแจ้งเตือนเข้า LINE group'
                   : 'เมื่อเชื่อมต่อ LINE Bot แล้ว จึงจะสามารถตั้งเวลาและส่งสรุปเข้า LINE group ได้'}
               </p>
             </div>
@@ -927,6 +1029,7 @@ function NewAssignmentContent() {
                             type="text"
                             value={opt}
                             onChange={(e) => handleOptionChange(idx, optIdx, e.target.value)}
+                            placeholder={language === 'th' ? `ตัวเลือก ${'กขคงจฉชซ'[optIdx] || optIdx + 1}` : `Option ${String.fromCharCode(65 + optIdx)}`}
                             className="flex-1 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
                           />
                         </div>

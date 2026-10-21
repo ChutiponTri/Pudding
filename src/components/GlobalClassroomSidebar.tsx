@@ -156,17 +156,19 @@ export const GlobalClassroomSidebar: React.FC = () => {
           ) : (
             groupedCourses.map((group) => (
               <div key={group.label} className="space-y-1.5 min-w-0">
-                <div className="px-2 py-1 flex items-center justify-between gap-1 min-w-0">
-                  <p className="text-xs font-black text-slate-800 dark:text-slate-200 truncate flex items-center gap-1.5 min-w-0">
-                    <BookOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <div className="px-2 py-1.5 flex items-center justify-between gap-2 min-w-0">
+                  <p className="text-sm font-black text-slate-900 dark:text-white truncate flex items-center gap-2 min-w-0" title={group.label}>
+                    <span className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                      <BookOpen className="w-4 h-4" />
+                    </span>
                     <span className="truncate">{group.label}</span>
                   </p>
-                  <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                    ({group.items.length})
+                  <span className="px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 tabular-nums shrink-0">
+                    {group.items.length}
                   </span>
                 </div>
 
-                <div className="space-y-1 pl-1 min-w-0">
+                <div className="space-y-1 pl-2 ml-3.5 border-l border-slate-200 dark:border-slate-800 min-w-0">
                   {group.items.map((cls) => {
                     const isActive = pathname.startsWith(`/classrooms/${cls.id}`);
                     const studentCount = cls.student_count || cls.students?.length || 0;
@@ -176,18 +178,19 @@ export const GlobalClassroomSidebar: React.FC = () => {
                         key={cls.id}
                         href={`/classrooms/${cls.id}`}
                         onClick={handleItemClick}
-                        className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer min-w-0 ${
+                        title={cls.name}
+                        className={`flex items-center justify-between min-h-11 px-3 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer min-w-0 ${
                           isActive
                             ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-300/80 dark:ring-amber-700/70'
                             : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
                         }`}
                       >
                         <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
                           <span className="truncate">{cls.name}</span>
                         </div>
-                        <span className="text-[10px] text-slate-400 font-normal shrink-0 ml-2 flex items-center gap-0.5">
-                          <Users className="w-2.5 h-2.5" />
+                        <span className="text-xs text-slate-400 font-semibold shrink-0 ml-2 flex items-center gap-1 tabular-nums">
+                          <Users className="w-3.5 h-3.5" />
                           <span>{studentCount}</span>
                         </span>
                       </Link>

@@ -1,3 +1,4 @@
+import type { Assignment } from '@/types/database';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
@@ -6,36 +7,77 @@ import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 
 export const runtime = 'nodejs';
+
+type ReminderRow = {
+  id: string;
+  title: string;
+  due_date: string;
+  is_exam?: boolean;
+  status_override?: Assignment['status_override'];
+  extended_until?: string;
+  reminder_offset_minutes: number;
+  reminder_offsets_minutes?: number[] | null;
+  classroom_id: string;
+  line_last_reminded_at: string | null;
+};
 export const dynamic = 'force-dynamic';
 
-/** Run from a scheduler every five minutes. */
+/**
+ * Run from a scheduler every five minutes (see supabase_reminder_cron.sql).
+ * Accepts GET (Vercel Cron, which sends `Authorization: Bearer $CRON_SECRET`)
+ * and POST (pg_cron / any external scheduler).
+ */
+export async function GET(request: NextRequest) {
+  return runReminders(request);
+}
+
 export async function POST(request: NextRequest) {
-  const cronSecret = process.env.LINE_REMINDER_CRON_SECRET;
-  if (!cronSecret) {
+  return runReminders(request);
+}
+
+async function runReminders(request: NextRequest) {
+  const secrets = [process.env.LINE_REMINDER_CRON_SECRET, process.env.CRON_SECRET].filter(Boolean);
+  if (!secrets.length) {
     return NextResponse.json({ error: 'LINE_REMINDER_CRON_SECRET is not configured' }, { status: 503 });
   }
-  if (request.headers.get('authorization') !== `Bearer ${cronSecret}`) {
+  const authorization = request.headers.get('authorization');
+  if (!secrets.some((secret) => authorization === `Bearer ${secret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const supabase = createServiceSupabaseClient();
   const now = new Date();
-  const { data: assignments, error } = await supabase
-    .from('assignments')
-    .select('id, title, due_date, status_override, extended_until, reminder_offset_minutes, classroom_id, line_last_reminded_at')
-    .eq('is_exam', false)
-    .neq('status_override', 'force_closed');
+  // Only rows with a reminder whose deadline (or extension) is still ahead.
+  // reminder_offset_minutes holds the earliest reminder, so it is > 0 whenever any is set.
+  const columns = 'id, title, due_date, is_exam, status_override, extended_until, reminder_offset_minutes, classroom_id, line_last_reminded_at';
+  const query = (select: string) =>
+    supabase
+      .from('assignments')
+      .select(select)
+      .gt('reminder_offset_minutes', 0)
+      .or(`due_date.gt.${now.toISOString()},extended_until.gt.${now.toISOString()}`)
+      .returns<ReminderRow[]>();
+  let { data: rows, error } = await query(`${columns}, reminder_offsets_minutes`);
+  // Databases without the multi-reminder column yet: one reminder per assignment.
+  if (error?.message?.includes('reminder_offsets_minutes')) ({ data: rows, error } = await query(columns));
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // Filtered here rather than with `neq`, which would also drop NULL rows.
+  // Quizzes close at the deadline, so they get no reminder.
+  const assignments = (rows || []).filter((row) => !row.is_exam && row.status_override !== 'force_closed');
 
   let sent = 0;
-  for (const assignment of assignments || []) {
-    // Quizzes are filtered out above (is_exam = false): they close at the deadline, so no reminder.
-    if (!assignment.reminder_offset_minutes || Number(assignment.reminder_offset_minutes) <= 0) continue;
-    // Follow the teacher's extension, if any, so the reminder moves with the deadline.
+  const failed: string[] = [];
+  for (const assignment of assignments) {
+    // Follow the teacher's extension, if any, so the reminders move with the deadline.
     const dueAt = getAssignmentWindow(assignment).deadline;
-    if (dueAt === null) continue;
-    const reminderAt = dueAt - Number(assignment.reminder_offset_minutes || 1440) * 60 * 1000;
-    if (now.getTime() < reminderAt || now.getTime() >= dueAt) continue;
+    if (dueAt === null || now.getTime() >= dueAt) continue;
+    const offsets = (assignment.reminder_offsets_minutes?.length ? assignment.reminder_offsets_minutes : [assignment.reminder_offset_minutes])
+      .map(Number)
+      .filter((offset) => offset > 0);
+    // The most recent reminder time that has passed. One timestamp is enough to
+    // track them all: reminders fire in order, and a late run sends once.
+    const reminderAt = Math.max(...offsets.map((offset) => dueAt - offset * 60 * 1000).filter((at) => at <= now.getTime()));
+    if (!Number.isFinite(reminderAt)) continue;
     if (assignment.line_last_reminded_at && new Date(assignment.line_last_reminded_at).getTime() >= reminderAt) continue;
 
     const { data: classroom } = await supabase
@@ -59,16 +101,23 @@ export async function POST(request: NextRequest) {
     const names = missing.map((student) => `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.name || 'ไม่ระบุชื่อ');
     // The server clock is UTC; LINE readers are in Thailand.
     const dueLabel = formatDateTime(new Date(dueAt).toISOString(), 'th', SCHOOL_TIME_ZONE);
-    await pushLineGroupText(
-      classroom.line_group_id,
-      withLiffLink(
-        `🔔 แจ้งเตือนส่งงาน\n${assignment.title}\nห้อง: ${classroom.name}\nกำหนดส่ง: ${dueLabel}\n\nยังไม่ส่งงาน (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`,
-        'กดเพื่อส่งงาน',
-        { classroomId: assignment.classroom_id, assignmentId: assignment.id }
-      )
-    );
+    try {
+      await pushLineGroupText(
+        classroom.line_group_id,
+        withLiffLink(
+          `🔔 แจ้งเตือนส่งงาน\n${assignment.title}\nห้อง: ${classroom.name}\nกำหนดส่ง: ${dueLabel}\n\nยังไม่ส่งงาน (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`,
+          'กดเพื่อส่งงาน',
+          { classroomId: assignment.classroom_id, assignmentId: assignment.id }
+        )
+      );
+    } catch (pushError) {
+      // One failed group (bot removed, quota) must not stop the others.
+      console.error(`LINE reminder failed for assignment ${assignment.id}:`, pushError);
+      failed.push(assignment.id);
+      continue;
+    }
     await supabase.from('assignments').update({ line_last_reminded_at: now.toISOString() }).eq('id', assignment.id);
     sent += 1;
   }
-  return NextResponse.json({ ok: true, sent });
+  return NextResponse.json({ ok: true, checked: assignments.length, sent, failed });
 }

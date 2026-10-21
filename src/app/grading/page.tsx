@@ -46,6 +46,7 @@ import {
   AlertCircle,
   HelpCircle,
 } from 'lucide-react';
+import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 
 
 function GradingHubContent() {
@@ -468,22 +469,19 @@ function GradingHubContent() {
 
                         {/* Submission status override badge */}
                         <div className="text-right shrink-0">
-                          {item.assignment.status_override === 'force_closed' ? (
-                            <span className="px-2.5 py-1 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 text-[11px] font-bold flex items-center gap-1">
-                              <Lock className="w-3 h-3" />
-                              <span>{language === 'th' ? 'ปิดรับงานแล้ว' : 'Closed'}</span>
-                            </span>
-                          ) : item.assignment.status_override === 'extended' ? (
-                            <span className="px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 text-[11px] font-bold flex items-center gap-1">
-                              <Unlock className="w-3 h-3" />
-                              <span>{language === 'th' ? 'ขยายเวลาส่ง' : 'Extended'}</span>
-                            </span>
-                          ) : (
-                            <span className="px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              <span>{language === 'th' ? 'เปิดรับส่งงาน' : 'Open'}</span>
-                            </span>
-                          )}
+                          {(() => {
+                            const status = getAssignmentStatus(getAssignmentWindow(item.assignment), item.assignment.is_exam);
+                            const Icon = status.tone === 'closed' ? Lock : status.tone === 'extended' ? Unlock : Clock;
+                            return (
+                              <span
+                                className={`px-2.5 py-1 rounded-full border text-[11px] font-bold flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`}
+                                title={status.note || undefined}
+                              >
+                                <Icon className="w-3 h-3" />
+                                <span>{status.label}</span>
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
 

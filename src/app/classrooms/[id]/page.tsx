@@ -10,6 +10,7 @@ import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { formatDateTime } from '@/lib/utils/datetime';
+import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Submission, User } from '@/types/database';
 import {
   ArrowLeft,
@@ -76,6 +77,35 @@ const findStudentRecord = (index: Map<string, AttendanceRecord>, student: Roster
   index.get(student.id) ||
   (student.line_uid ? index.get(student.line_uid) : undefined) ||
   (student.student_id ? index.get(student.student_id) : undefined);
+
+/** Saves rows as a UTF-8 CSV (with BOM so Excel reads Thai correctly). */
+const downloadCsv = (filename: string, rows: Array<Array<string | number>>) => {
+  const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const csvDateStamp = () => new Date().toLocaleDateString('th-TH').replaceAll('/', '-');
+
+const sameInstitution = (a?: string, b?: string) =>
+  (a || '').trim().replace(/\s+/g, ' ').toLowerCase() === (b || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+/** Submissions may reference the student by users.id, LINE uid or school number. */
+const findStudentSubmission = (submissions: Submission[], assignmentId: string, student: User) =>
+  submissions.find(
+    (s) =>
+      s.assignment_id === assignmentId &&
+      ((s.student_id && s.student_id === student.id) ||
+        (student.line_uid && s.student_id === student.line_uid) ||
+        (student.student_id && s.student_id === student.student_id) ||
+        (s.student?.student_id && student.student_id && s.student.student_id === student.student_id) ||
+        (s.student?.id && student.id && s.student.id === student.id) ||
+        (s.student?.line_uid && student.line_uid && s.student.line_uid === student.line_uid))
+  );
 
 /** A record replaces any earlier one for the same student in the same session. */
 const upsertRecord = (records: AttendanceRecord[], record: AttendanceRecord) => [
@@ -147,6 +177,19 @@ export default function ClassroomWorkspacePage() {
   const [loading, setLoading] = useState(true);
   const [gradesLoading, setGradesLoading] = useState(false);
   const [notice, setNotice] = useState('');
+  const [teacherInstitution, setTeacherInstitution] = useState('');
+
+  // Notices clear themselves; the X button still closes one early.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(''), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    dataService.getUserById(user.id).then((profile) => setTeacherInstitution(profile?.institution?.trim() || ''));
+  }, [user?.id]);
 
   // Bumped by every local attendance change; a refresh that started before
   // one is dropped so it can't overwrite the optimistic state.
@@ -681,6 +724,15 @@ export default function ClassroomWorkspacePage() {
     return Array.from(set);
   }, [assignments]);
 
+  // Grade book columns: assignments and quizzes in the order they were given.
+  const gradeColumns = useMemo(
+    () =>
+      [...assignments].sort(
+        (a, b) => new Date(a.created_at || a.due_date).getTime() - new Date(b.created_at || b.due_date).getTime()
+      ),
+    [assignments]
+  );
+
   // ----------------------------------------------------
   // CRUD HANDLERS: POSTS
   // ----------------------------------------------------
@@ -975,10 +1027,10 @@ export default function ClassroomWorkspacePage() {
     }
   };
 
-  // Export Attendance CSV
+  // Export one session's attendance as CSV
   const exportAttendance = () => {
     if (!classroom || !session) return;
-    const rows = [
+    downloadCsv(`attendance-${classroom.name}-${session.title}-${csvDateStamp()}.csv`, [
       ['นักเรียน', 'รหัสนักเรียน', 'สถานะ', 'เวลาที่เช็ค'],
       ...(classroom.students || []).map((student) => {
         const record = findStudentRecord(recordIndex, student);
@@ -989,16 +1041,43 @@ export default function ClassroomWorkspacePage() {
           record?.checked_at ? new Date(record.checked_at).toLocaleTimeString('th-TH') : '-',
         ];
       }),
-    ];
-    const url = URL.createObjectURL(
-      new Blob(['\ufeff' + rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n')], {
-        type: 'text/csv;charset=utf-8',
-      })
-    );
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `attendance-${classroom.name}-${new Date().toLocaleDateString('th-TH')}.csv`;
-    anchor.click();
+    ]);
+  };
+
+  // Export every session: one row per student, one column per session (oldest first)
+  const exportAllAttendance = () => {
+    if (!classroom || !sessions.length) return;
+    const ordered = [...sessions].sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+    const indexes = ordered.map((s) => indexRecords(allRecords.filter((r) => r.session_id === s.id)));
+    downloadCsv(`attendance-all-${classroom.name}-${csvDateStamp()}.csv`, [
+      ['ชื่อ-นามสกุล', 'รหัสนักเรียน', ...ordered.map((s) => `${s.title} (${formatDateTime(s.starts_at, 'th')})`), ...Object.values(statusLabels)],
+      ...(classroom.students || []).map((student) => {
+        const statuses = indexes.map((index) => findStudentRecord(index, student)?.status || 'absent');
+        const totals = (Object.keys(statusLabels) as AttendanceStatus[]).map((key) => statuses.filter((s) => s === key).length);
+        return [
+          `${student.first_name} ${student.last_name}`,
+          student.student_id || '',
+          ...statuses.map((status) => statusLabels[status]),
+          ...totals,
+        ];
+      }),
+    ]);
+  };
+
+  // Export the grade book: one row per student, one column per assignment/quiz (in the order given)
+  const exportGrades = () => {
+    if (!classroom) return;
+    downloadCsv(`grades-${classroom.name}-${csvDateStamp()}.csv`, [
+      ['ชื่อ-นามสกุล', 'รหัสนักเรียน', ...gradeColumns.map((item) => `${item.is_exam ? '[ข้อสอบ] ' : '[งาน] '}${item.title} (เต็ม ${item.total_points || 20})`), 'คะแนนรวม'],
+      ...(classroom.students || []).map((student) => {
+        const scores = gradeColumns.map((item) => {
+          const sub = findStudentSubmission(submissions, item.id, student);
+          return sub?.total_score != null ? sub.total_score : sub ? 'รอตรวจ' : '-';
+        });
+        const total = scores.reduce<number>((sum, score) => sum + (typeof score === 'number' ? score : 0), 0);
+        return [`${student.first_name} ${student.last_name}`, student.student_id || '', ...scores, total];
+      }),
+    ]);
   };
 
   // ----------------------------------------------------
@@ -1008,6 +1087,21 @@ export default function ClassroomWorkspacePage() {
     if (!classroom) return [];
     return classroom.teachers || [];
   }, [classroom]);
+
+  /** True when both schools are known and differ from the teacher's. */
+  const isOtherSchool = (institution?: string) =>
+    !!teacherInstitution && !!institution?.trim() && !sameInstitution(institution, teacherInstitution);
+
+  /** Teachers may still admit a student from another school, but only after confirming. */
+  const confirmOtherSchool = (students: Array<Pick<User, 'first_name' | 'last_name' | 'institution'>>) => {
+    const others = students.filter((student) => isOtherSchool(student.institution));
+    if (!others.length) return true;
+    const lines = others.map((student) => `• ${student.first_name} ${student.last_name} — ${student.institution}`).join('\n');
+    return confirm(
+      `⚠️ นักเรียนต่อไปนี้ระบุโรงเรียนต่างจากโรงเรียนของคุณครู (${teacherInstitution})\n\n${lines}\n\n` +
+        'หากนักเรียนกรอกชื่อโรงเรียนผิด คุณครูสามารถแก้ไขได้ภายหลังที่แท็บ "ผู้สอนและผู้เรียน"\n\nยืนยันรับเข้าห้องเรียนหรือไม่?'
+    );
+  };
 
   const handleRemoveTeacher = async (teacherId: string) => {
     if (!classroom) return;
@@ -1030,6 +1124,7 @@ export default function ClassroomWorkspacePage() {
       setNotice('นักเรียนคนนี้อยู่ในห้องเรียนแล้ว');
       return;
     }
+    if (!confirmOtherSchool([std])) return;
     await dataService.addStudentToClassroom(
       classroom.id,
       {
@@ -1051,6 +1146,8 @@ export default function ClassroomWorkspacePage() {
 
   const handleAdmitStudent = async (studentId: string) => {
     if (!classroom) return;
+    const pending = (classroom.pending_students || []).find((student) => student.id === studentId);
+    if (pending && !confirmOtherSchool([pending])) return;
     try {
       await dataService.admitStudentToClassroom(classroom.id, studentId);
       setNotice('อนุมัตินักเรียนเข้าห้องเรียนสำเร็จ');
@@ -1106,6 +1203,7 @@ export default function ClassroomWorkspacePage() {
       last_name: last_name.trim(),
       student_id: student_id.trim() || undefined,
       email: email.trim() || undefined,
+      institution: teacherInstitution || undefined,
       role: 'student' as const,
     };
     const currentStudents = classroom.students || [];
@@ -1122,7 +1220,7 @@ export default function ClassroomWorkspacePage() {
 
   const [editingStudent, setEditingStudent] = useState<User | null>(null);
 
-  const handleStudentEdited = (studentId: string, fields: Pick<User, 'first_name' | 'last_name' | 'student_id'>) => {
+  const handleStudentEdited = (studentId: string, fields: Pick<User, 'first_name' | 'last_name' | 'student_id' | 'institution'>) => {
     setClassroom((prev) =>
       prev
         ? {
@@ -1543,10 +1641,17 @@ export default function ClassroomWorkspacePage() {
                     <div className="space-y-2.5">
                       {items.map((item) => {
                         const submittedCount = submissions.filter((s) => s.assignment_id === item.id).length;
+                        const itemWindow = getAssignmentWindow(item);
+                        const itemStatus = getAssignmentStatus(itemWindow, item.is_exam);
+                        const isClosed = itemStatus.tone === 'closed';
                         return (
                           <div
                             key={item.id}
-                            className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 hover:border-amber-400 transition-all bg-slate-50/60 dark:bg-slate-850 space-y-2"
+                            className={`p-3.5 rounded-2xl border hover:border-amber-400 transition-all space-y-2 ${
+                              isClosed
+                                ? 'border-rose-200 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/20'
+                                : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850'
+                            }`}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">
@@ -1561,9 +1666,17 @@ export default function ClassroomWorkspacePage() {
                                     {item.is_exam ? 'ข้อสอบ' : 'งาน'}
                                   </span>
                                   <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.title}</p>
+                                  <span
+                                    className={`shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full border ${ASSIGNMENT_STATUS_CLASSES[itemStatus.tone]}`}
+                                    title={itemStatus.note || undefined}
+                                  >
+                                    {isClosed ? '🔒 ' : ''}{itemStatus.label}
+                                  </span>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                                  <span>{item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: {formatDateTime(item.due_date, 'th')} • คะแนนเต็ม: {item.total_points || 20}</span>
+                                  <span>
+                                    {item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: {formatDateTime(itemWindow.deadline !== null ? new Date(itemWindow.deadline).toISOString() : item.due_date, 'th')} • คะแนนเต็ม: {item.total_points || 20}
+                                  </span>
                                   <span className="font-bold text-amber-600">
                                     • ส่งแล้ว {submittedCount}/{classroom.students?.length || 0} คน
                                   </span>
@@ -1730,6 +1843,7 @@ export default function ClassroomWorkspacePage() {
               update={updateAttendanceRecord}
               action={sessionAction}
               exportCsv={exportAttendance}
+              exportAllCsv={exportAllAttendance}
               selectSession={setSelectedSessionId}
               onUpdateSession={handleUpdateSession}
               onDeleteSession={handleDeleteSession}
@@ -1846,6 +1960,7 @@ export default function ClassroomWorkspacePage() {
                 }}
                 onRemoveStudent={handleRemoveStudent}
                 onEditStudent={setEditingStudent}
+                isOtherSchool={isOtherSchool}
               />
             </section>
           )}
@@ -1862,7 +1977,18 @@ export default function ClassroomWorkspacePage() {
                     แสดงคะแนนผลงาน ข้อสอบ และสถานะรอตรวจของนักเรียนทุกคน
                   </p>
                 </div>
-                <span className="text-xs text-slate-400 font-bold">{assignments.length} งาน/ข้อสอบ</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-bold">{assignments.length} งาน/ข้อสอบ</span>
+                  <button
+                    type="button"
+                    onClick={exportGrades}
+                    disabled={!assignments.length || !(classroom.students || []).length}
+                    className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>ส่งออก CSV</span>
+                  </button>
+                </div>
               </div>
 
               {gradesLoading ? (
@@ -1877,7 +2003,7 @@ export default function ClassroomWorkspacePage() {
                     <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 text-left">
                       <th className="p-3 sticky left-0 z-10 bg-white dark:bg-slate-900">ชื่อ-นามสกุล</th>
                       <th className="p-3">รหัสนักเรียน</th>
-                      {assignments.map((item) => (
+                      {gradeColumns.map((item) => (
                         <th key={item.id} className="p-3 text-center">
                           <span className="block truncate max-w-28 mx-auto font-bold text-slate-700 dark:text-slate-300">
                             {item.title}
@@ -1896,17 +2022,8 @@ export default function ClassroomWorkspacePage() {
                           {student.first_name} {student.last_name}
                         </td>
                         <td className="p-3 text-slate-500 font-mono">{student.student_id || '-'}</td>
-                        {assignments.map((item) => {
-                          const sub = submissions.find(
-                            (s) =>
-                              s.assignment_id === item.id &&
-                              ((s.student_id && s.student_id === student.id) ||
-                                (student.line_uid && s.student_id === student.line_uid) ||
-                                (student.student_id && s.student_id === student.student_id) ||
-                                (s.student?.student_id && student.student_id && s.student.student_id === student.student_id) ||
-                                (s.student?.id && student.id && s.student.id === student.id) ||
-                                (s.student?.line_uid && student.line_uid && s.student.line_uid === student.line_uid))
-                          );
+                        {gradeColumns.map((item) => {
+                          const sub = findStudentSubmission(submissions, item.id, student);
                           return (
                             <td key={item.id} className="p-3 text-center font-bold">
                               {sub?.total_score != null ? (
@@ -1983,6 +2100,7 @@ export default function ClassroomWorkspacePage() {
         <EditStudentModal
           classroomId={classroom.id}
           student={editingStudent}
+          teacherInstitution={teacherInstitution}
           onClose={() => setEditingStudent(null)}
           onSaved={handleStudentEdited}
         />
@@ -2261,6 +2379,7 @@ export default function ClassroomWorkspacePage() {
                           <p className="text-[10px] text-slate-400 font-mono">
                             รหัส: {found.student_id || '-'} • {found.email || 'ไม่มีอีเมล'}
                           </p>
+                          <InstitutionTag institution={found.institution} otherSchool={isOtherSchool(found.institution)} />
                         </div>
                         <button
                           type="button"
@@ -2439,6 +2558,7 @@ export default function ClassroomWorkspacePage() {
                       <button
                         type="button"
                         onClick={async () => {
+                          if (!confirmOtherSchool(classroom.pending_students || [])) return;
                           for (const p of classroom.pending_students || []) {
                             await dataService.admitStudentToClassroom(classroom.id, p.id);
                           }
@@ -2463,6 +2583,7 @@ export default function ClassroomWorkspacePage() {
                           <p className="text-[10px] text-slate-400 font-mono">
                             รหัส: {p.student_id || '-'} • {p.email || 'LINE Login'}
                           </p>
+                          <InstitutionTag institution={p.institution} otherSchool={isOtherSchool(p.institution)} />
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
@@ -2592,19 +2713,37 @@ export default function ClassroomWorkspacePage() {
   );
 }
 
+function InstitutionTag({ institution, otherSchool }: { institution?: string; otherSchool: boolean }) {
+  if (!institution?.trim()) {
+    return <p className="text-[10px] text-slate-400 mt-0.5 truncate">🏫 ไม่ระบุโรงเรียน</p>;
+  }
+  return (
+    <p
+      className={`text-[10px] mt-0.5 truncate ${otherSchool ? 'font-bold text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}
+      title={otherSchool ? 'โรงเรียนไม่ตรงกับโรงเรียนของคุณครู' : institution}
+    >
+      {otherSchool ? '⚠️' : '🏫'} {institution}
+      {otherSchool && <span className="ml-1 px-1.5 py-px rounded-full bg-rose-100 dark:bg-rose-950 text-[9px]">ต่างโรงเรียน</span>}
+    </p>
+  );
+}
+
 function StudentList({
   classroom,
   onOpenAddStudent,
   onRemoveStudent,
   onEditStudent,
+  isOtherSchool,
 }: {
   classroom: Classroom;
   onOpenAddStudent: () => void;
   onRemoveStudent: (id: string) => void;
   onEditStudent: (student: User) => void;
+  isOtherSchool: (institution?: string) => boolean;
 }) {
   const [query, setQuery] = useState('');
   const students = classroom.students || [];
+  const otherSchoolCount = students.filter((s) => isOtherSchool(s.institution)).length;
   const filtered = students.filter(
     (s) =>
       `${s.first_name} ${s.last_name}`.toLowerCase().includes(query.toLowerCase()) ||
@@ -2627,6 +2766,13 @@ function StudentList({
         </button>
       </div>
 
+      {otherSchoolCount > 0 && (
+        <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-[11px] font-bold text-rose-800 dark:text-rose-200 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-px" />
+          <span>มีนักเรียน {otherSchoolCount} คนที่ระบุโรงเรียนต่างจากโรงเรียนของคุณครู หากกรอกผิด กดปุ่มแก้ไข (ดินสอ) เพื่อปรับชื่อโรงเรียนให้ถูกต้อง</span>
+        </div>
+      )}
+
       <div className="relative">
         <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
         <input
@@ -2645,6 +2791,7 @@ function StudentList({
                 {student.first_name} {student.last_name}
               </p>
               <p className="text-[10px] text-slate-400 font-mono mt-0.5">{student.student_id || 'ไม่มีรหัส'}</p>
+              <InstitutionTag institution={student.institution} otherSchool={isOtherSchool(student.institution)} />
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {student.line_uid && (
@@ -2655,7 +2802,7 @@ function StudentList({
               <button
                 onClick={() => onEditStudent(student)}
                 className="p-1 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                title="แก้ไขชื่อ นามสกุล และรหัสนักเรียน"
+                title="แก้ไขชื่อ นามสกุล รหัสนักเรียน และโรงเรียน"
               >
                 <Edit2 className="w-3.5 h-3.5" />
               </button>
@@ -2693,6 +2840,7 @@ function AttendancePanel({
   update,
   action,
   exportCsv,
+  exportAllCsv,
   selectSession,
   onUpdateSession,
   onDeleteSession,
@@ -2715,6 +2863,7 @@ function AttendancePanel({
   update: (sessionId: string, studentId: string, status: AttendanceStatus) => void;
   action: (sessionId: string, a: 'close' | 'extend') => void;
   exportCsv: () => void;
+  exportAllCsv: () => void;
   selectSession: (id: string) => void;
   onUpdateSession?: (
     id: string,
@@ -2798,14 +2947,15 @@ function AttendancePanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {session && (
+          {sessions.length > 0 && (
             <button
               type="button"
-              onClick={exportCsv}
-              className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+              onClick={exportAllCsv}
+              title="ส่งออกการเช็คชื่อทุกคาบ (แถว = นักเรียน, คอลัมน์ = คาบเรียน)"
+              className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Download className="w-3.5 h-3.5 text-emerald-600" />
-              <span>ส่งออก CSV</span>
+              <span>ส่งออก CSV ทุกคาบ</span>
             </button>
           )}
 

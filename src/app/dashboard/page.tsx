@@ -1370,18 +1370,21 @@ export default function DashboardPage() {
             >
               {/* Course Header */}
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-                <div className="space-y-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-900 dark:text-amber-300 font-mono text-xs font-bold border border-amber-200 dark:border-amber-900">
+                <div className="flex items-start gap-3 sm:gap-4 min-w-0">
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-linear-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-md shadow-amber-500/20 shrink-0">
+                    <BookOpen className="w-6 h-6 sm:w-7 sm:h-7" />
+                  </div>
+                  <div className="space-y-1.5 min-w-0">
+                    <span className="inline-block px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-900 dark:text-amber-300 font-mono text-sm font-bold tracking-wide border border-amber-200 dark:border-amber-900">
                       {course.code}
                     </span>
-                    <h3 className="text-lg font-black text-slate-900 dark:text-white break-words min-w-0">
+                    <h3 className="text-xl sm:text-2xl font-black leading-tight tracking-tight text-slate-900 dark:text-white break-words">
                       {course.name}
                     </h3>
+                    {course.description && (
+                      <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{course.description}</p>
+                    )}
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {course.description || '-'}
-                  </p>
                 </div>
 
                 {/* Course Control Actions: Rubrics, Co-Teachers, Clone to other term, Add Section & Delete Course */}
@@ -1390,7 +1393,7 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     onClick={() => handleOpenCoTeachersModal(course)}
-                    className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 cursor-pointer transition-colors"
+                    className="h-10 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-[13px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 cursor-pointer transition-colors"
                     title={t('courses.co_teachers')}
                   >
                     <div className="flex -space-x-1.5 overflow-hidden">
@@ -1407,7 +1410,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={() => handleOpenIndicatorsModal(course)}
-                        className="px-3.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+                        className="h-10 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-[13px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 cursor-pointer transition-colors"
                       >
                         <Sliders className="w-3.5 h-3.5 text-amber-500" />
                         <span>{t('dashboard.classrooms_section.course_settings_btn')}</span>
@@ -1416,7 +1419,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={() => handleCloneCourseToOtherSemester(course)}
-                        className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+                        className="h-10 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-[13px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 cursor-pointer transition-colors"
                         title={language === 'th' ? 'คัดลอกวิชานี้ไปยังเทอมอื่น' : 'Add this course to another semester'}
                       >
                         <Copy className="w-3.5 h-3.5 text-amber-500" />
@@ -1435,9 +1438,9 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={() => handleOpenCreateClassModal(course)}
-                      className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+                      className="h-10 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[13px] flex items-center gap-2 cursor-pointer transition-colors shadow-xs"
                     >
-                      <PlusCircle className="w-3.5 h-3.5" />
+                      <PlusCircle className="w-4 h-4" />
                       <span>+ {language === 'th' ? 'เพิ่มห้องเรียน' : 'Add Classroom'}</span>
                     </button>
                   )}
@@ -1447,8 +1450,9 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={() => handleDeleteCourse(course)}
-                      className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-transparent hover:border-rose-200 dark:hover:border-rose-900 transition-colors cursor-pointer"
+                      className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-slate-200 dark:border-slate-700 hover:border-rose-200 dark:hover:border-rose-900 transition-colors cursor-pointer"
                       title={language === 'th' ? `ลบรายวิชา ${course.code}` : `Delete Course ${course.code}`}
+                      aria-label={language === 'th' ? `ลบรายวิชา ${course.code}` : `Delete Course ${course.code}`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -1458,9 +1462,13 @@ export default function DashboardPage() {
 
               {/* Sub-sections Grid (Classrooms belonging to this Course) */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-500 dark:text-slate-400">
-                  <span>{language === 'th' ? 'ห้องเรียนในสังกัด' : 'Classrooms'} ({course.sections.length})</span>
-                  <span className="text-[11px] font-normal">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-black text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                    <School className="w-4 h-4 text-amber-500" />
+                    {language === 'th' ? 'ห้องเรียนในสังกัด' : 'Classrooms'}
+                    <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-300 tabular-nums">{course.sections.length}</span>
+                  </span>
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
                     {course.assignments.length} {language === 'th' ? 'ชิ้นงาน/ข้อสอบ' : 'Tasks'}
                   </span>
                 </div>
@@ -1477,35 +1485,49 @@ export default function DashboardPage() {
                       return (
                         <div
                           key={cls.id}
-                          className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 flex flex-col justify-between gap-4 min-w-0 hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-md hover:shadow-amber-500/5 transition-all"
+                          className="group relative p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 flex flex-col justify-between gap-4 min-w-0 hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-lg hover:shadow-amber-500/10 transition-all"
                         >
-                          <div>
-                            <div className="flex items-center justify-between text-xs mb-1.5">
-                              <span className="font-mono text-[11px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded">
-                                {cls.invite_code || 'OMU'}
-                              </span>
+                          <div className="space-y-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <Link href={`/classrooms/${cls.id}`} className="min-w-0 flex-1 cursor-pointer">
+                                <h4 className="text-lg font-black leading-snug text-slate-900 dark:text-white break-words group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
+                                  {cls.name}
+                                </h4>
+                                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                  <span className="font-mono text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-md" title={language === 'th' ? 'รหัสเข้าห้องเรียน' : 'Invite code'}>
+                                    {cls.invite_code || 'OMU'}
+                                  </span>
+                                  {selectedSemesterKey === 'all' && (
+                                    <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-amber-100/90 dark:bg-amber-950/80 text-amber-900 dark:text-amber-300">
+                                      {cls.semester === 3 ? 'ซัมเมอร์' : `เทอม ${cls.semester || 1}`}
+                                    </span>
+                                  )}
+                                </div>
+                              </Link>
                               {/* Only Course/Classroom Owner Can Edit/Delete Section */}
                               {(!course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id) ? (
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-1 shrink-0">
                                   <button
                                     type="button"
                                     onClick={() => handleOpenEditClassModal(cls)}
-                                    className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded"
+                                    className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
                                     title={t('common.edit')}
+                                    aria-label={`${t('common.edit')} ${cls.name}`}
                                   >
-                                    <Edit2 className="w-3.5 h-3.5" />
+                                    <Edit2 className="w-4 h-4" />
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => handleDeleteClassroom(cls)}
-                                    className="p-1 text-slate-400 hover:text-rose-500 rounded"
+                                    className="w-9 h-9 flex items-center justify-center rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
                                     title={t('common.delete')}
+                                    aria-label={`${t('common.delete')} ${cls.name}`}
                                   >
-                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <Trash2 className="w-4 h-4" />
                                   </button>
                                 </div>
                               ) : (
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                                <span className="shrink-0 text-xs font-bold px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
                                   {course.teachers?.some((t) => t.teacher_id === clerkUser?.id && t.role === 'researcher')
                                     ? '🔬 โหมดวิจัย'
                                     : '👨‍🏫 TA'}
@@ -1513,22 +1535,14 @@ export default function DashboardPage() {
                               )}
                             </div>
 
-                            <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
-                              <span className="break-words min-w-0">{cls.name}</span>
-                              {selectedSemesterKey === 'all' && (
-                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-100/90 dark:bg-amber-950/80 text-amber-900 dark:text-amber-300">
-                                  {cls.semester === 3 ? 'ซัมเมอร์' : `เทอม ${cls.semester || 1}`}
-                                </span>
-                              )}
-                            </h4>
-                            <div className="flex items-center justify-between mt-1 gap-2 flex-wrap">
-                              <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-700/70 text-xs font-bold text-slate-700 dark:text-slate-200">
                                 <Users className="w-3.5 h-3.5" />
-                                <span>{count} {t('common.student')}</span>
-                              </p>
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black ${lineConnectionStatuses[cls.id] === 'connected' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : lineConnectionStatuses[cls.id] === 'waiting' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>
-                                <MessageCircle className="w-3 h-3" />
-                                {lineConnectionStatuses[cls.id] === 'connected' ? 'LINE Group เชื่อมต่อแล้ว' : lineConnectionStatuses[cls.id] === 'waiting' ? 'LINE Group รอยืนยัน' : 'LINE Group ยังไม่เชื่อมต่อ'}
+                                <span className="tabular-nums">{count}</span> {t('common.student')}
+                              </span>
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${lineConnectionStatuses[cls.id] === 'connected' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' : lineConnectionStatuses[cls.id] === 'waiting' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300'}`}>
+                                <MessageCircle className="w-3.5 h-3.5" />
+                                {lineConnectionStatuses[cls.id] === 'connected' ? 'LINE เชื่อมแล้ว' : lineConnectionStatuses[cls.id] === 'waiting' ? 'LINE รอยืนยัน' : 'LINE ยังไม่เชื่อม'}
                               </span>
                               {cls.pending_students && cls.pending_students.length > 0 && (
                                 <button
@@ -1537,47 +1551,45 @@ export default function DashboardPage() {
                                     e.stopPropagation();
                                     handleOpenManagingClassroom(cls, 'pending');
                                   }}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse cursor-pointer shadow-xs hover:bg-rose-600 transition-colors"
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500 text-white text-xs font-black animate-pulse cursor-pointer shadow-xs hover:bg-rose-600 transition-colors"
                                   title="คลิกเพื่ออนุมัตินักเรียนเข้าห้องเรียน"
                                 >
-                                  <UserPlus className="w-3 h-3" />
-                                  <span>รออนุมัติ {cls.pending_students.length} คน (Admit)</span>
+                                  <UserPlus className="w-3.5 h-3.5" />
+                                  <span>รออนุมัติ {cls.pending_students.length} คน</span>
                                 </button>
                               )}
                             </div>
                           </div>
 
-                          <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200/60 dark:border-slate-700/60">
+                          <div className="space-y-2">
                             <Link
                               href={`/classrooms/${cls.id}`}
-                              className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                              className="w-full h-11 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-sm font-black flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
                             >
                               <span>{t('dashboard.classrooms_section.view_class')}</span>
-                              <ArrowRight className="w-3 h-3" />
+                              <ArrowRight className="w-4 h-4" />
                             </Link>
-
-                            <div className="flex flex-wrap items-center gap-1.5">
+                            <div className="grid grid-cols-2 gap-2">
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleOpenManagingClassroom(cls, 'roster');
                                 }}
-                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:border-amber-300 flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
+                                className="h-10 px-2 rounded-xl text-[13px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:border-amber-300 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
                                 title="เพิ่ม / จัดการนักเรียนในห้องนี้"
                               >
-                                <UserPlus className="w-3 h-3 text-amber-500" />
-                                <span>+ เพิ่มนักเรียน</span>
+                                <UserPlus className="w-4 h-4 text-amber-500" />
+                                <span className="truncate">เพิ่มนักเรียน</span>
                               </button>
-
                               <button
                                 type="button"
                                 onClick={() => handleOpenLineConnectionPopup(cls)}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-xs cursor-pointer ${lineConnectionStatuses[cls.id] === 'connected' ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-200 hover:bg-emerald-100 dark:bg-slate-700 dark:hover:bg-emerald-950/50 text-slate-700 dark:text-slate-200'}`}
+                                className={`h-10 px-2 rounded-xl text-[13px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${lineConnectionStatuses[cls.id] === 'connected' ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-100 hover:bg-emerald-100 dark:bg-slate-700 dark:hover:bg-emerald-950/50 text-slate-700 dark:text-slate-200'}`}
                                 title="จัดการ LINE Group"
                               >
-                                <MessageCircle className="w-3 h-3" />
-                                <span>{lineConnectionStatuses[cls.id] === 'connected' ? 'LINE Group' : 'เชื่อม LINE Group'}</span>
+                                <MessageCircle className="w-4 h-4" />
+                                <span className="truncate">{lineConnectionStatuses[cls.id] === 'connected' ? 'LINE Group' : 'เชื่อม LINE'}</span>
                               </button>
                             </div>
                           </div>
