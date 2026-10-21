@@ -9,9 +9,10 @@ import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
+import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
-import { Assignment, Classroom, ClassroomTeacher, Submission, User } from '@/types/database';
+import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
 import {
   ArrowLeft,
   AlertCircle,
@@ -178,6 +179,8 @@ export default function ClassroomWorkspacePage() {
   const [gradesLoading, setGradesLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [teacherInstitution, setTeacherInstitution] = useState('');
+  const [course, setCourse] = useState<Course | null>(null);
+  const [statusAssignment, setStatusAssignment] = useState<Assignment | null>(null);
 
   // Notices clear themselves; the X button still closes one early.
   useEffect(() => {
@@ -185,6 +188,12 @@ export default function ClassroomWorkspacePage() {
     const timer = setTimeout(() => setNotice(''), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  const courseId = classroom?.course_id;
+  useEffect(() => {
+    if (!courseId) return;
+    dataService.getCourseById(courseId).then(setCourse).catch(() => setCourse(null));
+  }, [courseId]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -1294,7 +1303,9 @@ export default function ClassroomWorkspacePage() {
             <Menu className="w-5 h-5" />
           </button>
           <div className="min-w-0">
-            <p className="text-[10px] font-bold text-amber-600 truncate">{classroom.course_name || classroom.subject_code || 'CLASSROOM'}</p>
+            <p className="text-[10px] font-bold text-amber-600 truncate">
+              {[course?.code || classroom.subject_code, course?.name || classroom.course_name].filter(Boolean).join(' · ') || 'CLASSROOM'}
+            </p>
             <h1 className="text-sm font-black text-slate-900 dark:text-white truncate">{classroom.name}</h1>
           </div>
         </div>
@@ -1311,13 +1322,20 @@ export default function ClassroomWorkspacePage() {
           {/* Header Row (title is in the mobile bar below lg; actions show on every size) */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4 mb-5 sm:mb-6">
             <div className="hidden lg:flex items-center gap-3 min-w-0">
-              <div>
-                <div className="flex items-center gap-2 text-xs font-bold text-amber-600 mb-1">
-                  <span>{classroom.subject_code || 'CLASSROOM'}</span>
-                  <span>•</span>
-                  <span>ภาคเรียน {classroom.academic_year || 'ปัจจุบัน'}</span>
+              <div className="min-w-0 space-y-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 font-mono text-xs font-bold">
+                    {course?.code || classroom.subject_code || 'CLASSROOM'}
+                  </span>
+                  <span className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">
+                    {course?.name || classroom.course_name || ''}
+                  </span>
+                  <span className="shrink-0 text-xs text-slate-400">• ภาคเรียน {classroom.academic_year || 'ปัจจุบัน'}</span>
                 </div>
                 <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight break-words">{classroom.name}</h1>
+                {course?.description && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-2 max-w-2xl">{course.description}</p>
+                )}
               </div>
             </div>
 
@@ -1669,12 +1687,16 @@ export default function ClassroomWorkspacePage() {
                                     {item.is_exam ? 'ข้อสอบ' : 'งาน'}
                                   </span>
                                   <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.title}</p>
-                                  <span
-                                    className={`shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full border ${ASSIGNMENT_STATUS_CLASSES[itemStatus.tone]}`}
-                                    title={itemStatus.note || undefined}
+                                  <button
+                                    type="button"
+                                    onClick={() => setStatusAssignment(item)}
+                                    className={`shrink-0 inline-flex items-center gap-0.5 text-[10px] font-black pl-2 pr-1.5 py-0.5 rounded-full border cursor-pointer hover:brightness-95 dark:hover:brightness-125 transition ${ASSIGNMENT_STATUS_CLASSES[itemStatus.tone]}`}
+                                    title={`${itemStatus.note ? `${itemStatus.note} • ` : ''}กดเพื่อเปลี่ยนสถานะการรับงาน`}
+                                    aria-label={`สถานะ: ${itemStatus.label} — กดเพื่อเปลี่ยน`}
                                   >
                                     {isClosed ? '🔒 ' : ''}{itemStatus.label}
-                                  </span>
+                                    <ChevronDown className="w-3 h-3" />
+                                  </button>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                                   <span>
@@ -2099,6 +2121,18 @@ export default function ClassroomWorkspacePage() {
       {/* ============================================================== */}
       {/* MODAL: EDIT ASSIGNMENT / EXAM */}
       {/* ============================================================== */}
+      {statusAssignment && (
+        <AssignmentStatusDialog
+          assignment={statusAssignment}
+          onClose={() => setStatusAssignment(null)}
+          onSaved={(updated) => {
+            setAssignments((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)));
+            setStatusAssignment(null);
+            setNotice(`อัปเดตสถานะการรับงาน "${updated.title}" แล้ว`);
+          }}
+        />
+      )}
+
       {editingStudent && classroom && (
         <EditStudentModal
           classroomId={classroom.id}
