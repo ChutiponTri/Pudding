@@ -117,6 +117,8 @@ type TimelineItem = {
   id: string;
   rawId?: string;
   isPost?: boolean;
+  /** Set when the item stands for an assignment/quiz; deleting it deletes the assignment. */
+  assignmentId?: string;
   title: string;
   body: string;
   type: 'announcement' | 'assignment' | 'exam' | 'attendance';
@@ -616,6 +618,7 @@ export default function ClassroomWorkspacePage() {
   const timeline = useMemo<TimelineItem[]>(() => {
     const list: TimelineItem[] = [];
     const seenAssignmentIds = new Set<string>();
+    const assignmentIds = new Set(assignments.map((a) => a.id));
     const seenSessionIds = new Set<string>();
     const seenContentKeys = new Set<string>();
 
@@ -625,6 +628,8 @@ export default function ClassroomWorkspacePage() {
       const sId = (post.metadata as any)?.sessionId;
 
       if (aId) {
+        // The assignment was deleted: drop its leftover announcement too.
+        if (!assignmentIds.has(aId)) continue;
         if (seenAssignmentIds.has(aId)) continue;
         seenAssignmentIds.add(aId);
       }
@@ -661,6 +666,7 @@ export default function ClassroomWorkspacePage() {
         id: `post-${post.id}`,
         rawId: post.id,
         isPost: true,
+        assignmentId: aId,
         title,
         body: post.body,
         type: post.activity_type || 'announcement',
@@ -685,6 +691,7 @@ export default function ClassroomWorkspacePage() {
         id: `assignment-${item.id}`,
         rawId: item.id,
         isPost: false,
+        assignmentId: item.id,
         title: item.is_exam ? 'ข้อสอบในระบบ' : 'งานที่มอบหมาย',
         body: `${item.title} (${item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: ${formatDateTime(item.due_date, 'th')})`,
         type: item.is_exam ? ('exam' as const) : ('assignment' as const),
@@ -842,6 +849,12 @@ export default function ClassroomWorkspacePage() {
       await dataService.deleteAssignment(assignmentId);
       setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
       setSubmissions((prev) => prev.filter((s) => s.assignment_id !== assignmentId));
+      // Remove its timeline announcement(s) as well; best effort, the timeline already hides orphans.
+      const related = posts.filter((p) => p.metadata?.assignmentId === assignmentId);
+      setPosts((prev) => prev.filter((p) => p.metadata?.assignmentId !== assignmentId));
+      await Promise.all(
+        related.map((p) => fetch(`/api/classrooms/posts?id=${encodeURIComponent(p.id)}`, { method: 'DELETE' }).catch(() => null))
+      );
       setNotice('ลบงาน/ข้อสอบเรียบร้อยแล้ว');
     } catch {
       setNotice('เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ');
@@ -1544,9 +1557,10 @@ export default function ClassroomWorkspacePage() {
                         </div>
                       </div>
 
-                      {/* Edit / Delete Buttons for Posts */}
-                      {item.isPost && (
+                      {/* Edit (posts) / Delete (posts and assignments) */}
+                      {(item.isPost || item.assignmentId) && (
                         <div className="flex items-center gap-1">
+                          {item.isPost && (
                           <button
                             onClick={() => {
                               const found = posts.find((p) => p.id === item.rawId);
@@ -1560,10 +1574,13 @@ export default function ClassroomWorkspacePage() {
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
+                          )}
                           <button
-                            onClick={() => handleDeletePost(item.rawId!)}
+                            onClick={() =>
+                              item.assignmentId ? handleDeleteAssignment(item.assignmentId) : handleDeletePost(item.rawId!)
+                            }
                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                            title="ลบโพสต์"
+                            title={item.assignmentId ? 'ลบงาน/ข้อสอบนี้ (ลบออกจากแท็บงานด้วย)' : 'ลบโพสต์'}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
