@@ -1323,14 +1323,21 @@ export default function ClassroomWorkspacePage() {
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4 mb-5 sm:mb-6">
             <div className="hidden lg:flex items-center gap-3 min-w-0">
               <div className="min-w-0 space-y-1">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="shrink-0 px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 font-mono text-xs font-bold">
+                {/* Code, course name and semester share one height and type size. */}
+                <div className="flex items-center gap-2 min-w-0 h-6 text-xs">
+                  <span className="shrink-0 h-6 inline-flex items-center px-2 rounded-md bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 font-mono font-bold">
                     {course?.code || classroom.subject_code || 'CLASSROOM'}
                   </span>
-                  <span className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">
-                    {course?.name || classroom.course_name || ''}
+                  {(course?.name || classroom.course_name) && (
+                    <span className="min-w-0 truncate font-bold text-slate-700 dark:text-slate-200">
+                      {course?.name || classroom.course_name}
+                    </span>
+                  )}
+                  <span aria-hidden className="shrink-0 w-px h-3.5 bg-slate-300 dark:bg-slate-700" />
+                  <span className="shrink-0 h-6 inline-flex items-center gap-1 px-2 rounded-md bg-slate-100 dark:bg-slate-800 font-semibold text-slate-600 dark:text-slate-300">
+                    <CalendarCheck className="w-3.5 h-3.5 text-slate-400" />
+                    ภาคเรียน {classroom.academic_year || 'ปัจจุบัน'}
                   </span>
-                  <span className="shrink-0 text-xs text-slate-400">• ภาคเรียน {classroom.academic_year || 'ปัจจุบัน'}</span>
                 </div>
                 <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight break-words">{classroom.name}</h1>
                 {course?.description && (
