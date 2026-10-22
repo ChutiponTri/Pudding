@@ -247,6 +247,8 @@ export default function ClassroomWorkspacePage() {
   const [customGroups, setCustomGroups] = useState<string[]>([]);
   const [draggingAssignmentId, setDraggingAssignmentId] = useState<string | null>(null);
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
+  // Where a dragged card would land: before the card at `index` in `group` (index = length → at the end).
+  const [dropTarget, setDropTarget] = useState<{ group: string; index: number } | null>(null);
 
   // People Tab: Add Teacher & Add Student Modals
   const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
@@ -844,19 +846,62 @@ export default function ClassroomWorkspacePage() {
     setNotice(`เพิ่มหมวดหมู่ "${name}" แล้ว ลากงานมาวางในกลุ่มนี้เพื่อบันทึก`);
   };
 
-  /** Dropped on a group card: the default groups (งานทั่วไป / ข้อสอบ) mean "no group name". */
-  const handleDropOnGroup = (group: string, assignmentId: string) => {
+  const groupKeyOf = (item: Assignment) => item.group_name || (item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป');
+  // Dragged order first (new work without a position on top), then newest first.
+  const byClassworkOrder = (a: Assignment, b: Assignment) =>
+    (a.sort_order ?? -1) - (b.sort_order ?? -1) ||
+    new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+
+  /**
+   * A card dropped into `group` at `index` (counted in that group's list as
+   * shown, including the dragged card if it is already there). Reorders the
+   * group and, when it came from another group, moves it; the default groups
+   * (งานทั่วไป / ข้อสอบ) mean "no group name".
+   */
+  const handleDropAssignment = async (assignmentId: string, group: string, index: number) => {
     const item = assignments.find((a) => a.id === assignmentId);
     if (!item) return;
+    const fromGroup = groupKeyOf(item);
+    const list = assignments.filter((a) => groupKeyOf(a) === group).sort(byClassworkOrder);
+    const from = list.findIndex((a) => a.id === assignmentId);
+    let target = Math.max(0, Math.min(index, list.length));
+    if (from !== -1) {
+      if (target === from || target === from + 1) return; // dropped where it already is
+      list.splice(from, 1);
+      if (from < target) target -= 1;
+    }
+    list.splice(target, 0, item);
+
     const fallback = item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป';
-    if (group === (item.group_name || fallback)) return;
-    handleUpdateAssignmentGroup(assignmentId, group === fallback ? '' : group);
+    const newGroupName = fromGroup === group ? undefined : group === fallback ? null : group;
+    const updates = list.map((a, position) => ({
+      id: a.id,
+      sort_order: position,
+      ...(a.id === assignmentId && newGroupName !== undefined ? { group_name: newGroupName } : {}),
+    }));
+    const previous = assignments;
+    const byId = new Map(updates.map((u) => [u.id, u]));
+    setAssignments((prev) =>
+      prev.map((a) => {
+        const u = byId.get(a.id);
+        if (!u) return a;
+        return { ...a, sort_order: u.sort_order, ...('group_name' in u ? { group_name: u.group_name || undefined } : {}) };
+      })
+    );
+    try {
+      await dataService.reorderAssignments(classroomId, updates);
+      if (newGroupName !== undefined) setNotice(`ย้าย “${item.title}” ไปยังหมวดหมู่ "${group}" เรียบร้อย`);
+    } catch (error) {
+      setAssignments(previous);
+      setNotice(error instanceof Error && error.message ? error.message : 'บันทึกลำดับงานไม่สำเร็จ');
+    }
   };
 
   const handleUpdateAssignmentGroup = async (assignmentId: string, newGroup: string) => {
     const clean = newGroup.trim();
     try {
-      await dataService.updateAssignment(assignmentId, { group_name: clean || undefined });
+      // '' (not undefined, which JSON drops) so moving back to the default group really clears it.
+      await dataService.updateAssignment(assignmentId, { group_name: clean });
       setAssignments((prev) =>
         prev.map((a) => (a.id === assignmentId ? { ...a, group_name: clean || undefined } : a))
       );
@@ -1678,7 +1723,7 @@ export default function ClassroomWorkspacePage() {
                     },
                     Object.fromEntries(customGroups.map((name) => [name, [] as Assignment[]]))
                   )
-                ).map(([group, items]) => (
+                ).map(([group, unsorted]) => [group, [...unsorted].sort(byClassworkOrder)] as const).map(([group, items]) => (
                   <div
                     key={group}
                     onDragOver={(e) => {
@@ -1686,16 +1731,23 @@ export default function ClassroomWorkspacePage() {
                       e.preventDefault();
                       e.dataTransfer.dropEffect = 'move';
                       if (dragOverGroup !== group) setDragOverGroup(group);
+                      // Over the group but not over a card: drop at the end.
+                      if (dropTarget?.group !== group || dropTarget.index !== items.length) setDropTarget({ group, index: items.length });
                     }}
                     onDragLeave={(e) => {
-                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOverGroup((g) => (g === group ? null : g));
+                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                        setDragOverGroup((g) => (g === group ? null : g));
+                        setDropTarget((t) => (t?.group === group ? null : t));
+                      }
                     }}
                     onDrop={(e) => {
                       e.preventDefault();
                       const id = e.dataTransfer.getData('text/plain') || draggingAssignmentId;
+                      const index = dropTarget?.group === group ? dropTarget.index : items.length;
                       setDragOverGroup(null);
+                      setDropTarget(null);
                       setDraggingAssignmentId(null);
-                      if (id) handleDropOnGroup(group, id);
+                      if (id) handleDropAssignment(id, group, index);
                     }}
                     className={`bg-white dark:bg-slate-900 rounded-3xl border p-5 shadow-xs space-y-4 transition-all ${
                       dragOverGroup === group
@@ -1723,7 +1775,14 @@ export default function ClassroomWorkspacePage() {
                     )}
 
                     <div className="space-y-2.5">
-                      {items.map((item) => {
+                      {items.map((item, itemIndex, all) => {
+                        // Show the insertion line only where a drop would change something.
+                        const draggedIndex = all.findIndex((a) => a.id === draggingAssignmentId);
+                        const lineAt = (index: number) =>
+                          !!draggingAssignmentId &&
+                          dropTarget?.group === group &&
+                          dropTarget.index === index &&
+                          (draggedIndex === -1 || (index !== draggedIndex && index !== draggedIndex + 1));
                         const submittedCount = submissions.filter((s) => s.assignment_id === item.id).length;
                         const itemWindow = getAssignmentWindow(item);
                         const itemStatus = getAssignmentStatus(itemWindow, item.is_exam);
@@ -1741,9 +1800,21 @@ export default function ClassroomWorkspacePage() {
                             onDragEnd={() => {
                               setDraggingAssignmentId(null);
                               setDragOverGroup(null);
+                              setDropTarget(null);
                             }}
-                            title="ลากเพื่อย้ายไปกลุ่มอื่น"
-                            className={`p-3.5 rounded-2xl border hover:border-amber-400 transition-all space-y-2 cursor-grab active:cursor-grabbing ${
+                            onDragOver={(e) => {
+                              if (!draggingAssignmentId) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              e.dataTransfer.dropEffect = 'move';
+                              // Top half of the card: before it; bottom half: after it.
+                              const box = e.currentTarget.getBoundingClientRect();
+                              const index = itemIndex + (e.clientY > box.top + box.height / 2 ? 1 : 0);
+                              if (dragOverGroup !== group) setDragOverGroup(group);
+                              if (dropTarget?.group !== group || dropTarget.index !== index) setDropTarget({ group, index });
+                            }}
+                            title="ลากเพื่อเรียงลำดับ หรือย้ายไปกลุ่มอื่น"
+                            className={`relative p-3.5 rounded-2xl border hover:border-amber-400 transition-all space-y-2 cursor-grab active:cursor-grabbing ${
                               draggingAssignmentId === item.id ? 'opacity-40' : ''
                             } ${
                               isClosed
@@ -1753,6 +1824,13 @@ export default function ClassroomWorkspacePage() {
                                 : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850'
                             }`}
                           >
+                            {/* Insertion line: where the dragged card will land */}
+                            {lineAt(itemIndex) && (
+                              <span aria-hidden className="pointer-events-none absolute -top-[7px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
+                            )}
+                            {itemIndex === items.length - 1 && lineAt(items.length) && (
+                              <span aria-hidden className="pointer-events-none absolute -bottom-[7px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
+                            )}
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5 mb-1">

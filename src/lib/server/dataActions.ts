@@ -1054,6 +1054,36 @@ export const dataActions = {
     return rows;
   },
 
+  /**
+   * Saves a drag in the classroom's work list: new positions for one group's
+   * cards, and the new group of the card that moved (null = default group).
+   */
+  async reorderAssignments(
+    { supabase, actor }: Ctx,
+    classroomId: string,
+    updates: Array<{ id: string; sort_order: number; group_name?: string | null }>
+  ) {
+    await requireTeacherOfClassroom(supabase, actor, classroomId);
+    const ids = updates.map((u) => u.id);
+    const { data: rows } = await supabase.from('assignments').select('id').eq('classroom_id', classroomId).in('id', ids);
+    if ((rows || []).length !== new Set(ids).size) throw FORBIDDEN();
+    const results = await Promise.all(
+      updates.map(({ id, sort_order, group_name }) =>
+        supabase
+          .from('assignments')
+          .update({ sort_order, ...(group_name !== undefined ? { group_name } : {}) })
+          .eq('id', id)
+      )
+    );
+    const failed = results.find((r) => r.error)?.error;
+    if (failed?.message?.includes('sort_order')) {
+      throw new HttpError(409, 'ฐานข้อมูลยังไม่รองรับการเรียงลำดับงาน กรุณารัน SQL ใน supabase_assignment_order_update.sql ก่อน');
+    }
+    if (failed) throw toDatabaseError(failed, 'assignments');
+    after(() => signalClassroom(classroomId, { type: 'timeline' }));
+    return true;
+  },
+
   async deleteAssignment({ supabase, actor }: Ctx, id: string) {
     const { assignment } = await requireTeacherOfAssignment(supabase, actor, id);
     await Promise.all([

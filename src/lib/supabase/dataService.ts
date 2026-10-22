@@ -477,6 +477,14 @@ export const dataService = {
     return call<Assignment | null>('updateAssignment', id, data);
   },
 
+  /** Saves a drag in the classroom work list: positions inside one group, and the moved card's new group. */
+  async reorderAssignments(
+    classroomId: string,
+    updates: Array<{ id: string; sort_order: number; group_name?: string | null }>
+  ): Promise<boolean> {
+    return call<boolean>('reorderAssignments', classroomId, updates);
+  },
+
   /** Full edit: saves the edited questions (kept ids keep students' answers; removed ones are deleted). */
   async replaceAssignmentQuestions(
     id: string,

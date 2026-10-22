@@ -129,6 +129,8 @@ export interface Assignment {
   publish_at?: string;
   /** Optional teacher-managed grouping label shown in classroom timelines. */
   group_name?: string;
+  /** Position inside its group, set by dragging in the classroom; missing = newest first. */
+  sort_order?: number | null;
 }
 
 export type QuestionType = 'multiple_choice' | 'short_answer' | 'file_upload' | 'true_false';
