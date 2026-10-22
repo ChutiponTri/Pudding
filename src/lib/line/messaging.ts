@@ -24,6 +24,21 @@ export async function replyLineText(replyToken: string, text: string): Promise<v
   await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages: [{ type: 'text', text }] });
 }
 
+/**
+ * Text reply with tappable quick-reply buttons under it. Tapping a button sends
+ * its label as the user's own message. LINE allows 13 buttons of 20 characters.
+ */
+export async function replyLineTextWithQuickReplies(replyToken: string, text: string, options: string[]): Promise<void> {
+  const items = options.slice(0, 13).map((label) => ({
+    type: 'action',
+    action: { type: 'message', label: [...label].slice(0, 20).join(''), text: label },
+  }));
+  await sendLineMessage(LINE_REPLY_ENDPOINT, {
+    replyToken,
+    messages: [{ type: 'text', text, ...(items.length ? { quickReply: { items } } : {}) }],
+  });
+}
+
 export interface LinePostbackChoice {
   label: string;
   data: string;

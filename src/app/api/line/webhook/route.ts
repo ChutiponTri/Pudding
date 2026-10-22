@@ -1,8 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { getGroupSummary, isGroupMember, pushLineGroupText, replyLineConfirm, replyLineText } from '@/lib/line/messaging';
+import { getGroupSummary, isGroupMember, pushLineGroupText, replyLineConfirm, replyLineText, replyLineTextWithQuickReplies } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
+import { answerTeacherQuestion, teacherFollowUpWelcome, type BotReply } from '@/lib/line/teacherFaq';
 
 export const runtime = 'nodejs';
 // Leaves room for the delayed "last student joined" announcement (see handleMemberJoined).
@@ -45,6 +46,16 @@ function normalizeCommand(command: string | undefined) {
   };
   const value = (command || 'help').trim().toLowerCase();
   return aliases[value] || value;
+}
+
+/** FAQ / welcome reply with its next-step buttons. */
+async function replyBotSafely(replyToken: string | undefined, reply: BotReply) {
+  if (!replyToken) return;
+  try {
+    await replyLineTextWithQuickReplies(replyToken, reply.text, reply.quickReplies);
+  } catch (error) {
+    console.error('LINE reply failed:', error);
+  }
 }
 
 async function replySafely(replyToken: string | undefined, text: string) {
@@ -447,12 +458,8 @@ export async function POST(request: NextRequest) {
         .eq('role', 'teacher')
         .select('first_name')
         .maybeSingle();
-      if (event.type === 'follow') {
-        const liffUrl = getLiffUrl();
-        await replySafely(event.replyToken, teacher
-          ? `สวัสดีคุณครู${teacher.first_name ? ` ${teacher.first_name}` : ''} 🍮\nบัญชี LINE ของคุณเชื่อมกับ Pudding แล้ว\nเชื่อม LINE Group: กด “เชื่อม LINE Group” ที่ห้องเรียนในเว็บ แล้วเพิ่มบอทเข้ากลุ่ม`
-          : `ยินดีต้อนรับสู่ Pudding 🍮${liffUrl ? `\nนักเรียนเปิดห้องเรียนได้ที่: ${liffUrl}` : ''}`);
-      }
+      // Follows the LINE OA greeting (its 4 setup steps), picking up where this teacher is.
+      if (event.type === 'follow') await replyBotSafely(event.replyToken, teacherFollowUpWelcome(teacher));
       continue;
     }
     if (groupId && event.type === 'memberJoined') {
@@ -472,6 +479,11 @@ export async function POST(request: NextRequest) {
       if (await handleLinkMessage(supabase, groupId, lineUserId, event.replyToken)) continue;
     }
 
+    // 1:1 chat: everyday questions get an answer from the FAQ (never in groups).
+    if (!groupId && event.type === 'message' && !commandMatch && !directJoinRequest) {
+      if (event.message?.type === 'text') await replyBotSafely(event.replyToken, answerTeacherQuestion(normalizedText));
+      continue;
+    }
     // Ignore ordinary group messages. Only explicit Pudding commands continue below.
     if (!commandMatch && !directJoinRequest) continue;
     const rawCommand = directJoinRequest ? 'join' : (commandMatch?.[1] || '').trim();
