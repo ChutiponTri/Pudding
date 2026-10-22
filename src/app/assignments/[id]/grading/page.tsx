@@ -23,6 +23,7 @@ import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
 import { AntiCheatingBadge } from '@/components/AntiCheatingBadge';
 import { IntegrityAuditModal } from '@/components/IntegrityAuditModal';
 import { GradingWorkspace } from '@/components/GradingWorkspace';
+import { ReferenceWorkLink } from '@/components/ReferenceWorkLink';
 import {
   Search,
   Filter,
@@ -449,11 +450,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 <span className="text-xs text-slate-400 font-mono">
                   {classroom?.name || assignment?.classroom_name || ''}
                 </span>
-                {assignment?.sample_work_title && (
-                  <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-[11px] font-semibold border border-blue-200 dark:border-blue-900/50">
-                    📎 {assignment.sample_work_title}
-                  </span>
-                )}
+                {assignment && <ReferenceWorkLink assignment={assignment} className="max-w-full sm:max-w-xs py-0.5" />}
               </div>
 
               <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white">

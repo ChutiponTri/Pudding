@@ -44,6 +44,7 @@ import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
+import { isImageUrl, isPdfUrl, referenceWorkUrl } from "@/lib/utils/referenceWork";
 
 interface RealLineStudent {
   id: string; // LINE userId
@@ -210,14 +211,12 @@ function Sheet({ children, onClose, size = "md" }: { children: React.ReactNode; 
 
 /** Teacher's reference work for homework: a link, or a file (image / PDF) stored in R2. */
 function ReferenceWork({ assignment }: { assignment: Assignment }) {
-  const rawUrl = (assignment.sample_work_url || "").trim();
-  // Teachers sometimes type "www.…" without a scheme; anything else that isn't http(s) is not linked.
-  const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : /^[\w-]+(\.[\w-]+)+(\/|$)/.test(rawUrl) ? `https://${rawUrl}` : "";
+  const url = referenceWorkUrl(assignment.sample_work_url);
   const title = assignment.sample_work_title?.trim();
   const description = assignment.sample_work_description?.trim();
   if (!url && !title && !description) return null;
-  const isImage = /\.(png|jpe?g|webp|gif)($|\?)/i.test(url);
-  const isPdf = /\.pdf($|\?)/i.test(url);
+  const isImage = isImageUrl(url);
+  const isPdf = isPdfUrl(url);
 
   return (
     <section className={`${CARD} p-4 sm:p-5 space-y-3`}>

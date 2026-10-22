@@ -9,6 +9,7 @@ import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
+import { ReferenceWorkLink } from '@/components/ReferenceWorkLink';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
@@ -31,6 +32,7 @@ import {
   FileText,
   Filter,
   FolderPlus,
+  GripVertical,
   Layers,
   Megaphone,
   Menu,
@@ -248,6 +250,11 @@ export default function ClassroomWorkspacePage() {
   const [showAddGroupModal, setShowAddGroupModal] = useState(false);
   const [editingAssignmentGroup, setEditingAssignmentGroup] = useState<Assignment | null>(null);
   const [targetGroupForAssignment, setTargetGroupForAssignment] = useState('');
+  // Groups created here but still empty. A group is stored only as assignments'
+  // group_name, so it is saved once work is dropped into it.
+  const [customGroups, setCustomGroups] = useState<string[]>([]);
+  const [draggingAssignmentId, setDraggingAssignmentId] = useState<string | null>(null);
+  const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
 
   // People Tab: Add Teacher & Add Student Modals
   const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
@@ -718,8 +725,9 @@ export default function ClassroomWorkspacePage() {
     assignments.forEach((a) => {
       if (a.group_name && a.group_name.trim()) set.add(a.group_name.trim());
     });
+    customGroups.forEach((name) => set.add(name));
     return Array.from(set);
-  }, [assignments]);
+  }, [assignments, customGroups]);
 
   // Grade book columns: assignments and quizzes in the order they were given.
   const gradeColumns = useMemo(
@@ -857,6 +865,24 @@ export default function ClassroomWorkspacePage() {
     } catch (err) {
       setNotice(err instanceof Error && err.message ? err.message : 'เผยแพร่งานไม่สำเร็จ');
     }
+  };
+
+  const handleAddGroup = () => {
+    const name = newGroupName.trim();
+    if (!name) return;
+    setCustomGroups((prev) => (prev.includes(name) ? prev : [...prev, name]));
+    setShowAddGroupModal(false);
+    setNewGroupName('');
+    setNotice(`เพิ่มหมวดหมู่ "${name}" แล้ว ลากงานมาวางในกลุ่มนี้เพื่อบันทึก`);
+  };
+
+  /** Dropped on a group card: the default groups (งานทั่วไป / ข้อสอบ) mean "no group name". */
+  const handleDropOnGroup = (group: string, assignmentId: string) => {
+    const item = assignments.find((a) => a.id === assignmentId);
+    if (!item) return;
+    const fallback = item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป';
+    if (group === (item.group_name || fallback)) return;
+    handleUpdateAssignmentGroup(assignmentId, group === fallback ? '' : group);
   };
 
   const handleUpdateAssignmentGroup = async (assignmentId: string, newGroup: string) => {
@@ -1676,13 +1702,41 @@ export default function ClassroomWorkspacePage() {
               {/* Grouped Assignments List */}
               <div className="grid md:grid-cols-2 gap-4">
                 {Object.entries(
-                  assignments.reduce<Record<string, Assignment[]>>((groups, item) => {
-                    const key = item.group_name || (item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป');
-                    (groups[key] ||= []).push(item);
-                    return groups;
-                  }, {})
+                  assignments.reduce<Record<string, Assignment[]>>(
+                    (groups, item) => {
+                      const key = item.group_name || (item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป');
+                      (groups[key] ||= []).push(item);
+                      return groups;
+                    },
+                    Object.fromEntries(customGroups.map((name) => [name, [] as Assignment[]]))
+                  )
                 ).map(([group, items]) => (
-                  <div key={group} className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-xs space-y-4">
+                  <div
+                    key={group}
+                    onDragOver={(e) => {
+                      if (!draggingAssignmentId) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (dragOverGroup !== group) setDragOverGroup(group);
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOverGroup((g) => (g === group ? null : g));
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const id = e.dataTransfer.getData('text/plain') || draggingAssignmentId;
+                      setDragOverGroup(null);
+                      setDraggingAssignmentId(null);
+                      if (id) handleDropOnGroup(group, id);
+                    }}
+                    className={`bg-white dark:bg-slate-900 rounded-3xl border p-5 shadow-xs space-y-4 transition-all ${
+                      dragOverGroup === group
+                        ? 'border-amber-400 ring-2 ring-amber-400/60 bg-amber-50/60 dark:bg-amber-950/20'
+                        : draggingAssignmentId
+                        ? 'border-dashed border-slate-300 dark:border-slate-700'
+                        : 'border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                       <div className="flex items-center gap-2">
                         <span className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-600">
@@ -1694,6 +1748,12 @@ export default function ClassroomWorkspacePage() {
                       </div>
                     </div>
 
+                    {items.length === 0 && (
+                      <div className="py-6 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-center text-[11px] text-slate-400">
+                        ลากงานมาวางที่นี่ หรือกด “ย้ายกลุ่ม” ที่งาน
+                      </div>
+                    )}
+
                     <div className="space-y-2.5">
                       {items.map((item) => {
                         const submittedCount = submissions.filter((s) => s.assignment_id === item.id).length;
@@ -1704,7 +1764,20 @@ export default function ClassroomWorkspacePage() {
                         return (
                           <div
                             key={item.id}
-                            className={`p-3.5 rounded-2xl border hover:border-amber-400 transition-all space-y-2 ${
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', item.id);
+                              e.dataTransfer.effectAllowed = 'move';
+                              setDraggingAssignmentId(item.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingAssignmentId(null);
+                              setDragOverGroup(null);
+                            }}
+                            title="ลากเพื่อย้ายไปกลุ่มอื่น"
+                            className={`p-3.5 rounded-2xl border hover:border-amber-400 transition-all space-y-2 cursor-grab active:cursor-grabbing ${
+                              draggingAssignmentId === item.id ? 'opacity-40' : ''
+                            } ${
                               isClosed
                                 ? 'border-rose-200 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/20'
                                 : isLate
@@ -1715,6 +1788,7 @@ export default function ClassroomWorkspacePage() {
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5 mb-1">
+                                  <GripVertical className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 shrink-0 -ml-1" aria-hidden />
                                   <span
                                     className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
                                       item.is_exam
@@ -1791,6 +1865,11 @@ export default function ClassroomWorkspacePage() {
                               </div>
                             </div>
 
+                            {/* Teacher's reference work (link or uploaded file) */}
+                            {(item.sample_work_url || item.sample_work_title) && (
+                              <ReferenceWorkLink assignment={item} />
+                            )}
+
                             {/* Quick Group Switcher for Teacher */}
                             <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-800 text-[11px]">
                               <span className="text-slate-400 flex items-center gap-1">
@@ -1815,87 +1894,6 @@ export default function ClassroomWorkspacePage() {
                 ))}
               </div>
 
-              {/* Modal: Create Category Group */}
-              {showAddGroupModal && (
-                <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-                  <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
-                    <h3 className="font-black text-sm text-slate-900 dark:text-white">เพิ่มหมวดหมู่ใหม่</h3>
-                    <input
-                      value={newGroupName}
-                      onChange={(e) => setNewGroupName(e.target.value)}
-                      placeholder="เช่น บทที่ 1 การเคลื่อนที่, ข้อสอบกลางภาค..."
-                      className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setShowAddGroupModal(false)}
-                        className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
-                      >
-                        ยกเลิก
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (newGroupName.trim()) {
-                            setShowAddGroupModal(false);
-                            setNotice(`เพิ่มหมวดหมู่ "${newGroupName.trim()}" เรียบร้อยแล้ว สามารถย้ายงานเข้ามาได้ทันที`);
-                            setNewGroupName('');
-                          }
-                        }}
-                        className="flex-1 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-black cursor-pointer"
-                      >
-                        บันทึกกลุ่ม
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Modal: Move Assignment to Group */}
-              {editingAssignmentGroup && (
-                <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-                  <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
-                    <h3 className="font-black text-sm text-slate-900 dark:text-white">ย้ายหมวดหมู่ของงาน</h3>
-                    <p className="text-xs text-slate-500 font-bold truncate">{editingAssignmentGroup.title}</p>
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-bold text-slate-400">เลือกกลุ่มที่มีอยู่ หรือพิมพ์กลุ่มใหม่</label>
-                      <input
-                        value={targetGroupForAssignment}
-                        onChange={(e) => setTargetGroupForAssignment(e.target.value)}
-                        placeholder="ชื่อหมวดหมู่..."
-                        className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none"
-                      />
-                      {existingGroupNames.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 pt-2">
-                          {existingGroupNames.map((gn) => (
-                            <button
-                              key={gn}
-                              type="button"
-                              onClick={() => setTargetGroupForAssignment(gn)}
-                              className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-amber-100 dark:hover:bg-amber-950 text-[10px] font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
-                            >
-                              {gn}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex gap-2 pt-2">
-                      <button
-                        onClick={() => setEditingAssignmentGroup(null)}
-                        className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
-                      >
-                        ยกเลิก
-                      </button>
-                      <button
-                        onClick={() => handleUpdateAssignmentGroup(editingAssignmentGroup.id, targetGroupForAssignment)}
-                        className="flex-1 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-black cursor-pointer"
-                      >
-                        บันทึกการย้าย
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </section>
           )}
 
@@ -2129,6 +2127,96 @@ export default function ClassroomWorkspacePage() {
           </div>
         </main>
       </div>
+
+      {/* Group modals live outside the animated tab panel: its transform would
+          otherwise confine these fixed overlays to the panel instead of the page. */}
+      {/* Modal: Create Category Group */}
+      {showAddGroupModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in"
+          onClick={(e) => e.target === e.currentTarget && setShowAddGroupModal(false)}
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <div>
+              <h3 className="font-black text-sm text-slate-900 dark:text-white">เพิ่มหมวดหมู่ใหม่</h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">สร้างแล้วลากงานมาวางในกลุ่มใหม่ได้ทันที</p>
+            </div>
+            <input
+              autoFocus
+              value={newGroupName}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddGroup()}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="เช่น บทที่ 1 การเคลื่อนที่, ข้อสอบกลางภาค..."
+              className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowAddGroupModal(false)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleAddGroup}
+                disabled={!newGroupName.trim()}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-black cursor-pointer disabled:opacity-50"
+              >
+                บันทึกกลุ่ม
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Move Assignment to Group */}
+      {editingAssignmentGroup && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in"
+          onClick={(e) => e.target === e.currentTarget && setEditingAssignmentGroup(null)}
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <h3 className="font-black text-sm text-slate-900 dark:text-white">ย้ายหมวดหมู่ของงาน</h3>
+            <p className="text-xs text-slate-500 font-bold truncate">{editingAssignmentGroup.title}</p>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-400">เลือกกลุ่มที่มีอยู่ หรือพิมพ์กลุ่มใหม่</label>
+              <input
+                value={targetGroupForAssignment}
+                onChange={(e) => setTargetGroupForAssignment(e.target.value)}
+                placeholder="ชื่อหมวดหมู่..."
+                className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none"
+              />
+              {existingGroupNames.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-2">
+                  {existingGroupNames.map((gn) => (
+                    <button
+                      key={gn}
+                      type="button"
+                      onClick={() => setTargetGroupForAssignment(gn)}
+                      className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-amber-100 dark:hover:bg-amber-950 text-[10px] font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+                    >
+                      {gn}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setEditingAssignmentGroup(null)}
+                className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={() => handleUpdateAssignmentGroup(editingAssignmentGroup.id, targetGroupForAssignment)}
+                className="flex-1 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-black cursor-pointer"
+              >
+                บันทึกการย้าย
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ============================================================== */}
       {/* MODAL: EDIT POST */}
