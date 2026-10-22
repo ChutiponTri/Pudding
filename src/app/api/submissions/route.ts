@@ -197,6 +197,21 @@ export async function POST(request: NextRequest) {
       .eq('assignment_id', assignment_id);
 
     const qsList: any[] = questions || [];
+
+    // Homework: required questions must be answered (quizzes may be handed in unfinished).
+    if (!assignment.is_exam) {
+      const missingRequired = qsList.filter((q) => {
+        if (q.is_required === false) return false;
+        const ans = (answers || []).find((a: any) => a.question_id === q.id);
+        return !String(ans?.answer_text || '').trim() && !ans?.file_url;
+      });
+      if (missingRequired.length) {
+        return NextResponse.json(
+          { error: `ยังไม่ได้ตอบคำถามที่จำเป็น ${missingRequired.length} ข้อ กรุณาตอบให้ครบก่อนส่ง` },
+          { status: 400 }
+        );
+      }
+    }
     if (qsList.length > 0) {
       let totalMax = 0;
       let runningScore = 0;

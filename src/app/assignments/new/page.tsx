@@ -43,6 +43,7 @@ interface QuestionDraft {
   ideal_answer: string;
   rubric_criteria: string;
   max_score: number;
+  is_required: boolean;
 }
 
 function NewAssignmentContent() {
@@ -110,6 +111,7 @@ function NewAssignmentContent() {
       ideal_answer: '',
       rubric_criteria: '',
       max_score: 5,
+      is_required: true,
     },
   ]);
 
@@ -255,6 +257,7 @@ function NewAssignmentContent() {
         ideal_answer: '',
         rubric_criteria: '',
         max_score: 5,
+        is_required: true,
       },
     ]);
 
@@ -355,6 +358,7 @@ function NewAssignmentContent() {
           ideal_answer: q.ideal_answer,
           rubric_criteria: q.rubric_criteria,
           max_score: Number(q.max_score) || 5,
+          is_required: isExam ? true : q.is_required,
         }))
       );
 
@@ -868,7 +872,28 @@ function NewAssignmentContent() {
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    {/* Required / optional (homework only; quizzes may be handed in unfinished) */}
+                    {!isExam && (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={q.is_required}
+                        onClick={() => handleQuestionChange(idx, 'is_required', !q.is_required)}
+                        title={q.is_required ? 'นักเรียนต้องตอบข้อนี้ก่อนส่งงาน' : 'นักเรียนเว้นข้อนี้ได้'}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                          q.is_required
+                            ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300'
+                            : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400'
+                        }`}
+                      >
+                        <span className={`w-6 h-3.5 rounded-full relative transition-colors ${q.is_required ? 'bg-rose-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                          <span className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all ${q.is_required ? 'left-3' : 'left-0.5'}`} />
+                        </span>
+                        <span>{q.is_required ? 'จำเป็น' : 'ไม่บังคับ'}</span>
+                      </button>
+                    )}
+
                     {/* Score */}
                     <div className="flex items-center gap-1.5 text-xs">
                       <span className="text-slate-500 font-semibold">

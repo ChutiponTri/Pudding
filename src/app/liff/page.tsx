@@ -1011,6 +1011,23 @@ export default function LiffStudentPage() {
   const handleSubmitTask = async () => {
     if (!activeAssignment || !currentStudent) return;
 
+    const unanswered = activeQuestions
+      .map((q, index) => ({ q, number: index + 1 }))
+      .filter(({ q }) => !(studentAnswers[q.id]?.text || "").trim() && !studentAnswers[q.id]?.file_url);
+    const numbers = (items: typeof unanswered) => items.map((item) => item.number).join(", ");
+    if (activeAssignment.is_exam) {
+      // Quizzes are short; let the student hand in what they have, but make sure they mean it.
+      if (unanswered.length && !confirm(`ยังไม่ได้ตอบ ${unanswered.length} ข้อ (ข้อ ${numbers(unanswered)})\n\nต้องการส่งคำตอบตอนนี้เลยหรือไม่? ส่งแล้วจะแก้ไขไม่ได้`)) return;
+    } else {
+      const missingRequired = unanswered.filter(({ q }) => q.is_required !== false);
+      if (missingRequired.length) {
+        alert(`กรุณาตอบคำถามที่จำเป็นให้ครบก่อนส่งงาน\nยังไม่ได้ตอบ: ข้อ ${numbers(missingRequired)}`);
+        document.getElementById(`question-${missingRequired[0].q.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      if (unanswered.length && !confirm(`ยังไม่ได้ตอบข้อที่ไม่บังคับ ${unanswered.length} ข้อ (ข้อ ${numbers(unanswered)})\n\nต้องการส่งงานเลยหรือไม่?`)) return;
+    }
+
     setIsSubmitting(true);
     try {
       const currentAwaySeconds = awayStartRef.current
@@ -2227,7 +2244,7 @@ export default function LiffStudentPage() {
                   const isAnswered = Boolean(currentAnswer.trim() || studentAnswers[q.id]?.file_url);
 
                   return (
-                    <div key={q.id} className={`${CARD} p-4 sm:p-5 space-y-4`}>
+                    <div key={q.id} id={`question-${q.id}`} className={`${CARD} p-4 sm:p-5 space-y-4 scroll-mt-20`}>
                       <div className="flex items-start gap-3">
                         <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-colors ${
                           isAnswered ? 'bg-line text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
@@ -2237,6 +2254,11 @@ export default function LiffStudentPage() {
                         <div className="min-w-0 flex-1 space-y-1">
                           <span className="text-[11px] font-semibold text-slate-400">
                             ข้อ {idx + 1}/{activeQuestions.length} • {q.max_score} คะแนน{isFileUpload ? ' • แนบไฟล์' : isChoice ? ' • ปรนัย' : ''}
+                            {!activeAssignment.is_exam && (
+                              q.is_required !== false
+                                ? <span className="ml-1.5 text-rose-600 dark:text-rose-400">• จำเป็น *</span>
+                                : <span className="ml-1.5 text-slate-400">• ไม่บังคับ</span>
+                            )}
                           </span>
                           <p className="text-base font-semibold text-slate-900 dark:text-white leading-relaxed whitespace-pre-wrap break-words">{q.question_text}</p>
                         </div>

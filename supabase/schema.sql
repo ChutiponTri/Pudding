@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS public.questions (
   ideal_answer TEXT,                          -- Model answer for AI ASAG scoring
   rubric_criteria TEXT,                       -- Scoring criteria guide
   max_score NUMERIC NOT NULL DEFAULT 5,
+  is_required BOOLEAN NOT NULL DEFAULT TRUE,  -- Homework: must be answered before submitting
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

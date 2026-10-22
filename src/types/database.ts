@@ -142,6 +142,8 @@ export interface Question {
   ideal_answer?: string;
   rubric_criteria?: string;
   max_score: number;
+  /** Homework only: false lets students leave this question blank. Missing means required. */
+  is_required?: boolean;
 }
 
 export type SubmissionStatus = 'submitted' | 'late' | 'pending';

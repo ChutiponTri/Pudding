@@ -269,3 +269,11 @@ NOTIFY pgrst, 'reload schema';
 -- reminder_offset_minutes keeps the earliest one for older code.
 ALTER TABLE public.assignments
 ADD COLUMN IF NOT EXISTS reminder_offsets_minutes INTEGER[];
+
+-- ==========================================
+-- Required / optional homework questions
+-- ==========================================
+-- Homework questions are required unless the teacher marks them optional.
+-- Quizzes ignore this: students may hand in an unfinished quiz after confirming.
+ALTER TABLE public.questions
+ADD COLUMN IF NOT EXISTS is_required BOOLEAN NOT NULL DEFAULT TRUE;

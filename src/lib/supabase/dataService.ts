@@ -997,7 +997,11 @@ export const dataService = {
     }
     if (error) throw toDatabaseError(error, 'assignments');
     if (newQuestions.length > 0) {
-      const { error: qError } = await supabase.from('questions').insert(newQuestions);
+      let { error: qError } = await supabase.from('questions').insert(newQuestions);
+      // Databases without questions.is_required yet: every question stays required.
+      if (qError?.message?.includes('is_required')) {
+        ({ error: qError } = await supabase.from('questions').insert(newQuestions.map(({ is_required: _unused, ...q }) => q)));
+      }
       if (qError) {
         await supabase.from('assignments').delete().eq('id', id);
         throw toDatabaseError(qError, 'questions');
