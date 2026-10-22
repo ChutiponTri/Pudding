@@ -1910,7 +1910,7 @@ export default function ClassroomWorkspacePage() {
 
                             {/* Teacher's reference work (link or uploaded file) */}
                             {(item.sample_work_url || item.sample_work_title) && (
-                              <ReferenceWorkLink assignment={item} />
+                              <ReferenceWorkLink assignment={item} preview />
                             )}
 
                             {/* Quick Group Switcher for Teacher */}
