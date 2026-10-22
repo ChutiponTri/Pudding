@@ -1,7 +1,7 @@
 /**
  * Deep links into the student LIFF app, attached to every LINE message that
  * asks students to act (check in, do homework/exams, read an announcement), so
- * they can tap straight through instead of typing "#pudding link".
+ * they can tap straight through instead of typing "พุดดิ้ง หน้าหลัก".
  *
  * The LIFF page reads these params: classId opens the classroom; code is the
  * classroom's invite code, which lets a classmate who has not joined yet send

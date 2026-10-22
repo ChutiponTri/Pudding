@@ -505,7 +505,7 @@ export const dataService = {
     assignmentId: string,
     override: { status_override: SubmissionOverrideStatus; extended_until?: string }
   ): Promise<Assignment | null> {
-    // Through the server so closing / extending is announced in the LINE group.
+    // Through the server, which checks the teacher and refreshes open student pages (no LINE message).
     const res = await authFetch('/api/assignments/override', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

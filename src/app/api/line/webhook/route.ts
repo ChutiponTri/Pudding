@@ -1,13 +1,15 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { after, NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getGroupSummary, isGroupMember, pushLineGroupText, replyLineConfirm, replyLineText, replyLineTextWithQuickReplies } from '@/lib/line/messaging';
-import { withLiffLink } from '@/lib/line/liffLink';
+import { buildLiffUrl, withLiffLink } from '@/lib/line/liffLink';
 import { answerTeacherQuestion, teacherFollowUpWelcome, type BotReply } from '@/lib/line/teacherFaq';
+import { parseStudentCommand, studentHelpText, type StudentCommand } from '@/lib/line/studentCommands';
+import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import type { Assignment } from '@/types/database';
 
 export const runtime = 'nodejs';
-// Leaves room for the delayed "last student joined" announcement (see handleMemberJoined).
-export const maxDuration = 30;
 
 function isValidSignature(body: string, signature: string | null) {
   const secret = process.env.LINE_CHANNEL_SECRET;
@@ -74,6 +76,7 @@ function classroomJoinText(classroom: { name: string; invite_code?: string | nul
   if (classroom.invite_code) lines.push(`รหัสเข้าห้อง: ${classroom.invite_code}`);
   if (joinUrl) lines.push(`กดลิงก์นี้เพื่อเข้าร่วม: ${joinUrl}`);
   lines.push('หากเป็นนักเรียนใหม่ ให้เปิดลิงก์ผ่าน LINE แล้วกรอกข้อมูลเพื่อส่งคำขอเข้าห้องเรียน');
+  lines.push('💡 พิมพ์ "พุดดิ้ง" เพื่อดูคำสั่งทั้งหมด เช่น "พุดดิ้ง เข้าห้อง" "พุดดิ้ง งาน"');
   return lines.join('\n');
 }
 
@@ -87,13 +90,11 @@ type ServiceClient = ReturnType<typeof createServiceSupabaseClient>;
 const JOIN_QUIET_MS = 8000;
 
 /**
- * Announces the classroom link when students join the LINE group, without
- * flooding it when a whole class is invited at once:
- * - the first join after a quiet period gets the link immediately (reply);
- * - later joins in the same burst stay silent, and once nobody has joined for
- *   JOIN_QUIET_MS the link is pushed once more for everyone who came late.
- * State lives on the classroom row because each join arrives as its own
- * webhook request (possibly on different instances).
+ * Announces the classroom link when students join the LINE group, once per
+ * burst (a teacher inviting a whole class): the first join after a quiet period
+ * gets a reply, which is free. Later joiners get no pushed message (that would
+ * use the LINE quota); they can type "พุดดิ้ง เข้าห้อง" for the same link.
+ * State lives on the classroom row because each join is its own webhook request.
  */
 async function handleMemberJoined(supabase: ServiceClient, groupId: string, replyToken: string | undefined) {
   const { data: classroom } = await supabase.from('classrooms').select('id, name, invite_code').eq('line_group_id', groupId).maybeSingle();
@@ -119,33 +120,8 @@ async function handleMemberJoined(supabase: ServiceClient, groupId: string, repl
     await replyClassroomJoinCode(replyToken, classroom, liffUrl);
     return;
   }
-
-  // Mid-burst: become the latest join (unless a newer one already is) ...
-  const { data: latest } = await supabase
-    .from('classrooms')
-    .update({ line_member_joined_at: joinedAt, line_join_notice_pending: true })
-    .eq('id', classroom.id)
-    .lt('line_member_joined_at', joinedAt)
-    .select('id');
-  if (!latest?.length) return;
-
-  // ... and if nobody joins after us, send the follow-up once.
-  after(async () => {
-    await new Promise((resolve) => setTimeout(resolve, JOIN_QUIET_MS));
-    const { data: claimed } = await supabase
-      .from('classrooms')
-      .update({ line_join_notice_pending: false })
-      .eq('id', classroom.id)
-      .eq('line_member_joined_at', joinedAt)
-      .eq('line_join_notice_pending', true)
-      .select('id');
-    if (!claimed?.length) return;
-    try {
-      await pushLineGroupText(groupId, classroomJoinText(classroom, liffUrl));
-    } catch (err) {
-      console.error('LINE join follow-up push failed:', err);
-    }
-  });
+  // Mid-burst: just keep the burst going.
+  await supabase.from('classrooms').update({ line_member_joined_at: joinedAt }).eq('id', classroom.id);
 }
 type LinkClassroom = {
   id: string;
@@ -399,6 +375,83 @@ async function handleLinkPostback(supabase: ServiceClient, groupId: string, line
   }
 }
 
+/** Shortest-first list of the classroom's work students can still hand in. */
+async function openWork(supabase: ServiceClient, classroomId: string) {
+  const { data } = await supabase.from('assignments').select('*').eq('classroom_id', classroomId);
+  const now = Date.now();
+  return ((data || []) as Assignment[])
+    .map((assignment) => ({ assignment, window: getAssignmentWindow(assignment, now) }))
+    .filter(({ window }) => window.acceptsSubmissions)
+    .sort((a, b) => (a.window.deadline ?? Infinity) - (b.window.deadline ?? Infinity));
+}
+
+/**
+ * Answers a student's "พุดดิ้ง …" message in a classroom group with a reply
+ * (free, unlike pushed messages). Every answer links into the student LIFF app.
+ */
+async function handleStudentCommand(supabase: ServiceClient, groupId: string, command: StudentCommand, replyToken: string | undefined) {
+  const liffUrl = getLiffUrl();
+  const { data: classroom } = await supabase.from('classrooms').select('id, name, invite_code').eq('line_group_id', groupId).maybeSingle();
+  if (!classroom) {
+    await replySafely(replyToken, command === 'help'
+      ? 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียนใน Pudding\nให้คุณครูกด "เชื่อมบอท LINE" ในหน้าห้องเรียนบนเว็บก่อนนะคะ'
+      : 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียนใน Pudding');
+    return;
+  }
+  const link = (options: Omit<Parameters<typeof withLiffLink>[2], 'classroomId' | 'inviteCode'> = {}) => ({
+    classroomId: classroom.id,
+    inviteCode: classroom.invite_code,
+    ...options,
+  });
+
+  if (command === 'help') {
+    await replySafely(replyToken, studentHelpText(classroom.name));
+  } else if (command === 'join') {
+    await replyClassroomJoinCode(replyToken, classroom, liffUrl);
+  } else if (command === 'home') {
+    await replySafely(replyToken, withLiffLink(`🎓 ห้องเรียน: ${classroom.name}`, 'เปิดห้องเรียนใน Pudding', link()));
+  } else if (command === 'status') {
+    await replySafely(replyToken, `🎓 ห้อง: ${classroom.name}\n✅ เชื่อมกับ Pudding แล้ว`);
+  } else if (command === 'attendance') {
+    const { data: sessions } = await supabase
+      .from('attendance_sessions')
+      .select('title, starts_at, late_until_minutes')
+      .eq('classroom_id', classroom.id)
+      .eq('status', 'open')
+      .lte('starts_at', new Date().toISOString())
+      .order('starts_at', { ascending: false })
+      .limit(3);
+    if (!sessions?.length) {
+      await replySafely(replyToken, `⏰ ห้อง ${classroom.name}\nตอนนี้ยังไม่มีคาบเช็คชื่อที่เปิดอยู่ค่ะ`);
+      return;
+    }
+    const lines = sessions.map((session) => {
+      const closesAt = new Date(new Date(session.starts_at).getTime() + (session.late_until_minutes || 30) * 60000).toISOString();
+      return `• ${session.title} (เช็คได้ถึง ${formatDateTime(closesAt, 'th', SCHOOL_TIME_ZONE)})`;
+    });
+    await replySafely(replyToken, withLiffLink(`⏰ เช็คชื่อ • ${classroom.name}\n${lines.join('\n')}`, 'กดเพื่อเช็คชื่อ', link({ view: 'attendance' })));
+  } else {
+    // works / submit: what is still open, each with its own link.
+    const open = await openWork(supabase, classroom.id);
+    if (!open.length) {
+      await replySafely(replyToken, withLiffLink(`🎉 ห้อง ${classroom.name}\nตอนนี้ไม่มีงานหรือข้อสอบที่เปิดรับอยู่ค่ะ`, 'ดูงานทั้งหมด', link({ view: 'work' })));
+      return;
+    }
+    const shown = open.slice(0, 8);
+    const items = shown.map(({ assignment, window }, index) => {
+      const kind = assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน';
+      const due = window.deadline
+        ? `${assignment.is_exam ? 'ปิด' : 'ส่งภายใน'} ${formatDateTime(new Date(window.deadline).toISOString(), 'th', SCHOOL_TIME_ZONE)}`
+        : '';
+      const url = buildLiffUrl(link({ assignmentId: assignment.id }));
+      return `${index + 1}. ${kind}: ${assignment.title}${due ? `\n   ${due}` : ''}${url ? `\n   👉 ${url}` : ''}`;
+    });
+    const more = open.length > shown.length ? `\n…และอีก ${open.length - shown.length} รายการ` : '';
+    const heading = command === 'submit' ? `📤 ส่งงาน • ${classroom.name}\nกดลิงก์ของงานที่ต้องการส่ง` : `📚 งานที่เปิดรับ • ${classroom.name}`;
+    await replySafely(replyToken, withLiffLink(`${heading}\n\n${items.join('\n\n')}${more}`, 'ดูงานทั้งหมด', link({ view: 'work' })));
+  }
+}
+
 /**
  * LINE webhook. Teachers are recognised by the LINE id copied from their LINE
  * sign-in (see syncTeacherLineIdentity); groups link and unlink automatically
@@ -470,7 +523,6 @@ export async function POST(request: NextRequest) {
       ? event.message.text?.replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim()
       : '') || '';
     const commandMatch = normalizedText.match(/^#pudding(?:\s+(.+))?$/i);
-    const directJoinRequest = /^(?:#pudding\s+)?(?:join|code|ขอรหัส|ขอรหัสเข้าห้อง|รหัสเข้าห้อง|เข้าห้อง)$/i.test(normalizedText);
     if (!groupId && !lineUserId) continue;
 
     // The bot was added before the teacher tapped "connect" in the web UI: any
@@ -479,14 +531,20 @@ export async function POST(request: NextRequest) {
       if (await handleLinkMessage(supabase, groupId, lineUserId, event.replyToken)) continue;
     }
 
-    // 1:1 chat: everyday questions get an answer from the FAQ (never in groups).
-    if (!groupId && event.type === 'message' && !commandMatch && !directJoinRequest) {
+    // Group chat: only messages starting with "พุดดิ้ง" / "pudding" get a (free) reply.
+    if (groupId) {
+      const studentCommand = event.type === 'message' ? parseStudentCommand(normalizedText) : null;
+      if (studentCommand) await handleStudentCommand(supabase, groupId, studentCommand, event.replyToken);
+      continue;
+    }
+
+    // 1:1 chat: everyday questions get an answer from the FAQ.
+    if (event.type === 'message' && !commandMatch) {
       if (event.message?.type === 'text') await replyBotSafely(event.replyToken, answerTeacherQuestion(normalizedText));
       continue;
     }
-    // Ignore ordinary group messages. Only explicit Pudding commands continue below.
-    if (!commandMatch && !directJoinRequest) continue;
-    const rawCommand = directJoinRequest ? 'join' : (commandMatch?.[1] || '').trim();
+    if (!commandMatch) continue;
+    const rawCommand = (commandMatch[1] || '').trim();
     const [command, ...args] = rawCommand.split(/\s+/);
     const normalizedCommand = normalizeCommand(command);
     const liffUrl = getLiffUrl();
@@ -495,7 +553,7 @@ export async function POST(request: NextRequest) {
       ? await supabase.from('users').select('id, first_name, last_name, role').eq('line_uid', lineUserId).eq('role', 'teacher').maybeSingle()
       : { data: null };
 
-    if (!groupId) {
+    {
       if (normalizedCommand === 'help') {
         await replySafely(event.replyToken, '#pudding status ตรวจสถานะ\n#pudding test ทดสอบแจ้งเตือน\n#pudding link เปิด Pudding\n#pudding attendance สถานะเช็กชื่อ');
         continue;
@@ -536,18 +594,6 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    const { data: groupClassroom } = await supabase.from('classrooms').select('id, name, teacher_id, teachers, line_group_id, invite_code').eq('line_group_id', groupId).maybeSingle();
-    if (!groupClassroom) {
-      if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding join หรือ “ขอรหัสเข้าห้อง” ขอรหัส/ลิงก์เข้าห้อง\n#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
-      else if (normalizedCommand === 'link') await replySafely(event.replyToken, liffUrl ? `เปิด Pudding: ${liffUrl}` : 'ยังไม่ได้ตั้งค่า LIFF URL');
-      else if (normalizedCommand === 'status') await replySafely(event.replyToken, 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียนใน Pudding');
-      continue;
-    }
-    if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding join หรือ “ขอรหัสเข้าห้อง” ขอรหัส/ลิงก์เข้าห้อง\n#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
-    else if (normalizedCommand === 'join') await replyClassroomJoinCode(event.replyToken, groupClassroom, liffUrl);
-    else if (normalizedCommand === 'link') await replySafely(event.replyToken, withLiffLink(`🎓 ห้องเรียน: ${groupClassroom.name}`, 'เปิดห้องเรียนใน Pudding', { classroomId: groupClassroom.id, inviteCode: groupClassroom.invite_code }));
-    else if (normalizedCommand === 'status') await replySafely(event.replyToken, `ห้อง: ${groupClassroom.name}\nLINE Group: เชื่อมต่อแล้ว\nแจ้งเตือนงาน: พร้อมใช้งาน`);
-    else if (normalizedCommand === 'attendance') await replySafely(event.replyToken, withLiffLink(`⏰ เช็คชื่อ: ${groupClassroom.name}`, 'กดเพื่อเช็คชื่อ', { classroomId: groupClassroom.id, inviteCode: groupClassroom.invite_code, view: 'attendance' }));
   }
   return NextResponse.json({ ok: true });
 }

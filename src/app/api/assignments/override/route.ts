@@ -1,11 +1,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { pushLineGroupText } from '@/lib/line/messaging';
 import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
-import { withLiffLink } from '@/lib/line/liffLink';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 
@@ -16,8 +13,9 @@ const STATUSES: SubmissionOverrideStatus[] = ['auto', 'force_closed', 'extended'
 
 /**
  * Teacher changes whether an assignment accepts work: back to the deadline,
- * close now, or extend. Closing and extending are announced in the classroom's
- * LINE group so students know right away.
+ * close now, or extend. No LINE message is pushed (it would use the LINE
+ * message quota); open student pages update right away, and students can ask
+ * the bot in the group ("พุดดิ้ง งาน") for what is still open.
  * `action: 'publish_now'` instead releases scheduled work immediately (the class
  * reached the topic early); it is announced like a scheduled release.
  */
@@ -97,29 +95,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'บันทึกสถานะการรับงานไม่สำเร็จ' }, { status: 500 });
   }
 
-  // Announce only real changes to work students can already see.
-  const changed =
-    previous.status_override !== status ||
-    (status === 'extended' && new Date(previous.extended_until || 0).getTime() !== extendedMs);
-  const lineGroupId = classroom.line_group_id;
-  if (changed && lineGroupId && isAssignmentPublished(updated) && (status === 'force_closed' || status === 'extended')) {
-    const kind = updated.is_exam ? 'ข้อสอบ' : 'งาน';
-    const message =
-      status === 'force_closed'
-        ? `🔒 ปิดรับ${kind}แล้ว\n📌 ${kind}: “${updated.title}”\n🏫 ห้อง: ${classroom.name}\n\nคุณครูปิดรับ${kind} “${updated.title}” แล้ว นักเรียนไม่สามารถส่งเพิ่มได้`
-        : withLiffLink(
-            `⏳ ขยายเวลาส่ง${kind}\n📌 ${kind}: “${updated.title}”\n🏫 ห้อง: ${classroom.name}\n\nส่งได้ถึง: ${formatDateTime(updated.extended_until, 'th', SCHOOL_TIME_ZONE)}`,
-            updated.is_exam ? 'กดเพื่อทำข้อสอบ' : 'กดเพื่อส่งงาน',
-            { classroomId: classroom.id, inviteCode: classroom.invite_code, assignmentId: updated.id }
-          );
-    after(async () => {
-      try {
-        await pushLineGroupText(lineGroupId, message);
-      } catch (lineError) {
-        console.error('Override LINE push failed:', lineError);
-      }
-    });
-  }
   // Open student pages pick up the new status.
   after(() => signalClassroom(classroom.id, { type: 'timeline' }));
 

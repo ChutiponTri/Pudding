@@ -2936,7 +2936,7 @@ export default function DashboardPage() {
                 <p className="font-bold">
                   {lineConnection.groupName ? `เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว` : 'เชื่อมกับกลุ่ม LINE แล้ว'}
                 </p>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">กลุ่มนี้จะได้รับแจ้งเตือนงาน และนักเรียนพิมพ์ <b>ขอรหัสเข้าห้อง</b> เพื่อรับลิงก์เข้าห้องเรียนได้ทันที</p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">กลุ่มนี้จะได้รับแจ้งเตือนงาน และนักเรียนพิมพ์ <b>พุดดิ้ง</b> เพื่อดูคำสั่ง เช่น <b>พุดดิ้ง เข้าห้อง</b> <b>พุดดิ้ง งาน</b> <b>พุดดิ้ง เช็คชื่อ</b></p>
                 <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">หากนำบอทออกจากกลุ่ม ห้องเรียนนี้จะยกเลิกการเชื่อมต่อโดยอัตโนมัติ</p>
               </div>
             ) : (
