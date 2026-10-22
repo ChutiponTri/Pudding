@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
+import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
@@ -17,6 +18,8 @@ const STATUSES: SubmissionOverrideStatus[] = ['auto', 'force_closed', 'extended'
  * Teacher changes whether an assignment accepts work: back to the deadline,
  * close now, or extend. Closing and extending are announced in the classroom's
  * LINE group so students know right away.
+ * `action: 'publish_now'` instead releases scheduled work immediately (the class
+ * reached the topic early); it is announced like a scheduled release.
  */
 export async function POST(request: NextRequest) {
   const { userId } = await auth();
@@ -26,7 +29,8 @@ export async function POST(request: NextRequest) {
   const assignmentId = typeof body.assignmentId === 'string' ? body.assignmentId : '';
   const status = body.status_override as SubmissionOverrideStatus;
   const extendedUntil = typeof body.extended_until === 'string' ? body.extended_until : undefined;
-  if (!assignmentId || !STATUSES.includes(status)) {
+  const publishNow = body.action === 'publish_now';
+  if (!assignmentId || (!publishNow && !STATUSES.includes(status))) {
     return NextResponse.json({ error: 'assignmentId and a valid status_override are required' }, { status: 400 });
   }
   const extendedMs = extendedUntil ? new Date(extendedUntil).getTime() : NaN;
@@ -47,6 +51,43 @@ export async function POST(request: NextRequest) {
     classroom?.teacher_id === userId ||
     (classroom?.teachers || []).some((teacher: { teacher_id?: string }) => teacher.teacher_id === userId);
   if (!classroom || !isTeacher) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  if (publishNow) {
+    if (isAssignmentPublished(previous)) return NextResponse.json({ assignment: previous });
+    const nowIso = new Date().toISOString();
+    const { data: published, error: publishError } = await supabase
+      .from('assignments')
+      .update({ publish_at: nowIso })
+      .eq('id', assignmentId)
+      .select('*')
+      .maybeSingle<Assignment>();
+    if (publishError || !published) {
+      console.error('Assignment publish-now failed:', publishError);
+      return NextResponse.json({ error: 'เผยแพร่งานไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' }, { status: 500 });
+    }
+    // Move the held-back timeline post to now; announceScheduledPosts then
+    // sends its LINE message once and refreshes open student pages.
+    const { data: posts } = await supabase
+      .from('classroom_posts')
+      .select('id, metadata')
+      .eq('classroom_id', classroom.id)
+      .contains('metadata', { assignmentId });
+    await Promise.all(
+      (posts || [])
+        .filter((post) => typeof post.metadata?.publishAt === 'string')
+        .map((post) =>
+          supabase
+            .from('classroom_posts')
+            .update({ metadata: { ...post.metadata, publishAt: nowIso }, created_at: nowIso })
+            .eq('id', post.id)
+        )
+    );
+    after(async () => {
+      await announceScheduledPosts(supabase, new Date(), classroom.id);
+      await signalClassroom(classroom.id, { type: 'published', assignmentId });
+    });
+    return NextResponse.json({ assignment: published });
+  }
 
   const patch: Partial<Assignment> = { status_override: status };
   if (status === 'extended') patch.extended_until = new Date(extendedMs).toISOString();

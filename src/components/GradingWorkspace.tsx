@@ -35,6 +35,8 @@ interface GradingWorkspaceProps {
   grader: ClassroomTeacher;
   /** Position of this student in the grading order, e.g. 3 of 25. */
   studentPosition?: { index: number; total: number };
+  /** Quizzes track leaving the screen; homework does not, so no integrity alert. */
+  tracksAway?: boolean;
   onClose: () => void;
   onPrevStudent?: () => void;
   onNextStudent?: () => void;
@@ -81,6 +83,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   initialAnswers,
   grader,
   studentPosition,
+  tracksAway = true,
   onClose,
   onPrevStudent,
   onNextStudent,
@@ -405,7 +408,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                 <span>Δ {agreement.avg} · {agreement.high ? t('grading.workspace.irr_agreement_high') : t('grading.workspace.irr_agreement_moderate')}</span>
               </div>
             )}
-            {submission.is_flagged_suspicious && (
+            {tracksAway && submission.is_flagged_suspicious && (
               <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 space-y-0.5">
                 <span className="font-bold flex items-center gap-1">
                   <AlertCircle className="w-3.5 h-3.5" />

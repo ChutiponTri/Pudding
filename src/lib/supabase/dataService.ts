@@ -481,6 +481,18 @@ export const dataService = {
     return call<boolean>('deleteAssignment', id);
   },
 
+  /** Releases a scheduled assignment now (the teacher reached the topic early); announced in LINE like a scheduled release. */
+  async publishAssignmentNow(assignmentId: string): Promise<Assignment | null> {
+    const res = await authFetch('/api/assignments/override', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignmentId, action: 'publish_now' }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    return (json.assignment as Assignment) || null;
+  },
+
   async updateAssignmentDeadlineOverride(
     assignmentId: string,
     override: { status_override: SubmissionOverrideStatus; extended_until?: string }
@@ -507,6 +519,8 @@ export const dataService = {
     student_last_name?: string;
     student_avatar?: string;
     line_uid?: string;
+    /** Borrowed phone: the classmate's student number; the work is saved as theirs. */
+    proxy_student_number?: string;
     answers: Array<{ question_id: string; answer_text?: string; file_url?: string }>;
     antiCheating: {
       tab_switch_count: number;
@@ -533,6 +547,7 @@ export const dataService = {
         student_avatar: payload.student_avatar,
         answers: payload.answers,
         antiCheating: payload.antiCheating,
+        proxy_student_number: payload.proxy_student_number || undefined,
       }),
     });
     const json = await res.json().catch(() => ({}));

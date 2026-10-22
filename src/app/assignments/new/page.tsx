@@ -395,7 +395,8 @@ function NewAssignmentContent() {
             total_points: totalPoints,
             status_override: 'auto',
             sample_work_title: !isExam ? sampleWorkTitle : undefined,
-            sample_work_url: undefined,
+            // A typed link is saved now; a chosen file replaces it after upload below.
+            sample_work_url: !isExam && !sampleWorkFile ? sampleWorkUrl.trim() || undefined : undefined,
             sample_work_description: !isExam ? sampleWorkDescription : undefined,
           },
           questionRows

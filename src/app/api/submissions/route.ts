@@ -4,7 +4,8 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAssignmentWindow, QUIZ_SUBMIT_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { parseTrueFalse } from '@/lib/utils/trueFalse';
 import { getActor } from '@/lib/auth/actor';
-import { classroomRole, isTeacherOf, loadClassroom } from '@/lib/server/access';
+import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
+import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
 import type { Classroom } from '@/types/database';
 
 /**
@@ -83,7 +84,8 @@ export async function GET(request: NextRequest) {
   // Attach each student's real profile. submissions.student_id is users.id
   // (usually the LINE user id), so without this the teacher UI showed the raw
   // LINE id instead of the student's name, student number and photo.
-  const ids = [...new Set(submissions.map((s) => s.student_id).filter(Boolean))] as string[];
+  // Work sent from a classmate's phone also names that classmate.
+  const ids = [...new Set(submissions.flatMap((s) => [s.student_id, s.submitted_by]).filter(Boolean))] as string[];
   const quoted = ids.map((id) => `"${id.replace(/["\\]/g, '')}"`).join(',');
   const { data: users, error: usersError } = await supabase
     .from('users')
@@ -99,7 +101,12 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     submissions: submissions.map((submission) => {
       const profile = byId.get(submission.student_id);
-      return profile ? { ...submission, student: { ...profile, role: 'student' } } : submission;
+      const sender = submission.submitted_by ? byId.get(submission.submitted_by) : null;
+      return {
+        ...submission,
+        ...(profile ? { student: { ...profile, role: 'student' } } : {}),
+        ...(sender ? { submitted_by_name: `${sender.first_name || ''} ${sender.last_name || ''}`.trim() } : {}),
+      };
     }),
   });
 }
@@ -115,6 +122,7 @@ export async function POST(request: NextRequest) {
       student_avatar,
       answers = [],
       antiCheating = {},
+      proxy_student_number,
     } = body;
 
     // The student is whoever LINE says the token belongs to, never an id from the body.
@@ -170,6 +178,16 @@ export async function POST(request: NextRequest) {
     if (!classroom || (await classroomRole(supabase, actor, classroom as Classroom)) !== 'student') {
       return NextResponse.json({ error: 'คุณยังไม่ได้อยู่ในห้องเรียนนี้ หรือยังรอคุณครูอนุมัติ' }, { status: 403 });
     }
+    // Borrowed phone: the work belongs to the classmate, the phone's owner is recorded as the sender.
+    let proxyStudent: ProxyStudent | null = null;
+    if (proxy_student_number) {
+      try {
+        proxyStudent = await resolveProxyStudent(supabase, actor, classroom as Classroom, proxy_student_number);
+      } catch (proxyError) {
+        if (proxyError instanceof HttpError) return NextResponse.json({ error: proxyError.message }, { status: proxyError.status });
+        throw proxyError;
+      }
+    }
     if (assignmentWindow.isScheduled) {
       return NextResponse.json({ error: 'งานนี้ยังไม่เปิดให้ส่ง' }, { status: 409 });
     }
@@ -180,19 +198,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'คุณครูปิดรับงานนี้แล้ว ไม่สามารถส่งได้' }, { status: 409 });
     }
 
-    const awaySeconds = Number(antiCheating.away_time_seconds || 0);
-    const tabSwitchCount = Number(antiCheating.tab_switch_count || 0);
+    // Leaving the screen is tracked during quizzes only; homework may be done
+    // alongside other apps (looking up references, taking photos).
+    const tracked = !!assignment.is_exam;
+    const awaySeconds = tracked ? Number(antiCheating.away_time_seconds || 0) : 0;
+    const tabSwitchCount = tracked ? Number(antiCheating.tab_switch_count || 0) : 0;
     const isSuspicious = tabSwitchCount >= 3 || awaySeconds >= 30;
 
-    const firstName = student_first_name || (student_name ? student_name.split(' ')[0] : 'นักเรียน');
-    const lastName = student_last_name || (student_name ? student_name.split(' ').slice(1).join(' ') : '');
+    const firstName = proxyStudent?.first_name || student_first_name || (student_name ? student_name.split(' ')[0] : 'นักเรียน');
+    const lastName = proxyStudent?.last_name || student_last_name || (student_name ? student_name.split(' ').slice(1).join(' ') : '');
 
     // Resolve the canonical users.id. LIFF sends the school student number as
     // student_id, but submissions.student_id is a foreign key to users.id and the
     // teacher roster matches on that id, so every copy must use it.
-    let targetUserDbId = line_uid || student_id;
-    let existingUser: { id: string } | null = null;
-    if (line_uid) {
+    let targetUserDbId = proxyStudent?.id || line_uid || student_id;
+    let existingUser: { id: string } | null = proxyStudent ? { id: proxyStudent.id } : null;
+    if (!existingUser && line_uid) {
       const { data } = await supabase.from('users').select('id').eq('line_uid', line_uid).maybeSingle();
       existingUser = data;
     }
@@ -238,14 +259,23 @@ export async function POST(request: NextRequest) {
     }
     const subId = existingSubmission?.id || `sub-${assignment_id}-${targetUserDbId}`;
 
-    const studentInfo = {
-      id: targetUserDbId,
-      first_name: firstName,
-      last_name: lastName,
-      student_id: student_id || '',
-      line_uid: line_uid || '',
-      avatar_url: student_avatar || '',
-    };
+    const studentInfo = proxyStudent
+      ? {
+          id: proxyStudent.id,
+          first_name: firstName,
+          last_name: lastName,
+          student_id: proxyStudent.student_id || '',
+          line_uid: proxyStudent.line_uid || '',
+          avatar_url: proxyStudent.avatar_url || '',
+        }
+      : {
+          id: targetUserDbId,
+          first_name: firstName,
+          last_name: lastName,
+          student_id: student_id || '',
+          line_uid: line_uid || '',
+          avatar_url: student_avatar || '',
+        };
 
     // Calculate score for objective questions and determine total score
     let calculatedTotalScore: number | undefined = undefined;
@@ -338,10 +368,11 @@ export async function POST(request: NextRequest) {
       total_score: calculatedTotalScore,
       max_total_score: assignmentMaxScore,
       answers: scoredAnswers,
+      submitted_by: proxyStudent ? student_id : null,
     };
 
     try {
-      const { error: subErr } = await supabase.from('submissions').upsert({
+      const submissionRow: Record<string, unknown> = {
         id: submissionRecord.id,
         assignment_id: submissionRecord.assignment_id,
         student_id: targetUserDbId,
@@ -354,7 +385,16 @@ export async function POST(request: NextRequest) {
         is_flagged_suspicious: submissionRecord.is_flagged_suspicious,
         total_score: calculatedTotalScore !== undefined ? calculatedTotalScore : null,
         max_total_score: assignmentMaxScore,
-      });
+        // Only borrowed-phone work names a sender, so databases without the column are unaffected otherwise.
+        ...(submissionRecord.submitted_by ? { submitted_by: submissionRecord.submitted_by } : {}),
+      };
+      let { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
+      // Databases without submissions.submitted_by yet still save the work.
+      if (subErr?.message?.includes('submitted_by')) {
+        console.warn('[POST /api/submissions] submissions.submitted_by is missing; run supabase_proxy_submission_update.sql');
+        const { submitted_by: _unused, ...withoutSender } = submissionRow;
+        ({ error: subErr } = await supabase.from('submissions').upsert(withoutSender));
+      }
       if (subErr) throw subErr;
       console.log('[POST /api/submissions] Supabase submissions upsert succeeded:', subId);
 
@@ -375,7 +415,7 @@ export async function POST(request: NextRequest) {
         if (answerError) throw answerError;
       }
 
-      const events = antiCheating.events || [];
+      const events = tracked ? antiCheating.events || [] : [];
       if (events.length > 0) {
         const { error: eventsError } = await supabase.from('submission_events').insert(
           events.map((evt: any, i: number) => ({

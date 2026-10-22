@@ -530,14 +530,17 @@ export default function DashboardPage() {
     ).length;
   }, [filteredSubmissions]);
 
+  // Leaving the screen is tracked during quizzes only.
   const suspiciousAlertCount = useMemo(() => {
+    const examIds = new Set(filteredAssignments.filter((a) => a.is_exam).map((a) => a.id));
     return filteredSubmissions.filter(
       (s) =>
-        s.is_flagged_suspicious ||
-        (s.tab_switch_count && s.tab_switch_count >= 3) ||
-        (s.total_time_away_seconds && s.total_time_away_seconds >= 30)
+        examIds.has(s.assignment_id) &&
+        (s.is_flagged_suspicious ||
+          (s.tab_switch_count && s.tab_switch_count >= 3) ||
+          (s.total_time_away_seconds && s.total_time_away_seconds >= 30))
     ).length;
-  }, [filteredSubmissions]);
+  }, [filteredSubmissions, filteredAssignments]);
 
   // Course Creation & Deletion Handlers
   const handleOpenCreateCourseModal = () => {
@@ -3255,23 +3258,7 @@ export default function DashboardPage() {
 
             {/* LINE LIFF Invite / LINE Group tabs */}
             {(studentTab === 'line' || studentTab === 'line-group') && (
-              <div className="space-y-5 text-center p-3 sm:p-5">
-                {studentTab === 'line' && (
-                <>
-                <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto shadow-xs">
-                  <MessageCircle className="w-6 h-6" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-base text-slate-900 dark:text-white">
-                    {t('classroom_mgmt.invite_line_title')}
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1">
-                    {t('classroom_mgmt.invite_line_desc')}
-                  </p>
-                </div>
-                </>
-                )}
-
+              <div className={studentTab === 'line' ? '' : 'space-y-5 text-center p-3 sm:p-5'}>
                 {/* LINE Group connection for assignment reminders */}
                 {studentTab === 'line-group' && (
                 <div className="max-w-lg mx-auto w-full text-left p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 space-y-3">
@@ -3314,89 +3301,104 @@ export default function DashboardPage() {
                 )}
 
                 {studentTab === 'line' && (
-                <>
-                {/* Invite Code Highlight */}
-                {managingClassroom.invite_code && (
-                  <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 max-w-sm mx-auto flex items-center justify-between">
-                    <div className="text-left">
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                        {language === 'th' ? 'รหัสเข้าห้องเรียน' : 'Classroom Code'}
+                <div className="space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <span className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                      <MessageCircle className="w-4.5 h-4.5" />
+                    </span>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-sm text-slate-900 dark:text-white">{t('classroom_mgmt.invite_line_title')}</h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{t('classroom_mgmt.invite_line_desc')}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-3 sm:gap-4">
+                    {/* QR Code */}
+                    <div className="shrink-0 flex flex-col items-center gap-1">
+                      <div className="p-2 bg-white rounded-2xl shadow-xs border border-slate-200">
+                        <img
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(getRealLiffUrl(managingClassroom))}`}
+                          alt="LINE LIFF QR Code"
+                          className="w-32 h-32 object-contain rounded-lg"
+                        />
                       </div>
-                      <div className="text-xl font-black font-mono tracking-widest text-slate-900 dark:text-white">
-                        {managingClassroom.invite_code}
+                      <span className="text-[10px] text-slate-400 font-medium text-center">
+                        {language === 'th' ? 'สแกนด้วยแอป LINE เพื่อเข้าห้องทันที' : 'Scan with LINE to join instantly'}
+                      </span>
+                    </div>
+
+                    <div className="flex-1 min-w-0 w-full space-y-2">
+                      {/* Invite code */}
+                      {managingClassroom.invite_code && (
+                        <div className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                              {language === 'th' ? 'รหัสเข้าห้องเรียน' : 'Classroom Code'}
+                            </div>
+                            <div className="text-lg leading-tight font-black font-mono tracking-widest text-slate-900 dark:text-white">
+                              {managingClassroom.invite_code}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(managingClassroom.invite_code || '');
+                              setIsCopied(true);
+                              setTimeout(() => setIsCopied(false), 2000);
+                            }}
+                            className="shrink-0 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 flex items-center gap-1 cursor-pointer"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>{isCopied ? t('classroom_mgmt.copied') : (language === 'th' ? 'คัดลอกรหัส' : 'Copy')}</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* LIFF URL (full link on hover / select) */}
+                      <div
+                        className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 font-mono text-[11px] text-slate-700 dark:text-slate-300 truncate select-all"
+                        title={getRealLiffUrl(managingClassroom)}
+                      >
+                        {getRealLiffUrl(managingClassroom)}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyLiff(managingClassroom)}
+                          className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Copy className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{isCopied ? t('classroom_mgmt.copied') : t('classroom_mgmt.copy_liff_link')}</span>
+                        </button>
+                        <a
+                          href={`https://line.me/R/msg/text/?${encodeURIComponent(
+                            `${language === 'th' ? 'เข้าร่วมห้องเรียน Pudding' : 'Join Pudding Classroom'}: ${managingClassroom.name} (${courses.find((c) => c.id === managingClassroom.course_id)?.name || managingClassroom.subject_code || ''})\n\nกดลิงก์นี้ใน LINE: ${getRealLiffUrl(managingClassroom)}\nรหัสห้องเรียน: ${managingClassroom.invite_code || ''}`
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Share2 className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{language === 'th' ? 'แชร์เข้าแชท LINE' : 'Share to LINE'}</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(getWebInviteUrl(managingClassroom));
+                            setIsCopied(true);
+                            setTimeout(() => setIsCopied(false), 2000);
+                          }}
+                          className="col-span-2 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Copy className="w-3 h-3" />
+                          <span>{language === 'th' ? 'คัดลอกลิงก์เว็บตรง' : 'Copy Web Link'}</span>
+                        </button>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(managingClassroom.invite_code || '');
-                        setIsCopied(true);
-                        setTimeout(() => setIsCopied(false), 2000);
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 flex items-center gap-1 cursor-pointer"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>{isCopied ? t('classroom_mgmt.copied') : (language === 'th' ? 'คัดลอกรหัส' : 'Copy')}</span>
-                    </button>
                   </div>
-                )}
-
-                {/* QR Code */}
-                <div className="flex flex-col items-center justify-center gap-2">
-                  <div className="p-2.5 bg-white rounded-2xl shadow-sm border border-slate-200 inline-block">
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(getRealLiffUrl(managingClassroom))}`}
-                      alt="LINE LIFF QR Code"
-                      className="w-40 h-40 object-contain rounded-lg"
-                    />
-                  </div>
-                  <span className="text-[11px] text-slate-400 font-medium">
-                    {language === 'th' ? 'สแกน QR ด้วยแอป LINE เพื่อเข้าห้องเรียนทันที' : 'Scan with LINE to join instantly'}
-                  </span>
                 </div>
-
-                {/* Real LIFF URL Display */}
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all select-all max-w-lg mx-auto">
-                  {getRealLiffUrl(managingClassroom)}
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex flex-wrap items-center justify-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => handleCopyLiff(managingClassroom)}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>{isCopied ? t('classroom_mgmt.copied') : t('classroom_mgmt.copy_liff_link')}</span>
-                  </button>
-
-                  <a
-                    href={`https://line.me/R/msg/text/?${encodeURIComponent(
-                      `${language === 'th' ? 'เข้าร่วมห้องเรียน Pudding' : 'Join Pudding Classroom'}: ${managingClassroom.name} (${courses.find((c) => c.id === managingClassroom.course_id)?.name || managingClassroom.subject_code || ''})\n\nกดลิงก์นี้ใน LINE: ${getRealLiffUrl(managingClassroom)}\nรหัสห้องเรียน: ${managingClassroom.invite_code || ''}`
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    <span>{language === 'th' ? 'แชร์เข้าแชท LINE' : 'Share to LINE'}</span>
-                  </a>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(getWebInviteUrl(managingClassroom));
-                      setIsCopied(true);
-                      setTimeout(() => setIsCopied(false), 2000);
-                    }}
-                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Copy className="w-3 h-3" />
-                    <span>{language === 'th' ? 'คัดลอกลิงก์เว็บตรง' : 'Copy Web Link'}</span>
-                  </button>
-                </div>
-                </>
                 )}
               </div>
             )}

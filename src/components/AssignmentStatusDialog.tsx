@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Clock, Loader2, Lock, Unlock, X } from 'lucide-react';
+import { Check, Clock, Loader2, Lock, Rocket, Unlock, X } from 'lucide-react';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 import { DateTimeField } from '@/components/DateTimeField';
 import { dataService } from '@/lib/supabase/dataService';
@@ -11,7 +11,8 @@ import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } f
 /**
  * Lets a teacher change whether an assignment accepts work, from the classroom
  * classwork list: follow the deadline, close now, or extend the deadline.
- * Same override the grading page's control panel writes.
+ * Same override the grading page's control panel writes. Scheduled work can
+ * also be released right away from here.
  */
 export function AssignmentStatusDialog({
   assignment,
@@ -30,7 +31,9 @@ export function AssignmentStatusDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const status = getAssignmentStatus(getAssignmentWindow(assignment), assignment.is_exam);
+  const [publishing, setPublishing] = useState(false);
+  const assignmentWindow = getAssignmentWindow(assignment);
+  const status = getAssignmentStatus(assignmentWindow, assignment.is_exam);
   const dueLabel = formatDateTime(assignment.due_date, 'th');
 
   const options: Array<{ id: SubmissionOverrideStatus; icon: typeof Clock; title: string; detail: string; tone: string }> = [
@@ -68,6 +71,22 @@ export function AssignmentStatusDialog({
     emerald: 'text-emerald-600 dark:text-emerald-400',
     rose: 'text-rose-600 dark:text-rose-400',
     amber: 'text-amber-600 dark:text-amber-400',
+  };
+
+  const publishNow = async () => {
+    const kind = assignment.is_exam ? 'ข้อสอบ' : 'งาน';
+    if (!confirm(`เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`)) return;
+    setPublishing(true);
+    setError('');
+    try {
+      const updated = await dataService.publishAssignmentNow(assignment.id);
+      onSaved(updated || { ...assignment, publish_at: new Date().toISOString() });
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error && err.message ? err.message : 'เผยแพร่งานไม่สำเร็จ');
+    } finally {
+      setPublishing(false);
+    }
   };
 
   const save = async () => {
@@ -116,6 +135,23 @@ export function AssignmentStatusDialog({
             </button>
           </div>
         </div>
+
+        {assignmentWindow.isScheduled && assignment.publish_at && (
+          <div className="p-3.5 rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/40 space-y-2.5">
+            <p className="text-[11px] leading-relaxed text-sky-800 dark:text-sky-300">
+              ตั้งเวลาเผยแพร่ไว้ <span className="font-black">{formatDateTime(assignment.publish_at, 'th')}</span> — สอนถึงหัวข้อนี้เร็วกว่ากำหนด? เปิดให้นักเรียนทำได้ทันที
+            </p>
+            <button
+              type="button"
+              onClick={publishNow}
+              disabled={publishing || saving}
+              className="w-full px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-black text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
+            >
+              {publishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rocket className="w-3.5 h-3.5" />}
+              <span>เผยแพร่ตอนนี้เลย</span>
+            </button>
+          </div>
+        )}
 
         <div className="space-y-2" role="radiogroup">
           {options.map((option) => {

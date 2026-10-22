@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS public.attendance_records (
   checked_at TIMESTAMPTZ,
   adjusted_at TIMESTAMPTZ,
   adjusted_by TEXT REFERENCES public.users(id),
+  checked_in_by TEXT REFERENCES public.users(id) ON DELETE SET NULL, -- Classmate whose phone checked in (NULL = own phone)
   note TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (session_id, student_id)
@@ -234,6 +235,7 @@ CREATE TABLE IF NOT EXISTS public.submissions (
   is_flagged_suspicious BOOLEAN DEFAULT FALSE,
   total_score NUMERIC,
   max_total_score NUMERIC DEFAULT 20,
+  submitted_by TEXT REFERENCES public.users(id) ON DELETE SET NULL, -- Classmate whose phone sent it (NULL = own phone)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(assignment_id, student_id)

@@ -43,6 +43,7 @@ import {
   Check,
   Calendar,
   Layers,
+  Rocket,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 
@@ -270,6 +271,23 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     }
   };
 
+  // Release scheduled work now (the class reached the topic early).
+  const handlePublishNow = async () => {
+    if (!assignment) return;
+    const kind = assignment.is_exam ? (language === 'th' ? 'ข้อสอบ' : 'quiz') : language === 'th' ? 'งาน' : 'assignment';
+    if (!confirm(language === 'th'
+      ? `เผยแพร่${kind}นี้ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`
+      : `Publish this ${kind} now? Students can start right away and get a LINE notification.`)) return;
+    try {
+      const updated = await dataService.publishAssignmentNow(assignmentId);
+      setAssignment(updated || { ...assignment, publish_at: new Date().toISOString() });
+      showToast(language === 'th' ? `เผยแพร่${kind}แล้ว นักเรียนเริ่มทำได้ทันที` : `Published; students can start now`);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error && err.message ? err.message : 'Error publishing assignment');
+    }
+  };
+
   // Open Integrity Audit Modal
   const handleOpenAudit = async (submission: Submission) => {
     setAuditSubmission(submission);
@@ -337,8 +355,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     };
   })();
 
+  // Leaving the screen is tracked during quizzes only, so homework never counts as suspicious.
+  const tracksAway = !!assignment?.is_exam;
   const isSuspicious = (sub: Submission) =>
-    sub.is_flagged_suspicious || sub.tab_switch_count >= 3 || sub.total_time_away_seconds >= 60;
+    tracksAway && (sub.is_flagged_suspicious || sub.tab_switch_count >= 3 || sub.total_time_away_seconds >= 60);
 
   const filteredRows = rosterRows.filter(({ student, submission: sub }) => {
     const studentName = `${student?.first_name || ''} ${student?.last_name || ''}`;
@@ -584,6 +604,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 </span>
               </div>
 
+              {assignmentWindow?.isScheduled && (
+                <button
+                  type="button"
+                  onClick={handlePublishNow}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-black cursor-pointer shrink-0 ml-6 sm:ml-0 shadow-xs"
+                >
+                  <Rocket className="w-3.5 h-3.5" />
+                  {th ? 'เผยแพร่ตอนนี้' : 'Publish now'}
+                </button>
+              )}
+
               {overrideStatus !== 'auto' && (
                 <button
                   type="button"
@@ -599,7 +630,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       </div>
 
       {/* Analytics Summary Banner */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-2 gap-4 ${tracksAway ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
           <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
             {t('grading.total_submissions')}
@@ -634,15 +665,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-rose-200 dark:border-rose-900/50 shadow-xs">
-          <span className="text-xs text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
-            <ShieldAlert className="w-3.5 h-3.5" />
-            {t('grading.suspicious_count')}
-          </span>
-          <p className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
-            {suspiciousTotal}
-          </p>
-        </div>
+        {tracksAway && (
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-rose-200 dark:border-rose-900/50 shadow-xs">
+            <span className="text-xs text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
+              <ShieldAlert className="w-3.5 h-3.5" />
+              {t('grading.suspicious_count')}
+            </span>
+            <p className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
+              {suspiciousTotal}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Submissions Table & Filter Controls */}
@@ -683,6 +716,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
             >
               {language === 'th' ? 'ยังไม่ส่ง' : 'Not submitted'} ({missingTotal})
             </button>
+            {tracksAway && (
             <button
               onClick={() => setStatusFilter('suspicious')}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer ${
@@ -694,6 +728,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               <ShieldAlert className="w-3.5 h-3.5" />
               <span>{t('grading.filter_suspicious')} ({suspiciousTotal})</span>
             </button>
+            )}
             <button
               onClick={() => setStatusFilter('pending')}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
@@ -820,13 +855,25 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                       </td>
 
                       <td className="py-3.5 px-4 sm:px-6">
-                        <div className="flex items-center gap-2">
-                          <AntiCheatingBadge
-                            isFlagged={sub.is_flagged_suspicious}
-                            tabSwitchCount={sub.tab_switch_count}
-                            totalTimeAwaySeconds={sub.total_time_away_seconds}
-                          />
-                          {sub.is_flagged_suspicious && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          {tracksAway ? (
+                            <AntiCheatingBadge
+                              isFlagged={sub.is_flagged_suspicious}
+                              tabSwitchCount={sub.tab_switch_count}
+                              totalTimeAwaySeconds={sub.total_time_away_seconds}
+                            />
+                          ) : (
+                            !sub.submitted_by && <span className="text-slate-400">-</span>
+                          )}
+                          {sub.submitted_by && (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-900 text-[11px] font-bold whitespace-nowrap"
+                              title={th ? 'นักเรียนส่งด้วยโทรศัพท์ของเพื่อนร่วมห้อง' : "Sent from a classmate's phone"}
+                            >
+                              📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
+                            </span>
+                          )}
+                          {tracksAway && sub.is_flagged_suspicious && (
                             <button
                               type="button"
                               onClick={() => handleOpenAudit(sub)}
@@ -894,6 +941,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           questions={questions}
           initialAnswers={gradingAnswers}
           grader={grader}
+          tracksAway={tracksAway}
           studentPosition={gradingIndex >= 0 ? { index: gradingIndex, total: gradingOrder.length } : undefined}
           onClose={() => {
             setIsGradingWorkspaceOpen(false);

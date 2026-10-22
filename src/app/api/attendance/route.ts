@@ -5,7 +5,8 @@ import { pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { getActor, type Actor } from '@/lib/auth/actor';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { classroomRole, isTeacherOf } from '@/lib/server/access';
+import { classroomRole, HttpError, isTeacherOf } from '@/lib/server/access';
+import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
 import type { Classroom } from '@/types/database';
 
 export const runtime = 'nodejs';
@@ -158,6 +159,16 @@ export async function POST(request: NextRequest) {
     if (!session || session.status === 'closed') {
       return NextResponse.json({ error: 'ขณะนี้ไม่มีคาบเช็คชื่อที่เปิดอยู่' }, { status: 400 });
     }
+    // Borrowed phone: check in the classmate; the phone's owner is recorded as the sender.
+    let proxyStudent: ProxyStudent | null = null;
+    if (body.proxyStudentNumber) {
+      try {
+        proxyStudent = await resolveProxyStudent(sb, actor, classroom as Classroom, body.proxyStudentNumber);
+      } catch (proxyError) {
+        if (proxyError instanceof HttpError) return NextResponse.json({ error: proxyError.message }, { status: proxyError.status });
+        throw proxyError;
+      }
+    }
 
     const now = Date.now();
     const startTime = new Date(session.starts_at).getTime();
@@ -170,7 +181,9 @@ export async function POST(request: NextRequest) {
 
     // A student can only check in once. Re-tapping (or a second device) must not
     // overwrite the first check-in time or a status the teacher adjusted.
-    const candidateIds = [...new Set([lineUser?.id, studentId, lineUid].filter(Boolean))] as string[];
+    const candidateIds = proxyStudent
+      ? ([proxyStudent.id, proxyStudent.line_uid].filter(Boolean) as string[])
+      : ([...new Set([lineUser?.id, studentId, lineUid].filter(Boolean))] as string[]);
     const { data: existingRecord } = await sb
       .from('attendance_records')
       .select('*')
@@ -188,10 +201,10 @@ export async function POST(request: NextRequest) {
     const rosterStudent = ((classroom?.students || []) as RosterEntry[]).find(
       (st) => st && (matches(st.id) || matches(st.line_uid) || matches(st.student_id))
     );
-    let canonicalUserId = lineUser?.id || rosterStudent?.id || studentId || lineUid;
-    let firstName = lineUser?.first_name?.trim() || rosterStudent?.first_name?.trim() || '';
-    let lastName = lineUser?.last_name?.trim() || rosterStudent?.last_name?.trim() || '';
-    if (!lineUser && studentId) {
+    let canonicalUserId = proxyStudent?.id || lineUser?.id || rosterStudent?.id || studentId || lineUid;
+    let firstName = proxyStudent?.first_name.trim() || lineUser?.first_name?.trim() || rosterStudent?.first_name?.trim() || '';
+    let lastName = proxyStudent?.last_name.trim() || lineUser?.last_name?.trim() || rosterStudent?.last_name?.trim() || '';
+    if (!proxyStudent && !lineUser && studentId) {
       const { data: studentUser } = await sb.from('users').select('id, first_name, last_name').eq('student_id', studentId).maybeSingle();
       if (studentUser?.id) {
         canonicalUserId = studentUser.id;
@@ -205,28 +218,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'ยังไม่พบชื่อและนามสกุลจาก LIFF กรุณาซิงค์โปรไฟล์นักเรียนแล้วลองเช็คชื่ออีกครั้ง' }, { status: 409 });
     }
 
-    const record = {
+    const record: Record<string, unknown> = {
       id: `att-rec-${Date.now()}-${randomUUID().slice(0, 6)}`,
       session_id: session.id,
       classroom_id: classroomId,
       student_id: canonicalUserId,
       status: computedStatus,
       checked_at: new Date().toISOString(),
+      ...(proxyStudent ? { checked_in_by: studentId } : {}),
     };
-    const { error: userError } = await sb.from('users').upsert(
-      { id: canonicalUserId, role: 'student', line_uid: lineUid || undefined, first_name: firstName, last_name: lastName },
-      { onConflict: 'id', ignoreDuplicates: true }
-    );
-    const { error: attendanceError } = userError
+    // The classmate's profile already exists; only the phone owner's may need creating.
+    const { error: userError } = proxyStudent
+      ? { error: null }
+      : await sb.from('users').upsert(
+          { id: canonicalUserId, role: 'student', line_uid: lineUid || undefined, first_name: firstName, last_name: lastName },
+          { onConflict: 'id', ignoreDuplicates: true }
+        );
+    let { error: attendanceError } = userError
       ? { error: userError }
       : await sb.from('attendance_records').upsert(record, { onConflict: 'session_id,student_id' });
+    // Databases without attendance_records.checked_in_by yet still save the check-in.
+    if (attendanceError?.message?.includes('checked_in_by')) {
+      console.warn('attendance_records.checked_in_by is missing; run supabase_proxy_submission_update.sql');
+      const { checked_in_by: _unused, ...withoutSender } = record;
+      ({ error: attendanceError } = await sb.from('attendance_records').upsert(withoutSender, { onConflict: 'session_id,student_id' }));
+    }
     if (attendanceError) {
       // Without the database row the teacher never sees this check-in.
       console.error('Attendance check-in failed:', attendanceError);
       return NextResponse.json({ error: 'บันทึกการเช็คชื่อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' }, { status: 503 });
     }
     signalAttendance(classroomId);
-    return NextResponse.json({ success: true, status: computedStatus, record, session });
+    return NextResponse.json({ success: true, status: computedStatus, record, session, proxyStudent: proxyStudent ? { first_name: firstName, last_name: lastName } : undefined });
   }
 
   // ----------------------------------------------------

@@ -164,6 +164,10 @@ export interface Submission {
   is_flagged_suspicious: boolean;
   total_score?: number;
   max_total_score?: number;
+  /** users.id of the classmate whose phone sent this work (borrowed phone); missing = the student's own phone. */
+  submitted_by?: string | null;
+  /** That classmate's name, attached for teachers. */
+  submitted_by_name?: string;
 }
 
 export interface TeacherGradeRecord {

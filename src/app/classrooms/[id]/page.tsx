@@ -38,6 +38,7 @@ import {
   Pencil,
   Plus,
   QrCode,
+  Rocket,
   RefreshCw,
   Search,
   Send,
@@ -56,7 +57,15 @@ import {
 
 type Tab = 'overview' | 'classwork' | 'attendance' | 'people' | 'grades';
 type AttendanceStatus = 'on_time' | 'late' | 'absent' | 'excused';
-type AttendanceRecord = { id: string; session_id: string; student_id: string; status: AttendanceStatus; checked_at?: string | null };
+type AttendanceRecord = {
+  id: string;
+  session_id: string;
+  student_id: string;
+  status: AttendanceStatus;
+  checked_at?: string | null;
+  /** Classmate whose phone checked this student in (borrowed phone). */
+  checked_in_by?: string | null;
+};
 type AttendanceSession = {
   id: string;
   classroom_id?: string;
@@ -826,6 +835,27 @@ export default function ClassroomWorkspacePage() {
       setNotice('ลบงาน/ข้อสอบเรียบร้อยแล้ว');
     } catch {
       setNotice('เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ');
+    }
+  };
+
+  // The class reached the topic before the scheduled time: release it now.
+  const handlePublishAssignmentNow = async (assignment: Assignment) => {
+    const kind = assignment.is_exam ? 'ข้อสอบ' : 'งาน';
+    if (!confirm(`เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`)) return;
+    try {
+      const updated = await dataService.publishAssignmentNow(assignment.id);
+      const nowIso = updated?.publish_at || new Date().toISOString();
+      setAssignments((prev) => prev.map((a) => (a.id === assignment.id ? { ...a, ...(updated || {}), publish_at: nowIso } : a)));
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.metadata?.assignmentId === assignment.id && p.metadata?.publishAt
+            ? { ...p, created_at: nowIso, metadata: { ...p.metadata, publishAt: nowIso } }
+            : p
+        )
+      );
+      setNotice(`เผยแพร่${kind} "${assignment.title}" แล้ว นักเรียนเริ่มทำได้ทันที`);
+    } catch (err) {
+      setNotice(err instanceof Error && err.message ? err.message : 'เผยแพร่งานไม่สำเร็จ');
     }
   };
 
@@ -1708,7 +1738,19 @@ export default function ClassroomWorkspacePage() {
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                                   {itemWindow.isScheduled && item.publish_at && (
-                                    <span className="font-bold text-sky-700 dark:text-sky-400">เผยแพร่: {formatDateTime(item.publish_at, 'th')} •</span>
+                                    <>
+                                      <span className="font-bold text-sky-700 dark:text-sky-400">เผยแพร่: {formatDateTime(item.publish_at, 'th')}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handlePublishAssignmentNow(item)}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-black cursor-pointer transition-colors"
+                                        title="สอนถึงหัวข้อนี้แล้ว — เปิดให้นักเรียนทำได้ทันที"
+                                      >
+                                        <Rocket className="w-3 h-3" />
+                                        เผยแพร่ตอนนี้
+                                      </button>
+                                      <span>•</span>
+                                    </>
                                   )}
                                   <span>
                                     {item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: {formatDateTime(itemWindow.deadline !== null ? new Date(itemWindow.deadline).toISOString() : item.due_date, 'th')} • คะแนนเต็ม: {item.total_points || 20}
@@ -3341,6 +3383,7 @@ function AttendancePanel({
                             <span className="text-[10px] text-slate-400 font-mono">
                               รหัส: {student.student_id || '-'}
                               {record?.checked_at && ` • เช็คเมื่อ ${new Date(record.checked_at).toLocaleTimeString('th-TH')}`}
+                              {record?.checked_in_by && ' • 📱 เช็คชื่อจากเครื่องเพื่อน'}
                             </span>
                           </div>
 

@@ -134,8 +134,9 @@ function GradingHubContent() {
         (s) => (s.status === 'submitted' || s.status === 'late') && s.total_score == null
       ).length;
 
+      // Leaving the screen is tracked during quizzes only.
       const suspiciousCount = courseSubmissions.filter(
-        (s) => s.is_flagged_suspicious
+        (s) => s.is_flagged_suspicious && courseAssignments.some((a) => a.id === s.assignment_id && a.is_exam)
       ).length;
 
       const submittedCount = courseSubmissions.filter(
@@ -186,7 +187,7 @@ function GradingHubContent() {
         const asgSubs = allSubmissions.filter((s) => s.assignment_id === asg.id);
         const submitted = asgSubs.filter((s) => s.status === 'submitted' || s.status === 'late');
         const late = asgSubs.filter((s) => s.status === 'late');
-        const flagged = asgSubs.filter((s) => s.is_flagged_suspicious);
+        const flagged = asg.is_exam ? asgSubs.filter((s) => s.is_flagged_suspicious) : [];
         const graded = asgSubs.filter((s) => s.total_score != null);
         const pending = asgSubs.filter(
           (s) => (s.status === 'submitted' || s.status === 'late') && s.total_score == null
