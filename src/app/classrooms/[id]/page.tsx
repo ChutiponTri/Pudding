@@ -228,14 +228,6 @@ export default function ClassroomWorkspacePage() {
   const [editPostBody, setEditPostBody] = useState('');
   const [isUpdatingPost, setIsUpdatingPost] = useState(false);
 
-  // Edit Assignment Modal State
-  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
-  const [editAssignTitle, setEditAssignTitle] = useState('');
-  const [editAssignDueDate, setEditAssignDueDate] = useState('');
-  const [editAssignPoints, setEditAssignPoints] = useState(20);
-  const [editAssignGroup, setEditAssignGroup] = useState('');
-  const [isUpdatingAssignment, setIsUpdatingAssignment] = useState(false);
-
   // Attendance form & edit session state
   const [attendanceTitle, setAttendanceTitle] = useState('เช็คชื่อประจำคาบ');
   const [attendanceStartsAt, setAttendanceStartsAt] = useState('');
@@ -808,30 +800,6 @@ export default function ClassroomWorkspacePage() {
   // ----------------------------------------------------
   // CRUD HANDLERS: ASSIGNMENTS / EXAMS
   // ----------------------------------------------------
-  const handleUpdateAssignment = async (
-    assignmentId: string,
-    updates: { title: string; due_date: string; total_points: number; group_name?: string }
-  ) => {
-    // Old (already passed) deadlines may be kept when only the title/points change.
-    const previous = assignments.find((a) => a.id === assignmentId)?.due_date;
-    const dueChanged = !previous || new Date(previous).getTime() !== new Date(updates.due_date).getTime();
-    if (dueChanged && new Date(updates.due_date).getTime() <= Date.now()) {
-      alert('กำหนดส่งต้องเป็นเวลาในอนาคต');
-      return;
-    }
-    setIsUpdatingAssignment(true);
-    try {
-      await dataService.updateAssignment(assignmentId, updates);
-      setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, ...updates } : a)));
-      setNotice('แก้ไขข้อมูลงาน/ข้อสอบเรียบร้อยแล้ว');
-      setEditingAssignment(null);
-    } catch (error) {
-      setNotice(error instanceof Error && error.message ? error.message : 'เกิดข้อผิดพลาดในการแก้ไขงาน/ข้อสอบ');
-    } finally {
-      setIsUpdatingAssignment(false);
-    }
-  };
-
   const handleDeleteAssignment = async (assignmentId: string) => {
     if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบงาน/ข้อสอบนี้? (คะแนนและข้อสอบทั้งหมดจะถูกลบออก)')) return;
     try {
@@ -1836,19 +1804,16 @@ export default function ClassroomWorkspacePage() {
                               </div>
 
                               <div className="flex items-center gap-1.5 shrink-0">
-                                <button
-                                  onClick={() => {
-                                    setEditingAssignment(item);
-                                    setEditAssignTitle(item.title);
-                                    setEditAssignDueDate(item.due_date || '');
-                                    setEditAssignPoints(item.total_points || 20);
-                                    setEditAssignGroup(item.group_name || '');
-                                  }}
+                                {/* Full editor: questions, answer keys, attachment, schedule and everything else */}
+                                <Link
+                                  href={`/assignments/new?edit=${item.id}&classroomId=${classroomId}&from=classroom`}
+                                  draggable={false}
                                   className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                                  title="แก้ไขงาน/ข้อสอบ"
+                                  title="แก้ไขงาน/ข้อสอบ (ทุกส่วน)"
+                                  aria-label="แก้ไขงาน/ข้อสอบ"
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
-                                </button>
+                                </Link>
                                 <button
                                   onClick={() => handleDeleteAssignment(item.id)}
                                   className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
@@ -2261,7 +2226,7 @@ export default function ClassroomWorkspacePage() {
       )}
 
       {/* ============================================================== */}
-      {/* MODAL: EDIT ASSIGNMENT / EXAM */}
+      {/* MODAL: ASSIGNMENT STATUS */}
       {/* ============================================================== */}
       {statusAssignment && (
         <AssignmentStatusDialog
@@ -2283,82 +2248,6 @@ export default function ClassroomWorkspacePage() {
           onClose={() => setEditingStudent(null)}
           onSaved={handleStudentEdited}
         />
-      )}
-
-      {editingAssignment && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                <Edit2 className="w-4 h-4 text-amber-500" />
-                <span>แก้ไขงาน / ข้อสอบ</span>
-              </h3>
-              <button onClick={() => setEditingAssignment(null)} className="p-1 text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">ชื่องาน / ข้อสอบ</label>
-                <input
-                  value={editAssignTitle}
-                  onChange={(e) => setEditAssignTitle(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">
-                  {editingAssignment.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}
-                </label>
-                <DateTimeField value={editAssignDueDate} onChange={setEditAssignDueDate} presets="deadline" />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-400 block mb-1">คะแนนเต็ม</label>
-                  <input
-                    type="number"
-                    value={editAssignPoints}
-                    onChange={(e) => setEditAssignPoints(Number(e.target.value))}
-                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-slate-50 dark:bg-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-400 block mb-1">หมวดหมู่</label>
-                  <input
-                    value={editAssignGroup}
-                    onChange={(e) => setEditAssignGroup(e.target.value)}
-                    placeholder="เช่น การเคลื่อนที่"
-                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-slate-50 dark:bg-slate-800"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setEditingAssignment(null)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300"
-              >
-                ยกเลิก
-              </button>
-              <button
-                type="button"
-                disabled={isUpdatingAssignment || !editAssignTitle.trim()}
-                onClick={() =>
-                  handleUpdateAssignment(editingAssignment.id, {
-                    title: editAssignTitle.trim(),
-                    due_date: editAssignDueDate || editingAssignment.due_date,
-                    total_points: editAssignPoints,
-                    group_name: editAssignGroup.trim() || undefined,
-                  })
-                }
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
-              >
-                {isUpdatingAssignment ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* ============================================================== */}

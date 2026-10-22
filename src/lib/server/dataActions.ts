@@ -981,6 +981,18 @@ export const dataActions = {
     }
     if (error) throw toDatabaseError(error, 'assignments');
 
+    // A rescheduled release moves its held-back timeline post (and LINE announcement) too.
+    const nextPublishMs = patch.publish_at ? new Date(patch.publish_at).getTime() : NaN;
+    if (!Number.isNaN(nextPublishMs) && nextPublishMs > Date.now() && nextPublishMs !== new Date(previous.publish_at || 0).getTime()) {
+      const publishIso = new Date(nextPublishMs).toISOString();
+      const { data: scheduledPosts } = await supabase.from('classroom_posts').select('id, metadata').contains('metadata', { assignmentId: id, pendingLine: true });
+      await Promise.all(
+        (scheduledPosts || []).map((p) =>
+          supabase.from('classroom_posts').update({ created_at: publishIso, metadata: { ...(p.metadata || {}), publishAt: publishIso } }).eq('id', p.id)
+        )
+      );
+    }
+
     // The timeline post spells out the title and due date; keep it in step.
     const next = (updated as Assignment) || { ...previous, ...patch };
     const dueChanged = patch.due_date && new Date(patch.due_date).getTime() !== new Date(previous.due_date).getTime();
@@ -999,6 +1011,47 @@ export const dataActions = {
       after(() => signalClassroom(previous.classroom_id, { type: 'timeline' }));
     }
     return (updated as Assignment) || null;
+  },
+
+  /**
+   * Replaces an assignment's questions with the edited set (full edit). Questions
+   * keep their id, so students' answers stay attached; a question left out is
+   * deleted together with its answers. total_points follows the new scores.
+   */
+  async replaceAssignmentQuestions(
+    { supabase, actor }: Ctx,
+    id: string,
+    questionsData: Array<Omit<Question, 'assignment_id' | 'id'> & { id?: string }>
+  ) {
+    await requireTeacherOfAssignment(supabase, actor, id);
+    const { data: existing, error: loadError } = await supabase.from('questions').select('id').eq('assignment_id', id);
+    if (loadError) throw toDatabaseError(loadError, 'questions');
+    const existingIds = new Set((existing || []).map((q) => q.id as string));
+    const stamp = Date.now();
+    const rows: Question[] = questionsData.map((q, idx) => ({
+      ...q,
+      // Only ids of this assignment's own questions are kept; anything else becomes a new question.
+      id: q.id && existingIds.has(q.id) ? q.id : `q-${stamp}-${Math.random().toString(36).slice(2, 6)}-${idx}`,
+      assignment_id: id,
+    }));
+
+    if (rows.length > 0) {
+      let { error } = await supabase.from('questions').upsert(rows);
+      // Databases without questions.is_required yet: every question stays required.
+      if (error?.message?.includes('is_required')) {
+        ({ error } = await supabase.from('questions').upsert(rows.map(({ is_required: _unused, ...q }) => q)));
+      }
+      if (error) throw toDatabaseError(error, 'questions');
+    }
+    const keep = new Set(rows.map((q) => q.id));
+    const removed = [...existingIds].filter((qid) => !keep.has(qid));
+    if (removed.length) {
+      const { error } = await supabase.from('questions').delete().in('id', removed);
+      if (error) throw toDatabaseError(error, 'questions');
+    }
+    const totalPoints = rows.reduce((sum, q) => sum + Number(q.max_score || 0), 0);
+    await supabase.from('assignments').update({ total_points: totalPoints }).eq('id', id);
+    return rows;
   },
 
   async deleteAssignment({ supabase, actor }: Ctx, id: string) {

@@ -477,6 +477,14 @@ export const dataService = {
     return call<Assignment | null>('updateAssignment', id, data);
   },
 
+  /** Full edit: saves the edited questions (kept ids keep students' answers; removed ones are deleted). */
+  async replaceAssignmentQuestions(
+    id: string,
+    questionsData: Array<Omit<Question, 'assignment_id' | 'id'> & { id?: string }>
+  ): Promise<Question[]> {
+    return call<Question[]>('replaceAssignmentQuestions', id, questionsData);
+  },
+
   async deleteAssignment(id: string): Promise<boolean> {
     return call<boolean>('deleteAssignment', id);
   },

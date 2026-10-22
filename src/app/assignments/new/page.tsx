@@ -5,7 +5,7 @@ import { useUser } from '@clerk/nextjs';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
-import { Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
+import { Assignment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
@@ -36,6 +36,8 @@ import {
 } from 'lucide-react';
 
 interface QuestionDraft {
+  /** Set when editing a saved question, so students' answers stay attached to it. */
+  id?: string;
   indicator_id: string;
   type: QuestionType;
   question_text: string;
@@ -46,12 +48,16 @@ interface QuestionDraft {
   is_required: boolean;
 }
 
+const SAMPLE_FILE_MAX_BYTES = 4 * 1024 * 1024;
+
 function NewAssignmentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlClassroomId = searchParams.get('classroomId');
   const urlFrom = searchParams.get('from');
   const isFromDashboard = urlFrom === 'dashboard' || (!urlClassroomId && urlFrom !== 'classroom');
+  // ?edit=<assignmentId>: the same form, filled with a saved assignment or quiz.
+  const editId = searchParams.get('edit');
   const { user: clerkUser } = useUser();
   const { t, language } = useLanguage();
 
@@ -64,6 +70,9 @@ function NewAssignmentContent() {
   // Course-level indicators derived from the selected course
   const [courseIndicators, setCourseIndicators] = useState<CourseLearningIndicator[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
+  const [editSubmissionCount, setEditSubmissionCount] = useState(0);
+  const originalQuestionIdsRef = useRef<string[]>([]);
 
   // Form fields
   const [isExam, setIsExam] = useState(false);
@@ -76,12 +85,15 @@ function NewAssignmentContent() {
   const [schedulePublish, setSchedulePublish] = useState(false);
   const [publishAt, setPublishAt] = useState(() => daysFromNowAt(1, 8, 0));
   const reminderCron = 'relative_due_date';
-  const [reminderOffsets, setReminderOffsets] = useState<number[]>([24 * 60]);
+  // One reminder per assignment (each one is a LINE message from the quota); null = no reminder.
+  const [reminderOffset, setReminderOffset] = useState<number | null>(24 * 60);
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setClock(Date.now()), 60000);
     return () => clearInterval(timer);
   }, []);
+  // Already visible to students: the release time can no longer be changed.
+  const editIsPublished = !!editingAssignment && (!editingAssignment.publish_at || new Date(editingAssignment.publish_at).getTime() <= clock);
 
   // Conditional Sample Work / Guidelines (Assignment Mode only)
   const [sampleWorkTitle, setSampleWorkTitle] = useState("");
@@ -94,8 +106,9 @@ function NewAssignmentContent() {
 
   const handleSampleFileSelect = (file: File) => {
     setSampleUploadError(null);
-    if (file.size > 25 * 1024 * 1024) {
-      setSampleUploadError("ไฟล์ต้องมีขนาดไม่เกิน 25MB");
+    // The hosting platform rejects request bodies over about 4.5MB, so larger files never arrive.
+    if (file.size > SAMPLE_FILE_MAX_BYTES) {
+      setSampleUploadError("ไฟล์ต้องมีขนาดไม่เกิน 4MB — ถ้าไฟล์ใหญ่กว่านี้ ให้อัปโหลดไว้ที่ Google Drive แล้ววางลิงก์แทน");
       return;
     }
     setSampleWorkFile(file);
@@ -174,6 +187,58 @@ function NewAssignmentContent() {
         } else if (cls.length > 0) {
           setSelectedClassroomIds([urlClassroomId || cls[0].id]);
         }
+
+        if (editId) {
+          const [{ assignment, questions: savedQuestions }, subs] = await Promise.all([
+            dataService.getAssignmentById(editId),
+            dataService.getSubmissionsByAssignmentIds([editId], { includeStudents: false }),
+          ]);
+          if (!assignment) {
+            alert(language === 'th' ? 'ไม่พบงานนี้ อาจถูกลบไปแล้ว' : 'This assignment no longer exists');
+            router.back();
+            return;
+          }
+          const ownClassroom = cls.find((c) => c.id === assignment.classroom_id);
+          const courseId = assignment.course_id || ownClassroom?.course_id || '';
+          setEditingAssignment(assignment);
+          setEditSubmissionCount(subs.filter((sub) => sub.status !== 'pending').length);
+          if (courseId) {
+            setSelectedCourseId(courseId);
+            setCourseIndicators(crs.find((c) => c.id === courseId)?.indicators || []);
+          }
+          setSelectedClassroomIds([assignment.classroom_id]);
+          setIsExam(!!assignment.is_exam);
+          setTitle(assignment.title || '');
+          setGroupName(assignment.group_name || '');
+          setDescription(assignment.description || '');
+          setDueDate(assignment.due_date || daysFromNowAt(7, 23, 59));
+          const publishMs = assignment.publish_at ? new Date(assignment.publish_at).getTime() : NaN;
+          setSchedulePublish(!Number.isNaN(publishMs) && publishMs > Date.now());
+          if (assignment.publish_at) setPublishAt(assignment.publish_at);
+          // Work saved with several reminders keeps the earliest one.
+          setReminderOffset(assignment.reminder_offsets_minutes?.length
+            ? Math.max(...assignment.reminder_offsets_minutes)
+            : assignment.reminder_offset_minutes || null);
+          setSampleWorkTitle(assignment.sample_work_title || '');
+          setSampleWorkUrl(assignment.sample_work_url || '');
+          setSampleWorkDescription(assignment.sample_work_description || '');
+          originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
+          if (savedQuestions.length) {
+            setQuestions(savedQuestions.map((q) => ({
+              id: q.id,
+              indicator_id: q.indicator_id || '',
+              type: q.type,
+              question_text: q.question_text || '',
+              options: q.type === 'multiple_choice'
+                ? [...(q.options || []), '', '', '', ''].slice(0, Math.max(4, (q.options || []).length))
+                : ['', '', '', ''],
+              ideal_answer: q.ideal_answer || '',
+              rubric_criteria: q.rubric_criteria || '',
+              max_score: Number(q.max_score) || 5,
+              is_required: q.is_required !== false,
+            })));
+          }
+        }
       } catch (err) {
         console.error(err);
       } finally {
@@ -181,7 +246,8 @@ function NewAssignmentContent() {
       }
     }
     init(teacherId);
-  }, [urlClassroomId, clerkUser?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per teacher / target
+  }, [urlClassroomId, editId, clerkUser?.id]);
 
   // Groups already used in the selected classrooms, offered as one-tap choices.
   const selectedClassroomKey = selectedClassroomIds.join(',');
@@ -203,6 +269,7 @@ function NewAssignmentContent() {
   }, [selectedClassroomKey]);
 
   const handleCourseChange = (courseId: string) => {
+    if (editingAssignment) return; // an edit stays in its own classroom
     setSelectedCourseId(courseId);
     const matchingClasses = classrooms.filter((c) => c.course_id === courseId);
     if (matchingClasses.length > 0) {
@@ -219,6 +286,7 @@ function NewAssignmentContent() {
   };
 
   const toggleClassroomSelection = (classId: string) => {
+    if (editingAssignment) return;
     setSelectedClassroomIds((prev) => {
       if (prev.includes(classId)) {
         if (prev.length === 1) return prev; // Keep at least one
@@ -242,12 +310,9 @@ function NewAssignmentContent() {
   const reminderFloor = schedulePublish && publishAt ? Math.max(clock, new Date(publishAt).getTime()) : clock;
   const minutesUntilDue = dueDate ? Math.floor((new Date(dueDate).getTime() - reminderFloor) / 60000) : Infinity;
   const reminderOptions = allReminderOptions.filter((option) => option.value < minutesUntilDue);
-  // Selected reminders that still fit, earliest first.
-  const effectiveReminderOffsets = reminderOffsets
-    .filter((offset) => reminderOptions.some((option) => option.value === offset))
-    .sort((a, b) => b - a);
-  const toggleReminderOffset = (offset: number) =>
-    setReminderOffsets((prev) => (prev.includes(offset) ? prev.filter((value) => value !== offset) : [...prev, offset]));
+  // The chosen reminder, if it still fits before the deadline (saved as a one-item list).
+  const effectiveReminderOffsets =
+    reminderOffset !== null && reminderOptions.some((option) => option.value === reminderOffset) ? [reminderOffset] : [];
 
   const handleAddQuestion = (type: QuestionType = 'short_answer') => {
     // Use courseIndicators first, fall back to global indicators
@@ -309,11 +374,13 @@ function NewAssignmentContent() {
       alert(language === 'th' ? 'กรุณาระบุชื่อการบ้านหรือข้อสอบ' : 'Please provide a title');
       return;
     }
-    if (dueDate && new Date(dueDate).getTime() <= Date.now()) {
+    // An edit may keep a deadline that has already passed; only a new one must be ahead.
+    const dueChanged = !editingAssignment || new Date(dueDate).getTime() !== new Date(editingAssignment.due_date).getTime();
+    if (dueChanged && dueDate && new Date(dueDate).getTime() <= Date.now()) {
       alert(language === 'th' ? 'กำหนดส่งต้องเป็นเวลาในอนาคต' : 'The due date must be in the future');
       return;
     }
-    if (schedulePublish) {
+    if (schedulePublish && !editIsPublished) {
       const publishMs = new Date(publishAt).getTime();
       if (!publishAt || Number.isNaN(publishMs) || publishMs <= Date.now()) {
         alert(language === 'th' ? 'เวลาเผยแพร่ต้องเป็นเวลาในอนาคต' : 'The publish time must be in the future');
@@ -376,6 +443,75 @@ function NewAssignmentContent() {
         max_score: Number(q.max_score) || 5,
         is_required: isExam ? true : q.is_required,
       }));
+      // Upload the reference file first: if it fails, nothing is saved and the
+      // teacher sees why (it used to fail silently after the work was created).
+      let uploadedSampleUrl: string | undefined;
+      if (!isExam && sampleWorkFile) {
+        setIsUploadingSample(true);
+        try {
+          const formData = new FormData();
+          formData.append("file", sampleWorkFile);
+          // The server adds a timestamp to the stored name, so drafts never collide.
+          formData.append("assignment_id", editingAssignment?.id || "draft");
+          formData.append("purpose", "sample");
+          const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+          const uploadJson = await uploadRes.json().catch(() => ({}));
+          if (!uploadRes.ok || !uploadJson.url) {
+            throw new Error(
+              uploadRes.status === 413
+                ? "ไฟล์ใหญ่เกินไป กรุณาใช้ไฟล์ไม่เกิน 4MB หรือวางลิงก์ Google Drive แทน"
+                : uploadJson.error || "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ"
+            );
+          }
+          uploadedSampleUrl = uploadJson.url;
+        } catch (uploadError) {
+          console.error("Sample work upload error:", uploadError);
+          const message = uploadError instanceof Error ? uploadError.message : "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ";
+          setSampleUploadError(message);
+          alert(`${message}\n\nยังไม่ได้บันทึกงาน กรุณาแก้ไฟล์แล้วกดบันทึกอีกครั้ง`);
+          return;
+        } finally {
+          setIsUploadingSample(false);
+        }
+      }
+      const sampleUrl = isExam ? '' : uploadedSampleUrl || sampleWorkUrl.trim();
+
+      if (editingAssignment) {
+        const keptIds = new Set(questions.map((q) => q.id).filter(Boolean));
+        const removedCount = originalQuestionIdsRef.current.filter((id) => !keptIds.has(id)).length;
+        if (
+          editSubmissionCount > 0 &&
+          !confirm(
+            `มีนักเรียนส่งงานนี้แล้ว ${editSubmissionCount} คน\n` +
+              (removedCount ? `• ข้อที่ลบ (${removedCount} ข้อ) จะลบคำตอบของนักเรียนในข้อนั้นด้วย\n` : '') +
+              '• คะแนนที่ตรวจไปแล้วจะไม่ถูกคำนวณใหม่อัตโนมัติ\n\nต้องการบันทึกการแก้ไขหรือไม่?'
+          )
+        ) {
+          return;
+        }
+        const id = editingAssignment.id;
+        await dataService.updateAssignment(id, {
+          title,
+          group_name: groupName.trim(),
+          description,
+          is_exam: isExam,
+          due_date: dueDate || editingAssignment.due_date,
+          ...(!editIsPublished && schedulePublish ? { publish_at: new Date(publishAt).toISOString() } : {}),
+          reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
+          reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
+          total_points: totalPoints,
+          sample_work_title: isExam ? '' : sampleWorkTitle.trim(),
+          sample_work_url: sampleUrl,
+          sample_work_description: isExam ? '' : sampleWorkDescription.trim(),
+        });
+        await dataService.replaceAssignmentQuestions(id, questionRows.map((row, index) => ({ ...row, id: questions[index].id })));
+        // Was scheduled, teacher switched to "publish now".
+        if (!editIsPublished && !schedulePublish) await dataService.publishAssignmentNow(id);
+        alert(language === 'th' ? 'บันทึกการแก้ไขเรียบร้อยแล้ว' : 'Changes saved');
+        router.push(isFromDashboard ? '/dashboard' : `/classrooms/${editingAssignment.classroom_id}?tab=classwork`);
+        return;
+      }
+
       const createdIds: string[] = [];
       for (const classId of targetClassIds) {
         const created = await dataService.createAssignment(
@@ -395,33 +531,12 @@ function NewAssignmentContent() {
             total_points: totalPoints,
             status_override: 'auto',
             sample_work_title: !isExam ? sampleWorkTitle : undefined,
-            // A typed link is saved now; a chosen file replaces it after upload below.
-            sample_work_url: !isExam && !sampleWorkFile ? sampleWorkUrl.trim() || undefined : undefined,
+            sample_work_url: sampleUrl || undefined,
             sample_work_description: !isExam ? sampleWorkDescription : undefined,
           },
           questionRows
         );
         createdIds.push(created.assignment.id);
-      }
-
-      if (!isExam && sampleWorkFile) {
-        setIsUploadingSample(true);
-        try {
-          const formData = new FormData();
-          formData.append("file", sampleWorkFile);
-          formData.append("assignment_id", createdIds[0]);
-          formData.append("purpose", "sample");
-          const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
-          const uploadJson = await uploadRes.json();
-          if (!uploadRes.ok || !uploadJson.url) throw new Error(uploadJson.error || "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ");
-          // One uploaded file serves every classroom's copy.
-          await Promise.all(createdIds.map((id) => dataService.updateAssignment(id, { sample_work_url: uploadJson.url })));
-        } catch (uploadError) {
-          console.error("Sample work upload error:", uploadError);
-          setSampleUploadError(uploadError instanceof Error ? uploadError.message : "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ");
-        } finally {
-          setIsUploadingSample(false);
-        }
       }
 
       alert(
@@ -489,8 +604,15 @@ function NewAssignmentContent() {
           <span>{isExam ? '🛡️ ' + t('assignment_creator.mode_exam') : '📚 ' + t('assignment_creator.mode_assignment')}</span>
         </div>
         <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-          {t('assignment_creator.title')}
+          {editId ? (language === 'th' ? 'แก้ไขงาน / ข้อสอบ' : 'Edit assignment / quiz') : t('assignment_creator.title')}
         </h1>
+        {editingAssignment && editSubmissionCount > 0 && (
+          <p role="status" className="mt-3 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-xs font-semibold text-amber-900 dark:text-amber-200">
+            {language === 'th'
+              ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — แก้ไขได้ทุกส่วน แต่ถ้าลบคำถาม คำตอบของข้อนั้นจะหายไป และคะแนนที่ตรวจแล้วจะไม่คำนวณใหม่`
+              : `${editSubmissionCount} students have submitted. Removing a question deletes its answers, and existing scores are not recalculated.`}
+          </p>
+        )}
         <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
           {t('assignment_creator.subtitle')}
         </p>
@@ -561,8 +683,9 @@ function NewAssignmentContent() {
               </label>
               <select
                 value={selectedCourseId}
+                disabled={!!editingAssignment}
                 onChange={(e) => handleCourseChange(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {courses.map((course) => (
                   <option key={course.id} value={course.id}>
@@ -577,8 +700,13 @@ function NewAssignmentContent() {
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                 {t('assignment_creator.fields.classroom_label')} *
               </label>
+              {editingAssignment && (
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {language === 'th' ? 'งานที่สร้างแล้วย้ายห้องไม่ได้ (แก้ไขเฉพาะห้องนี้)' : 'Saved work stays in its classroom.'}
+                </p>
+              )}
               <div className="flex flex-wrap gap-2 pt-0.5">
-                {currentCourseClassrooms.map((cls) => {
+                {(editingAssignment ? currentCourseClassrooms.filter((c) => c.id === editingAssignment.classroom_id) : currentCourseClassrooms).map((cls) => {
                   const isSelected = selectedClassroomIds.includes(cls.id);
                   return (
                     <button
@@ -672,6 +800,13 @@ function NewAssignmentContent() {
                 <Send className="w-3.5 h-3.5 text-sky-500" />
                 <span>{language === 'th' ? 'เวลาเผยแพร่ให้นักเรียน' : 'Release to students'}</span>
               </label>
+              {editIsPublished ? (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {language === 'th' ? 'เผยแพร่ให้นักเรียนแล้ว' : 'Already released to students'}
+                  {editingAssignment?.publish_at ? ` • ${formatDateTime(editingAssignment.publish_at, language)}` : ''}
+                </p>
+              ) : (
+              <>
               <div className="grid grid-cols-2 gap-2 max-w-md" role="radiogroup">
                 {[
                   { value: false, label: language === 'th' ? 'เผยแพร่ทันที' : 'Publish now' },
@@ -704,6 +839,8 @@ function NewAssignmentContent() {
                   </p>
                 </div>
               )}
+              </>
+              )}
             </div>
 
             {/* Due Date */}
@@ -734,15 +871,16 @@ function NewAssignmentContent() {
                     : 'Less than 30 minutes until the due date, so no reminder can be scheduled.'}
                 </div>
               ) : selectedClassroomsLineReady ? (
-                <div className="flex flex-wrap gap-2" role="group" aria-label={t('assignment_creator.fields.line_reminder_label')}>
-                  {reminderOptions.map((option) => {
-                    const selected = effectiveReminderOffsets.includes(option.value);
+                <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t('assignment_creator.fields.line_reminder_label')}>
+                  {[...reminderOptions, { value: 0, label: language === 'th' ? 'ไม่ต้องเตือน' : 'No reminder' }].map((option) => {
+                    const selected = option.value === 0 ? effectiveReminderOffsets.length === 0 : effectiveReminderOffsets[0] === option.value;
                     return (
                       <button
                         key={option.value}
                         type="button"
-                        aria-pressed={selected}
-                        onClick={() => toggleReminderOffset(option.value)}
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => setReminderOffset(option.value || null)}
                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer inline-flex items-center gap-1.5 ${
                           selected
                             ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
@@ -766,7 +904,7 @@ function NewAssignmentContent() {
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {selectedClassroomsLineReady
                   ? effectiveReminderOffsets.length
-                    ? `เลือกได้หลายเวลา (เลือกแล้ว ${effectiveReminderOffsets.length}) — ทุกครั้งระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน`
+                    ? 'เตือน 1 ครั้งตามเวลาที่เลือก — ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน (แสดงเฉพาะเวลาที่ยังทันก่อนกำหนดส่ง)'
                     : 'ไม่ได้เลือกเวลาเตือน ระบบจะไม่ส่งแจ้งเตือนเข้า LINE group'
                   : 'เมื่อเชื่อมต่อ LINE Bot แล้ว จึงจะสามารถตั้งเวลาและส่งสรุปเข้า LINE group ได้'}
               </p>
@@ -1299,7 +1437,11 @@ function NewAssignmentContent() {
             className="flex-1 sm:flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-900 dark:hover:bg-slate-100 text-sm sm:text-xs font-bold shadow-lg shadow-black/15 transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <Send className="w-4 h-4 text-amber-500" />
-            <span>{isSubmitting ? t('common.loading') : t('assignment_creator.buttons.publish')}</span>
+            <span>
+              {isSubmitting
+                ? isUploadingSample ? (language === 'th' ? 'กำลังอัปโหลดไฟล์...' : 'Uploading file...') : t('common.loading')
+                : editId ? (language === 'th' ? 'บันทึกการแก้ไข' : 'Save changes') : t('assignment_creator.buttons.publish')}
+            </span>
           </button>
         </div>
       </form>

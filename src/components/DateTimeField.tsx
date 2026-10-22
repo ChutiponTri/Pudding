@@ -4,7 +4,6 @@ import React, { useState } from 'react';
 import { Calendar, Clock, X } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
-  daysFromNowAt,
   formatDateTime,
   formatRelative,
   localPartsToIso,
@@ -15,6 +14,9 @@ import {
 type PresetKind = 'deadline' | 'start' | 'none';
 
 const pad = (n: number) => String(n).padStart(2, '0');
+/** ISO time `minutes` from now (called from event handlers only). */
+const isoFromNow = (minutes = 0) => new Date(Date.now() + minutes * 60000).toISOString();
+const clockNow = () => Date.now();
 const HOURS = Array.from({ length: 24 }, (_, i) => pad(i));
 // Every 5 minutes, plus :59 for "end of day" deadlines.
 const MINUTES = [...Array.from({ length: 12 }, (_, i) => pad(i * 5)), '59'];
@@ -74,7 +76,7 @@ export function DateTimeField({
   }
 
   const commit = (nextDate: string, nextTime: string) => {
-    setNow(Date.now());
+    setNow(clockNow());
     setDate(nextDate);
     setTime(nextTime);
     const iso = localPartsToIso(nextDate, nextTime || defaultTime);
@@ -97,23 +99,50 @@ export function DateTimeField({
     }
   };
 
-  const chips: Array<{ label: string; onClick: () => void }> =
+  // Quick picks in labelled rows: fixed moments ("set to") and shifts of the current value ("add").
+  // A fixed moment is highlighted while it is the chosen value.
+  type Chip = { label: string; onClick: () => void; target?: string };
+  // Targets come from the `now` state (not a fresh clock read) so rendering stays pure.
+  const dayAt = (days: number, hours: number, minutes = 0) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() + days);
+    d.setHours(hours, minutes, 0, 0);
+    return d.toISOString();
+  };
+  const fixed = (label: string, target: string): Chip => ({ label, target, onClick: () => setIso(target) });
+  const chipRows: Array<{ title: string; chips: Chip[] }> =
     presets === 'deadline'
       ? [
-          { label: th ? 'วันนี้ 23:59' : 'Today 23:59', onClick: () => setIso(daysFromNowAt(0, 23, 59)) },
-          { label: th ? 'พรุ่งนี้ 08:00' : 'Tomorrow 08:00', onClick: () => setIso(daysFromNowAt(1, 8)) },
-          { label: th ? 'พรุ่งนี้ 23:59' : 'Tomorrow 23:59', onClick: () => setIso(daysFromNowAt(1, 23, 59)) },
-          { label: '+1 ' + (th ? 'วัน' : 'day'), onClick: () => addDays(1) },
-          { label: '+3 ' + (th ? 'วัน' : 'days'), onClick: () => addDays(3) },
-          { label: '+1 ' + (th ? 'สัปดาห์' : 'week'), onClick: () => addDays(7) },
+          {
+            title: th ? 'ตั้งเป็น' : 'Set to',
+            chips: [
+              fixed(th ? 'วันนี้ 23:59' : 'Today 23:59', dayAt(0, 23, 59)),
+              fixed(th ? 'พรุ่งนี้ 08:00' : 'Tmrw 08:00', dayAt(1, 8)),
+              fixed(th ? 'พรุ่งนี้ 23:59' : 'Tmrw 23:59', dayAt(1, 23, 59)),
+            ],
+          },
+          {
+            title: th ? 'เลื่อนออก' : 'Add',
+            chips: [
+              { label: '+1 ' + (th ? 'วัน' : 'day'), onClick: () => addDays(1) },
+              { label: '+3 ' + (th ? 'วัน' : 'days'), onClick: () => addDays(3) },
+              { label: '+1 ' + (th ? 'สัปดาห์' : 'week'), onClick: () => addDays(7) },
+            ],
+          },
         ]
       : presets === 'start'
       ? [
-          { label: th ? 'ตอนนี้' : 'Now', onClick: () => setIso(new Date().toISOString()) },
-          { label: th ? 'อีก 15 นาที' : 'In 15 min', onClick: () => setIso(new Date(Date.now() + 15 * 60000).toISOString()) },
-          { label: th ? 'พรุ่งนี้ 08:00' : 'Tomorrow 08:00', onClick: () => setIso(daysFromNowAt(1, 8)) },
+          {
+            title: th ? 'ตั้งเป็น' : 'Set to',
+            chips: [
+              { label: th ? 'ตอนนี้' : 'Now', onClick: () => setIso(isoFromNow()) },
+              { label: th ? 'อีก 15 นาที' : 'In 15 min', onClick: () => setIso(isoFromNow(15)) },
+              fixed(th ? 'พรุ่งนี้ 08:00' : 'Tmrw 08:00', dayAt(1, 8)),
+            ],
+          },
         ]
       : [];
+  const sameMinute = (a: string, b: string) => !!a && !!b && Math.abs(new Date(a).getTime() - new Date(b).getTime()) < 60000;
 
   const [hour, minute] = (time || defaultTime).split(':');
   // Keep a saved time like 10:07 selectable even though it is off the 5-minute grid.
@@ -186,17 +215,34 @@ export function DateTimeField({
         )}
       </div>
 
-      {chips.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {chips.map((chip) => (
-            <button
-              key={chip.label}
-              type="button"
-              onClick={chip.onClick}
-              className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-amber-100 dark:hover:bg-amber-950 text-slate-700 dark:text-slate-300 text-[11px] font-bold transition-colors cursor-pointer"
-            >
-              {chip.label}
-            </button>
+      {chipRows.length > 0 && (
+        <div className="grid grid-cols-[auto_1fr] items-center gap-x-2.5 gap-y-1.5">
+          {chipRows.map((row) => (
+            <React.Fragment key={row.title}>
+              <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 whitespace-nowrap">{row.title}</span>
+              <div className="grid grid-cols-3 gap-1.5">
+                {row.chips.map((chip) => {
+                  const active = !!chip.target && sameMinute(value, chip.target);
+                  return (
+                    <button
+                      key={chip.label}
+                      type="button"
+                      onClick={chip.onClick}
+                      aria-pressed={chip.target ? active : undefined}
+                      className={`min-w-0 h-8 px-2 rounded-lg border text-[11px] font-bold truncate transition-colors cursor-pointer ${
+                        active
+                          ? accent === 'emerald'
+                            ? 'bg-emerald-600 border-emerald-600 text-white'
+                            : 'bg-amber-500 border-amber-500 text-slate-950'
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+                      }`}
+                    >
+                      {chip.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </React.Fragment>
           ))}
         </div>
       )}

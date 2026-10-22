@@ -453,9 +453,19 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 {assignment && <ReferenceWorkLink assignment={assignment} className="max-w-full sm:max-w-xs py-0.5" />}
               </div>
 
-              <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white">
-                {assignment?.title || t('grading.title')}
-              </h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white">
+                  {assignment?.title || t('grading.title')}
+                </h1>
+                {assignment && grader && (
+                  <Link
+                    href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
+                  >
+                    ✏️ {th ? 'แก้ไขงาน' : 'Edit'}
+                  </Link>
+                )}
+              </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 {assignment?.description || '-'}
               </p>
