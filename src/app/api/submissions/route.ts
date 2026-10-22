@@ -192,10 +192,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'งานนี้ยังไม่เปิดให้ส่ง' }, { status: 409 });
     }
     if (assignmentWindow.isQuizClosed) {
-      return NextResponse.json({ error: 'หมดเวลาทำข้อสอบแล้ว ไม่สามารถส่งคำตอบได้' }, { status: 409 });
+      return NextResponse.json({ error: `หมดเวลาทำข้อสอบ “${assignment.title}” แล้ว ไม่สามารถส่งคำตอบได้` }, { status: 409 });
     }
     if (!assignmentWindow.acceptsSubmissions) {
-      return NextResponse.json({ error: 'คุณครูปิดรับงานนี้แล้ว ไม่สามารถส่งได้' }, { status: 409 });
+      return NextResponse.json({ error: `คุณครูปิดรับ${assignment.is_exam ? 'ข้อสอบ' : 'งาน'} “${assignment.title}” แล้ว ไม่สามารถส่งได้` }, { status: 409 });
     }
 
     // Leaving the screen is tracked during quizzes only; homework may be done

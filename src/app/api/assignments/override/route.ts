@@ -106,9 +106,9 @@ export async function POST(request: NextRequest) {
     const kind = updated.is_exam ? 'ข้อสอบ' : 'งาน';
     const message =
       status === 'force_closed'
-        ? `🔒 ปิดรับ${kind}แล้ว\n${updated.title}\nห้อง: ${classroom.name}\n\nคุณครูปิดรับ${kind}นี้แล้ว นักเรียนไม่สามารถส่งเพิ่มได้`
+        ? `🔒 ปิดรับ${kind}แล้ว\n📌 ${kind}: “${updated.title}”\n🏫 ห้อง: ${classroom.name}\n\nคุณครูปิดรับ${kind} “${updated.title}” แล้ว นักเรียนไม่สามารถส่งเพิ่มได้`
         : withLiffLink(
-            `⏳ ขยายเวลาส่ง${kind}\n${updated.title}\nห้อง: ${classroom.name}\n\nส่งได้ถึง: ${formatDateTime(updated.extended_until, 'th', SCHOOL_TIME_ZONE)}`,
+            `⏳ ขยายเวลาส่ง${kind}\n📌 ${kind}: “${updated.title}”\n🏫 ห้อง: ${classroom.name}\n\nส่งได้ถึง: ${formatDateTime(updated.extended_until, 'th', SCHOOL_TIME_ZONE)}`,
             updated.is_exam ? 'กดเพื่อทำข้อสอบ' : 'กดเพื่อส่งงาน',
             { classroomId: classroom.id, inviteCode: classroom.invite_code, assignmentId: updated.id }
           );

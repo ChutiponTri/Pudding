@@ -2235,7 +2235,14 @@ export default function ClassroomWorkspacePage() {
           onSaved={(updated) => {
             setAssignments((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)));
             setStatusAssignment(null);
-            setNotice(`อัปเดตสถานะการรับงาน "${updated.title}" แล้ว`);
+            const kind = updated.is_exam ? 'ข้อสอบ' : 'งาน';
+            setNotice(
+              updated.status_override === 'force_closed'
+                ? `🔒 ปิดรับ${kind} “${updated.title}” แล้ว`
+                : updated.status_override === 'extended'
+                ? `⏳ ขยายเวลาส่ง${kind} “${updated.title}” ถึง ${formatDateTime(updated.extended_until, 'th')} แล้ว`
+                : `${kind} “${updated.title}” กลับไปรับงานตามกำหนดส่งแล้ว`
+            );
           }}
         />
       )}

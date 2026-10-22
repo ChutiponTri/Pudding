@@ -1048,7 +1048,9 @@ export default function LiffStudentPage() {
     }
     const openWindow = getAssignmentWindow(a);
     if (!openWindow.acceptsSubmissions) {
-      alert(openWindow.isQuizClosed ? "หมดเวลาทำข้อสอบนี้แล้ว" : "คุณครูปิดรับงานนี้แล้ว ไม่สามารถส่งได้");
+      alert(openWindow.isQuizClosed
+        ? `หมดเวลาทำข้อสอบ “${a.title}” แล้ว`
+        : `คุณครูปิดรับ${a.is_exam ? "ข้อสอบ" : "งาน"} “${a.title}” แล้ว ไม่สามารถส่งได้`);
       return;
     }
     setStudentAnswers({});

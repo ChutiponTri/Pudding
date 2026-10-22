@@ -256,16 +256,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         setOverrideStatus(newStatus);
       }
 
+      const name = (updated || assignment)?.title || '';
+      const kind = (updated || assignment)?.is_exam ? (language === 'th' ? 'ข้อสอบ' : 'quiz') : language === 'th' ? 'งาน' : 'assignment';
       if (newStatus === 'force_closed') {
-        showToast(language === 'th' ? 'บังคับปิดรับงานทันทีเรียบร้อยแล้ว' : 'Submissions force-closed immediately');
-        setShowExtendPicker(false);
+        showToast(language === 'th' ? `🔒 ปิดรับ${kind} “${name}” แล้ว` : `🔒 Closed ${kind} “${name}”`);
       } else if (newStatus === 'extended') {
-        showToast(language === 'th' ? 'ขยายเวลาส่งงานเรียบร้อยแล้ว' : 'Deadline extended successfully');
-        setShowExtendPicker(false);
+        showToast(language === 'th' ? `⏳ ขยายเวลาส่ง${kind} “${name}” แล้ว` : `⏳ Extended ${kind} “${name}”`);
       } else {
-        showToast(language === 'th' ? 'กลับสู่โหมดกำหนดส่งอัตโนมัติ' : 'Reset to automated deadline schedule');
-        setShowExtendPicker(false);
+        showToast(language === 'th' ? `${kind} “${name}” กลับไปรับงานตามกำหนดส่งแล้ว` : `${kind} “${name}” is back on its deadline`);
       }
+      setShowExtendPicker(false);
     } catch (err) {
       console.error(err);
       alert(err instanceof Error && err.message ? err.message : 'Error updating deadline override');
