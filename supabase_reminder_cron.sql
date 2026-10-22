@@ -6,7 +6,7 @@
 -- on the free plan), so it does not depend on Vercel Cron limits.
 --
 -- Before running, replace:
---   <APP_URL>      your deployed site, e.g. https://pudding.vercel.app
+--   (the URL below is the production site; change it if the domain changes)
 --   <CRON_SECRET>  the value of LINE_REMINDER_CRON_SECRET in Vercel env vars
 --
 -- Run in the Supabase SQL editor. Re-running replaces the job.
@@ -22,7 +22,7 @@ SELECT cron.schedule(
   '*/5 * * * *',
   $$
   SELECT net.http_post(
-    url := '<APP_URL>/api/line/reminders',
+    url := 'https://pudding-p.vercel.app/api/line/reminders',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'Authorization', 'Bearer <CRON_SECRET>'
