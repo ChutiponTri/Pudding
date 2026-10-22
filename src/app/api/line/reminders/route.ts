@@ -5,7 +5,7 @@ import { pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { getAssignmentWindow, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
-import { buildPostLineMessage } from '@/lib/line/classroomAnnouncement';
+import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
 
 export const runtime = 'nodejs';
 
@@ -125,48 +125,3 @@ async function runReminders(request: NextRequest) {
   return NextResponse.json({ ok: true, checked: assignments.length, sent, failed, announced });
 }
 
-/**
- * Sends the LINE "new work" message for scheduled posts whose publish time has
- * come (the posts API holds it back with metadata.pendingLine).
- */
-async function announceScheduledPosts(supabase: ReturnType<typeof createServiceSupabaseClient>, now: Date) {
-  const { data: pending, error } = await supabase
-    .from('classroom_posts')
-    .select('id, classroom_id, body, activity_type, metadata')
-    .contains('metadata', { pendingLine: true });
-  if (error) {
-    console.error('Scheduled post lookup failed:', error);
-    return 0;
-  }
-  let count = 0;
-  for (const post of pending || []) {
-    const metadata = (post.metadata || {}) as Record<string, unknown>;
-    const publishAt = typeof metadata.publishAt === 'string' ? new Date(metadata.publishAt).getTime() : 0;
-    if (publishAt > now.getTime()) continue;
-
-    // Mark first so an overlapping run can't announce twice.
-    const { error: markError } = await supabase
-      .from('classroom_posts')
-      .update({ metadata: { ...metadata, pendingLine: false, announcedAt: now.toISOString() } })
-      .eq('id', post.id);
-    if (markError) continue;
-
-    // The assignment may have been deleted while it was scheduled.
-    if (typeof metadata.assignmentId === 'string') {
-      const { data: assignment } = await supabase.from('assignments').select('id').eq('id', metadata.assignmentId).maybeSingle();
-      if (!assignment) continue;
-    }
-    const { data: classroom } = await supabase.from('classrooms').select('name, line_group_id').eq('id', post.classroom_id).maybeSingle();
-    if (!classroom?.line_group_id) continue;
-    try {
-      await pushLineGroupText(
-        classroom.line_group_id,
-        buildPostLineMessage(post.activity_type, classroom.name || 'ห้องเรียน', post.body, post.classroom_id, metadata)
-      );
-      count += 1;
-    } catch (pushError) {
-      console.error(`Scheduled LINE announcement failed for post ${post.id}:`, pushError);
-    }
-  }
-  return count;
-}

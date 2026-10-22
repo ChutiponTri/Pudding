@@ -421,7 +421,7 @@ function NewAssignmentContent() {
       }
     } catch (err) {
       console.error(err);
-      alert('Error creating assignment');
+      alert(err instanceof Error && err.message ? err.message : 'Error creating assignment');
     } finally {
       setIsSubmitting(false);
     }

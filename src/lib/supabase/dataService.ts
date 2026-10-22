@@ -109,6 +109,8 @@ async function fetchUsersByKeys(supabase: SupabaseClient, keys: Array<string | u
 
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
 const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes', 'publish_at'] as const;
+const PUBLISH_AT_MIGRATION_MESSAGE =
+  'ฐานข้อมูลยังไม่รองรับการตั้งเวลาเผยแพร่ (ยังไม่มีคอลัมน์ publish_at) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือเลือก "เผยแพร่ทันที"';
 
 type EnrollmentLink = { classroom_id: string; student_id: string; status: string };
 
@@ -991,6 +993,8 @@ export const dataService = {
     let { error } = await supabase.from('assignments').insert(row);
     for (const column of OPTIONAL_ASSIGNMENT_COLUMNS) {
       if (!error?.message?.includes(column)) continue;
+      // Dropping a requested publish time would release the work right away; refuse instead.
+      if (column === 'publish_at' && row.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
       const { [column]: _unused, ...rest } = row;
       row = rest;
       ({ error } = await supabase.from('assignments').insert(row));
@@ -1033,6 +1037,7 @@ export const dataService = {
     let { data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle();
     for (const column of OPTIONAL_ASSIGNMENT_COLUMNS) {
       if (!error?.message?.includes(column)) continue;
+      if (column === 'publish_at' && patch.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
       const { [column]: _unused, ...rest } = patch;
       patch = rest;
       ({ data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle());

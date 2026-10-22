@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { auth } from '@clerk/nextjs/server';
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
-import { buildPostLineMessage } from '@/lib/line/classroomAnnouncement';
+import { announceScheduledPosts, buildPostLineMessage } from '@/lib/line/classroomAnnouncement';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -57,6 +57,10 @@ export async function GET(request: NextRequest) {
     );
   }
   if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  // Scheduled work whose time has come: announce it in LINE now, without
+  // waiting for the cron and without slowing this response.
+  after(() => announceScheduledPosts(supabase, new Date(), classroomId));
 
   const { data, error } = await supabase
     .from('classroom_posts')
