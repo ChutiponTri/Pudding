@@ -1,7 +1,13 @@
 import type { Assignment } from '@/types/database';
 
 type AssignmentDeadlineFields = Pick<Assignment, 'due_date' | 'status_override' | 'extended_until'> &
-  Partial<Pick<Assignment, 'is_exam'>>;
+  Partial<Pick<Assignment, 'is_exam' | 'publish_at'>>;
+
+/** False while a scheduled assignment's publish time is still ahead. */
+export function isAssignmentPublished(assignment: Partial<Pick<Assignment, 'publish_at'>>, now: number = Date.now()) {
+  const publishAt = assignment.publish_at ? new Date(assignment.publish_at).getTime() : NaN;
+  return Number.isNaN(publishAt) || now >= publishAt;
+}
 
 /** Answers a student started before a quiz closed still get this long to arrive. */
 export const QUIZ_SUBMIT_GRACE_MS = 2 * 60 * 1000;
@@ -31,6 +37,7 @@ export function getAssignmentWindow(
   const hasDeadline = !Number.isNaN(deadline);
   const isPastDeadline = hasDeadline && now > deadline;
   const isQuizClosed = !!assignment.is_exam && hasDeadline && now > deadline + graceMs;
+  const isScheduled = !isAssignmentPublished(assignment, now);
 
   return {
     isForceClosed,
@@ -39,11 +46,13 @@ export function getAssignmentWindow(
     isPastDeadline,
     /** Closed because a quiz's time is up (not a teacher override). */
     isQuizClosed,
-    acceptsSubmissions: !isForceClosed && !isQuizClosed,
+    /** Not released to students yet (publish_at is in the future). */
+    isScheduled,
+    acceptsSubmissions: !isForceClosed && !isQuizClosed && !isScheduled,
   };
 }
 
-export type AssignmentStatusTone = 'open' | 'late' | 'closed';
+export type AssignmentStatusTone = 'scheduled' | 'open' | 'late' | 'closed';
 
 /**
  * Teacher-facing acceptance state, kept to three short labels:
@@ -55,6 +64,13 @@ export function getAssignmentStatus(
   language: 'th' | 'en' = 'th'
 ) {
   const th = language === 'th';
+  if (window.isScheduled && !window.isForceClosed) {
+    return {
+      tone: 'scheduled' as AssignmentStatusTone,
+      label: th ? 'ตั้งเวลาไว้' : 'Scheduled',
+      note: th ? 'นักเรียนจะเห็นงานเมื่อถึงเวลาเผยแพร่' : 'Students see it at the publish time',
+    };
+  }
   if (!window.acceptsSubmissions) {
     return {
       tone: 'closed' as AssignmentStatusTone,
@@ -79,6 +95,7 @@ export function getAssignmentStatus(
 }
 
 export const ASSIGNMENT_STATUS_CLASSES: Record<AssignmentStatusTone, string> = {
+  scheduled: 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-900',
   open: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900',
   late: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900',
   closed: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-900',

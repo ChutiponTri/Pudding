@@ -108,7 +108,7 @@ async function fetchUsersByKeys(supabase: SupabaseClient, keys: Array<string | u
 }
 
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
-const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes'] as const;
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes', 'publish_at'] as const;
 
 type EnrollmentLink = { classroom_id: string; student_id: string; status: string };
 
@@ -1018,6 +1018,8 @@ export const dataService = {
           activityType: assignmentData.is_exam ? 'exam' : 'assignment',
           body: `${assignmentData.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${assignmentData.title} (${assignmentData.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${formatDateTime(assignmentData.due_date, 'th', SCHOOL_TIME_ZONE)})`,
           metadata: { assignmentId: id, dueDate: assignmentData.due_date, groupName: assignmentData.group_name || (assignmentData.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
+          // Only when the database kept publish_at; otherwise the assignment is already visible.
+          publishAt: row.publish_at || undefined,
         }),
       }).catch((err) => console.warn('Unable to publish assignment activity:', err));
     }

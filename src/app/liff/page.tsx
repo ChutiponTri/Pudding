@@ -36,7 +36,7 @@ import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
-import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
+import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 
 interface RealLineStudent {
@@ -767,7 +767,8 @@ export default function LiffStudentPage() {
 
         // Single-beat unified data loading: filter assignments and load student submissions together
         const enrolledClassIds = new Set(enrolled.map((c) => c.id));
-        const relevantAssigns = await dataService.getAssignmentsByClassroomIds([...enrolledClassIds]);
+        // Scheduled work stays hidden until its publish time.
+        const relevantAssigns = (await dataService.getAssignmentsByClassroomIds([...enrolledClassIds])).filter((a) => isAssignmentPublished(a));
 
         // This student's submissions only, in one request.
         const allSubmissions = await dataService.getSubmissionsByAssignmentIds(
@@ -1114,7 +1115,7 @@ export default function LiffStudentPage() {
       setTimeout(() => setJoinMessage(null), 3500);
 
       // Refresh assignments for this new classroom
-      const relevant = await dataService.getAssignmentsByClassroomId(matched.id);
+      const relevant = (await dataService.getAssignmentsByClassroomId(matched.id)).filter((a) => isAssignmentPublished(a));
       setAssignments((prev) => [...prev.filter((a) => a.classroom_id !== matched.id), ...relevant]);
     } else {
       setJoinMessage("ไม่พบห้องเรียนจากรหัสที่ระบุ กรุณาตรวจสอบรหัสอีกครั้ง");

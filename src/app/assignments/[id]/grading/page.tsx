@@ -335,6 +335,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // What "auto" actually does right now: homework keeps taking late work, a quiz closes.
   const autoBannerText = !assignment
     ? ''
+    : assignmentWindow?.isScheduled && assignment.publish_at
+    ? th
+      ? `ตั้งเวลาเผยแพร่ ${formatDateTime(assignment.publish_at, language)} — ก่อนถึงเวลานี้นักเรียนยังไม่เห็นงาน`
+      : `Scheduled for ${formatDateTime(assignment.publish_at, language)}; hidden from students until then`
     : assignment.is_exam
     ? assignmentWindow?.isPastDeadline
       ? th ? 'อัตโนมัติ: หมดเวลาแล้ว ปิดรับคำตอบ' : 'Automatic: time is up, answers are closed'

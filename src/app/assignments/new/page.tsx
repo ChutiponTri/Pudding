@@ -8,7 +8,7 @@ import { dataService } from '@/lib/supabase/dataService';
 import { Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
-import { daysFromNowAt } from '@/lib/utils/datetime';
+import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
 import {
   PlusCircle,
   Trash2,
@@ -72,6 +72,9 @@ function NewAssignmentContent() {
   const [existingGroups, setExistingGroups] = useState<string[]>([]);
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState(() => daysFromNowAt(7, 23, 59));
+  // Scheduled release: prepare work ahead and let students see it at class time.
+  const [schedulePublish, setSchedulePublish] = useState(false);
+  const [publishAt, setPublishAt] = useState(() => daysFromNowAt(1, 8, 0));
   const reminderCron = 'relative_due_date';
   const [reminderOffsets, setReminderOffsets] = useState<number[]>([24 * 60]);
   const [clock, setClock] = useState(() => Date.now());
@@ -235,7 +238,9 @@ function NewAssignmentContent() {
   ];
   // A reminder can't be earlier than "now": only offer offsets that fit before the due date.
   // `clock` ticks each minute so the list shrinks while the form stays open.
-  const minutesUntilDue = dueDate ? Math.floor((new Date(dueDate).getTime() - clock) / 60000) : Infinity;
+  // Reminders also can't fire before a scheduled assignment is published.
+  const reminderFloor = schedulePublish && publishAt ? Math.max(clock, new Date(publishAt).getTime()) : clock;
+  const minutesUntilDue = dueDate ? Math.floor((new Date(dueDate).getTime() - reminderFloor) / 60000) : Infinity;
   const reminderOptions = allReminderOptions.filter((option) => option.value < minutesUntilDue);
   // Selected reminders that still fit, earliest first.
   const effectiveReminderOffsets = reminderOffsets
@@ -304,6 +309,17 @@ function NewAssignmentContent() {
       alert(language === 'th' ? 'กำหนดส่งต้องเป็นเวลาในอนาคต' : 'The due date must be in the future');
       return;
     }
+    if (schedulePublish) {
+      const publishMs = new Date(publishAt).getTime();
+      if (!publishAt || Number.isNaN(publishMs) || publishMs <= Date.now()) {
+        alert(language === 'th' ? 'เวลาเผยแพร่ต้องเป็นเวลาในอนาคต' : 'The publish time must be in the future');
+        return;
+      }
+      if (dueDate && new Date(dueDate).getTime() <= publishMs) {
+        alert(language === 'th' ? 'กำหนดส่งต้องอยู่หลังเวลาเผยแพร่' : 'The due date must be after the publish time');
+        return;
+      }
+    }
     const incompleteChoice = questions.findIndex(
       (q) => q.type === 'multiple_choice' && q.options.filter((opt) => opt.trim()).length < 2
     );
@@ -341,6 +357,7 @@ function NewAssignmentContent() {
           description,
           is_exam: isExam,
           due_date: dueDate || daysFromNowAt(7, 23, 59),
+          publish_at: schedulePublish ? new Date(publishAt).toISOString() : undefined,
           reminder_cron: reminderCron,
           reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
           reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
@@ -383,7 +400,11 @@ function NewAssignmentContent() {
       }
 
       alert(
-        isExam
+        schedulePublish
+          ? language === 'th'
+            ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
+            : `Scheduled for ${formatDateTime(publishAt, 'en')}. Students will see it then.`
+          : isExam
           ? (language === 'th' ? 'สร้างแบบทดสอบสำเร็จ!' : 'Quiz created successfully!')
           : !selectedClassroomsLineReady || !effectiveReminderOffsets.length
           ? (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')
@@ -618,6 +639,46 @@ function NewAssignmentContent() {
                 placeholder={t('assignment_creator.fields.description_placeholder')}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 leading-relaxed"
               />
+            </div>
+
+            {/* Publish time: now or scheduled */}
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Send className="w-3.5 h-3.5 text-sky-500" />
+                <span>{language === 'th' ? 'เวลาเผยแพร่ให้นักเรียน' : 'Release to students'}</span>
+              </label>
+              <div className="grid grid-cols-2 gap-2 max-w-md" role="radiogroup">
+                {[
+                  { value: false, label: language === 'th' ? 'เผยแพร่ทันที' : 'Publish now' },
+                  { value: true, label: language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule' },
+                ].map((option) => (
+                  <button
+                    key={String(option.value)}
+                    type="button"
+                    role="radio"
+                    aria-checked={schedulePublish === option.value}
+                    onClick={() => setSchedulePublish(option.value)}
+                    className={`px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 ${
+                      schedulePublish === option.value
+                        ? 'bg-sky-600 border-sky-600 text-white shadow-xs'
+                        : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
+                    }`}
+                  >
+                    {option.value ? <Clock className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
+                    <span>{option.label}</span>
+                  </button>
+                ))}
+              </div>
+              {schedulePublish && (
+                <div className="p-3 rounded-2xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 space-y-2">
+                  <DateTimeField value={publishAt} onChange={setPublishAt} presets="start" />
+                  <p className="text-[11px] text-sky-800 dark:text-sky-300 leading-relaxed">
+                    {language === 'th'
+                      ? 'ก่อนถึงเวลานี้ นักเรียนจะยังไม่เห็นงานและส่งไม่ได้ เมื่อถึงเวลา งานจะขึ้นในไทม์ไลน์และแจ้งเข้า LINE group อัตโนมัติ'
+                      : 'Students cannot see or submit before this time. At this time it appears on the timeline and is announced in the LINE group.'}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Due Date */}

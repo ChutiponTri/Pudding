@@ -17,6 +17,13 @@ import { dataService } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
 import { useSidebar } from '@/components/SidebarContext';
 
+/** Short "term/year" label, e.g. "เทอม 1/2568", so the same room in another year is told apart. */
+function periodLabel(cls: Classroom): string {
+  const term = cls.semester === 3 ? 'ซัมเมอร์' : cls.semester ? `เทอม ${cls.semester}` : '';
+  const year = cls.year_ce ? String(cls.year_ce + 543) : cls.academic_year || '';
+  return [term, year].filter(Boolean).join('/');
+}
+
 export const GlobalClassroomSidebar: React.FC = () => {
   const pathname = usePathname();
   const { isOpen, setIsOpen, closeSidebar } = useSidebar();
@@ -187,7 +194,14 @@ export const GlobalClassroomSidebar: React.FC = () => {
                       >
                         <div className="flex items-center gap-2 min-w-0 flex-1">
                           <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
-                          <span className="truncate">{cls.name}</span>
+                          <span className="min-w-0">
+                            <span className="block truncate">{cls.name}</span>
+                            {periodLabel(cls) && (
+                              <span className={`block text-[11px] font-semibold leading-tight ${isActive ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400'}`}>
+                                {periodLabel(cls)}
+                              </span>
+                            )}
+                          </span>
                         </div>
                         <span className="text-xs text-slate-400 font-semibold shrink-0 ml-2 flex items-center gap-1 tabular-nums">
                           <Users className="w-3.5 h-3.5" />

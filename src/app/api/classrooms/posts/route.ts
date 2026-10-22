@@ -3,7 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
-import { withLiffLink } from '@/lib/line/liffLink';
+import { buildPostLineMessage } from '@/lib/line/classroomAnnouncement';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -64,7 +64,15 @@ export async function GET(request: NextRequest) {
     .eq('classroom_id', classroomId)
     .order('created_at', { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ posts: data || [] });
+  // Students don't see scheduled work before its publish time; teachers see everything.
+  const now = Date.now();
+  const posts = teacherClassroom
+    ? data || []
+    : (data || []).filter((post: ClassroomPost) => {
+        const publishAt = typeof post.metadata?.publishAt === 'string' ? new Date(post.metadata.publishAt).getTime() : NaN;
+        return Number.isNaN(publishAt) || publishAt <= now;
+      });
+  return NextResponse.json({ posts });
 }
 
 export async function POST(request: NextRequest) {
@@ -72,7 +80,15 @@ export async function POST(request: NextRequest) {
   const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
   const postBody = typeof body.body === 'string' ? body.body.trim() : '';
   const activityType = (typeof body.activityType === 'string' ? body.activityType : 'announcement') as ClassroomPost['activity_type'];
-  const metadata = body.metadata && typeof body.metadata === 'object' ? body.metadata : {};
+  const metadata = body.metadata && typeof body.metadata === 'object' ? { ...body.metadata } : {};
+  // Scheduled work: the post shows on the timeline at publish time and the LINE
+  // message waits for the reminder cron (see /api/line/reminders).
+  const publishAtMs = typeof body.publishAt === 'string' ? new Date(body.publishAt).getTime() : NaN;
+  const isScheduled = !Number.isNaN(publishAtMs) && publishAtMs > Date.now();
+  if (isScheduled) {
+    metadata.publishAt = new Date(publishAtMs).toISOString();
+    metadata.pendingLine = true;
+  }
 
   if (!classroomId || !postBody) return NextResponse.json({ error: 'classroomId and body are required' }, { status: 400 });
 
@@ -104,7 +120,7 @@ export async function POST(request: NextRequest) {
     body: postBody,
     activity_type: activityType,
     metadata,
-    created_at: new Date().toISOString(),
+    created_at: isScheduled ? new Date(publishAtMs).toISOString() : new Date().toISOString(),
   };
   const { data: savedPost, error } = await supabase.from('classroom_posts').insert(newPost).select('*').single();
   if (error) {
@@ -116,29 +132,9 @@ export async function POST(request: NextRequest) {
   const lineGroupId = context.classroom.line_group_id;
   const classroomName = context.classroom.name || 'ห้องเรียน';
 
-  if (lineGroupId) {
+  if (lineGroupId && !isScheduled) {
     try {
-      let icon = '📢';
-      let title = 'ประกาศจากครู';
-      if (activityType === 'assignment') {
-        icon = '📋';
-        title = 'งานใหม่';
-      } else if (activityType === 'exam') {
-        icon = '📝';
-        title = 'ข้อสอบใหม่';
-      } else if (activityType === 'attendance') {
-        icon = '⏰';
-        title = 'เปิดคาบเช็คชื่อ';
-      }
-      const message = `${icon} ${title}\nห้อง: ${classroomName}\n\n${postBody}`;
-      // Always include a tap-through link to the exact place students need.
-      const linkedAssignmentId = typeof metadata?.assignmentId === 'string' ? metadata.assignmentId : undefined;
-      const linked = activityType === 'attendance'
-        ? withLiffLink(message, 'กดเพื่อเช็คชื่อ', { classroomId, view: 'attendance' })
-        : (activityType === 'assignment' || activityType === 'exam') && linkedAssignmentId
-          ? withLiffLink(message, activityType === 'exam' ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', { classroomId, assignmentId: linkedAssignmentId })
-          : withLiffLink(message, 'เปิดห้องเรียนใน Pudding', { classroomId });
-      await pushLineGroupText(lineGroupId, linked);
+      await pushLineGroupText(lineGroupId, buildPostLineMessage(activityType, classroomName, postBody, classroomId, metadata));
     } catch (lineError) {
       console.error('Classroom post LINE push failed:', lineError);
     }

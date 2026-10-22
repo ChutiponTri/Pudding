@@ -119,6 +119,8 @@ type TimelineItem = {
   isPost?: boolean;
   /** Set when the item stands for an assignment/quiz; deleting it deletes the assignment. */
   assignmentId?: string;
+  /** Publish time still ahead: only the teacher sees this item for now. */
+  scheduledAt?: string;
   title: string;
   body: string;
   type: 'announcement' | 'assignment' | 'exam' | 'attendance';
@@ -132,7 +134,7 @@ type Post = {
   body: string;
   created_at: string;
   activity_type?: TimelineItem['type'];
-  metadata?: { assignmentId?: string; groupName?: string };
+  metadata?: { assignmentId?: string; groupName?: string; publishAt?: string };
 };
 
 const tabs: Array<{ id: Tab; label: string; icon: typeof BookOpen }> = [
@@ -667,6 +669,7 @@ export default function ClassroomWorkspacePage() {
         rawId: post.id,
         isPost: true,
         assignmentId: aId,
+        scheduledAt: post.metadata?.publishAt && new Date(post.metadata.publishAt).getTime() > Date.now() ? post.metadata.publishAt : undefined,
         title,
         body: post.body,
         type: post.activity_type || 'announcement',
@@ -692,6 +695,7 @@ export default function ClassroomWorkspacePage() {
         rawId: item.id,
         isPost: false,
         assignmentId: item.id,
+        scheduledAt: item.publish_at && new Date(item.publish_at).getTime() > Date.now() ? item.publish_at : undefined,
         title: item.is_exam ? 'ข้อสอบในระบบ' : 'งานที่มอบหมาย',
         body: `${item.title} (${item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: ${formatDateTime(item.due_date, 'th')})`,
         type: item.is_exam ? ('exam' as const) : ('assignment' as const),
@@ -1547,6 +1551,11 @@ export default function ClassroomWorkspacePage() {
                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${item.badgeColor}`}>
                               {item.badgeLabel}
                             </span>
+                            {item.scheduledAt && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
+                                ⏰ เผยแพร่ {formatDateTime(item.scheduledAt, 'th')}
+                              </span>
+                            )}
                           </div>
                           <time className="text-[10px] text-slate-400 block mt-0.5">
                             {new Date(item.created_at).toLocaleString('th-TH', {
@@ -1723,6 +1732,9 @@ export default function ClassroomWorkspacePage() {
                                   </button>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                                  {itemWindow.isScheduled && item.publish_at && (
+                                    <span className="font-bold text-sky-700 dark:text-sky-400">เผยแพร่: {formatDateTime(item.publish_at, 'th')} •</span>
+                                  )}
                                   <span>
                                     {item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: {formatDateTime(itemWindow.deadline !== null ? new Date(itemWindow.deadline).toISOString() : item.due_date, 'th')} • คะแนนเต็ม: {item.total_points || 20}
                                   </span>

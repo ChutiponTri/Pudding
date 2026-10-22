@@ -109,7 +109,8 @@ export async function POST(request: NextRequest) {
     // shared with the teacher portal so both sides agree on open/closed/late.
     const { data: assignment, error: assignmentError } = await supabase
       .from('assignments')
-      .select('id, due_date, status_override, extended_until, is_exam')
+      // `*` so databases without publish_at yet still work.
+      .select('*')
       .eq('id', assignment_id)
       .maybeSingle();
     if (assignmentError) {
@@ -120,6 +121,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'ไม่พบงานหรือข้อสอบนี้ในระบบ อาจถูกลบไปแล้ว' }, { status: 404 });
     }
     const assignmentWindow = getAssignmentWindow(assignment, Date.now(), QUIZ_SUBMIT_GRACE_MS);
+    if (assignmentWindow.isScheduled) {
+      return NextResponse.json({ error: 'งานนี้ยังไม่เปิดให้ส่ง' }, { status: 409 });
+    }
     if (assignmentWindow.isQuizClosed) {
       return NextResponse.json({ error: 'หมดเวลาทำข้อสอบแล้ว ไม่สามารถส่งคำตอบได้' }, { status: 409 });
     }

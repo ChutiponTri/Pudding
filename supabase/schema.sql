@@ -182,6 +182,7 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   reminder_cron TEXT DEFAULT '0 18 * * *',    -- Cron schedule for LINE reminders
   reminder_offset_minutes INTEGER DEFAULT 1440,
   reminder_offsets_minutes INTEGER[],          -- All selected reminders (minutes before due)
+  publish_at TIMESTAMPTZ,                      -- Scheduled release; NULL = published on creation
   line_last_reminded_at TIMESTAMPTZ,
   total_points NUMERIC DEFAULT 20,
   status_override TEXT DEFAULT 'auto' CHECK (status_override IN ('auto', 'force_closed', 'extended')),

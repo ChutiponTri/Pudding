@@ -125,6 +125,8 @@ export interface Assignment {
   sample_work_title?: string;
   sample_work_description?: string;
   created_at?: string;
+  /** Scheduled release: students see and can submit only from this time. Missing = published on creation. */
+  publish_at?: string;
   /** Optional teacher-managed grouping label shown in classroom timelines. */
   group_name?: string;
 }
