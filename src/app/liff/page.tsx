@@ -2367,7 +2367,7 @@ export default function LiffStudentPage() {
                               }))
                             }
                             placeholder={isFileUpload ? "พิมพ์คำอธิบายประกอบการแนบไฟล์..." : "พิมพ์คำตอบที่นี่..."}
-                            className="w-full p-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm leading-relaxed focus:ring-2 focus:ring-line focus:bg-white dark:focus:bg-slate-900 outline-none transition-all resize-y"
+                            className="w-full p-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm leading-relaxed focus:ring-2 focus:ring-line focus:bg-white dark:focus:bg-slate-900 outline-none transition-all resize-none overflow-y-auto"
                           />
                         </div>
                       )}
