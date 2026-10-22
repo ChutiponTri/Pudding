@@ -768,7 +768,8 @@ export default function LiffStudentPage() {
         // Single-beat unified data loading: filter assignments and load student submissions together
         const enrolledClassIds = new Set(enrolled.map((c) => c.id));
         // Scheduled work stays hidden until its publish time.
-        const relevantAssigns = (await dataService.getAssignmentsByClassroomIds([...enrolledClassIds])).filter((a) => isAssignmentPublished(a));
+        const allAssigns = await dataService.getAssignmentsByClassroomIds([...enrolledClassIds]);
+        const relevantAssigns = allAssigns.filter((a) => isAssignmentPublished(a));
 
         // This student's submissions only, in one request.
         const allSubmissions = await dataService.getSubmissionsByAssignmentIds(
@@ -813,6 +814,9 @@ export default function LiffStudentPage() {
 
         // Batch all state updates in one single beat
         enrolledClassroomIdsRef.current = new Set(enrolled.map((c) => c.id));
+        latestEnrolled = enrolled;
+        syncSignals(enrolled.map((c) => c.id));
+        schedulePublishReload(allAssigns);
         setClassrooms(enrolled);
         setSelectedClassroom(active);
         setAssignments(relevantAssigns);
@@ -827,6 +831,45 @@ export default function LiffStudentPage() {
         if (isInitial && seq === loadSeq) setIsLoadingData(false);
       }
     }
+
+    // Live updates: the server signals when scheduled work is published or the
+    // timeline changes, and a timer reloads exactly when the next scheduled
+    // assignment goes live, so new work appears without polling.
+    let latestEnrolled: Classroom[] = [];
+    let signalKey = "";
+    let unsubscribeSignals = () => {};
+    let signalTimer: ReturnType<typeof setTimeout> | null = null;
+    let publishTimer: ReturnType<typeof setTimeout> | null = null;
+    const reloadClassroom = (classroomId?: string) => {
+      if (classroomId) courseCacheRef.current.delete(classroomId);
+      else courseCacheRef.current.clear();
+      loadData(false);
+      const selectedId = selectedClassroomIdRef.current;
+      const selected = latestEnrolled.find((c) => c.id === selectedId);
+      if (selected && (!classroomId || classroomId === selectedId) && currentStudent?.line_uid) {
+        loadClassroomPosts(selected, currentStudent.line_uid);
+      }
+    };
+    const syncSignals = (ids: string[]) => {
+      const key = [...ids].sort().join(",");
+      if (key === signalKey) return;
+      signalKey = key;
+      unsubscribeSignals();
+      unsubscribeSignals = dataService.subscribeToClassroomSignals(ids, (classroomId, signal) => {
+        if (signal?.type === "submission") return; // the student's own work; nothing new to show
+        if (signalTimer) clearTimeout(signalTimer);
+        signalTimer = setTimeout(() => reloadClassroom(classroomId), 300);
+      });
+    };
+    const schedulePublishReload = (all: Assignment[]) => {
+      if (publishTimer) clearTimeout(publishTimer);
+      const now = Date.now();
+      const next = all
+        .map((a) => (a.publish_at ? new Date(a.publish_at).getTime() : NaN))
+        .filter((t) => t > now)
+        .sort((a, b) => a - b)[0];
+      if (next) publishTimer = setTimeout(() => reloadClassroom(), Math.min(next - now + 1000, 2 ** 31 - 1));
+    };
 
     loadData(true);
 
@@ -848,6 +891,9 @@ export default function LiffStudentPage() {
     );
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
+      if (signalTimer) clearTimeout(signalTimer);
+      if (publishTimer) clearTimeout(publishTimer);
+      unsubscribeSignals();
       unsub();
     };
   }, [authStatus, currentStudent?.id, currentStudent?.student_id]);

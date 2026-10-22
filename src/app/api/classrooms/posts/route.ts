@@ -4,6 +4,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
 import { announceScheduledPosts, buildPostLineMessage } from '@/lib/line/classroomAnnouncement';
+import { signalClassroom } from '@/lib/realtime/classroomSignal';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -144,6 +145,8 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Scheduled posts stay hidden from students, so there is nothing to show them yet.
+  if (!isScheduled) after(() => signalClassroom(classroomId, { type: 'timeline' }));
   return NextResponse.json({ post: savedPost }, { status: 201 });
 }
 
@@ -153,7 +156,7 @@ async function getOwnedPost(id: string) {
   const { data: post } = await supabase.from('classroom_posts').select('id, classroom_id').eq('id', id).maybeSingle();
   if (!post) return null;
   const context = await getTeacherContext(post.classroom_id);
-  return context.classroom ? context.supabase : null;
+  return context.classroom ? { supabase: context.supabase, classroomId: post.classroom_id as string } : null;
 }
 
 export async function PATCH(request: NextRequest) {
@@ -164,15 +167,16 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'id and body are required' }, { status: 400 });
   }
 
-  const supabase = await getOwnedPost(id);
-  if (!supabase) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  const { data: post, error } = await supabase
+  const owned = await getOwnedPost(id);
+  if (!owned) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  const { data: post, error } = await owned.supabase
     .from('classroom_posts')
     .update({ body: postBody })
     .eq('id', id)
     .select('*')
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  after(() => signalClassroom(owned.classroomId, { type: 'timeline' }));
   return NextResponse.json({ success: true, post });
 }
 
@@ -184,9 +188,10 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: 'id is required' }, { status: 400 });
   }
 
-  const supabase = await getOwnedPost(id);
-  if (!supabase) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  const { error } = await supabase.from('classroom_posts').delete().eq('id', id);
+  const owned = await getOwnedPost(id);
+  if (!owned) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  const { error } = await owned.supabase.from('classroom_posts').delete().eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  after(() => signalClassroom(owned.classroomId, { type: 'timeline' }));
   return NextResponse.json({ success: true, deletedPostId: id });
 }

@@ -2,7 +2,7 @@
 
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { dataService } from '@/lib/supabase/dataService';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
@@ -155,7 +155,6 @@ const statusLabels: Record<AttendanceStatus, string> = {
 export default function ClassroomWorkspacePage() {
   const { user } = useUser();
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const search = useSearchParams();
   const classroomId = params.id;
 
@@ -580,39 +579,106 @@ export default function ClassroomWorkspacePage() {
     };
   }, [classroomId]);
 
-  // Submissions refresh while the teacher is on classwork/grades (every 10s,
-  // paused when the tab is hidden), plus instant refresh on same-browser events.
+  // Live classwork: the server broadcasts a signal when a student submits or the
+  // timeline changes, so the page refetches once instead of polling. A slow poll
+  // runs only while the realtime socket is down.
+  const assignmentsRef = useRef(assignments);
+  const tabRef = useRef(tab);
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible' && (tab === 'grades' || tab === 'classwork')) {
-        refreshSubmissions(assignments);
-      }
-    }, 10000);
+    assignmentsRef.current = assignments;
+    tabRef.current = tab;
+  }, [assignments, tab]);
+  useEffect(() => {
+    if (!classroomId) return;
+    let submissionTimer: ReturnType<typeof setTimeout> | undefined;
+    let timelineTimer: ReturnType<typeof setTimeout> | undefined;
+    let fallback: ReturnType<typeof setInterval> | undefined;
+    let live = false;
 
-    // Attendance only needs this when the realtime channel is down.
+    const refreshSubmissionsSoon = () => {
+      clearTimeout(submissionTimer);
+      submissionTimer = setTimeout(() => refreshSubmissions(assignmentsRef.current), 400);
+    };
+    const refreshTimelineSoon = () => {
+      clearTimeout(timelineTimer);
+      timelineTimer = setTimeout(async () => {
+        try {
+          const [list, postsRes] = await Promise.all([
+            dataService.getAssignmentsByClassroomId(classroomId),
+            fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' }),
+          ]);
+          setAssignments(list);
+          if (postsRes.ok) setPosts((await postsRes.json()).posts || []);
+        } catch {}
+      }, 400);
+    };
+    const pollIfNeeded = () => {
+      if (live || document.visibilityState !== 'visible') return;
+      if (tabRef.current === 'grades' || tabRef.current === 'classwork') refreshSubmissions(assignmentsRef.current, 25000);
+    };
+    const onVisible = () => {
+      // Signals sent while the tab was hidden may have been missed.
+      if (document.visibilityState === 'visible') refreshSubmissions(assignmentsRef.current, 30000);
+    };
+
+    const unsubscribe = dataService.subscribeToClassroomSignals(
+      [classroomId],
+      (_id, signal) => {
+        if (signal?.type === 'submission') refreshSubmissionsSoon();
+        else refreshTimelineSoon();
+      },
+      (isLive) => {
+        live = isLive;
+        if (isLive) {
+          clearInterval(fallback);
+          fallback = undefined;
+        } else if (!fallback) {
+          fallback = setInterval(pollIfNeeded, 30000);
+        }
+      }
+    );
+
+    // Same-browser events (e.g. a LIFF tab next to this one) refresh instantly.
     const onAttendanceChecked = () => {
       if (!attendanceLiveRef.current) loadAttendance();
     };
-    const onSubmissionCreated = () => refreshSubmissions(assignments);
-
-    window.addEventListener('pudding-submission-created', onSubmissionCreated);
+    window.addEventListener('pudding-submission-created', refreshSubmissionsSoon);
     window.addEventListener('pudding-attendance-checked', onAttendanceChecked);
+    document.addEventListener('visibilitychange', onVisible);
     let bc: BroadcastChannel | null = null;
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    if ('BroadcastChannel' in window) {
       bc = new BroadcastChannel('pudding-realtime');
       bc.onmessage = (event) => {
         if (event.data?.type === 'attendance_checked') onAttendanceChecked();
-        if (event.data?.type === 'submission_created') onSubmissionCreated();
+        if (event.data?.type === 'submission_created') refreshSubmissionsSoon();
       };
     }
 
     return () => {
-      clearInterval(interval);
-      window.removeEventListener('pudding-submission-created', onSubmissionCreated);
+      unsubscribe();
+      clearTimeout(submissionTimer);
+      clearTimeout(timelineTimer);
+      clearInterval(fallback);
+      window.removeEventListener('pudding-submission-created', refreshSubmissionsSoon);
       window.removeEventListener('pudding-attendance-checked', onAttendanceChecked);
+      document.removeEventListener('visibilitychange', onVisible);
       bc?.close();
     };
-  }, [classroomId, tab, assignments]);
+  }, [classroomId]);
+
+  // Re-render when the next scheduled assignment goes live, so its badge and
+  // timeline entry flip from "scheduled" without a refresh.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const now = Date.now();
+    const next = assignments
+      .map((a) => (a.publish_at ? new Date(a.publish_at).getTime() : NaN))
+      .filter((t) => t > now)
+      .sort((a, b) => a - b)[0];
+    if (!next) return;
+    const timer = setTimeout(() => setNowMs(Date.now()), Math.min(next - now + 500, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [assignments, nowMs]);
 
   // ----------------------------------------------------
   // UNIFIED TIMELINE BUILDER (Feed of Announcements, Work, Exams, Attendance)
@@ -669,7 +735,7 @@ export default function ClassroomWorkspacePage() {
         rawId: post.id,
         isPost: true,
         assignmentId: aId,
-        scheduledAt: post.metadata?.publishAt && new Date(post.metadata.publishAt).getTime() > Date.now() ? post.metadata.publishAt : undefined,
+        scheduledAt: post.metadata?.publishAt && new Date(post.metadata.publishAt).getTime() > nowMs ? post.metadata.publishAt : undefined,
         title,
         body: post.body,
         type: post.activity_type || 'announcement',
@@ -695,7 +761,7 @@ export default function ClassroomWorkspacePage() {
         rawId: item.id,
         isPost: false,
         assignmentId: item.id,
-        scheduledAt: item.publish_at && new Date(item.publish_at).getTime() > Date.now() ? item.publish_at : undefined,
+        scheduledAt: item.publish_at && new Date(item.publish_at).getTime() > nowMs ? item.publish_at : undefined,
         title: item.is_exam ? 'ข้อสอบในระบบ' : 'งานที่มอบหมาย',
         body: `${item.title} (${item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: ${formatDateTime(item.due_date, 'th')})`,
         type: item.is_exam ? ('exam' as const) : ('assignment' as const),
@@ -732,7 +798,7 @@ export default function ClassroomWorkspacePage() {
     }
 
     return list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [posts, assignments, sessions]);
+  }, [posts, assignments, sessions, nowMs]);
 
 
   // Existing group names across assignments
@@ -1435,9 +1501,12 @@ export default function ClassroomWorkspacePage() {
                 <button
                   key={item.id}
                   onClick={() => {
+                    if (item.id === tab) return;
                     setTab(item.id);
-                    router.replace(`/classrooms/${classroom.id}?tab=${item.id}`, { scroll: false });
+                    // Native history keeps ?tab in sync without a router round-trip.
+                    window.history.replaceState(null, '', `/classrooms/${classroom.id}?tab=${item.id}`);
                   }}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`px-3.5 sm:px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                     isActive
                       ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
@@ -1451,6 +1520,8 @@ export default function ClassroomWorkspacePage() {
             })}
           </div>
 
+          {/* Tab content fades and rises slightly on switch (opacity/transform only, so it stays on the GPU). */}
+          <div key={tab} className="animate-in fade-in slide-in-from-bottom-1 [--tw-duration:220ms]">
           {/* ============================================================ */}
           {/* TAB 1: OVERVIEW (ภาพรวม & Facebook-style Teacher Timeline) */}
           {/* ============================================================ */}
@@ -2109,6 +2180,7 @@ export default function ClassroomWorkspacePage() {
               )}
             </section>
           )}
+          </div>
         </main>
       </div>
 

@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
+import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAssignmentWindow, QUIZ_SUBMIT_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { parseTrueFalse } from '@/lib/utils/trueFalse';
@@ -343,6 +344,8 @@ export async function POST(request: NextRequest) {
       }, { status: 503 });
     }
 
+    // Teacher pages with this classroom open refresh their counts now instead of polling.
+    after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id }));
     return NextResponse.json({ success: true, submission: submissionRecord });
   } catch (error: any) {
     console.error('[POST /api/submissions] Fatal error:', error);

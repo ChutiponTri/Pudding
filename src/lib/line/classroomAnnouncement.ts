@@ -2,6 +2,7 @@ import 'server-only';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { pushLineGroupText } from '@/lib/line/messaging';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
+import { signalClassroom } from '@/lib/realtime/classroomSignal';
 
 export type PostActivityType = 'announcement' | 'assignment' | 'exam' | 'attendance';
 
@@ -76,6 +77,11 @@ export async function announceScheduledPosts(
       const { data: assignment } = await supabase.from('assignments').select('id').eq('id', metadata.assignmentId).maybeSingle();
       if (!assignment) continue;
     }
+    // Open student/teacher pages show the work right away.
+    await signalClassroom(post.classroom_id, {
+      type: 'published',
+      assignmentId: typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined,
+    });
     const { data: classroom } = await supabase.from('classrooms').select('name, line_group_id').eq('id', post.classroom_id).maybeSingle();
     if (!classroom?.line_group_id) continue;
     try {

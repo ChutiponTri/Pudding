@@ -14,7 +14,8 @@ import {
   TeacherRole,
   User,
 } from '@/types/database';
-import { createClient } from './client';
+import { createClient, isSupabaseConfigured } from './client';
+import { classroomSignalChannel, type ClassroomSignal } from '@/lib/realtime/signals';
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 
@@ -830,6 +831,7 @@ export const dataService = {
       return !!teacherId && !!row && isTeacherOf(row, teacherId);
     };
 
+    let realtimeLive = false;
     const channel = supabase
       .channel(`classrooms_${teacherId || 'student'}_${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'classrooms' }, (change) => {
@@ -859,7 +861,9 @@ export const dataService = {
           payload,
         });
       })
-      .subscribe();
+      .subscribe((status) => {
+        realtimeLive = status === 'SUBSCRIBED';
+      });
 
     const broadcast = supabase.channel('pudding_realtime_broadcast');
     const onBroadcast = (event: { payload?: ClassroomChangeEvent['detail'] }) => {
@@ -884,11 +888,16 @@ export const dataService = {
         bc.onmessage = (event) => onUpdate({ eventType: 'LOCAL_SYNC', detail: event.data?.detail || event.data });
       } catch {}
 
-      // Fallback poll: compares roster ids only, never the full hydrated data.
-      if (options.classroomIds) {
+      // Fallback poll while the realtime socket is down: compares roster ids
+      // only, never the full hydrated data. pollIntervalMs: 0 turns it off.
+      if (options.classroomIds && options.pollIntervalMs !== 0) {
         let lastFingerprint = '';
         pollTimer = setInterval(async () => {
           if (document.visibilityState !== 'visible') return;
+          if (realtimeLive) {
+            lastFingerprint = '';
+            return;
+          }
           const ids = options.classroomIds!();
           if (ids.length === 0) return;
           try {
@@ -923,6 +932,42 @@ export const dataService = {
         bc?.close();
       } catch {}
       if (pollTimer) clearInterval(pollTimer);
+    };
+  },
+
+  /**
+   * Listens for server signals about the given classrooms (new submission,
+   * timeline change, scheduled work published). `onLive(false)` means the
+   * socket is down and the caller should fall back to polling.
+   */
+  subscribeToClassroomSignals(
+    classroomIds: string[],
+    onSignal: (classroomId: string, signal: ClassroomSignal) => void,
+    onLive?: (live: boolean) => void
+  ) {
+    const ids = [...new Set(classroomIds.filter(Boolean))];
+    if (!ids.length || !isSupabaseConfigured) {
+      onLive?.(false);
+      return () => {};
+    }
+    const supabase = createClient();
+    const live = new Set<string>();
+    const channels = ids.map((classroomId) =>
+      supabase
+        .channel(classroomSignalChannel(classroomId))
+        .on('broadcast', { event: '*' }, (message) => onSignal(classroomId, message.payload as ClassroomSignal))
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') live.add(classroomId);
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') live.delete(classroomId);
+          onLive?.(live.size === ids.length);
+        })
+    );
+    return () => {
+      for (const channel of channels) {
+        try {
+          supabase.removeChannel(channel);
+        } catch {}
+      }
     };
   },
 

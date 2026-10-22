@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, use, Suspense } from 'react';
+import React, { useState, useEffect, useRef, use, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
@@ -172,34 +172,70 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     loadAllData();
   }, [assignmentId]);
 
+  // New submissions arrive as a server signal for this classroom; refetch then.
+  // A slow poll covers the case where the realtime socket is down. Refreshes
+  // wait while a grading or audit dialog is open so it doesn't jump.
+  const pausedRef = useRef(false);
   useEffect(() => {
-    // Background refresh for new submissions (paused while grading or hidden).
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible' && !isGradingWorkspaceOpen && !isAuditModalOpen) {
-        refreshSubmissions();
-      }
-    }, 15000);
+    pausedRef.current = isGradingWorkspaceOpen || isAuditModalOpen;
+  }, [isGradingWorkspaceOpen, isAuditModalOpen]);
+  const signalClassroomId = assignment?.classroom_id;
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let fallback: ReturnType<typeof setInterval> | undefined;
+    let live = false;
+    let lastFetch = Date.now();
+    const refresh = () => {
+      if (pausedRef.current || document.visibilityState !== 'visible') return;
+      lastFetch = Date.now();
+      refreshSubmissions();
+    };
+    const refreshSoon = () => {
+      clearTimeout(timer);
+      timer = setTimeout(refresh, 400);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastFetch > 30000) refresh();
+    };
+
+    const unsubscribe = signalClassroomId
+      ? dataService.subscribeToClassroomSignals(
+          [signalClassroomId],
+          (_id, signal) => {
+            if (signal?.type === 'submission' && signal.assignmentId === assignmentId) refreshSoon();
+          },
+          (isLive) => {
+            live = isLive;
+            if (isLive) {
+              clearInterval(fallback);
+              fallback = undefined;
+            } else if (!fallback) {
+              fallback = setInterval(() => !live && refresh(), 30000);
+            }
+          }
+        )
+      : () => {};
 
     // Same-browser events refresh instantly.
-    const handleSubmissionEvent = () => refreshSubmissions();
-
-    window.addEventListener('pudding-submission-created', handleSubmissionEvent);
+    window.addEventListener('pudding-submission-created', refreshSoon);
+    document.addEventListener('visibilitychange', onVisible);
     let bc: BroadcastChannel | null = null;
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    if ('BroadcastChannel' in window) {
       bc = new BroadcastChannel('pudding-realtime');
       bc.onmessage = (event) => {
-        if (event.data?.type === 'submission_created') {
-          handleSubmissionEvent();
-        }
+        if (event.data?.type === 'submission_created') refreshSoon();
       };
     }
 
     return () => {
-      clearInterval(interval);
-      window.removeEventListener('pudding-submission-created', handleSubmissionEvent);
-      if (bc) bc.close();
+      unsubscribe();
+      clearTimeout(timer);
+      clearInterval(fallback);
+      window.removeEventListener('pudding-submission-created', refreshSoon);
+      document.removeEventListener('visibilitychange', onVisible);
+      bc?.close();
     };
-  }, [assignmentId, isGradingWorkspaceOpen, isAuditModalOpen]);
+  }, [assignmentId, signalClassroomId]);
 
   // Handle Manual Override
   const handleSetOverride = async (newStatus: SubmissionOverrideStatus, newExtendedUntil?: string) => {
