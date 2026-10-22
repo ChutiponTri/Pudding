@@ -85,8 +85,9 @@ function NewAssignmentContent() {
   const [schedulePublish, setSchedulePublish] = useState(false);
   const [publishAt, setPublishAt] = useState(() => daysFromNowAt(1, 8, 0));
   const reminderCron = 'relative_due_date';
-  // One reminder per assignment (each one is a LINE message from the quota); null = no reminder.
-  const [reminderOffset, setReminderOffset] = useState<number | null>(24 * 60);
+  // One reminder per assignment (each one is a LINE message from the quota).
+  // undefined = not chosen yet (the teacher must pick), null = no reminder.
+  const [reminderOffset, setReminderOffset] = useState<number | null | undefined>(undefined);
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setClock(Date.now()), 60000);
@@ -312,7 +313,9 @@ function NewAssignmentContent() {
   const reminderOptions = allReminderOptions.filter((option) => option.value < minutesUntilDue);
   // The chosen reminder, if it still fits before the deadline (saved as a one-item list).
   const effectiveReminderOffsets =
-    reminderOffset !== null && reminderOptions.some((option) => option.value === reminderOffset) ? [reminderOffset] : [];
+    typeof reminderOffset === 'number' && reminderOptions.some((option) => option.value === reminderOffset) ? [reminderOffset] : [];
+  // Dropdown value: a fitting time, "none", or '' (please select; also when the chosen time no longer fits).
+  const reminderSelectValue = effectiveReminderOffsets.length ? String(effectiveReminderOffsets[0]) : reminderOffset === null ? 'none' : '';
 
   const handleAddQuestion = (type: QuestionType = 'short_answer') => {
     // Use courseIndicators first, fall back to global indicators
@@ -390,6 +393,11 @@ function NewAssignmentContent() {
         alert(language === 'th' ? 'กำหนดส่งต้องอยู่หลังเวลาเผยแพร่' : 'The due date must be after the publish time');
         return;
       }
+    }
+    if (!isExam && selectedClassroomsLineReady && reminderOptions.length > 0 && !reminderSelectValue) {
+      alert(language === 'th' ? 'กรุณาเลือกเวลาแจ้งเตือนทาง LINE (หรือเลือก "ไม่ต้องแจ้งเตือน")' : 'Please choose a LINE reminder (or "No reminder")');
+      document.getElementById('line-reminder')?.focus();
+      return;
     }
     const incompleteChoice = questions.findIndex(
       (q) => q.type === 'multiple_choice' && q.options.filter((opt) => opt.trim()).length < 2
@@ -871,27 +879,23 @@ function NewAssignmentContent() {
                     : 'Less than 30 minutes until the due date, so no reminder can be scheduled.'}
                 </div>
               ) : selectedClassroomsLineReady ? (
-                <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t('assignment_creator.fields.line_reminder_label')}>
-                  {[...reminderOptions, { value: 0, label: language === 'th' ? 'ไม่ต้องเตือน' : 'No reminder' }].map((option) => {
-                    const selected = option.value === 0 ? effectiveReminderOffsets.length === 0 : effectiveReminderOffsets[0] === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => setReminderOffset(option.value || null)}
-                        className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer inline-flex items-center gap-1.5 ${
-                          selected
-                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
-                            : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-slate-700 dark:text-slate-200 hover:border-emerald-400'
-                        }`}
-                      >
-                        {selected && <Check className="w-3.5 h-3.5" />}
-                        <span>{option.label}</span>
-                      </button>
-                    );
-                  })}
+                <div className="relative max-w-md">
+                  <select
+                    id="line-reminder"
+                    value={reminderSelectValue}
+                    onChange={(e) => setReminderOffset(e.target.value === 'none' ? null : e.target.value ? Number(e.target.value) : undefined)}
+                    aria-label={t('assignment_creator.fields.line_reminder_label')}
+                    className={`w-full appearance-none pl-3.5 pr-9 py-2.5 rounded-xl border text-xs font-bold cursor-pointer focus:outline-hidden focus:border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 ${
+                      reminderSelectValue ? 'text-slate-900 dark:text-white' : 'text-slate-400'
+                    }`}
+                  >
+                    <option value="" disabled>{language === 'th' ? '— กรุณาเลือก —' : '— Please select —'}</option>
+                    {reminderOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                    <option value="none">{language === 'th' ? 'ไม่ต้องแจ้งเตือน' : 'No reminder'}</option>
+                  </select>
+                  <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-600" />
                 </div>
               ) : (
                 <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
@@ -904,8 +908,10 @@ function NewAssignmentContent() {
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {selectedClassroomsLineReady
                   ? effectiveReminderOffsets.length
-                    ? 'เตือน 1 ครั้งตามเวลาที่เลือก — ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน (แสดงเฉพาะเวลาที่ยังทันก่อนกำหนดส่ง)'
-                    : 'ไม่ได้เลือกเวลาเตือน ระบบจะไม่ส่งแจ้งเตือนเข้า LINE group'
+                    ? 'เตือน 1 ครั้งตามเวลาที่เลือก — ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน'
+                    : reminderSelectValue === 'none'
+                    ? 'ไม่ส่งแจ้งเตือนเข้า LINE group สำหรับงานนี้'
+                    : 'แสดงเฉพาะเวลาที่ยังทันก่อนกำหนดส่ง — ถ้าเปลี่ยนกำหนดส่งแล้วเวลาที่เลือกไม่ทัน ต้องเลือกใหม่'
                   : 'เมื่อเชื่อมต่อ LINE Bot แล้ว จึงจะสามารถตั้งเวลาและส่งสรุปเข้า LINE group ได้'}
               </p>
             </div>
