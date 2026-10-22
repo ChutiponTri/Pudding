@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, R2_BUCKET_NAME, R2_PUBLIC_URL, isR2Configured } from '@/lib/storage/r2Client';
+import { getActor } from '@/lib/auth/actor';
 
 export const runtime = 'nodejs';
 
@@ -20,13 +21,21 @@ const ALLOWED_MIME_TYPES = [
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
+/** Keeps a client-supplied value safe to use as one segment of a storage key. */
+const keySegment = (value: string) => value.replace(/[^\w.-]/g, '_').slice(0, 80) || 'unknown';
+
 export async function POST(req: NextRequest) {
   try {
+    // Only signed-in teachers and LINE-verified students may upload.
+    const actor = await getActor(req);
+    if (!actor) return NextResponse.json({ error: 'กรุณาเข้าสู่ระบบก่อนอัปโหลดไฟล์' }, { status: 401 });
+
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
-    const assignmentId = (formData.get('assignment_id') as string) || 'general';
-    const studentId = (formData.get('student_id') as string) || 'student_anonymous';
-    const purpose = (formData.get('purpose') as string) || 'submission';
+    const assignmentId = keySegment((formData.get('assignment_id') as string) || 'general');
+    // A student's files are filed under their verified id; teachers upload sample work.
+    const studentId = keySegment(actor.userId);
+    const purpose = actor.kind === 'teacher' && formData.get('purpose') === 'sample' ? 'sample' : 'submission';
 
     if (!file) {
       return NextResponse.json(

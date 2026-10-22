@@ -32,6 +32,7 @@ import {
   UserCog,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme/ThemeContext";
+import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
 import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
@@ -262,8 +263,8 @@ export default function LiffStudentPage() {
     if (!classroom || (cached && isFreshCourseCache(cached.fetchedAt))) return;
     try {
       const [response, attendanceResponse] = await Promise.all([
-        fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroom.id)}&lineUid=${encodeURIComponent(lineUid)}`, { cache: "no-store" }),
-        fetch(`/api/attendance?classroomId=${encodeURIComponent(classroom.id)}&lineUid=${encodeURIComponent(lineUid)}`, { cache: "no-store" }),
+        authFetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroom.id)}`, { cache: "no-store" }),
+        authFetch(`/api/attendance?classroomId=${encodeURIComponent(classroom.id)}`, { cache: "no-store" }),
       ]);
       const [posts, attendance] = await Promise.all([
         response.ok ? response.json() : Promise.resolve({ posts: [] }),
@@ -307,8 +308,8 @@ export default function LiffStudentPage() {
     }
     try {
       // One request for every classroom instead of one request per classroom.
-      const res = await fetch(
-        `/api/attendance?classroomIds=${encodeURIComponent(classList.map((cls) => cls.id).join(","))}&lineUid=${encodeURIComponent(lineUid)}`,
+      const res = await authFetch(
+        `/api/attendance?classroomIds=${encodeURIComponent(classList.map((cls) => cls.id).join(","))}`,
         { cache: "no-store" }
       );
       if (!res.ok) return;
@@ -339,15 +340,14 @@ export default function LiffStudentPage() {
     if (!targetClassroomId || !currentStudent) return;
     setIsCheckingIn(true);
     try {
-      const res = await fetch("/api/attendance", {
+      // The server identifies the student from the LINE token.
+      const res = await authFetch("/api/attendance", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action: "check_in",
           classroomId: targetClassroomId,
           sessionId: sessionId || undefined,
-          lineUid: currentStudent.line_uid,
-          studentId: currentStudent.student_id || currentStudent.id,
         }),
       });
       const json = await res.json();
@@ -521,6 +521,8 @@ export default function LiffStudentPage() {
           sessionStorage.removeItem("pudding_liff_logged_out");
         }
 
+        // Every API call carries this token; the server verifies it with LINE.
+        setLineAccessToken(liff.getAccessToken());
         const profile = await liff.getProfile();
 
         // Real sync of LINE profile into Supabase users table
@@ -602,6 +604,7 @@ export default function LiffStudentPage() {
       if (liffInstance && liffInstance.isLoggedIn()) {
         liffInstance.logout();
       }
+      setLineAccessToken(null);
       setCurrentStudent(null);
       setAuthStatus("unauthenticated");
     }
@@ -682,10 +685,12 @@ export default function LiffStudentPage() {
         const [myClasses, institutions, linkedClass] = await Promise.all([
           dataService.getStudentClassrooms({ id: currentStudent.id, line_uid: currentStudent.line_uid }),
           isInitial ? dataService.getRegisteredInstitutions() : Promise.resolve(null),
-          classIdParam
-            ? dataService.getClassroomById(classIdParam)
-            : codeParam
+          // The invite code identifies the classroom for students who have not joined yet;
+          // classId alone only opens a classroom the student already belongs to.
+          codeParam
             ? dataService.findClassroomByInviteCode(codeParam)
+            : classIdParam
+            ? dataService.getClassroomById(classIdParam)
             : Promise.resolve(null),
         ]);
         if (institutions) setRegisteredInstitutions(institutions);
@@ -741,7 +746,7 @@ export default function LiffStudentPage() {
                     avatar_url: currentStudent.avatar,
                     line_uid: currentStudent.line_uid,
                   },
-                  { autoAdmit: false }
+                  { autoAdmit: false, inviteCode: codeParam || undefined }
                 );
                 setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
                 setTimeout(() => setJoinMessage(null), 3500);
@@ -1031,9 +1036,8 @@ export default function LiffStudentPage() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("assignment_id", activeAssignment?.id || "general");
-      formData.append("student_id", currentStudent.student_id || currentStudent.id);
 
-      const res = await fetch("/api/upload", {
+      const res = await authFetch("/api/upload", {
         method: "POST",
         body: formData,
       });
@@ -1146,7 +1150,7 @@ export default function LiffStudentPage() {
           line_uid: currentStudent.line_uid,
           avatar_url: currentStudent.avatar,
         },
-        { autoAdmit: isAlreadyActive }
+        { autoAdmit: isAlreadyActive, inviteCode: joinInviteCode.trim() }
       );
 
       setClassrooms((prev) => (prev.some((c) => c.id === matched.id) ? prev : [matched, ...prev]));

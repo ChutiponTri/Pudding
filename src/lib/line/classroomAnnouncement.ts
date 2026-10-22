@@ -12,7 +12,9 @@ export function buildPostLineMessage(
   classroomName: string,
   body: string,
   classroomId: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
+  /** Lets group members who have not joined yet request to join from the link. */
+  inviteCode?: string | null
 ): string {
   let icon = '📢';
   let title = 'ประกาศจากครู';
@@ -28,11 +30,11 @@ export function buildPostLineMessage(
   }
   const message = `${icon} ${title}\nห้อง: ${classroomName}\n\n${body}`;
   const assignmentId = typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined;
-  if (activityType === 'attendance') return withLiffLink(message, 'กดเพื่อเช็คชื่อ', { classroomId, view: 'attendance' });
+  if (activityType === 'attendance') return withLiffLink(message, 'กดเพื่อเช็คชื่อ', { classroomId, inviteCode, view: 'attendance' });
   if ((activityType === 'assignment' || activityType === 'exam') && assignmentId) {
-    return withLiffLink(message, activityType === 'exam' ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', { classroomId, assignmentId });
+    return withLiffLink(message, activityType === 'exam' ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', { classroomId, inviteCode, assignmentId });
   }
-  return withLiffLink(message, 'เปิดห้องเรียนใน Pudding', { classroomId });
+  return withLiffLink(message, 'เปิดห้องเรียนใน Pudding', { classroomId, inviteCode });
 }
 
 /**
@@ -82,16 +84,24 @@ export async function announceScheduledPosts(
       type: 'published',
       assignmentId: typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined,
     });
-    const { data: classroom } = await supabase.from('classrooms').select('name, line_group_id').eq('id', post.classroom_id).maybeSingle();
+    const { data: classroom } = await supabase.from('classrooms').select('name, line_group_id, invite_code').eq('id', post.classroom_id).maybeSingle();
     if (!classroom?.line_group_id) continue;
     try {
       await pushLineGroupText(
         classroom.line_group_id,
-        buildPostLineMessage(post.activity_type, classroom.name || 'ห้องเรียน', post.body, post.classroom_id, metadata)
+        buildPostLineMessage(post.activity_type, classroom.name || 'ห้องเรียน', post.body, post.classroom_id, metadata, classroom.invite_code)
       );
       count += 1;
     } catch (pushError) {
       console.error(`Scheduled LINE announcement failed for post ${post.id}:`, pushError);
+      // Put it back in the queue for the next run; give up after three tries.
+      const attempts = Number(metadata.lineAttempts || 0) + 1;
+      if (attempts < 3) {
+        await supabase
+          .from('classroom_posts')
+          .update({ metadata: { ...metadata, pendingLine: true, lineAttempts: attempts } })
+          .eq('id', post.id);
+      }
     }
   }
   return count;

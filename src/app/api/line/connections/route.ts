@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient, createServiceSupabaseClient } from '@/lib/supabase/server';
+import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
 
@@ -13,7 +13,7 @@ const CONNECT_INTENT_TTL_MS = 15 * 60 * 1000;
 async function getOwnedClassroom(classroomId: string) {
   const { userId } = await auth();
   if (!userId) return { userId: null, classroom: null };
-  const supabase = await createServerSupabaseClient();
+  const supabase = createServiceSupabaseClient();
   const { data: classroom } = await supabase
     .from('classrooms')
     .select('*')
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     && classroom.line_connection_token_expires_at
     && new Date(classroom.line_connection_token_expires_at).getTime() <= Date.now();
   if (isExpired) {
-    await (await createServerSupabaseClient()).from('classrooms').update({
+    await createServiceSupabaseClient().from('classrooms').update({
       line_connection_status: 'disconnected',
       line_connection_token_hash: null,
       line_connection_token: null,
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   const { userId, classroom } = await getOwnedClassroom(classroomId);
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!classroom) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
-  const supabase = await createServerSupabaseClient();
+  const supabase = createServiceSupabaseClient();
 
   if (action === 'disconnect') {
     const { error } = await supabase.from('classrooms').update({
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
     if (!classroom.line_group_id) return NextResponse.json({ error: 'LINE Group is not connected' }, { status: 409 });
     await pushLineGroupText(
       classroom.line_group_id,
-      withLiffLink(`✅ Pudding เชื่อมต่อห้องเรียน “${classroom.name}” สำเร็จแล้ว`, 'นักเรียนกดเพื่อเข้าห้องเรียน', { classroomId: classroom.id })
+      withLiffLink(`✅ Pudding เชื่อมต่อห้องเรียน “${classroom.name}” สำเร็จแล้ว`, 'นักเรียนกดเพื่อเข้าห้องเรียน', { classroomId: classroom.id, inviteCode: classroom.invite_code })
     );
     return NextResponse.json({ status: 'connected' });
   }

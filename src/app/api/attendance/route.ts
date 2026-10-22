@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { auth } from '@clerk/nextjs/server';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
+import { getActor, type Actor } from '@/lib/auth/actor';
+import { signalClassroom } from '@/lib/realtime/classroomSignal';
+import { classroomRole, isTeacherOf } from '@/lib/server/access';
+import type { Classroom } from '@/types/database';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,21 +28,20 @@ type AttendanceSession = {
 
 type RosterEntry = { id?: string; line_uid?: string; student_id?: string; first_name?: string; last_name?: string };
 
-/** The signed-in user and the classroom, if they teach it. */
-async function getTeacherContext(classroomId: string) {
-  const { userId } = await auth();
+/** The caller and the classroom, if the caller is a teacher of it. */
+async function getTeacherContext(actor: Actor | null, classroomId: string) {
   const supabase = createServiceSupabaseClient();
-  if (!userId) return { userId: null, supabase, classroom: null };
+  if (actor?.kind !== 'teacher') return { userId: null, supabase, classroom: null };
   const { data: classroom } = await supabase
     .from('classrooms')
-    .select('id, name, teacher_id, teachers, line_group_id')
+    .select('id, name, teacher_id, teachers, line_group_id, invite_code')
     .eq('id', classroomId)
     .maybeSingle();
-  const isTeacher =
-    classroom?.teacher_id === userId ||
-    (classroom?.teachers || []).some((teacher: { teacher_id?: string }) => teacher.teacher_id === userId);
-  return { userId, supabase, classroom: isTeacher ? classroom : null };
+  return { userId: actor.userId, supabase, classroom: classroom && isTeacherOf(classroom, actor.userId) ? classroom : null };
 }
+
+/** Pages with this classroom open refresh attendance once (after the response). */
+const signalAttendance = (classroomId: string) => after(() => signalClassroom(classroomId, { type: 'attendance' }));
 
 /** users.id for a LINE uid (attendance_records.student_id references users.id). */
 async function resolveUserId(supabase: ReturnType<typeof createServiceSupabaseClient>, lineUid: string) {
@@ -51,17 +53,20 @@ export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const classroomId = params.get('classroomId');
   const sessionId = params.get('sessionId');
-  const lineUid = params.get('lineUid');
-  const classroomIds = (params.get('classroomIds') || '').split(',').map((id) => id.trim()).filter(Boolean);
+  const requestedIds = (params.get('classroomIds') || '').split(',').map((id) => id.trim()).filter(Boolean);
   const supabase = createServiceSupabaseClient();
+  const actor = await getActor(request);
 
   // Student overview: sessions + this student's records for many classrooms in
-  // one request (the LIFF home screen).
-  if (!classroomId && classroomIds.length > 0 && lineUid) {
-    const studentId = await resolveUserId(supabase, lineUid);
+  // one request (the LIFF home screen). Only classrooms they belong to.
+  if (!classroomId && requestedIds.length > 0 && actor?.kind === 'student') {
+    const { data: rows } = await supabase.from('classrooms').select('*').in('id', requestedIds);
+    const roles = await Promise.all(((rows || []) as Classroom[]).map((c) => classroomRole(supabase, actor, c)));
+    const classroomIds = ((rows || []) as Classroom[]).filter((_, i) => roles[i]).map((c) => c.id);
+    if (!classroomIds.length) return NextResponse.json({ byClassroom: {} });
     const [sessionsRes, recordsRes] = await Promise.all([
       supabase.from('attendance_sessions').select('*').in('classroom_id', classroomIds).order('starts_at', { ascending: false }),
-      supabase.from('attendance_records').select('*').in('classroom_id', classroomIds).in('student_id', [...new Set([studentId, lineUid])]),
+      supabase.from('attendance_records').select('*').in('classroom_id', classroomIds).in('student_id', actor.keys),
     ]);
     const byClassroom: Record<string, { sessions: unknown[]; records: unknown[] }> = {};
     for (const id of classroomIds) {
@@ -80,14 +85,17 @@ export async function GET(request: NextRequest) {
     supabase.from('attendance_sessions').select('*').eq('classroom_id', classroomId).order('starts_at', { ascending: false });
   const sessionQuery = sessionId ? sessionsQuery().eq('id', sessionId) : sessionsQuery();
 
-  const context = await getTeacherContext(classroomId);
+  const context = await getTeacherContext(actor, classroomId);
 
-  // Student perspective: their own records only.
-  if (!context.classroom && lineUid) {
-    const studentId = await resolveUserId(supabase, lineUid);
+  // Student perspective: their own records only, in a classroom they belong to.
+  if (!context.classroom && actor?.kind === 'student') {
+    const { data: classroomRow } = await supabase.from('classrooms').select('*').eq('id', classroomId).maybeSingle();
+    if (!classroomRow || !(await classroomRole(supabase, actor, classroomRow as Classroom))) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const [{ data: sessions }, { data: records }] = await Promise.all([
       sessionQuery,
-      supabase.from('attendance_records').select('*').eq('classroom_id', classroomId).in('student_id', [...new Set([studentId, lineUid])]),
+      supabase.from('attendance_records').select('*').eq('classroom_id', classroomId).in('student_id', actor.keys),
     ]);
     return NextResponse.json({ sessions: sessions || [], session: sessions?.[0] || null, records: records || [] });
   }
@@ -120,34 +128,42 @@ export async function POST(request: NextRequest) {
   const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
   const action = body.action || 'create';
   if (!classroomId) return NextResponse.json({ error: 'classroomId is required' }, { status: 400 });
+  const actor = await getActor(request);
 
   // ----------------------------------------------------
   // STUDENT SELF CHECK-IN
   // ----------------------------------------------------
   if (action === 'check_in') {
-    const studentId = typeof body.studentId === 'string' ? body.studentId.trim() : '';
-    const lineUid = typeof body.lineUid === 'string' ? body.lineUid.trim() : '';
+    // The student is whoever LINE says the token belongs to, never an id from the body.
+    if (actor?.kind !== 'student') return NextResponse.json({ error: 'กรุณาเข้าสู่ระบบผ่าน LINE' }, { status: 401 });
+    const lineUid = actor.lineUid;
+    const studentId = actor.userId;
     const targetSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
-    if (!studentId && !lineUid) {
-      return NextResponse.json({ error: 'Student identity (studentId or lineUid) is required' }, { status: 400 });
-    }
 
     const sb = createServiceSupabaseClient();
+    // The session must belong to this classroom.
     const sessionQuery = targetSessionId
-      ? sb.from('attendance_sessions').select('*').eq('id', targetSessionId).maybeSingle()
+      ? sb.from('attendance_sessions').select('*').eq('id', targetSessionId).eq('classroom_id', classroomId).maybeSingle()
       : sb.from('attendance_sessions').select('*').eq('classroom_id', classroomId).eq('status', 'open').order('starts_at', { ascending: false }).limit(1).maybeSingle();
     const [{ data: session }, { data: lineUser }, { data: classroom }] = await Promise.all([
       sessionQuery,
-      lineUid ? sb.from('users').select('id, first_name, last_name').eq('line_uid', lineUid).maybeSingle() : Promise.resolve({ data: null }),
-      sb.from('classrooms').select('students').eq('id', classroomId).maybeSingle(),
+      sb.from('users').select('id, first_name, last_name').eq('line_uid', lineUid).maybeSingle(),
+      sb.from('classrooms').select('*').eq('id', classroomId).maybeSingle(),
     ]);
 
+    // Only admitted students of this classroom can check in.
+    if (!classroom || (await classroomRole(sb, actor, classroom as Classroom)) !== 'student') {
+      return NextResponse.json({ error: 'คุณยังไม่ได้อยู่ในห้องเรียนนี้ หรือยังรอคุณครูอนุมัติ' }, { status: 403 });
+    }
     if (!session || session.status === 'closed') {
       return NextResponse.json({ error: 'ขณะนี้ไม่มีคาบเช็คชื่อที่เปิดอยู่' }, { status: 400 });
     }
 
     const now = Date.now();
     const startTime = new Date(session.starts_at).getTime();
+    if (now < startTime) {
+      return NextResponse.json({ error: 'ยังไม่ถึงเวลาเช็คชื่อของคาบนี้' }, { status: 400 });
+    }
     const onTimeLimit = startTime + (session.on_time_until_minutes || 10) * 60 * 1000;
     const lateLimit = startTime + (session.late_until_minutes || 30) * 60 * 1000;
     const computedStatus: AttendanceStatus = now > lateLimit ? 'absent' : now > onTimeLimit ? 'late' : 'on_time';
@@ -209,13 +225,14 @@ export async function POST(request: NextRequest) {
       console.error('Attendance check-in failed:', attendanceError);
       return NextResponse.json({ error: 'บันทึกการเช็คชื่อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' }, { status: 503 });
     }
+    signalAttendance(classroomId);
     return NextResponse.json({ success: true, status: computedStatus, record, session });
   }
 
   // ----------------------------------------------------
   // TEACHER ACTIONS
   // ----------------------------------------------------
-  const context = await getTeacherContext(classroomId);
+  const context = await getTeacherContext(actor, classroomId);
   if (!context.userId || !context.classroom) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   const { supabase, userId, classroom } = context;
 
@@ -262,7 +279,7 @@ export async function POST(request: NextRequest) {
             withLiffLink(
               `⏰ เปิดคาบเช็คชื่อ\nห้อง: ${classroom.name || 'ห้องเรียน'}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
               'กดเพื่อเช็คชื่อ',
-              { classroomId, view: 'attendance' }
+              { classroomId, inviteCode: classroom.invite_code, view: 'attendance' }
             )
           );
         } catch (err) {
@@ -270,6 +287,8 @@ export async function POST(request: NextRequest) {
         }
       });
     }
+    signalAttendance(classroomId);
+    after(() => signalClassroom(classroomId, { type: 'timeline' }));
     return NextResponse.json({ session }, { status: 201 });
   }
 
@@ -278,7 +297,9 @@ export async function POST(request: NextRequest) {
 
   const updateSession = async (fields: Record<string, unknown>) => {
     const { error } = await supabase.from('attendance_sessions').update(fields).eq('id', sessionId).eq('classroom_id', classroomId);
-    return error ? NextResponse.json({ error: error.message }, { status: 500 }) : null;
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    signalAttendance(classroomId);
+    return null;
   };
 
   if (action === 'close') {
@@ -306,6 +327,7 @@ export async function POST(request: NextRequest) {
     await supabase.from('attendance_records').delete().eq('session_id', sessionId);
     const { error } = await supabase.from('attendance_sessions').delete().eq('id', sessionId).eq('classroom_id', classroomId);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    signalAttendance(classroomId);
     return NextResponse.json({ success: true, deletedSessionId: sessionId });
   }
 
@@ -339,6 +361,7 @@ export async function POST(request: NextRequest) {
       console.error('Manual attendance record failed:', error);
       return NextResponse.json({ error: 'บันทึกสถานะการเข้าเรียนไม่สำเร็จ' }, { status: 503 });
     }
+    signalAttendance(classroomId);
     return NextResponse.json({ record });
   }
 
@@ -351,11 +374,12 @@ export async function DELETE(request: NextRequest) {
   if (!sessionId || !classroomId) {
     return NextResponse.json({ error: 'sessionId and classroomId are required' }, { status: 400 });
   }
-  const { supabase, classroom } = await getTeacherContext(classroomId);
+  const { supabase, classroom } = await getTeacherContext(await getActor(request), classroomId);
   if (!classroom) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   await supabase.from('attendance_records').delete().eq('session_id', sessionId);
   const { error } = await supabase.from('attendance_sessions').delete().eq('id', sessionId).eq('classroom_id', classroomId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  signalAttendance(classroomId);
   return NextResponse.json({ success: true, deletedSessionId: sessionId });
 }

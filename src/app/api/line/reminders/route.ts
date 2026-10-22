@@ -85,7 +85,7 @@ async function runReminders(request: NextRequest) {
 
     const { data: classroom } = await supabase
       .from('classrooms')
-      .select('name, line_group_id, students')
+      .select('name, line_group_id, students, invite_code')
       .eq('id', assignment.classroom_id)
       .maybeSingle();
     if (!classroom?.line_group_id) continue;
@@ -110,7 +110,7 @@ async function runReminders(request: NextRequest) {
         withLiffLink(
           `🔔 แจ้งเตือนส่งงาน\n${assignment.title}\nห้อง: ${classroom.name}\nกำหนดส่ง: ${dueLabel}\n\nยังไม่ส่งงาน (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`,
           'กดเพื่อส่งงาน',
-          { classroomId: assignment.classroom_id, assignmentId: assignment.id }
+          { classroomId: assignment.classroom_id, inviteCode: classroom.invite_code, assignmentId: assignment.id }
         )
       );
     } catch (pushError) {

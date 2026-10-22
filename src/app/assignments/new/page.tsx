@@ -292,9 +292,13 @@ function NewAssignmentContent() {
   const handleOptionChange = (qIndex: number, optIndex: number, val: string) => {
     setQuestions((prev) => {
       const copy = [...prev];
-      const newOpts = [...copy[qIndex].options];
+      const current = copy[qIndex];
+      const newOpts = [...current.options];
+      const previousText = newOpts[optIndex];
       newOpts[optIndex] = val;
-      copy[qIndex].options = newOpts;
+      // The chosen correct answer follows its option when the teacher edits the text.
+      const idealFollows = current.type === 'multiple_choice' && previousText.trim() && current.ideal_answer === previousText;
+      copy[qIndex] = { ...current, options: newOpts, ideal_answer: idealFollows ? val : current.ideal_answer };
       return copy;
     });
   };
@@ -332,6 +336,20 @@ function NewAssignmentContent() {
       return;
     }
 
+    const noAnswerKey = questions
+      .map((q, i) => ({ q, n: i + 1 }))
+      .filter(({ q }) => q.type === 'multiple_choice' && !q.options.some((opt) => opt.trim() && opt === q.ideal_answer));
+    if (
+      noAnswerKey.length &&
+      !confirm(
+        language === 'th'
+          ? `ข้อ ${noAnswerKey.map((x) => x.n).join(', ')} ยังไม่ได้เลือกคำตอบที่ถูกต้อง ระบบจะให้ 0 คะแนนอัตโนมัติ (ตรวจเองภายหลังได้)\n\nต้องการสร้างต่อหรือไม่?`
+          : `Question ${noAnswerKey.map((x) => x.n).join(', ')} has no correct answer selected and will auto-score 0. Continue?`
+      )
+    ) {
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const primaryClassId = selectedClassroomIds[0] || classrooms[0]?.id;
@@ -339,7 +357,8 @@ function NewAssignmentContent() {
         alert(language === 'th' ? 'กรุณาเลือกห้องเรียนก่อนสร้างงาน' : 'Please choose a classroom first');
         return;
       }
-      const targetClass = classrooms.find((c) => c.id === primaryClassId);
+      // One copy per selected classroom (each gets its own timeline post and LINE message).
+      const targetClassIds = selectedClassroomIds.length ? selectedClassroomIds : [primaryClassId];
       const selectedCourse = courses.find((course) => course.id === selectedCourseId);
       if (selectedCourse?.indicator_mode === 'competency' && (selectedCourse.lesson_plans || []).length === 0) {
         alert(language === 'th' ? 'กรุณากำหนดแผนการสอน/สมรรถนะก่อนสร้างงาน' : 'Please configure competency lesson plans before creating an assignment');
@@ -347,50 +366,55 @@ function NewAssignmentContent() {
       }
       const totalPoints = questions.reduce((acc, q) => acc + Number(q.max_score || 0), 0);
 
-      const created = await dataService.createAssignment(
-        {
-          course_id: selectedCourseId,
-          classroom_id: primaryClassId,
-          classroom_name: targetClass?.name || 'Classroom',
-          title,
-          group_name: groupName.trim() || undefined,
-          description,
-          is_exam: isExam,
-          due_date: dueDate || daysFromNowAt(7, 23, 59),
-          publish_at: schedulePublish ? new Date(publishAt).toISOString() : undefined,
-          reminder_cron: reminderCron,
-          reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
-          reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
-          total_points: totalPoints,
-          status_override: 'auto',
-          sample_work_title: !isExam ? sampleWorkTitle : undefined,
-          sample_work_url: undefined,
-          sample_work_description: !isExam ? sampleWorkDescription : undefined,
-        },
-        questions.map((q) => ({
-          type: q.type,
-          question_text: q.question_text || 'คำถามข้อนี้',
-          indicator_id: q.indicator_id,
-          options: q.type === 'multiple_choice' ? q.options.map((opt) => opt.trim()).filter(Boolean) : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : undefined,
-          ideal_answer: q.ideal_answer,
-          rubric_criteria: q.rubric_criteria,
-          max_score: Number(q.max_score) || 5,
-          is_required: isExam ? true : q.is_required,
-        }))
-      );
+      const questionRows = questions.map((q) => ({
+        type: q.type,
+        question_text: q.question_text || 'คำถามข้อนี้',
+        indicator_id: q.indicator_id,
+        options: q.type === 'multiple_choice' ? q.options.map((opt) => opt.trim()).filter(Boolean) : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : undefined,
+        ideal_answer: q.ideal_answer,
+        rubric_criteria: q.rubric_criteria,
+        max_score: Number(q.max_score) || 5,
+        is_required: isExam ? true : q.is_required,
+      }));
+      const createdIds: string[] = [];
+      for (const classId of targetClassIds) {
+        const created = await dataService.createAssignment(
+          {
+            course_id: selectedCourseId,
+            classroom_id: classId,
+            classroom_name: classrooms.find((c) => c.id === classId)?.name || 'Classroom',
+            title,
+            group_name: groupName.trim() || undefined,
+            description,
+            is_exam: isExam,
+            due_date: dueDate || daysFromNowAt(7, 23, 59),
+            publish_at: schedulePublish ? new Date(publishAt).toISOString() : undefined,
+            reminder_cron: reminderCron,
+            reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
+            reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
+            total_points: totalPoints,
+            status_override: 'auto',
+            sample_work_title: !isExam ? sampleWorkTitle : undefined,
+            sample_work_url: undefined,
+            sample_work_description: !isExam ? sampleWorkDescription : undefined,
+          },
+          questionRows
+        );
+        createdIds.push(created.assignment.id);
+      }
 
       if (!isExam && sampleWorkFile) {
         setIsUploadingSample(true);
         try {
           const formData = new FormData();
           formData.append("file", sampleWorkFile);
-          formData.append("assignment_id", created.assignment.id);
-          formData.append("student_id", clerkUser?.id || "");
+          formData.append("assignment_id", createdIds[0]);
           formData.append("purpose", "sample");
           const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
           const uploadJson = await uploadRes.json();
           if (!uploadRes.ok || !uploadJson.url) throw new Error(uploadJson.error || "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ");
-          await dataService.updateAssignment(created.assignment.id, { sample_work_url: uploadJson.url });
+          // One uploaded file serves every classroom's copy.
+          await Promise.all(createdIds.map((id) => dataService.updateAssignment(id, { sample_work_url: uploadJson.url })));
         } catch (uploadError) {
           console.error("Sample work upload error:", uploadError);
           setSampleUploadError(uploadError instanceof Error ? uploadError.message : "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ");
@@ -1155,6 +1179,37 @@ function NewAssignmentContent() {
                           );
                         })}
                       </div>
+                    ) : q.type === 'multiple_choice' ? (
+                      // Pick the correct option, so auto-grading compares exactly what students select.
+                      q.options.some((opt) => opt.trim()) ? (
+                        <div className="grid gap-1.5" role="radiogroup">
+                          {q.options.map((opt, optIdx) => {
+                            if (!opt.trim()) return null;
+                            const isSelected = q.ideal_answer === opt;
+                            return (
+                              <button
+                                key={optIdx}
+                                type="button"
+                                role="radio"
+                                aria-checked={isSelected}
+                                onClick={() => handleQuestionChange(idx, 'ideal_answer', opt)}
+                                className={`px-3 py-2 rounded-xl text-xs font-bold border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                                    : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-slate-400'
+                                }`}
+                              >
+                                <span className="w-5 text-center shrink-0">{isSelected ? '✓' : String.fromCharCode(65 + optIdx)}</span>
+                                <span className="min-w-0 truncate">{opt}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-400 py-2">
+                          {language === 'th' ? 'กรอกตัวเลือกด้านบนก่อน แล้วเลือกข้อที่ถูกต้องที่นี่' : 'Fill in the options above, then pick the correct one here.'}
+                        </p>
+                      )
                     ) : (
                       <textarea
                         rows={2}

@@ -938,12 +938,12 @@ export default function DashboardPage() {
 
   const getRealLiffUrl = (cls: Classroom) => {
     const liffId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || '2011818142-BznwnWyj';
-    return `https://liff.line.me/${liffId}?classId=${cls.id}&code=${cls.invite_code || ''}`;
+    return `https://liff.line.me/${liffId}?code=${cls.invite_code || ''}`;
   };
 
   const getWebInviteUrl = (cls: Classroom) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    return `${origin}/liff?classId=${cls.id}&code=${cls.invite_code || ''}`;
+    return `${origin}/liff?code=${cls.invite_code || ''}`;
   };
 
   const handleCopyLiff = (cls: Classroom) => {
@@ -1110,11 +1110,37 @@ export default function DashboardPage() {
     }
   };
 
-  const handleCopyTeacherInviteLink = (course: Course, role: 'assistant' | 'researcher' = 'assistant') => {
-    const teacherName = `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim() || 'อาจารย์';
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const inviteUrl = `${origin}/teacher-invite?courseId=${course.id}&inviter=${encodeURIComponent(teacherName)}&role=${role}`;
-    navigator.clipboard.writeText(inviteUrl);
+  // Co-teacher invite link: a short signed code from the server (/teacher-invite?code=…).
+  const [teacherInviteCodes, setTeacherInviteCodes] = useState<Record<string, string>>({});
+  const inviteCourseId = isCoTeachersModalOpen ? editingCourseCoTeachers?.id : undefined;
+  useEffect(() => {
+    if (!inviteCourseId) return;
+    const key = `${inviteCourseId}:${newCoTeacherRole}`;
+    if (teacherInviteCodes[key]) return;
+    dataService
+      .getTeacherInviteCode(inviteCourseId, newCoTeacherRole)
+      .then((code) => setTeacherInviteCodes((prev) => ({ ...prev, [key]: code })))
+      .catch((error) => console.warn('Invite code unavailable:', error));
+  }, [inviteCourseId, newCoTeacherRole, teacherInviteCodes]);
+  const teacherInviteUrl = (courseId: string | undefined, role: 'assistant' | 'researcher') => {
+    const code = courseId ? teacherInviteCodes[`${courseId}:${role}`] : undefined;
+    if (!code) return '';
+    return `${typeof window !== 'undefined' ? window.location.origin : ''}/teacher-invite?code=${code}`;
+  };
+
+  const handleCopyTeacherInviteLink = async (course: Course, role: 'assistant' | 'researcher' = 'assistant') => {
+    let url = teacherInviteUrl(course.id, role);
+    if (!url) {
+      try {
+        const code = await dataService.getTeacherInviteCode(course.id, role);
+        setTeacherInviteCodes((prev) => ({ ...prev, [`${course.id}:${role}`]: code }));
+        url = `${window.location.origin}/teacher-invite?code=${code}`;
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'สร้างลิงก์เชิญไม่สำเร็จ');
+        return;
+      }
+    }
+    navigator.clipboard.writeText(url);
     setIsCopiedTeacherLink(true);
     setTimeout(() => setIsCopiedTeacherLink(false), 2500);
   };
@@ -2317,11 +2343,7 @@ export default function DashboardPage() {
                 </p>
 
                 <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all select-all">
-                  {typeof window !== 'undefined'
-                    ? `${window.location.origin}/teacher-invite?courseId=${editingCourseCoTeachers.id}&inviter=${encodeURIComponent(
-                        `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim() || 'อาจารย์'
-                      )}&role=${newCoTeacherRole}`
-                    : `/teacher-invite?courseId=${editingCourseCoTeachers.id}&role=${newCoTeacherRole}`}
+                  {teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole) || 'กำลังสร้างลิงก์เชิญ...'}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -2340,11 +2362,7 @@ export default function DashboardPage() {
                         newCoTeacherRole === 'assistant'
                           ? 'ครูผู้ช่วยสอน (Teaching Assistant - TA)'
                           : 'ครูผู้ช่วยตรวจงานวิจัย (Research Evaluator)'
-                      } วิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}" ที่ลิงก์: ${
-                        typeof window !== 'undefined' ? window.location.origin : ''
-                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}&inviter=${encodeURIComponent(
-                        `${clerkUser?.firstName || ''} ${clerkUser?.lastName || ''}`.trim() || 'อาจารย์'
-                      )}&role=${newCoTeacherRole}`
+                      } วิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}" ที่ลิงก์: ${teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole)}`
                     )}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -2364,9 +2382,7 @@ export default function DashboardPage() {
                         newCoTeacherRole === 'assistant'
                           ? 'ครูผู้ช่วยสอน (Teaching Assistant - TA)'
                           : 'ครูผู้ช่วยตรวจงานวิจัย (Research Evaluator)'
-                      } สำหรับรายวิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}"\n\nท่านสามารถกดยืนยันคำเชิญได้ที่ลิงก์นี้:\n${
-                        typeof window !== 'undefined' ? window.location.origin : ''
-                      }/teacher-invite?courseId=${editingCourseCoTeachers.id}&role=${newCoTeacherRole}\n\nขอบคุณครับ/ค่ะ`
+                      } สำหรับรายวิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}"\n\nท่านสามารถกดยืนยันคำเชิญได้ที่ลิงก์นี้:\n${teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole)}\n\nขอบคุณครับ/ค่ะ`
                     )}`}
                     className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                   >

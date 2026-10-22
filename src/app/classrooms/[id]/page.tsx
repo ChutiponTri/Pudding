@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { dataService } from '@/lib/supabase/dataService';
-import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
@@ -307,13 +306,13 @@ export default function ClassroomWorkspacePage() {
   const getRealLiffUrl = (cls?: Classroom | null) => {
     if (!cls) return '';
     const liffId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || '2011818142-BznwnWyj';
-    return `https://liff.line.me/${liffId}?classId=${cls.id}&code=${cls.invite_code || ''}`;
+    return `https://liff.line.me/${liffId}?code=${cls.invite_code || ''}`;
   };
 
   const getWebInviteUrl = (cls?: Classroom | null) => {
     if (!cls) return '';
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    return `${origin}/liff?classId=${cls.id}&code=${cls.invite_code || ''}`;
+    return `${origin}/liff?code=${cls.invite_code || ''}`;
   };
 
   const handleLineConnection = async (action: 'create' | 'test' | 'disconnect') => {
@@ -461,58 +460,6 @@ export default function ClassroomWorkspacePage() {
     loadWorkspace();
   }, [user?.id, classroomId]);
 
-  // Live roster: students join from LIFF by writing the classroom row or a
-  // classroom_students link, so listen for those changes and refetch only the
-  // roster (debounced, so a burst of joins costs one request). Polling is only
-  // a fallback for when the realtime channel can't connect.
-  useEffect(() => {
-    if (!classroomId) return;
-    let debounce: ReturnType<typeof setTimeout> | undefined;
-    let fallback: ReturnType<typeof setInterval> | undefined;
-    let disposed = false;
-    const refreshRoster = () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        dataService.getClassroomById(classroomId)
-          .then((current) => current && setClassroom(current))
-          .catch(() => {});
-      }, 400);
-    };
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') refreshRoster();
-    };
-    const startFallback = () => {
-      if (fallback || disposed) return;
-      fallback = setInterval(() => {
-        if (document.visibilityState === 'visible') refreshRoster();
-      }, 15000);
-    };
-
-    const supabase = isSupabaseConfigured ? createClient() : null;
-    const channel = supabase
-      ?.channel(`classroom-roster-${classroomId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'classrooms', filter: `id=eq.${classroomId}` }, refreshRoster)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'classroom_students', filter: `classroom_id=eq.${classroomId}` }, refreshRoster)
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          clearInterval(fallback);
-          fallback = undefined;
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          startFallback();
-        }
-      });
-    if (!channel) startFallback();
-    document.addEventListener('visibilitychange', onVisible);
-
-    return () => {
-      disposed = true;
-      clearTimeout(debounce);
-      clearInterval(fallback);
-      document.removeEventListener('visibilitychange', onVisible);
-      if (channel) supabase?.removeChannel(channel);
-    };
-  }, [classroomId]);
-
   // Fetch Grades when switching to Grades tab (unless they were just loaded)
   useEffect(() => {
     if (tab !== 'grades' || !assignments.length) return;
@@ -521,67 +468,14 @@ export default function ClassroomWorkspacePage() {
     refreshSubmissions(assignments).finally(() => setGradesLoading(false));
   }, [tab, assignments]);
 
-  // Live attendance: apply check-ins and session changes straight from the
-  // realtime payload (no refetch). Polling only runs while the channel is
-  // down and a session is open, since closed sessions only change locally.
   const sessionsRef = useRef(sessions);
   useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
-  const attendanceLiveRef = useRef(false);
-  useEffect(() => {
-    if (!classroomId) return;
-    let fallback: ReturnType<typeof setInterval> | undefined;
-    let disposed = false;
-    const startFallback = () => {
-      attendanceLiveRef.current = false;
-      if (fallback || disposed) return;
-      fallback = setInterval(() => {
-        if (document.visibilityState === 'visible' && sessionsRef.current.some((s) => s.status === 'open')) loadAttendance();
-      }, 10000);
-    };
-    const onVisible = () => {
-      if (document.visibilityState === 'visible' && !attendanceLiveRef.current) loadAttendance();
-    };
 
-    const supabase = isSupabaseConfigured ? createClient() : null;
-    const channel = supabase
-      ?.channel(`classroom-attendance-${classroomId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_records', filter: `classroom_id=eq.${classroomId}` }, (change) => {
-        const row = change.new as AttendanceRecord | undefined;
-        if (!row?.session_id) return;
-        attendanceVersionRef.current++;
-        setAllRecords((prev) => upsertRecord(prev, row));
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_sessions', filter: `classroom_id=eq.${classroomId}` }, (change) => {
-        const row = change.new as AttendanceSession | undefined;
-        if (!row?.id) return;
-        attendanceVersionRef.current++;
-        setSessions((prev) => [row, ...prev.filter((s) => s.id !== row.id)]);
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          attendanceLiveRef.current = true;
-          clearInterval(fallback);
-          fallback = undefined;
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          startFallback();
-        }
-      });
-    if (!channel) startFallback();
-    document.addEventListener('visibilitychange', onVisible);
-
-    return () => {
-      disposed = true;
-      clearInterval(fallback);
-      document.removeEventListener('visibilitychange', onVisible);
-      if (channel) supabase?.removeChannel(channel);
-    };
-  }, [classroomId]);
-
-  // Live classwork: the server broadcasts a signal when a student submits or the
-  // timeline changes, so the page refetches once instead of polling. A slow poll
-  // runs only while the realtime socket is down.
+  // Live classroom: the server broadcasts a small signal whenever a student
+  // submits, joins, checks in, or the timeline changes, and the page refetches
+  // just that part once. Polling runs only while the realtime socket is down.
   const assignmentsRef = useRef(assignments);
   const tabRef = useRef(tab);
   useEffect(() => {
@@ -590,18 +484,22 @@ export default function ClassroomWorkspacePage() {
   }, [assignments, tab]);
   useEffect(() => {
     if (!classroomId) return;
-    let submissionTimer: ReturnType<typeof setTimeout> | undefined;
-    let timelineTimer: ReturnType<typeof setTimeout> | undefined;
+    const timers: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
+    const soon = (key: string, run: () => void) => {
+      clearTimeout(timers[key]);
+      timers[key] = setTimeout(run, 400);
+    };
     let fallback: ReturnType<typeof setInterval> | undefined;
     let live = false;
 
-    const refreshSubmissionsSoon = () => {
-      clearTimeout(submissionTimer);
-      submissionTimer = setTimeout(() => refreshSubmissions(assignmentsRef.current), 400);
-    };
-    const refreshTimelineSoon = () => {
-      clearTimeout(timelineTimer);
-      timelineTimer = setTimeout(async () => {
+    const refreshRoster = () =>
+      soon('roster', () =>
+        dataService.getClassroomById(classroomId).then((current) => current && setClassroom(current)).catch(() => {})
+      );
+    const refreshAttendance = () => soon('attendance', () => loadAttendance());
+    const refreshSubmissionsSoon = () => soon('submissions', () => refreshSubmissions(assignmentsRef.current));
+    const refreshTimeline = () =>
+      soon('timeline', async () => {
         try {
           const [list, postsRes] = await Promise.all([
             dataService.getAssignmentsByClassroomId(classroomId),
@@ -610,22 +508,29 @@ export default function ClassroomWorkspacePage() {
           setAssignments(list);
           if (postsRes.ok) setPosts((await postsRes.json()).posts || []);
         } catch {}
-      }, 400);
-    };
-    const pollIfNeeded = () => {
+      });
+
+    const poll = () => {
       if (live || document.visibilityState !== 'visible') return;
+      refreshRoster();
+      if (sessionsRef.current.some((s) => s.status === 'open')) refreshAttendance();
       if (tabRef.current === 'grades' || tabRef.current === 'classwork') refreshSubmissions(assignmentsRef.current, 25000);
     };
     const onVisible = () => {
       // Signals sent while the tab was hidden may have been missed.
-      if (document.visibilityState === 'visible') refreshSubmissions(assignmentsRef.current, 30000);
+      if (document.visibilityState !== 'visible') return;
+      refreshRoster();
+      refreshAttendance();
+      refreshSubmissions(assignmentsRef.current, 30000);
     };
 
     const unsubscribe = dataService.subscribeToClassroomSignals(
       [classroomId],
       (_id, signal) => {
         if (signal?.type === 'submission') refreshSubmissionsSoon();
-        else refreshTimelineSoon();
+        else if (signal?.type === 'roster') refreshRoster();
+        else if (signal?.type === 'attendance') refreshAttendance();
+        else refreshTimeline();
       },
       (isLive) => {
         live = isLive;
@@ -633,15 +538,13 @@ export default function ClassroomWorkspacePage() {
           clearInterval(fallback);
           fallback = undefined;
         } else if (!fallback) {
-          fallback = setInterval(pollIfNeeded, 30000);
+          fallback = setInterval(poll, 15000);
         }
       }
     );
 
     // Same-browser events (e.g. a LIFF tab next to this one) refresh instantly.
-    const onAttendanceChecked = () => {
-      if (!attendanceLiveRef.current) loadAttendance();
-    };
+    const onAttendanceChecked = () => refreshAttendance();
     window.addEventListener('pudding-submission-created', refreshSubmissionsSoon);
     window.addEventListener('pudding-attendance-checked', onAttendanceChecked);
     document.addEventListener('visibilitychange', onVisible);
@@ -656,8 +559,7 @@ export default function ClassroomWorkspacePage() {
 
     return () => {
       unsubscribe();
-      clearTimeout(submissionTimer);
-      clearTimeout(timelineTimer);
+      Object.values(timers).forEach((t) => clearTimeout(t));
       clearInterval(fallback);
       window.removeEventListener('pudding-submission-created', refreshSubmissionsSoon);
       window.removeEventListener('pudding-attendance-checked', onAttendanceChecked);
@@ -906,8 +808,8 @@ export default function ClassroomWorkspacePage() {
       setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, ...updates } : a)));
       setNotice('แก้ไขข้อมูลงาน/ข้อสอบเรียบร้อยแล้ว');
       setEditingAssignment(null);
-    } catch {
-      setNotice('เกิดข้อผิดพลาดในการแก้ไขงาน/ข้อสอบ');
+    } catch (error) {
+      setNotice(error instanceof Error && error.message ? error.message : 'เกิดข้อผิดพลาดในการแก้ไขงาน/ข้อสอบ');
     } finally {
       setIsUpdatingAssignment(false);
     }
@@ -919,12 +821,8 @@ export default function ClassroomWorkspacePage() {
       await dataService.deleteAssignment(assignmentId);
       setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
       setSubmissions((prev) => prev.filter((s) => s.assignment_id !== assignmentId));
-      // Remove its timeline announcement(s) as well; best effort, the timeline already hides orphans.
-      const related = posts.filter((p) => p.metadata?.assignmentId === assignmentId);
+      // The server removed its timeline announcement(s) too.
       setPosts((prev) => prev.filter((p) => p.metadata?.assignmentId !== assignmentId));
-      await Promise.all(
-        related.map((p) => fetch(`/api/classrooms/posts?id=${encodeURIComponent(p.id)}`, { method: 'DELETE' }).catch(() => null))
-      );
       setNotice('ลบงาน/ข้อสอบเรียบร้อยแล้ว');
     } catch {
       setNotice('เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ');
@@ -1289,19 +1187,25 @@ export default function ClassroomWorkspacePage() {
 
   const handleAddStudent = async (first_name: string, last_name: string, student_id: string, email: string) => {
     if (!first_name.trim() || !classroom) return;
-    const newS = {
-      id: `std-${Date.now()}`,
-      first_name: first_name.trim(),
-      last_name: last_name.trim(),
-      student_id: student_id.trim() || undefined,
-      email: email.trim() || undefined,
-      institution: teacherInstitution || undefined,
-      role: 'student' as const,
-    };
-    const currentStudents = classroom.students || [];
-    const updated = [...currentStudents, newS];
-    await dataService.updateClassroom(classroom.id, { students: updated, student_count: updated.length });
-    setClassroom((prev) => (prev ? { ...prev, students: updated, student_count: updated.length } : prev));
+    // Enrolled like any other student (with a user record), so their work and
+    // check-ins match, and they merge with their LINE account when they join.
+    try {
+      await dataService.addStudentToClassroom(
+        classroom.id,
+        {
+          first_name: first_name.trim(),
+          last_name: last_name.trim(),
+          student_id: student_id.trim() || undefined,
+          email: email.trim() || undefined,
+          institution: teacherInstitution || undefined,
+        },
+        { autoAdmit: true }
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'เพิ่มผู้เรียนไม่สำเร็จ');
+      return;
+    }
+    await loadWorkspace();
     setNotice(`เพิ่มผู้เรียน "${first_name.trim()} ${last_name.trim()}" เรียบร้อยแล้ว`);
     setShowAddStudentModal(false);
     setNewStudentFirst('');
@@ -2502,13 +2406,18 @@ export default function ClassroomWorkspacePage() {
                   <input
                     value={studentSearchQuery}
                     onChange={(e) => handleSearchStudents(e.target.value)}
-                    placeholder="🔍 ค้นหานักเรียนในระบบ (ชื่อ, นามสกุล หรือรหัสนักเรียน)..."
+                    placeholder="🔍 ค้นหานักเรียนในโรงเรียนของคุณ (ชื่อ, นามสกุล หรือรหัสนักเรียน)..."
                     className="w-full pl-9 pr-8 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
                   />
                   {isSearchingStudents && (
                     <Loader2 className="w-4 h-4 absolute right-3 top-3 text-amber-500 animate-spin" />
                   )}
                 </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">
+                  {teacherInstitution
+                    ? `ค้นหาได้เฉพาะนักเรียนของ ${teacherInstitution} — นักเรียนที่ลงทะเบียนชื่อโรงเรียนไม่ตรง ให้เข้าร่วมผ่านลิงก์เชิญ แล้วแก้ชื่อโรงเรียนภายหลัง`
+                    : 'กรุณาระบุโรงเรียนของคุณครูที่แดชบอร์ดก่อน จึงจะค้นหานักเรียนได้'}
+                </p>
 
                 {studentSearchResults.length > 0 && (
                   <div className="p-2 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 space-y-1.5 max-h-56 overflow-y-auto">

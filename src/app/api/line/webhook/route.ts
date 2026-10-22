@@ -57,7 +57,8 @@ async function replySafely(replyToken: string | undefined, text: string) {
 }
 
 function classroomJoinText(classroom: { name: string; invite_code?: string | null; id: string }, liffUrl: string | null) {
-  const joinUrl = liffUrl ? `${liffUrl}?classId=${encodeURIComponent(classroom.id)}` : null;
+  // The invite code (not the guessable classroom id) is what lets a new student join.
+  const joinUrl = liffUrl && classroom.invite_code ? `${liffUrl}?code=${encodeURIComponent(classroom.invite_code)}` : null;
   const lines = [`🎓 ห้องเรียน: ${classroom.name}`];
   if (classroom.invite_code) lines.push(`รหัสเข้าห้อง: ${classroom.invite_code}`);
   if (joinUrl) lines.push(`กดลิงก์นี้เพื่อเข้าร่วม: ${joinUrl}`);
@@ -532,9 +533,9 @@ export async function POST(request: NextRequest) {
     }
     if (normalizedCommand === 'help') await replySafely(event.replyToken, '#pudding join หรือ “ขอรหัสเข้าห้อง” ขอรหัส/ลิงก์เข้าห้อง\n#pudding link เปิด Pudding\n#pudding status ดูสถานะกลุ่ม');
     else if (normalizedCommand === 'join') await replyClassroomJoinCode(event.replyToken, groupClassroom, liffUrl);
-    else if (normalizedCommand === 'link') await replySafely(event.replyToken, withLiffLink(`🎓 ห้องเรียน: ${groupClassroom.name}`, 'เปิดห้องเรียนใน Pudding', { classroomId: groupClassroom.id }));
+    else if (normalizedCommand === 'link') await replySafely(event.replyToken, withLiffLink(`🎓 ห้องเรียน: ${groupClassroom.name}`, 'เปิดห้องเรียนใน Pudding', { classroomId: groupClassroom.id, inviteCode: groupClassroom.invite_code }));
     else if (normalizedCommand === 'status') await replySafely(event.replyToken, `ห้อง: ${groupClassroom.name}\nLINE Group: เชื่อมต่อแล้ว\nแจ้งเตือนงาน: พร้อมใช้งาน`);
-    else if (normalizedCommand === 'attendance') await replySafely(event.replyToken, withLiffLink(`⏰ เช็คชื่อ: ${groupClassroom.name}`, 'กดเพื่อเช็คชื่อ', { classroomId: groupClassroom.id, view: 'attendance' }));
+    else if (normalizedCommand === 'attendance') await replySafely(event.replyToken, withLiffLink(`⏰ เช็คชื่อ: ${groupClassroom.name}`, 'กดเพื่อเช็คชื่อ', { classroomId: groupClassroom.id, inviteCode: groupClassroom.invite_code, view: 'attendance' }));
   }
   return NextResponse.json({ ok: true });
 }

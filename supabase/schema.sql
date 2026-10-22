@@ -283,7 +283,7 @@ CREATE INDEX IF NOT EXISTS idx_events_submission ON public.submission_events(sub
 
 -- ==============================================================================
 -- 12. ROW LEVEL SECURITY (RLS) POLICIES
--- Enables open read/write for development with anon key; ready for auth enhancement
+-- RLS on, no public policies: only the server (service_role) can read or write
 -- ==============================================================================
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.courses ENABLE ROW LEVEL SECURITY;
@@ -296,56 +296,9 @@ ALTER TABLE public.submissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submission_answers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submission_events ENABLE ROW LEVEL SECURITY;
 
--- Development policies (allow all operations via anon key / authenticated clients)
-CREATE POLICY "Public Read users" ON public.users FOR SELECT USING (true);
-CREATE POLICY "Public Insert users" ON public.users FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update users" ON public.users FOR UPDATE USING (true);
-CREATE POLICY "Public Delete users" ON public.users FOR DELETE USING (true);
-
-CREATE POLICY "Public Read courses" ON public.courses FOR SELECT USING (true);
-CREATE POLICY "Public Insert courses" ON public.courses FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update courses" ON public.courses FOR UPDATE USING (true);
-CREATE POLICY "Public Delete courses" ON public.courses FOR DELETE USING (true);
-
-CREATE POLICY "Public Read learning_indicators" ON public.learning_indicators FOR SELECT USING (true);
-CREATE POLICY "Public Insert learning_indicators" ON public.learning_indicators FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update learning_indicators" ON public.learning_indicators FOR UPDATE USING (true);
-CREATE POLICY "Public Delete learning_indicators" ON public.learning_indicators FOR DELETE USING (true);
-
-CREATE POLICY "Public Read classrooms" ON public.classrooms FOR SELECT USING (true);
-CREATE POLICY "Public Insert classrooms" ON public.classrooms FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update classrooms" ON public.classrooms FOR UPDATE USING (true);
-CREATE POLICY "Public Delete classrooms" ON public.classrooms FOR DELETE USING (true);
-
-CREATE POLICY "Public Read classroom_students" ON public.classroom_students FOR SELECT USING (true);
-CREATE POLICY "Public Insert classroom_students" ON public.classroom_students FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update classroom_students" ON public.classroom_students FOR UPDATE USING (true);
-CREATE POLICY "Public Delete classroom_students" ON public.classroom_students FOR DELETE USING (true);
-
-CREATE POLICY "Public Read assignments" ON public.assignments FOR SELECT USING (true);
-CREATE POLICY "Public Insert assignments" ON public.assignments FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update assignments" ON public.assignments FOR UPDATE USING (true);
-CREATE POLICY "Public Delete assignments" ON public.assignments FOR DELETE USING (true);
-
-CREATE POLICY "Public Read questions" ON public.questions FOR SELECT USING (true);
-CREATE POLICY "Public Insert questions" ON public.questions FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update questions" ON public.questions FOR UPDATE USING (true);
-CREATE POLICY "Public Delete questions" ON public.questions FOR DELETE USING (true);
-
-CREATE POLICY "Public Read submissions" ON public.submissions FOR SELECT USING (true);
-CREATE POLICY "Public Insert submissions" ON public.submissions FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update submissions" ON public.submissions FOR UPDATE USING (true);
-CREATE POLICY "Public Delete submissions" ON public.submissions FOR DELETE USING (true);
-
-CREATE POLICY "Public Read submission_answers" ON public.submission_answers FOR SELECT USING (true);
-CREATE POLICY "Public Insert submission_answers" ON public.submission_answers FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update submission_answers" ON public.submission_answers FOR UPDATE USING (true);
-CREATE POLICY "Public Delete submission_answers" ON public.submission_answers FOR DELETE USING (true);
-
-CREATE POLICY "Public Read submission_events" ON public.submission_events FOR SELECT USING (true);
-CREATE POLICY "Public Insert submission_events" ON public.submission_events FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public Update submission_events" ON public.submission_events FOR UPDATE USING (true);
-CREATE POLICY "Public Delete submission_events" ON public.submission_events FOR DELETE USING (true);
+-- No policies: the browser never reaches these tables with the public key.
+-- All access goes through the app's server routes (service_role key, which
+-- bypasses RLS) after checking the signed-in teacher or LINE-verified student.
 
 -- ==============================================================================
 -- 13. SEED DEFAULT TEACHER RECORD

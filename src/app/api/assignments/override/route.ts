@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
 
   const { data: classroom } = await supabase
     .from('classrooms')
-    .select('id, name, teacher_id, teachers, line_group_id')
+    .select('id, name, teacher_id, teachers, line_group_id, invite_code')
     .eq('id', previous.classroom_id)
     .maybeSingle();
   const isTeacher =
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
         : withLiffLink(
             `⏳ ขยายเวลาส่ง${kind}\n${updated.title}\nห้อง: ${classroom.name}\n\nส่งได้ถึง: ${formatDateTime(updated.extended_until, 'th', SCHOOL_TIME_ZONE)}`,
             updated.is_exam ? 'กดเพื่อทำข้อสอบ' : 'กดเพื่อส่งงาน',
-            { classroomId: classroom.id, assignmentId: updated.id }
+            { classroomId: classroom.id, inviteCode: classroom.invite_code, assignmentId: updated.id }
           );
     after(async () => {
       try {

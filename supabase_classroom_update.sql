@@ -17,19 +17,9 @@ CREATE TABLE IF NOT EXISTS public.classroom_posts (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Grant privileges to service_role, anon, authenticated
-GRANT ALL ON TABLE public.classroom_posts TO anon, authenticated, service_role;
+-- Server-only table: the app reaches it with the service_role key (RLS on, no public policies).
+GRANT ALL ON TABLE public.classroom_posts TO service_role;
 ALTER TABLE public.classroom_posts ENABLE ROW LEVEL SECURITY;
-
--- Allow read for everyone, and insert/update/delete for authenticated / service_role
-CREATE POLICY IF NOT EXISTS "Allow read classroom_posts"
-  ON public.classroom_posts FOR SELECT
-  USING (true);
-
-CREATE POLICY IF NOT EXISTS "Allow all for authenticated/service on classroom_posts"
-  ON public.classroom_posts FOR ALL
-  USING (true)
-  WITH CHECK (true);
 
 -- 2. Add group_name column to assignments if not present
 DO $$
@@ -65,25 +55,8 @@ CREATE TABLE IF NOT EXISTS public.attendance_records (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-GRANT ALL ON TABLE public.attendance_sessions TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.attendance_records TO anon, authenticated, service_role;
+-- Server-only tables: the app reaches them with the service_role key (RLS on, no public policies).
+GRANT ALL ON TABLE public.attendance_sessions TO service_role;
+GRANT ALL ON TABLE public.attendance_records TO service_role;
 ALTER TABLE public.attendance_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_records ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY IF NOT EXISTS "Allow read attendance_sessions"
-  ON public.attendance_sessions FOR SELECT
-  USING (true);
-
-CREATE POLICY IF NOT EXISTS "Allow all for authenticated/service on attendance_sessions"
-  ON public.attendance_sessions FOR ALL
-  USING (true)
-  WITH CHECK (true);
-
-CREATE POLICY IF NOT EXISTS "Allow read attendance_records"
-  ON public.attendance_records FOR SELECT
-  USING (true);
-
-CREATE POLICY IF NOT EXISTS "Allow all for authenticated/service on attendance_records"
-  ON public.attendance_records FOR ALL
-  USING (true)
-  WITH CHECK (true);

@@ -3,6 +3,28 @@ import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAssignmentWindow, QUIZ_SUBMIT_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { parseTrueFalse } from '@/lib/utils/trueFalse';
+import { getActor } from '@/lib/auth/actor';
+import { classroomRole, isTeacherOf, loadClassroom } from '@/lib/server/access';
+import type { Classroom } from '@/types/database';
+
+/**
+ * Whether a multiple-choice answer is right. The answer key may be the option
+ * text or its letter/number (ก/ข/…, A/B/…, 1/2/…). Text must match exactly
+ * (ignoring case and spacing); "10" is not "100".
+ */
+function isChoiceCorrect(ideal: string, studentText: string, options: unknown): boolean {
+  const norm = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+  const answer = norm(studentText);
+  if (!answer) return false;
+  if (norm(ideal) === answer) return true;
+  const list = Array.isArray(options) ? options.map((o) => String(o)) : [];
+  const key = ideal.trim().replace(/^(ข้อ|ตัวเลือก|option)\s*/i, '').replace(/[.)]$/, '').trim();
+  let index = -1;
+  if (/^[ก-ฮ]$/.test(key)) index = 'กขคงจฉชซฌญ'.indexOf(key);
+  else if (/^[a-z]$/i.test(key)) index = key.toUpperCase().charCodeAt(0) - 65;
+  else if (/^\d+$/.test(key)) index = Number(key) - 1;
+  return index >= 0 && index < list.length && norm(list[index]) === answer;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,8 +53,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Database is not configured' }, { status: 503 });
   }
 
-  let query = supabase.from('submissions').select('*').in('assignment_id', assignmentIds);
-  if (studentIds.length > 0) query = query.in('student_id', studentIds);
+  // Teachers: only assignments in classrooms they teach. Students: only their own work.
+  const actor = await getActor(request);
+  if (!actor) return NextResponse.json({ error: 'กรุณาเข้าสู่ระบบ' }, { status: 401 });
+  let allowedIds = assignmentIds;
+  if (actor.kind === 'teacher') {
+    const { data: rows } = await supabase.from('assignments').select('id, classroom_id').in('id', assignmentIds);
+    const classroomIds = [...new Set((rows || []).map((r) => r.classroom_id))];
+    const { data: classrooms } = classroomIds.length
+      ? await supabase.from('classrooms').select('id, teacher_id, teachers').in('id', classroomIds)
+      : { data: [] };
+    const mine = new Set((classrooms || []).filter((c) => isTeacherOf(c, actor.userId)).map((c) => c.id));
+    allowedIds = (rows || []).filter((r) => mine.has(r.classroom_id)).map((r) => r.id);
+    if (!allowedIds.length) return NextResponse.json({ submissions: [] });
+  }
+  let query = supabase.from('submissions').select('*').in('assignment_id', allowedIds);
+  if (actor.kind === 'student') query = query.in('student_id', actor.keys);
+  else if (studentIds.length > 0) query = query.in('student_id', studentIds);
   const { data, error } = await query;
   if (error) {
     console.error('[GET /api/submissions] query failed:', error);
@@ -72,15 +109,21 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const {
       assignment_id,
-      student_id,
       student_name,
       student_first_name,
       student_last_name,
       student_avatar,
-      line_uid,
       answers = [],
       antiCheating = {},
     } = body;
+
+    // The student is whoever LINE says the token belongs to, never an id from the body.
+    const actor = await getActor(request);
+    if (actor?.kind !== 'student') {
+      return NextResponse.json({ error: 'กรุณาเข้าสู่ระบบผ่าน LINE ก่อนส่งงาน' }, { status: 401 });
+    }
+    const line_uid = actor.lineUid;
+    const student_id = actor.userId;
 
     console.log('[POST /api/submissions] Received payload:', {
       assignment_id,
@@ -122,6 +165,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'ไม่พบงานหรือข้อสอบนี้ในระบบ อาจถูกลบไปแล้ว' }, { status: 404 });
     }
     const assignmentWindow = getAssignmentWindow(assignment, Date.now(), QUIZ_SUBMIT_GRACE_MS);
+    // Only admitted students of the assignment's classroom may submit.
+    const classroom = await loadClassroom(supabase, assignment.classroom_id);
+    if (!classroom || (await classroomRole(supabase, actor, classroom as Classroom)) !== 'student') {
+      return NextResponse.json({ error: 'คุณยังไม่ได้อยู่ในห้องเรียนนี้ หรือยังรอคุณครูอนุมัติ' }, { status: 403 });
+    }
     if (assignmentWindow.isScheduled) {
       return NextResponse.json({ error: 'งานนี้ยังไม่เปิดให้ส่ง' }, { status: 409 });
     }
@@ -176,10 +224,18 @@ export async function POST(request: NextRequest) {
     // (e.g. after editing their student number) would make the upsert fail.
     const { data: existingSubmission } = await supabase
       .from('submissions')
-      .select('id')
+      .select('id, status')
       .eq('assignment_id', assignment_id)
       .eq('student_id', targetUserDbId)
       .maybeSingle();
+    // Handing in again would overwrite the answers and erase the teacher's
+    // scores, and would let a quiz be retaken; only an unfinished draft may be replaced.
+    if (existingSubmission && existingSubmission.status !== 'pending') {
+      return NextResponse.json(
+        { error: assignment.is_exam ? 'ส่งข้อสอบนี้ไปแล้ว ไม่สามารถส่งซ้ำได้' : 'ส่งงานนี้ไปแล้ว ไม่สามารถส่งซ้ำได้' },
+        { status: 409 }
+      );
+    }
     const subId = existingSubmission?.id || `sub-${assignment_id}-${targetUserDbId}`;
 
     const studentInfo = {
@@ -238,8 +294,7 @@ export async function POST(request: NextRequest) {
             const studentBool = q.type === 'true_false' ? parseTrueFalse(studentText) : null;
             const isMatch = idealBool !== null && studentBool !== null
               ? idealBool === studentBool
-              : studentText.toLowerCase() === ideal.toLowerCase() ||
-                studentText.startsWith(ideal) || ideal.startsWith(studentText);
+              : isChoiceCorrect(ideal, studentText, q.options);
             questionScore = isMatch ? Number(q.max_score) : 0;
             runningScore += questionScore;
           } else {

@@ -6,7 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser, SignInButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { dataService } from '@/lib/supabase/dataService';
-import { Course, ClassroomTeacher } from '@/types/database';
+import { Course } from '@/types/database';
 import {
   GraduationCap,
   FlaskConical,
@@ -23,9 +23,10 @@ function TeacherInviteContent() {
   const router = useRouter();
   const { user: clerkUser, isLoaded, isSignedIn } = useUser();
 
-  const courseId = searchParams.get('courseId') || '';
-  const inviterName = searchParams.get('inviter') || 'อาจารย์ประจำวิชา';
-  const inviteRole: 'assistant' | 'researcher' = (searchParams.get('role') as 'assistant' | 'researcher') === 'researcher' ? 'researcher' : 'assistant';
+  // Short signed code; the course, role and inviter come from the server, not the URL.
+  const inviteCode = searchParams.get('code') || '';
+  const [inviterName, setInviterName] = useState('อาจารย์ประจำวิชา');
+  const [inviteRole, setInviteRole] = useState<'assistant' | 'researcher'>('assistant');
 
   const [course, setCourse] = useState<Course | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,28 +35,42 @@ function TeacherInviteContent() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchCourse() {
-      if (!courseId) {
-        setErrorMessage('ไม่พบรหัสรายวิชาในลิงก์คำเชิญ');
-        setLoading(false);
-        return;
-      }
-      try {
-        const found = await dataService.getCourseById(courseId);
-        if (found) {
-          setCourse(found);
-        } else {
-          setErrorMessage('ไม่พบข้อมูลรายวิชานี้ในระบบ หรือวิชาอาจถูกลบไปแล้ว');
-        }
-      } catch (err) {
-        console.error(err);
-        setErrorMessage('เกิดข้อผิดพลาดในการโหลดข้อมูลวิชา');
-      } finally {
-        setLoading(false);
-      }
+    if (!isLoaded) return;
+    if (!inviteCode) {
+      setErrorMessage('ลิงก์คำเชิญไม่ครบถ้วน กรุณาขอลิงก์ใหม่จากคุณครูประจำวิชา');
+      setLoading(false);
+      return;
     }
-    fetchCourse();
-  }, [courseId]);
+    // The invite is shown to signed-in teachers only; the sign-in prompt below handles the rest.
+    if (!isSignedIn) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    dataService
+      .getCourseInvite(inviteCode)
+      .then((invite) => {
+        if (cancelled) return;
+        if (!invite) {
+          setErrorMessage('ลิงก์คำเชิญไม่ถูกต้อง หรือรายวิชาอาจถูกลบไปแล้ว');
+          return;
+        }
+        setCourse(invite.course);
+        setInviteRole(invite.role);
+        if (invite.inviterName) setInviterName(invite.inviterName);
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!cancelled) setErrorMessage('เกิดข้อผิดพลาดในการโหลดคำเชิญ');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteCode, isLoaded, isSignedIn]);
 
   const handleAcceptInvite = async () => {
     if (!course || !clerkUser) return;
@@ -68,32 +83,11 @@ function TeacherInviteContent() {
       const teacherEmail =
         clerkUser.primaryEmailAddress?.emailAddress || undefined;
 
-      const currentTeachers = course.teachers || [];
-      const alreadyTeacherIndex = currentTeachers.findIndex(
-        (t) => t.teacher_id === clerkUser.id || (!!teacherEmail && t.email === teacherEmail)
-      );
-
-      let updatedTeachers = [...currentTeachers];
-      if (alreadyTeacherIndex >= 0) {
-        // Update their role if they rejoin with another invite
-        updatedTeachers[alreadyTeacherIndex] = {
-          ...updatedTeachers[alreadyTeacherIndex],
-          role: inviteRole,
-          name: teacherName,
-        };
-      } else {
-        const newTeacher: ClassroomTeacher = {
-          teacher_id: clerkUser.id,
-          name: teacherName,
-          email: teacherEmail,
-          avatar_url: clerkUser.imageUrl || undefined,
-          role: inviteRole,
-        };
-        updatedTeachers.push(newTeacher);
-      }
-
-      await dataService.updateCourse(course.id, {
-        teachers: updatedTeachers,
+      // The server adds this teacher to the course (as the invited role only).
+      await dataService.acceptCourseInvite(inviteCode, {
+        name: teacherName,
+        email: teacherEmail,
+        avatar_url: clerkUser.imageUrl || undefined,
       });
 
       setJoinedSuccess(true);
@@ -114,6 +108,25 @@ function TeacherInviteContent() {
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
           <p className="text-sm font-semibold text-slate-500">กำลังตรวจสอบคำเชิญ...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoaded && !isSignedIn && inviteCode && !errorMessage) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
+        <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 flex items-center justify-center mx-auto">
+            <GraduationCap className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-black text-slate-900 dark:text-white">คำเชิญเข้าร่วมสอน</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">กรุณาเข้าสู่ระบบด้วยบัญชีครูเพื่อดูรายละเอียดและยืนยันคำเชิญ</p>
+          <SignInButton mode="modal">
+            <button type="button" className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm cursor-pointer">
+              เข้าสู่ระบบเพื่อดูคำเชิญ
+            </button>
+          </SignInButton>
         </div>
       </div>
     );

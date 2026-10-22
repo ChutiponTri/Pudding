@@ -3,12 +3,14 @@
  * asks students to act (check in, do homework/exams, read an announcement), so
  * they can tap straight through instead of typing "#pudding link".
  *
- * The LIFF page reads these params: classId opens (and, for new students,
- * requests to join) the classroom; assignmentId opens that assignment or its
- * result; view=attendance opens the check-in tab.
+ * The LIFF page reads these params: classId opens the classroom; code is the
+ * classroom's invite code, which lets a classmate who has not joined yet send
+ * a join request (classId alone is not enough); assignmentId opens that
+ * assignment or its result; view=attendance opens the check-in tab.
  */
 export function buildLiffUrl(options: {
   classroomId?: string | null;
+  inviteCode?: string | null;
   assignmentId?: string | null;
   view?: 'attendance' | 'work' | 'timeline';
 } = {}): string | null {
@@ -16,6 +18,7 @@ export function buildLiffUrl(options: {
   if (!liffId) return null;
   const params = new URLSearchParams();
   if (options.classroomId) params.set('classId', options.classroomId);
+  if (options.inviteCode) params.set('code', options.inviteCode);
   if (options.assignmentId) params.set('assignmentId', options.assignmentId);
   if (options.view) params.set('view', options.view);
   const query = params.toString();
