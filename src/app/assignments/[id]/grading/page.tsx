@@ -266,7 +266,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       }
     } catch (err) {
       console.error(err);
-      alert('Error updating deadline override');
+      alert(err instanceof Error && err.message ? err.message : 'Error updating deadline override');
     }
   };
 

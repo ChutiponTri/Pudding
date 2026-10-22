@@ -1106,7 +1106,15 @@ export const dataService = {
     assignmentId: string,
     override: { status_override: SubmissionOverrideStatus; extended_until?: string }
   ): Promise<Assignment | null> {
-    return this.updateAssignment(assignmentId, override);
+    // Through the server so closing / extending is announced in the LINE group.
+    const res = await fetch('/api/assignments/override', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignmentId, ...override }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    return (json.assignment as Assignment) || null;
   },
 
   // ==============================================================================
