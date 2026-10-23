@@ -3,13 +3,14 @@ import { withLiffLink } from '@/lib/line/liffLink';
 import { pushLineGroupText } from '@/lib/line/messaging';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
+import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
 
 export type PostActivityType = 'announcement' | 'assignment' | 'exam' | 'attendance';
 
 /** LINE group text for a classroom timeline post, with a tap-through link to the right place. */
 export function buildPostLineMessage(
   activityType: PostActivityType,
-  classroomName: string,
+  classroom: LabelledClassroom,
   body: string,
   classroomId: string,
   metadata: Record<string, unknown> = {},
@@ -28,7 +29,7 @@ export function buildPostLineMessage(
     icon = '⏰';
     title = 'เปิดคาบเช็คชื่อ';
   }
-  const message = `${icon} ${title}\nห้อง: ${classroomName}\n\n${body}`;
+  const message = `${icon} ${title}\n📘 ${classroomTitle(classroom)}\n\n${body}`;
   const assignmentId = typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined;
   if (activityType === 'attendance') return withLiffLink(message, 'กดเพื่อเช็คชื่อ', { classroomId, inviteCode, view: 'attendance' });
   if ((activityType === 'assignment' || activityType === 'exam') && assignmentId) {
@@ -84,12 +85,12 @@ export async function announceScheduledPosts(
       type: 'published',
       assignmentId: typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined,
     });
-    const { data: classroom } = await supabase.from('classrooms').select('name, line_group_id, invite_code').eq('id', post.classroom_id).maybeSingle();
+    const { data: classroom } = await supabase.from('classrooms').select('name, course_name, subject_code, line_group_id, invite_code').eq('id', post.classroom_id).maybeSingle();
     if (!classroom?.line_group_id) continue;
     try {
       await pushLineGroupText(
         classroom.line_group_id,
-        buildPostLineMessage(post.activity_type, classroom.name || 'ห้องเรียน', post.body, post.classroom_id, metadata, classroom.invite_code)
+        buildPostLineMessage(post.activity_type, classroom, post.body, post.classroom_id, metadata, classroom.invite_code)
       );
       count += 1;
     } catch (pushError) {

@@ -1,8 +1,9 @@
 /**
- * Commands students type in a classroom's LINE group to get a link back. They
+ * Commands typed in a classroom's LINE group to post a link for the class. They
  * start with "พุดดิ้ง" or "pudding" (with or without "#"), e.g. "พุดดิ้ง เช็คชื่อ".
- * The bot answers with a reply, which does not count toward the LINE message
- * quota (pushed messages do), so students can ask as often as they need.
+ * Only the classroom's teachers and TAs get an answer (students are ignored so
+ * they cannot flood the group). The answer is a reply, which does not count
+ * toward the LINE message quota (pushed messages do).
  */
 
 export type StudentCommand = 'help' | 'attendance' | 'submit' | 'join' | 'works' | 'home' | 'status';
@@ -40,15 +41,17 @@ export function parseStudentCommand(text: string): StudentCommand | null {
   return 'help';
 }
 
-export function studentHelpText(classroomName?: string | null): string {
-  return `🍮 คำสั่ง Pudding${classroomName ? ` • ${classroomName}` : ''}
-พิมพ์ "พุดดิ้ง" ตามด้วยคำสั่ง เช่น
+export function studentHelpText(classroomTitle?: string | null): string {
+  return `🍮 คำสั่ง Pudding${classroomTitle ? `\n📘 ${classroomTitle}` : ''}
+สำหรับคุณครูและ TA พิมพ์ "พุดดิ้ง" ตามด้วยคำสั่ง
+บอทจะตอบให้ทุกคนในกลุ่มเห็น เช่น
 
 • พุดดิ้ง เช็คชื่อ → ลิงก์เช็คชื่อคาบที่เปิดอยู่
-• พุดดิ้ง งาน → รายการงาน/ข้อสอบที่ยังเปิดรับ
-• พุดดิ้ง ส่งงาน → ลิงก์ไปหน้าส่งงาน
+• พุดดิ้ง งาน → สรุปงาน/ข้อสอบที่ยังเปิดรับ และเวลาที่เหลือ
+• พุดดิ้ง ส่งงาน → ลิงก์ส่งของแต่ละงาน
 • พุดดิ้ง เข้าห้อง → รหัสและลิงก์เข้าห้องเรียน
 • พุดดิ้ง หน้าหลัก → เปิดห้องเรียนใน Pudding
 
-พิมพ์ "pudding" แทน "พุดดิ้ง" ก็ได้`;
+พิมพ์ "pudding" แทน "พุดดิ้ง" ก็ได้
+(ข้อความจากนักเรียน บอทจะไม่ตอบ)`;
 }

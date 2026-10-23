@@ -3,6 +3,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
+import { classroomTitle } from '@/lib/utils/classroomLabel';
 import { getActor, type Actor } from '@/lib/auth/actor';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { classroomRole, HttpError, isTeacherOf } from '@/lib/server/access';
@@ -300,7 +301,7 @@ export async function POST(request: NextRequest) {
           await pushLineGroupText(
             lineGroupId,
             withLiffLink(
-              `⏰ เปิดคาบเช็คชื่อ\nห้อง: ${classroom.name || 'ห้องเรียน'}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
+              `⏰ เปิดคาบเช็คชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
               'กดเพื่อเช็คชื่อ',
               { classroomId, inviteCode: classroom.invite_code, view: 'attendance' }
             )

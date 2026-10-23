@@ -4,6 +4,7 @@ import { after } from 'next/server';
 import { pushLineGroupText } from '@/lib/line/messaging';
 import { buildPostLineMessage, type PostActivityType } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
+import type { LabelledClassroom } from '@/lib/utils/classroomLabel';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 
 export type ClassroomPost = {
@@ -25,7 +26,7 @@ export type ClassroomPost = {
 export async function createClassroomPost(
   supabase: ReturnType<typeof createServiceSupabaseClient>,
   input: {
-    classroom: { id: string; name?: string | null; line_group_id?: string | null; invite_code?: string | null };
+    classroom: LabelledClassroom & { id: string; line_group_id?: string | null; invite_code?: string | null };
     authorId: string;
     body: string;
     activityType: PostActivityType;
@@ -71,7 +72,7 @@ export async function createClassroomPost(
     const lineGroupId = classroom.line_group_id;
     if (lineGroupId) {
       try {
-        await pushLineGroupText(lineGroupId, buildPostLineMessage(activityType, classroom.name || 'ห้องเรียน', body, classroom.id, metadata, classroom.invite_code));
+        await pushLineGroupText(lineGroupId, buildPostLineMessage(activityType, classroom, body, classroom.id, metadata, classroom.invite_code));
       } catch (lineError) {
         console.error('Classroom post LINE push failed:', lineError);
       }

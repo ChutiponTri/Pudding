@@ -45,6 +45,7 @@ import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { isImageUrl, isPdfUrl, referenceWorkUrl } from "@/lib/utils/referenceWork";
+import { classroomTitle, roomLabel, subjectCode, subjectName } from "@/lib/utils/classroomLabel";
 
 interface RealLineStudent {
   id: string; // LINE userId
@@ -854,7 +855,7 @@ export default function LiffStudentPage() {
               if (isAlreadyActive) {
                 // nothing to do
               } else if (isAlreadyPending) {
-                setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+                setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
                 setTimeout(() => setJoinMessage(null), 3500);
               } else {
                 await dataService.addStudentToClassroom(
@@ -871,7 +872,7 @@ export default function LiffStudentPage() {
                   },
                   { autoAdmit: false, inviteCode: codeParam || undefined }
                 );
-                setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+                setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
                 setTimeout(() => setJoinMessage(null), 3500);
               }
 
@@ -1265,7 +1266,7 @@ export default function LiffStudentPage() {
       if (isAlreadyPending) {
         setIsJoinModalOpen(false);
         setJoinInviteCode("");
-        setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+        setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
         setTimeout(() => setJoinMessage(null), 3500);
         return;
       }
@@ -1290,9 +1291,9 @@ export default function LiffStudentPage() {
       setIsJoinModalOpen(false);
       setJoinInviteCode("");
       if (isAlreadyActive) {
-        setJoinMessage(`🎉 คุณอยู่ในห้องเรียน "${matched.name}" เรียบร้อยแล้ว!`);
+        setJoinMessage(`🎉 คุณอยู่ในห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว!`);
       } else {
-        setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${matched.name}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+        setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
       }
       setTimeout(() => setJoinMessage(null), 3500);
 
@@ -1462,7 +1463,7 @@ export default function LiffStudentPage() {
   // ==========================================
   const courseGroups = classrooms.reduce((groups, classroom) => {
     const key = `${classroom.course_id || classroom.subject_code || classroom.name}-${classroom.semester || ''}-${classroom.year_ce || classroom.academic_year || ''}`;
-    const current = groups.get(key) || { label: classroom.course_name || classroom.subject_code || classroom.name, term: classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year, classrooms: [] as Classroom[] };
+    const current = groups.get(key) || { label: subjectName(classroom), term: classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year, classrooms: [] as Classroom[] };
     current.classrooms.push(classroom);
     groups.set(key, current);
     return groups;
@@ -1716,12 +1717,10 @@ export default function LiffStudentPage() {
                     <BookOpen className={`w-4 h-4 mt-0.5 shrink-0 ${isSelected ? "text-emerald-600" : "text-slate-400"}`} />
                     <span className="min-w-0 flex-1">
                       <span className={`block text-sm font-bold leading-snug ${isSelected ? "text-emerald-700 dark:text-emerald-300" : "text-slate-900 dark:text-white"}`}>
-                        {cls.course_name || cls.subject_code || cls.name}
+                        {subjectName(cls)}
                       </span>
                       <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        ห้อง {cls.name}
-                        {cls.subject_code ? ` • ${cls.subject_code}` : ""}
-                        {term ? ` • ${term}` : ""}
+                        {[subjectCode(cls), roomLabel(cls), term].filter(Boolean).join(' • ')}
                       </span>
                       {isPendingIn(cls) && (
                         <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
@@ -1828,7 +1827,7 @@ export default function LiffStudentPage() {
                         className="w-full text-left p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20 flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-transform"
                       >
                         <div className="min-w-0">
-                          <p className="text-[11px] font-semibold text-emerald-50/90">🎉 คุณครูตรวจแล้ว • {resultClass?.name || "รายวิชา"}</p>
+                          <p className="text-[11px] font-semibold text-emerald-50/90">🎉 คุณครูตรวจแล้ว • {resultClass ? subjectName(resultClass) : "รายวิชา"}</p>
                           <p className="text-sm font-bold truncate">{assignment.title}</p>
                           <p className="text-[11px] text-emerald-50/90 mt-0.5">แตะเพื่อดูคะแนนและความเห็นรายข้อ</p>
                         </div>
@@ -1860,7 +1859,7 @@ export default function LiffStudentPage() {
                         <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">เปิดรับเช็คชื่ออยู่ตอนนี้</p>
                         <h3 className="text-base font-bold text-slate-900 dark:text-white truncate">{item.session.title}</h3>
                         <p className="text-xs text-slate-500 truncate">
-                          {item.classroom.name} • เริ่ม {new Date(item.session.starts_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+                          {subjectName(item.classroom)} • เริ่ม {new Date(item.session.starts_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
                         </p>
                       </div>
                     </div>
@@ -1891,7 +1890,7 @@ export default function LiffStudentPage() {
                         tone="violet"
                         badge="ข้อสอบ"
                         title={exam.title}
-                        meta={`${examClass?.name || 'รายวิชา'} • ${formatTimeLeft(getAssignmentWindow(exam).deadline)}`}
+                        meta={`${examClass ? subjectName(examClass) : 'รายวิชา'} • ${formatTimeLeft(getAssignmentWindow(exam).deadline)}`}
                         action="เริ่มทำ"
                         onClick={() => {
                           if (examClass) setSelectedClassroom(examClass);
@@ -1927,7 +1926,7 @@ export default function LiffStudentPage() {
                         tone={hwWindow.isPastDeadline ? "rose" : "amber"}
                         badge={hwWindow.isPastDeadline ? "🔒 ปิดแล้ว · ส่งช้าได้" : "การบ้าน"}
                         title={hw.title}
-                        meta={`${hwClass?.name || 'รายวิชา'} • ${formatTimeLeft(hwWindow.deadline)}`}
+                        meta={`${hwClass ? subjectName(hwClass) : 'รายวิชา'} • ${formatTimeLeft(hwWindow.deadline)}`}
                         action="ส่งงาน"
                         onClick={() => {
                           if (hwClass) setSelectedClassroom(hwClass);
@@ -1979,11 +1978,11 @@ export default function LiffStudentPage() {
                         </span>
                         <div className="min-w-0 flex-1 space-y-0.5">
                           <p className="text-[11px] font-semibold text-slate-400 truncate">
-                            {cls.subject_code || 'รายวิชา'} • {cls.academic_year || 'ภาคเรียนปัจจุบัน'}
+                            {subjectCode(cls) || 'รายวิชา'} • {cls.academic_year || 'ภาคเรียนปัจจุบัน'}
                           </p>
                           <div className="flex items-center gap-2 min-w-0">
                             <h3 className="min-w-0 flex-1 text-sm font-bold text-slate-900 dark:text-white truncate">
-                              {cls.course_name || cls.name}
+                              {subjectName(cls)}
                             </h3>
                             <span className="shrink-0">
                               {pendingApproval ? (
@@ -1995,7 +1994,7 @@ export default function LiffStudentPage() {
                               )}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-500 truncate">{cls.name}</p>
+                          <p className="text-xs text-slate-500 truncate">{roomLabel(cls)}</p>
                         </div>
                         <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
                       </button>
@@ -2020,11 +2019,10 @@ export default function LiffStudentPage() {
               </button>
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-bold text-slate-900 dark:text-white truncate">
-                  {selectedClassroom.course_name || selectedClassroom.subject_code || 'รายวิชา'}
+                  {subjectName(selectedClassroom)}
                 </h2>
                 <p className="text-xs text-slate-500 truncate">
-                  {selectedClassroom.name}
-                  {selectedClassroom.subject_code ? ` • ${selectedClassroom.subject_code}` : ''}
+                  {[subjectCode(selectedClassroom), roomLabel(selectedClassroom)].filter(Boolean).join(' • ')}
                 </p>
               </div>
               {isSelectedClassroomPending ? (
@@ -2605,7 +2603,7 @@ export default function LiffStudentPage() {
             <div className="min-w-0 flex-1">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">ส่งแทนเพื่อน (ยืมเครื่อง)</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5">
-                สำหรับเพื่อนที่โทรศัพท์มีปัญหา ให้เพื่อนใช้เครื่องนี้ส่งงานของตัวเอง เพื่อนต้องเรียนวิชา {selectedClassroom.course_name || selectedClassroom.name} และอยู่โรงเรียนเดียวกับคุณ — คุณครูจะเห็นว่าส่งจากเครื่องของคุณ
+                สำหรับเพื่อนที่โทรศัพท์มีปัญหา ให้เพื่อนใช้เครื่องนี้ส่งงานของตัวเอง เพื่อนต้องเรียนวิชา {subjectName(selectedClassroom)} และอยู่โรงเรียนเดียวกับคุณ — คุณครูจะเห็นว่าส่งจากเครื่องของคุณ
               </p>
             </div>
             <button type="button" onClick={closeProxySheet} aria-label="ปิด" className="w-9 h-9 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 cursor-pointer shrink-0">

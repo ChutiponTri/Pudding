@@ -14,8 +14,8 @@ const STATUSES: SubmissionOverrideStatus[] = ['auto', 'force_closed', 'extended'
 /**
  * Teacher changes whether an assignment accepts work: back to the deadline,
  * close now, or extend. No LINE message is pushed (it would use the LINE
- * message quota); open student pages update right away, and students can ask
- * the bot in the group ("พุดดิ้ง งาน") for what is still open.
+ * message quota); open student pages update right away, and the teacher can
+ * ask the bot in the group ("พุดดิ้ง งาน") to post what is still open.
  * `action: 'publish_now'` instead releases scheduled work immediately (the class
  * reached the topic early); it is announced like a scheduled release.
  */

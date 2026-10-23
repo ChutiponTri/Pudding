@@ -6,6 +6,7 @@ import { withLiffLink } from '@/lib/line/liffLink';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { getAssignmentWindow, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
+import { classroomTitle } from '@/lib/utils/classroomLabel';
 
 export const runtime = 'nodejs';
 
@@ -85,7 +86,7 @@ async function runReminders(request: NextRequest) {
 
     const { data: classroom } = await supabase
       .from('classrooms')
-      .select('name, line_group_id, students, invite_code')
+      .select('name, course_name, subject_code, line_group_id, students, invite_code')
       .eq('id', assignment.classroom_id)
       .maybeSingle();
     if (!classroom?.line_group_id) continue;
@@ -108,7 +109,7 @@ async function runReminders(request: NextRequest) {
       await pushLineGroupText(
         classroom.line_group_id,
         withLiffLink(
-          `🔔 แจ้งเตือนส่งงาน\n${assignment.title}\nห้อง: ${classroom.name}\nกำหนดส่ง: ${dueLabel}\n\nยังไม่ส่งงาน (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`,
+          `🔔 แจ้งเตือนส่งงาน\n📘 ${classroomTitle(classroom)}\n📋 ${assignment.title}\nกำหนดส่ง: ${dueLabel}\n\nยังไม่ส่งงาน (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`,
           'กดเพื่อส่งงาน',
           { classroomId: assignment.classroom_id, inviteCode: classroom.invite_code, assignmentId: assignment.id }
         )
