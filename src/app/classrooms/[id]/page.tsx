@@ -3090,6 +3090,12 @@ function AttendancePanel({
     });
   }, [classroom.students, recordIndex, rosterSearch, statusFilter]);
 
+  /** Name of the classmate whose phone did a borrowed-phone check-in (they are on the same roster). */
+  const senderName = (senderId: string) => {
+    const sender = (classroom.students || []).find((s) => s.id === senderId || s.line_uid === senderId);
+    return sender ? `${sender.first_name} ${sender.last_name}`.trim() : 'เพื่อน';
+  };
+
   return (
     <section className="max-w-4xl mx-auto space-y-6">
       {/* 1. Top Header Bar with Open-Form Toggle */}
@@ -3445,7 +3451,11 @@ function AttendancePanel({
                             <span className="text-[10px] text-slate-400 font-mono">
                               รหัส: {student.student_id || '-'}
                               {record?.checked_at && ` • เช็คเมื่อ ${new Date(record.checked_at).toLocaleTimeString('th-TH')}`}
-                              {record?.checked_in_by && ' • 📱 เช็คชื่อจากเครื่องเพื่อน'}
+                              {record?.checked_in_by && (
+                                <span className="font-sans font-bold text-sky-600 dark:text-sky-400" title="นักเรียนเช็คชื่อด้วยโทรศัพท์ของเพื่อนร่วมห้อง">
+                                  {` • 📱 เช็คชื่อจากเครื่องของ ${senderName(record.checked_in_by)}`}
+                                </span>
+                              )}
                             </span>
                           </div>
 

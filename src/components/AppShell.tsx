@@ -10,8 +10,10 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const pathname = usePathname();
   const { isOpen } = useSidebar();
   const isLiff = pathname.startsWith('/liff');
+  // The admin console has its own header and no classroom sidebar.
+  const isAdmin = pathname.startsWith('/admin');
 
-  if (isLiff) {
+  if (isLiff || isAdmin) {
     return <>{children}</>;
   }
 
