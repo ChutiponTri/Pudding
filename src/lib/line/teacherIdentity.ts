@@ -72,7 +72,7 @@ export async function syncTeacherLineIdentity(clerkUserId: string): Promise<Teac
   const supabase = createServiceSupabaseClient();
   const selectTeacher = () => supabase
     .from('users')
-    .select('id, teacher_line_uid, line_bot_friend')
+    .select('id, teacher_line_uid, line_bot_friend, is_line_connected, line_link_status')
     .eq('id', clerkUserId)
     .eq('role', 'teacher')
     .maybeSingle();
@@ -114,13 +114,25 @@ export async function syncTeacherLineIdentity(clerkUserId: string): Promise<Teac
   if (!lineUid) return { status: 'missing_line', botFriend: null };
 
   // Never take over a LINE id that already belongs to another teacher account.
-  const { data: owner } = await supabase.from('users').select('id').eq('teacher_line_uid', lineUid).maybeSingle();
+  const { data: owner, error: ownerError } = await supabase.from('users').select('id').eq('teacher_line_uid', lineUid).maybeSingle();
+  if (ownerError) throw ownerError;
   if (owner && owner.id !== clerkUserId) return { status: 'conflict', lineUid, botFriend: null };
 
-  const friendship = (await fetchBotFriendship(clerkUserId)) ?? (await fetchBotProfileFriendship(lineUid));
+  // The login API can report false when its channel is not linked to the bot,
+  // so only trust its "yes"; a "no" is confirmed by the bot profile lookup.
+  const loginFriendship = await fetchBotFriendship(clerkUserId);
+  const friendship = loginFriendship === true
+    ? true
+    : (await fetchBotProfileFriendship(lineUid)) ?? loginFriendship;
   const botFriend = friendship ?? (teacher.line_bot_friend ?? null);
 
-  if (teacher.teacher_line_uid !== lineUid || (friendship !== null && friendship !== teacher.line_bot_friend)) {
+  // Also repairs teachers whose teacher_line_uid was backfilled by a migration
+  // without the connected flags.
+  const needsUpdate = teacher.teacher_line_uid !== lineUid
+    || teacher.is_line_connected !== true
+    || teacher.line_link_status !== 'connected'
+    || (friendship !== null && friendship !== teacher.line_bot_friend);
+  if (needsUpdate) {
     const { error } = await supabase.from('users').update({
       teacher_line_uid: lineUid,
       is_line_connected: true,

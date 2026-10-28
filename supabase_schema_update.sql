@@ -307,3 +307,13 @@ WHERE role = 'teacher' AND line_uid IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_teacher_line_uid_unique
   ON public.users(teacher_line_uid)
   WHERE teacher_line_uid IS NOT NULL;
+
+-- Teachers whose teacher_line_uid was backfilled above never got the connected
+-- flags; the app only repairs them on their next dashboard visit.
+UPDATE public.users
+SET is_line_connected = TRUE,
+    line_link_status = 'connected',
+    updated_at = NOW()
+WHERE role = 'teacher'
+  AND teacher_line_uid IS NOT NULL
+  AND (is_line_connected IS DISTINCT FROM TRUE OR line_link_status IS DISTINCT FROM 'connected');
