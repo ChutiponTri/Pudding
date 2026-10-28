@@ -676,18 +676,14 @@ export default function LiffStudentPage() {
         setCurrentStudent(realStudent);
         setAuthStatus("authenticated");
 
-        // Check if onboarding profile is needed (missing real name, valid student id >= 3 chars, or institution)
-        const needsProfileSetup =
-          !activeStudentId ||
-          activeStudentId.length < 3 ||
-          !syncedUser.first_name ||
-          syncedUser.first_name === "นักเรียน" ||
-          !syncedUser.last_name ||
-          !syncedUser.institution;
-
-        if (needsProfileSetup) {
-          setInputFirstName(syncedUser.first_name && syncedUser.first_name !== "นักเรียน" ? syncedUser.first_name : "");
-          setInputLastName(syncedUser.last_name || "");
+        // Onboarding until the profile is complete (real name, student number, school).
+        if (studentProfileError(syncedUser)) {
+          // Older accounts were pre-filled from the LINE display name; never
+          // offer that as the student's real name.
+          const fromLineName =
+            `${syncedUser.first_name || ""} ${syncedUser.last_name || ""}`.trim() === (profile.displayName || "").trim();
+          setInputFirstName(fromLineName || syncedUser.first_name === "นักเรียน" ? "" : syncedUser.first_name || "");
+          setInputLastName(fromLineName ? "" : syncedUser.last_name || "");
           setInputStudentId(activeStudentId && !activeStudentId.startsWith("U") ? activeStudentId : "");
           setInputInstitution(syncedUser.institution || "");
           setInputEmail(syncedUser.email || "");

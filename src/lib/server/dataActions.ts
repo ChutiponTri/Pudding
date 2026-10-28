@@ -282,15 +282,12 @@ export const dataActions = {
   async syncLineStudentUser({ supabase, actor }: Ctx, student: { name: string; first_name?: string; last_name?: string; avatar?: string | null; student_id?: string; institution?: string; email?: string | null }) {
     const me = requireStudent(actor);
     const lineUid = me.lineUid;
+    // A new student's name stays blank until they type their real one; the
+    // LINE display name is often a nickname, so it is never used as the name.
     let firstName = student.first_name?.trim() || '';
     let lastName = student.last_name?.trim() || '';
     let studentCode: string | null = student.student_id?.trim() || null;
     let institution: string | null = student.institution?.trim() || null;
-    if (!firstName) {
-      const names = (student.name || '').trim().split(' ');
-      firstName = names[0] || 'นักเรียน';
-      lastName = names.slice(1).join(' ');
-    }
     // LINE userId is the stable identity; reuse an older row found by line_uid.
     const { data: existingRows, error: readError } = await supabase
       .from('users')
