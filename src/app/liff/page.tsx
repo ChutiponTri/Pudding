@@ -46,6 +46,7 @@ import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignme
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { isImageUrl, isPdfUrl, referenceWorkUrl } from "@/lib/utils/referenceWork";
 import { classroomTitle, roomLabel, subjectCode, subjectName } from "@/lib/utils/classroomLabel";
+import { personNameError } from "@/lib/utils/studentName";
 
 interface RealLineStudent {
   id: string; // LINE userId
@@ -744,6 +745,11 @@ export default function LiffStudentPage() {
 
     if (!fn || !ln || sid.length < 3 || !inst || !currentStudent) {
       alert("กรุณาระบุข้อมูลให้ครบถ้วน: ชื่อจริง นามสกุล รหัสนักเรียน (ขั้นต่ำ 3 หลัก) และเลือกสถานศึกษา");
+      return;
+    }
+    const nameError = personNameError(fn, ln);
+    if (nameError) {
+      alert(nameError);
       return;
     }
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {

@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
+import { personNameError } from '@/lib/utils/studentName';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,7 +30,8 @@ export async function PATCH(request: NextRequest) {
   // Omitted (older clients) leaves the school unchanged.
   const institution = typeof body.institution === 'string' ? body.institution.trim() : undefined;
   if (!classroomId || !studentKey) return NextResponse.json({ error: 'classroomId and studentId are required' }, { status: 400 });
-  if (!firstName || !lastName) return NextResponse.json({ error: 'กรุณากรอกชื่อและนามสกุล' }, { status: 400 });
+  const nameError = personNameError(firstName, lastName);
+  if (nameError) return NextResponse.json({ error: nameError }, { status: 400 });
 
   const supabase = createServiceSupabaseClient();
   const { data: classroom } = await supabase

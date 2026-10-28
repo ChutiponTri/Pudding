@@ -5,6 +5,7 @@ import { AlertCircle, Edit2, Loader2, X } from 'lucide-react';
 import type { User } from '@/types/database';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 import { dataService } from '@/lib/supabase/dataService';
+import { personNameError } from '@/lib/utils/studentName';
 
 type StudentFields = { first_name: string; last_name: string; student_id?: string; institution?: string };
 
@@ -43,8 +44,9 @@ export function EditStudentModal({
   const [error, setError] = useState('');
 
   const save = async () => {
-    if (!firstName.trim() || !lastName.trim()) {
-      setError('กรุณากรอกชื่อและนามสกุล');
+    const nameError = personNameError(firstName, lastName);
+    if (nameError) {
+      setError(nameError);
       return;
     }
     setSaving(true);

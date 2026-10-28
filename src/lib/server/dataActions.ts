@@ -24,6 +24,7 @@ import {
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import { personNameError } from '@/lib/utils/studentName';
 import type {
   Assignment,
   Classroom,
@@ -344,6 +345,8 @@ export const dataActions = {
       institution: data.institution.trim(),
       email: data.email?.trim() || null,
     };
+    const nameError = personNameError(fields.first_name, fields.last_name);
+    if (nameError) throw new HttpError(400, nameError);
     const { error } = await supabase.from('users').update({ ...fields, updated_at: new Date().toISOString() }).eq('id', me.userId);
     if (error) {
       console.error('updateStudentProfile error:', error);
