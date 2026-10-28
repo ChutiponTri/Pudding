@@ -16,12 +16,75 @@ async function sendLineMessage(endpoint: string, body: Record<string, unknown>):
   if (!response.ok) throw new Error(`LINE message failed with status ${response.status}`);
 }
 
+export interface LinkButton {
+  label: string;
+  uri: string;
+}
+
+const URL_PATTERN = /https?:\/\/[^\s<>()"']+/g;
+/** LINE allows 4 buttons per card and 5 messages per request (the text + 4 cards). */
+const BUTTONS_PER_CARD = 4;
+const MAX_CARDS = 4;
+
+const fit = (value: string, max: number) => ([...value].length > max ? `${[...value].slice(0, max - 1).join('')}…` : value);
+
+function cleanLabel(value: string) {
+  return value.replace(/👉/g, '').replace(/^\s*\d+[.)]\s*/, '').replace(/[:：]\s*$/, '').trim();
+}
+
+/** A button already says "tap", so "กดเพื่อเช็คชื่อ" becomes "เช็คชื่อ" (and fits LINE's 20 characters). */
+function buttonLabel(label: string) {
+  return label.replace(/^(นักเรียน)?กด(ลิงก์นี้)?(เพื่อ)?\s*/, '').replace(/\s*ใน Pudding$/, '') || label;
+}
+
+/**
+ * Every link in a message, labelled from the text in front of it on the same
+ * line ("เปิด Pudding: <url>") or from the line above ("👉 กดเพื่อเช็คชื่อ\n<url>").
+ */
+export function findLinkButtons(text: string): LinkButton[] {
+  const lines = text.split('\n');
+  const buttons: LinkButton[] = [];
+  lines.forEach((line, index) => {
+    for (const match of line.matchAll(URL_PATTERN)) {
+      const uri = match[0].replace(/[.,!?;:]+$/, '');
+      if (buttons.some((button) => button.uri === uri)) continue;
+      let label = cleanLabel(line.slice(0, match.index)) || (index > 0 ? cleanLabel(lines[index - 1]) : '');
+      if (!label || label === 'เปิด') label = 'เปิด Pudding';
+      buttons.push({ label: buttonLabel(label), uri });
+    }
+  });
+  return buttons;
+}
+
+/** Cards of link buttons to show under a text message. */
+function linkCards(buttons: LinkButton[], cardText = 'แตะปุ่มด้านล่างเพื่อเปิด 👇') {
+  const cards: Record<string, unknown>[] = [];
+  for (let i = 0; i < buttons.length && cards.length < MAX_CARDS; i += BUTTONS_PER_CARD) {
+    const group = buttons.slice(i, i + BUTTONS_PER_CARD);
+    cards.push({
+      type: 'template',
+      altText: fit(group.map((button) => `${button.label}: ${button.uri}`).join('\n'), 400),
+      template: {
+        type: 'buttons',
+        text: fit(cardText, 160),
+        actions: group.map((button) => ({ type: 'uri', label: fit(button.label, 20), uri: button.uri })),
+      },
+    });
+  }
+  return cards;
+}
+
+/** A text message followed by a button for each link it contains. */
+function textWithLinkButtons(text: string, cardText?: string): Record<string, unknown>[] {
+  return [{ type: 'text', text }, ...linkCards(findLinkButtons(text), cardText)];
+}
+
 export async function pushLineGroupText(to: string, text: string): Promise<void> {
-  await sendLineMessage(LINE_PUSH_ENDPOINT, { to, messages: [{ type: 'text', text }] });
+  await sendLineMessage(LINE_PUSH_ENDPOINT, { to, messages: textWithLinkButtons(text) });
 }
 
 export async function replyLineText(replyToken: string, text: string): Promise<void> {
-  await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages: [{ type: 'text', text }] });
+  await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages: textWithLinkButtons(text) });
 }
 
 /**
@@ -33,16 +96,13 @@ export async function replyLineTextWithQuickReplies(replyToken: string, text: st
     type: 'action',
     action: { type: 'message', label: [...label].slice(0, 20).join(''), text: label },
   }));
-  await sendLineMessage(LINE_REPLY_ENDPOINT, {
-    replyToken,
-    messages: [{ type: 'text', text, ...(items.length ? { quickReply: { items } } : {}) }],
-  });
+  const messages = textWithLinkButtons(text);
+  // LINE shows quick replies only when they are on the last message.
+  if (items.length) messages[messages.length - 1] = { ...messages[messages.length - 1], quickReply: { items } };
+  await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages });
 }
 
-/**
- * Text reply followed by a card with one link button (both in the same free
- * reply). LINE caps the card text at 160 characters and the label at 20.
- */
+/** Text reply whose link card has its own wording and button label. */
 export async function replyLineTextWithLinkButton(
   replyToken: string,
   text: string,
@@ -50,18 +110,7 @@ export async function replyLineTextWithLinkButton(
 ): Promise<void> {
   await sendLineMessage(LINE_REPLY_ENDPOINT, {
     replyToken,
-    messages: [
-      { type: 'text', text },
-      {
-        type: 'template',
-        altText: `${button.label}: ${button.uri}`.slice(0, 400),
-        template: {
-          type: 'buttons',
-          text: [...button.text].slice(0, 160).join(''),
-          actions: [{ type: 'uri', label: [...button.label].slice(0, 20).join(''), uri: button.uri }],
-        },
-      },
-    ],
+    messages: [{ type: 'text', text }, ...linkCards([{ label: button.label, uri: button.uri }], button.text)],
   });
 }
 

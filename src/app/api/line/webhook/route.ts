@@ -498,10 +498,10 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
           : '⏳ ไม่มีกำหนดส่ง';
         const late = window.isPastDeadline ? '\n⚠️ ส่งตอนนี้จะนับว่าส่งช้า' : '';
         const url = buildLiffUrl(link({ assignmentId: assignment.id }));
-        return `【${index + 1}】${assignment.title}\n${due}${late}${url ? `\n${action} 👉 ${url}` : ''}`;
+        return `【${index + 1}】${assignment.title}\n${due}${late}${url ? `\n${action}【${index + 1}】 👉 ${url}` : ''}`;
       });
       const more = open.length > shown.length ? `\n\n…และอีก ${open.length - shown.length} รายการ ดูได้ในแอป` : '';
-      await replySafely(replyToken, `📤 ส่งงาน\n📘 ${title}\nแตะลิงก์ใต้ชื่องานเพื่อเปิดหน้าส่งงานได้ทันที\n━━━━━━━━━━\n\n${items.join('\n\n')}${more}`);
+      await replySafely(replyToken, `📤 ส่งงาน\n📘 ${title}\nแตะลิงก์ใต้ชื่องาน หรือปุ่มด้านล่าง เพื่อเปิดหน้าส่งงานได้ทันที\n━━━━━━━━━━\n\n${items.join('\n\n')}${more}`);
       return;
     }
     // งาน: a compact overview split into exams and homework, one link at the end.
@@ -519,7 +519,7 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
     ].filter(Boolean);
     await replySafely(replyToken, withLiffLink(
       `📚 งานที่เปิดรับ\n📘 ${title}\nทั้งหมด ${open.length} รายการ\n\n${sections.join('\n\n')}\n\n🔴 ไม่ถึง 1 วัน  🟡 ไม่ถึง 3 วัน  🟢 มากกว่านั้น\n💡 พิมพ์ "พุดดิ้ง ส่งงาน" เพื่อรับลิงก์ส่งของแต่ละงาน`,
-      'ดูรายละเอียดงานทั้งหมด',
+      'ดูงานทั้งหมด',
       link({ view: 'work' })
     ));
   }
