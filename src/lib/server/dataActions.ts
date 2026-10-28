@@ -24,7 +24,7 @@ import {
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
-import { personNameError } from '@/lib/utils/studentName';
+import { personNameError, studentProfileError } from '@/lib/utils/studentName';
 import type {
   Assignment,
   Classroom,
@@ -723,7 +723,16 @@ export const dataActions = {
         throw new HttpError(403, 'รหัสเข้าห้องเรียนไม่ถูกต้อง กรุณาขอลิงก์เชิญจากคุณครู');
       }
       autoAdmit = role === 'student';
-      data = { ...studentData, id: actor.userId, line_uid: actor.lineUid };
+      // A join request needs the saved profile to be complete, and the roster
+      // uses the saved name / number rather than whatever the client sent.
+      const { data: profile } = await supabase
+        .from('users')
+        .select('first_name, last_name, student_id, institution')
+        .eq('id', actor.userId)
+        .maybeSingle();
+      const profileError = studentProfileError(profile);
+      if (profileError && !autoAdmit) throw new HttpError(400, profileError);
+      data = { ...studentData, ...(profileError ? {} : profile), id: actor.userId, line_uid: actor.lineUid };
     }
 
     const studentId = data.id || data.line_uid || (data.student_id ? `std_${data.student_id.trim()}` : `std-${Date.now()}`);

@@ -46,7 +46,7 @@ import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignme
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { isImageUrl, isPdfUrl, referenceWorkUrl } from "@/lib/utils/referenceWork";
 import { classroomTitle, roomLabel, subjectCode, subjectName } from "@/lib/utils/classroomLabel";
-import { personNameError } from "@/lib/utils/studentName";
+import { personNameError, studentProfileError } from "@/lib/utils/studentName";
 
 interface RealLineStudent {
   id: string; // LINE userId
@@ -277,6 +277,8 @@ export default function LiffStudentPage() {
   const [isInLineClient, setIsInLineClient] = useState(false);
   const [liffInstance, setLiffInstance] = useState<any>(null);
   const [currentStudent, setCurrentStudent] = useState<RealLineStudent | null>(null);
+  // Join requests wait for a complete profile (see studentProfileError).
+  const profileReady = !studentProfileError(currentStudent);
 
   // Student Profile First-time Prompt & Edit State
   const [isStudentIdModalOpen, setIsStudentIdModalOpen] = useState(false);
@@ -842,7 +844,9 @@ export default function LiffStudentPage() {
         // Auto-enroll if arrived via invite code or classId link (deduplicated)
         if (codeParam || classIdParam) {
           const enrollKey = `${currentStudent.line_uid || currentStudent.id}_${codeParam || classIdParam}`;
-          if (processedEnrollRef.current !== enrollKey) {
+          // No join request until name, surname, student number and school are
+          // filled in; saving the profile re-runs this load.
+          if (processedEnrollRef.current !== enrollKey && !studentProfileError(currentStudent)) {
             processedEnrollRef.current = enrollKey;
 
             const matched = linkedClass;
@@ -1031,7 +1035,7 @@ export default function LiffStudentPage() {
       unsubscribeSignals();
       unsub();
     };
-  }, [authStatus, currentStudent?.id, currentStudent?.student_id]);
+  }, [authStatus, currentStudent?.id, currentStudent?.student_id, profileReady]);
 
   useEffect(() => {
     selectedClassroomIdRef.current = selectedClassroom?.id || null;
@@ -1258,6 +1262,18 @@ export default function LiffStudentPage() {
   // Join Classroom via Invite Code
   const handleJoinClassroom = async () => {
     if (!joinInviteCode.trim() || !currentStudent) return;
+    const profileError = studentProfileError(currentStudent);
+    if (profileError) {
+      alert(`${profileError}\nกรุณาแก้ไขข้อมูลนักเรียนให้ถูกต้องก่อน`);
+      setInputFirstName(currentStudent.first_name && currentStudent.first_name !== "นักเรียน" ? currentStudent.first_name : "");
+      setInputLastName(currentStudent.last_name || "");
+      setInputStudentId(currentStudent.student_id && !currentStudent.student_id.startsWith("U") ? currentStudent.student_id : "");
+      setInputInstitution(currentStudent.institution || "");
+      setInputEmail(currentStudent.email || "");
+      setIsJoinModalOpen(false);
+      setIsStudentIdModalOpen(true);
+      return;
+    }
     const matched = await dataService.findClassroomByInviteCode(joinInviteCode.trim());
     if (matched) {
       const firstName = currentStudent.first_name || currentStudent.name.split(" ")[0] || "นักเรียน";

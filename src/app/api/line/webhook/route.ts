@@ -348,8 +348,10 @@ async function handleLinkPostback(supabase: ServiceClient, groupId: string, line
   const classroomId = params.get('classroomId');
   if (!classroomId || !lineUserId) return;
   const teacher = await findTeacherByLineUid(supabase, lineUserId);
-  const classroom = teacher ? (await findWaitingClassrooms(supabase, teacher.id)).find((item) => item.id === classroomId) : undefined;
-  if (!teacher || !classroom) {
+  // Students (and anyone who is not a teacher) tapping the button get no reply.
+  if (!teacher) return;
+  const classroom = (await findWaitingClassrooms(supabase, teacher.id)).find((item) => item.id === classroomId);
+  if (!classroom) {
     await replySafely(replyToken, 'เฉพาะคุณครูที่กด “เชื่อม LINE Group” ในเว็บเท่านั้นที่ยืนยันได้ (หรือคำขอหมดอายุแล้ว)');
     return;
   }
@@ -522,7 +524,8 @@ export async function POST(request: NextRequest) {
     supabase = createServiceSupabaseClient();
   } catch (error) {
     console.error('LINE Supabase service client configuration failed:', error);
-    for (const event of payload.events || []) {
+    // Only answer 1:1 chats here: in a group the sender may be a student.
+    for (const event of (payload.events || []).filter((item) => item.source?.type === 'user')) {
       await replySafely(event.replyToken, error instanceof Error && error.message.includes('SUPABASE_SERVICE_ROLE_KEY')
         ? 'ระบบยังไม่ได้ตั้งค่า SUPABASE_SERVICE_ROLE_KEY บนระบบที่ deploy'
         : 'ระบบยังไม่ได้ตั้งค่า Supabase URL บนระบบที่ deploy');
@@ -530,6 +533,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Supabase service configuration is missing' }, { status: 503 });
   }
   for (const event of payload.events || []) {
+    // Multi-person chats ("room") are not classroom groups and may include students.
+    if (event.source?.type === 'room') continue;
     const groupId = event.source?.type === 'group' ? event.source.groupId : undefined;
     const lineUserId = event.source?.userId;
 
