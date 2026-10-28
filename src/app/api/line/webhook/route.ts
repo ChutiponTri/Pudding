@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { getGroupSummary, isGroupMember, pushLineGroupText, replyLineConfirm, replyLineText, replyLineTextWithQuickReplies } from '@/lib/line/messaging';
+import { getGroupSummary, isGroupMember, pushLineGroupText, replyLineConfirm, replyLineText, replyLineTextWithLinkButton, replyLineTextWithQuickReplies } from '@/lib/line/messaging';
 import { buildLiffUrl, withLiffLink } from '@/lib/line/liffLink';
 import { answerTeacherQuestion, teacherFollowUpWelcome, type BotReply } from '@/lib/line/teacherFaq';
 import { parseStudentCommand, studentHelpText, type StudentCommand } from '@/lib/line/studentCommands';
@@ -70,9 +70,13 @@ async function replySafely(replyToken: string | undefined, text: string) {
   }
 }
 
+// The invite code (not the guessable classroom id) is what lets a new student join.
+function classroomJoinUrl(classroom: { invite_code?: string | null }, liffUrl: string | null) {
+  return liffUrl && classroom.invite_code ? `${liffUrl}?code=${encodeURIComponent(classroom.invite_code)}` : null;
+}
+
 function classroomJoinText(classroom: LabelledClassroom & { invite_code?: string | null; id: string }, liffUrl: string | null) {
-  // The invite code (not the guessable classroom id) is what lets a new student join.
-  const joinUrl = liffUrl && classroom.invite_code ? `${liffUrl}?code=${encodeURIComponent(classroom.invite_code)}` : null;
+  const joinUrl = classroomJoinUrl(classroom, liffUrl);
   const lines = [`🎓 ${classroomTitle(classroom)}`];
   if (classroom.invite_code) lines.push(`รหัสเข้าห้อง: ${classroom.invite_code}`);
   if (joinUrl) lines.push(`กดลิงก์นี้เพื่อเข้าร่วม: ${joinUrl}`);
@@ -80,8 +84,22 @@ function classroomJoinText(classroom: LabelledClassroom & { invite_code?: string
   return lines.join('\n');
 }
 
+/** Join code text, plus a "เข้าร่วมห้องเรียน" button under it when there is a join link. */
 async function replyClassroomJoinCode(replyToken: string | undefined, classroom: LabelledClassroom & { invite_code?: string | null; id: string }, liffUrl: string | null) {
-  await replySafely(replyToken, classroomJoinText(classroom, liffUrl));
+  const text = classroomJoinText(classroom, liffUrl);
+  const joinUrl = classroomJoinUrl(classroom, liffUrl);
+  if (!replyToken || !joinUrl) return replySafely(replyToken, text);
+  try {
+    await replyLineTextWithLinkButton(replyToken, text, {
+      text: `🎓 ${classroomTitle(classroom)}\nกดปุ่มด้านล่างเพื่อเข้าร่วมห้องเรียน`,
+      label: 'เข้าร่วมห้องเรียน',
+      uri: joinUrl,
+    });
+  } catch (error) {
+    console.error('LINE join button reply failed:', error);
+    // A reply token works once; it is still unused when LINE rejected the message.
+    await replySafely(replyToken, text);
+  }
 }
 
 type ServiceClient = ReturnType<typeof createServiceSupabaseClient>;

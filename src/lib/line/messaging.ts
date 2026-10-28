@@ -39,6 +39,32 @@ export async function replyLineTextWithQuickReplies(replyToken: string, text: st
   });
 }
 
+/**
+ * Text reply followed by a card with one link button (both in the same free
+ * reply). LINE caps the card text at 160 characters and the label at 20.
+ */
+export async function replyLineTextWithLinkButton(
+  replyToken: string,
+  text: string,
+  button: { text: string; label: string; uri: string }
+): Promise<void> {
+  await sendLineMessage(LINE_REPLY_ENDPOINT, {
+    replyToken,
+    messages: [
+      { type: 'text', text },
+      {
+        type: 'template',
+        altText: `${button.label}: ${button.uri}`.slice(0, 400),
+        template: {
+          type: 'buttons',
+          text: [...button.text].slice(0, 160).join(''),
+          actions: [{ type: 'uri', label: [...button.label].slice(0, 20).join(''), uri: button.uri }],
+        },
+      },
+    ],
+  });
+}
+
 export interface LinePostbackChoice {
   label: string;
   data: string;
