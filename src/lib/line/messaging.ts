@@ -25,6 +25,8 @@ const URL_PATTERN = /https?:\/\/[^\s<>()"']+/g;
 /** LINE allows 4 buttons per card and 5 messages per request (the text + 4 cards). */
 const BUTTONS_PER_CARD = 4;
 const MAX_CARDS = 4;
+const MAX_BUTTONS = BUTTONS_PER_CARD * MAX_CARDS;
+const HAS_URL = /https?:\/\//;
 
 const fit = (value: string, max: number) => ([...value].length > max ? `${[...value].slice(0, max - 1).join('')}…` : value);
 
@@ -38,22 +40,44 @@ function buttonLabel(label: string) {
 }
 
 /**
- * Every link in a message, labelled from the text in front of it on the same
- * line ("เปิด Pudding: <url>") or from the line above ("👉 กดเพื่อเช็คชื่อ\n<url>").
+ * Turns every link in a message into a button and takes it out of the text,
+ * since the button already carries it. A button is labelled from the text in
+ * front of the link on the same line ("เปิด Pudding: <url>") or from the line
+ * above ("👉 กดเพื่อเช็คชื่อ\n<url>"); that label text leaves the message too.
+ * Links beyond what the cards can hold stay in the text.
  */
-export function findLinkButtons(text: string): LinkButton[] {
+export function splitLinkButtons(text: string): { text: string; buttons: LinkButton[] } {
   const lines = text.split('\n');
+  const kept: (string | null)[] = [...lines];
   const buttons: LinkButton[] = [];
   lines.forEach((line, index) => {
-    for (const match of line.matchAll(URL_PATTERN)) {
+    const matches = [...line.matchAll(URL_PATTERN)];
+    let rest = line;
+    for (const match of matches) {
       const uri = match[0].replace(/[.,!?;:]+$/, '');
-      if (buttons.some((button) => button.uri === uri)) continue;
-      let label = cleanLabel(line.slice(0, match.index)) || (index > 0 ? cleanLabel(lines[index - 1]) : '');
-      if (!label || label === 'เปิด') label = 'เปิด Pudding';
-      buttons.push({ label: buttonLabel(label), uri });
+      if (!buttons.some((button) => button.uri === uri)) {
+        if (buttons.length >= MAX_BUTTONS) continue;
+        const before = cleanLabel(line.slice(0, match.index));
+        const above = !before && index > 0 ? cleanLabel(lines[index - 1]) : '';
+        const label = before || above;
+        buttons.push({ label: buttonLabel(!label || label === 'เปิด' ? 'เปิด Pudding' : label), uri });
+        // The line above was only this button's label.
+        if (above && !HAS_URL.test(lines[index - 1])) kept[index - 1] = null;
+      }
+      rest = rest.replace(uri, '');
     }
+    if (rest === line) return;
+    const last = matches[matches.length - 1];
+    const after = line.slice(last.index + last[0].length);
+    // "label: <url>" goes away whole; a link inside a sentence leaves the sentence.
+    kept[index] = cleanLabel(after) || HAS_URL.test(rest) ? rest.replace(/[ \t]{2,}/g, ' ').trim() : null;
   });
-  return buttons;
+  const stripped = kept
+    .filter((line): line is string => line !== null)
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { text: stripped, buttons };
 }
 
 /** Cards of link buttons to show under a text message. */
@@ -74,9 +98,12 @@ function linkCards(buttons: LinkButton[], cardText = 'แตะปุ่มด�
   return cards;
 }
 
-/** A text message followed by a button for each link it contains. */
+/** A text message, without its links, followed by a button for each of them. */
 function textWithLinkButtons(text: string, cardText?: string): Record<string, unknown>[] {
-  return [{ type: 'text', text }, ...linkCards(findLinkButtons(text), cardText)];
+  const split = splitLinkButtons(text);
+  const cards = linkCards(split.buttons, cardText);
+  // A message that was nothing but a link becomes just its button.
+  return split.text || !cards.length ? [{ type: 'text', text: split.text || text }, ...cards] : cards;
 }
 
 export async function pushLineGroupText(to: string, text: string): Promise<void> {
@@ -110,7 +137,7 @@ export async function replyLineTextWithLinkButton(
 ): Promise<void> {
   await sendLineMessage(LINE_REPLY_ENDPOINT, {
     replyToken,
-    messages: [{ type: 'text', text }, ...linkCards([{ label: button.label, uri: button.uri }], button.text)],
+    messages: [{ type: 'text', text: splitLinkButtons(text).text || text }, ...linkCards([{ label: button.label, uri: button.uri }], button.text)],
   });
 }
 

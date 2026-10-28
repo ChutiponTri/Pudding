@@ -79,8 +79,10 @@ function classroomJoinText(classroom: LabelledClassroom & { invite_code?: string
   const joinUrl = classroomJoinUrl(classroom, liffUrl);
   const lines = [`🎓 ${classroomTitle(classroom)}`];
   if (classroom.invite_code) lines.push(`รหัสเข้าห้อง: ${classroom.invite_code}`);
-  if (joinUrl) lines.push(`กดลิงก์นี้เพื่อเข้าร่วม: ${joinUrl}`);
-  lines.push('หากเป็นนักเรียนใหม่ ให้เปิดลิงก์ผ่าน LINE แล้วกรอกข้อมูลเพื่อส่งคำขอเข้าห้องเรียน');
+  if (joinUrl) {
+    lines.push(`กดลิงก์นี้เพื่อเข้าร่วม: ${joinUrl}`);
+    lines.push('หากเป็นนักเรียนใหม่ ให้กดปุ่มเข้าร่วมใน LINE แล้วกรอกข้อมูลเพื่อส่งคำขอเข้าห้องเรียน');
+  }
   return lines.join('\n');
 }
 
@@ -501,7 +503,7 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
         return `【${index + 1}】${assignment.title}\n${due}${late}${url ? `\n${action}【${index + 1}】 👉 ${url}` : ''}`;
       });
       const more = open.length > shown.length ? `\n\n…และอีก ${open.length - shown.length} รายการ ดูได้ในแอป` : '';
-      await replySafely(replyToken, `📤 ส่งงาน\n📘 ${title}\nแตะลิงก์ใต้ชื่องาน หรือปุ่มด้านล่าง เพื่อเปิดหน้าส่งงานได้ทันที\n━━━━━━━━━━\n\n${items.join('\n\n')}${more}`);
+      await replySafely(replyToken, `📤 ส่งงาน\n📘 ${title}\nแตะปุ่มด้านล่างตามหมายเลขงาน เพื่อเปิดหน้าส่งงานได้ทันที\n━━━━━━━━━━\n\n${items.join('\n\n')}${more}`);
       return;
     }
     // งาน: a compact overview split into exams and homework, one link at the end.
@@ -518,7 +520,7 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
       homework.length ? `📋 การบ้าน (${homework.length})\n${homework.slice(0, 8).map(line).join('\n')}` : '',
     ].filter(Boolean);
     await replySafely(replyToken, withLiffLink(
-      `📚 งานที่เปิดรับ\n📘 ${title}\nทั้งหมด ${open.length} รายการ\n\n${sections.join('\n\n')}\n\n🔴 ไม่ถึง 1 วัน  🟡 ไม่ถึง 3 วัน  🟢 มากกว่านั้น\n💡 พิมพ์ "พุดดิ้ง ส่งงาน" เพื่อรับลิงก์ส่งของแต่ละงาน`,
+      `📚 งานที่เปิดรับ\n📘 ${title}\nทั้งหมด ${open.length} รายการ\n\n${sections.join('\n\n')}\n\n🔴 ไม่ถึง 1 วัน  🟡 ไม่ถึง 3 วัน  🟢 มากกว่านั้น\n💡 พิมพ์ "พุดดิ้ง ส่งงาน" เพื่อรับปุ่มส่งของแต่ละงาน`,
       'ดูงานทั้งหมด',
       link({ view: 'work' })
     ));
