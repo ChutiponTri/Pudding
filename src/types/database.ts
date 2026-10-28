@@ -4,6 +4,7 @@ export interface User {
   id: string;
   clerk_id?: string;
   line_uid?: string;
+  teacher_line_uid?: string;
   student_id?: string;
   first_name: string;
   last_name: string;

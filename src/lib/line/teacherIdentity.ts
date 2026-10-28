@@ -32,9 +32,33 @@ async function fetchBotFriendship(clerkUserId: string): Promise<boolean | null> 
 }
 
 /**
+ * Fallback that needs no linked login bot: the Messaging API only returns a
+ * profile for users who currently have the bot as a friend. This also catches
+ * teachers who added the bot before their line_uid was saved, whose `follow`
+ * webhook matched no row.
+ */
+async function fetchBotProfileFriendship(lineUid: string): Promise<boolean | null> {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!token) return null;
+  try {
+    const response = await fetch(`https://api.line.me/v2/bot/profile/${encodeURIComponent(lineUid)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (response.ok) return true;
+    if (response.status === 404) return false;
+    return null;
+  } catch (error) {
+    console.warn('LINE bot profile lookup failed:', error);
+    return null;
+  }
+}
+
+/**
  * Teachers sign up with LINE through Clerk, so the LINE user id is already on
- * their Clerk account. Copy it to users.line_uid so the bot recognises the
- * teacher without any pairing code. The LINE Login channel used by Clerk must
+ * their Clerk account. Copy it to users.teacher_line_uid so the bot recognises
+ * the teacher without any pairing code. users.line_uid stays the student
+ * identity, so the same person may also have a student LIFF account. The LINE Login channel used by Clerk must
  * belong to the same LINE provider as the Messaging API bot for the ids to match.
  */
 export async function syncTeacherLineIdentity(clerkUserId: string): Promise<TeacherLineIdentity> {
@@ -48,7 +72,7 @@ export async function syncTeacherLineIdentity(clerkUserId: string): Promise<Teac
   const supabase = createServiceSupabaseClient();
   const selectTeacher = () => supabase
     .from('users')
-    .select('id, line_uid, line_bot_friend')
+    .select('id, teacher_line_uid, line_bot_friend')
     .eq('id', clerkUserId)
     .eq('role', 'teacher')
     .maybeSingle();
@@ -89,17 +113,16 @@ export async function syncTeacherLineIdentity(clerkUserId: string): Promise<Teac
   if (!teacher) return { status: 'not_found', botFriend: null };
   if (!lineUid) return { status: 'missing_line', botFriend: null };
 
-  // Never take over a LINE id that already belongs to another account
-  // (for example the same person's student LIFF profile).
-  const { data: owner } = await supabase.from('users').select('id').eq('line_uid', lineUid).maybeSingle();
+  // Never take over a LINE id that already belongs to another teacher account.
+  const { data: owner } = await supabase.from('users').select('id').eq('teacher_line_uid', lineUid).maybeSingle();
   if (owner && owner.id !== clerkUserId) return { status: 'conflict', lineUid, botFriend: null };
 
-  const friendship = await fetchBotFriendship(clerkUserId);
+  const friendship = (await fetchBotFriendship(clerkUserId)) ?? (await fetchBotProfileFriendship(lineUid));
   const botFriend = friendship ?? (teacher.line_bot_friend ?? null);
 
-  if (teacher.line_uid !== lineUid || (friendship !== null && friendship !== teacher.line_bot_friend)) {
+  if (teacher.teacher_line_uid !== lineUid || (friendship !== null && friendship !== teacher.line_bot_friend)) {
     const { error } = await supabase.from('users').update({
-      line_uid: lineUid,
+      teacher_line_uid: lineUid,
       is_line_connected: true,
       line_link_status: 'connected',
       ...(friendship !== null ? { line_bot_friend: friendship } : {}),

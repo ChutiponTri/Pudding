@@ -99,8 +99,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'connected', groupName: classroom.line_group_name || undefined });
   }
   const service = createServiceSupabaseClient();
-  const { data: teacher } = await service.from('users').select('line_uid').eq('id', userId).maybeSingle();
-  if (!teacher?.line_uid) {
+  const { data: teacher } = await service.from('users').select('teacher_line_uid').eq('id', userId).maybeSingle();
+  if (!teacher?.teacher_line_uid) {
     return NextResponse.json({ error: 'บัญชีครูยังไม่ได้เชื่อม LINE กรุณาเข้าสู่ระบบด้วย LINE' }, { status: 409 });
   }
 

@@ -286,3 +286,24 @@ ADD COLUMN IF NOT EXISTS is_required BOOLEAN NOT NULL DEFAULT TRUE;
 -- reminder cron (supabase_reminder_cron.sql) once publish_at passes.
 ALTER TABLE public.assignments
 ADD COLUMN IF NOT EXISTS publish_at TIMESTAMPTZ;
+
+-- ==========================================
+-- Teacher LINE id kept apart from the student identity
+-- ==========================================
+-- users.line_uid identifies a student's LIFF login. A teacher who also uses
+-- the student app (allowed for testing) shares the same LINE id, so teacher
+-- rows keep theirs in teacher_line_uid instead and line_uid stays the student's.
+ALTER TABLE IF EXISTS public.users
+ADD COLUMN IF NOT EXISTS teacher_line_uid TEXT;
+
+UPDATE public.users
+SET teacher_line_uid = line_uid
+WHERE role = 'teacher' AND line_uid IS NOT NULL AND teacher_line_uid IS NULL;
+
+UPDATE public.users
+SET line_uid = NULL
+WHERE role = 'teacher' AND line_uid IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_teacher_line_uid_unique
+  ON public.users(teacher_line_uid)
+  WHERE teacher_line_uid IS NOT NULL;

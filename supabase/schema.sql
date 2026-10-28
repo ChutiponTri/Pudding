@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   id TEXT PRIMARY KEY,
   clerk_id TEXT UNIQUE,                       -- Clerk User ID (e.g. user_2xxx...)
   line_uid TEXT UNIQUE,                       -- LINE User ID from LINE LIFF (e.g. U1234567890abcdef...)
+  teacher_line_uid TEXT UNIQUE,               -- Teacher's LINE User ID from LINE sign-in (separate so the same person can also be a student)
   student_id TEXT,                            -- Student identification number (e.g. 54101)
   first_name TEXT NOT NULL,
   last_name TEXT NOT NULL,

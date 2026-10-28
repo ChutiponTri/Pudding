@@ -164,7 +164,7 @@ async function findLinkedClassroom(supabase: ServiceClient, groupId: string): Pr
 
 /** Registered teacher behind a LINE user id (students and strangers return null). */
 async function findTeacherByLineUid(supabase: ServiceClient, lineUserId: string) {
-  const { data } = await supabase.from('users').select('id, first_name').eq('line_uid', lineUserId).eq('role', 'teacher').maybeSingle();
+  const { data } = await supabase.from('users').select('id, first_name').eq('teacher_line_uid', lineUserId).eq('role', 'teacher').maybeSingle();
   return data as { id: string; first_name?: string | null } | null;
 }
 
@@ -284,13 +284,13 @@ async function handleBotJoined(supabase: ServiceClient, groupId: string, replyTo
   const waiting = await findWaitingClassrooms(supabase);
   const requesterIds = [...new Set(waiting.map((item) => item.line_connection_token as string))];
   const { data: requesters } = requesterIds.length
-    ? await supabase.from('users').select('id, line_uid').in('id', requesterIds).not('line_uid', 'is', null)
-    : { data: [] as Array<{ id: string; line_uid: string }> };
+    ? await supabase.from('users').select('id, teacher_line_uid').in('id', requesterIds).not('teacher_line_uid', 'is', null)
+    : { data: [] as Array<{ id: string; teacher_line_uid: string }> };
   const matches: LinkClassroom[] = [];
   for (const requester of requesters || []) {
     let member = false;
     try {
-      member = await isGroupMember(groupId, requester.line_uid as string);
+      member = await isGroupMember(groupId, requester.teacher_line_uid as string);
     } catch (error) {
       console.error('LINE group membership check failed:', error);
     }
@@ -560,7 +560,7 @@ export async function POST(request: NextRequest) {
       const { data: teacher } = await supabase
         .from('users')
         .update({ line_bot_friend: event.type === 'follow' })
-        .eq('line_uid', lineUserId)
+        .eq('teacher_line_uid', lineUserId)
         .eq('role', 'teacher')
         .select('first_name')
         .maybeSingle();
@@ -603,7 +603,7 @@ export async function POST(request: NextRequest) {
     const liffUrl = getLiffUrl();
 
     const { data: linkedTeacher } = lineUserId
-      ? await supabase.from('users').select('id, first_name, last_name, role').eq('line_uid', lineUserId).eq('role', 'teacher').maybeSingle()
+      ? await supabase.from('users').select('id, first_name, last_name, role').eq('teacher_line_uid', lineUserId).eq('role', 'teacher').maybeSingle()
       : { data: null };
 
     {
