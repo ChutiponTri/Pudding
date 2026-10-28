@@ -318,7 +318,7 @@ async function handleBotJoined(supabase: ServiceClient, groupId: string, replyTo
   }
 
   if (matches.length === 1) {
-    await promptLink(replyToken, matches[0], `เชื่อมกลุ่มนี้กับห้องเรียน ${classroomLabel(matches[0])}?\n(เฉพาะคุณครูเจ้าของวิชาเท่านั้นที่กดยืนยันได้)`);
+    await promptLink(replyToken, matches[0], `เชื่อมกลุ่มนี้กับห้องเรียน ${classroomLabel(matches[0])}?`);
   } else if (matches.length > 1) {
     await replySafely(replyToken, 'คุณครูที่กด “เชื่อม LINE Group” ในเว็บ กรุณาพิมพ์ข้อความใดก็ได้ในกลุ่มนี้เพื่อเชื่อมห้องเรียน');
   } else {
@@ -368,13 +368,11 @@ async function handleLinkPostback(supabase: ServiceClient, groupId: string, line
   const classroomId = params.get('classroomId');
   if (!classroomId || !lineUserId) return;
   const teacher = await findTeacherByLineUid(supabase, lineUserId);
-  // Students (and anyone who is not a teacher) tapping the button get no reply.
+  // Only the requesting teacher's tap gets a reply; students, other teachers
+  // and taps on an expired request are ignored.
   if (!teacher) return;
   const classroom = (await findWaitingClassrooms(supabase, teacher.id)).find((item) => item.id === classroomId);
-  if (!classroom) {
-    await replySafely(replyToken, 'เฉพาะคุณครูที่กด “เชื่อม LINE Group” ในเว็บเท่านั้นที่ยืนยันได้ (หรือคำขอหมดอายุแล้ว)');
-    return;
-  }
+  if (!classroom) return;
 
   if (params.get('pudding') === 'cancel') {
     await supabase.from('classrooms').update({
