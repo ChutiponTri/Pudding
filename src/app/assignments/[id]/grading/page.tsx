@@ -46,7 +46,7 @@ import {
   Layers,
   Rocket,
 } from 'lucide-react';
-import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
+import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 
 /**
@@ -394,6 +394,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // What "auto" actually does right now: homework keeps taking late work, a quiz closes.
   const autoBannerText = !assignment
     ? ''
+    : assignmentWindow?.isDraft
+    ? th
+      ? `ฉบับร่าง — นักเรียนยังไม่เห็นงาน จนกว่าคุณครูจะกดเผยแพร่${draftExpiresAt(assignment) ? ` (ลบอัตโนมัติ ${formatDateTime(draftExpiresAt(assignment), language)} หากยังไม่เผยแพร่)` : ''}`
+      : `Draft; hidden from students until you publish it${draftExpiresAt(assignment) ? ` (deleted automatically on ${formatDateTime(draftExpiresAt(assignment), language)} unless published)` : ''}`
     : assignmentWindow?.isScheduled && assignment.publish_at
     ? th
       ? `ตั้งเวลาเผยแพร่ ${formatDateTime(assignment.publish_at, language)} — ก่อนถึงเวลานี้นักเรียนยังไม่เห็นงาน`
@@ -619,7 +623,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 </span>
               </div>
 
-              {assignmentWindow?.isScheduled && (
+              {(assignmentWindow?.isScheduled || assignmentWindow?.isDraft) && (
                 <button
                   type="button"
                   onClick={handlePublishNow}

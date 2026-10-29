@@ -9,7 +9,7 @@ import { Assignment, Course, Classroom, LearningIndicator, CourseLearningIndicat
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
-import { LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
+import { DRAFT_PUBLISH_AT, DRAFT_RETENTION_DAYS, draftExpiresAt, isAssignmentDraft, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { optimizeImage, UploadError, uploadToStorage } from '@/lib/storage/uploadClient';
 import { uploadRejection } from '@/lib/storage/uploadRules';
 import {
@@ -17,6 +17,7 @@ import {
   Trash2,
   Calendar,
   Clock,
+  FilePen,
   Sparkles,
   BookOpen,
   Send,
@@ -83,8 +84,11 @@ function NewAssignmentContent() {
   const [existingGroups, setExistingGroups] = useState<string[]>([]);
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState(() => daysFromNowAt(7, 23, 59));
-  // Scheduled release: prepare work ahead and let students see it at class time.
-  const [schedulePublish, setSchedulePublish] = useState(false);
+  // Release: now, at a scheduled time (prepare work ahead for class time), or
+  // kept as a draft that only the teacher publishes, by hand.
+  const [releaseMode, setReleaseMode] = useState<'now' | 'schedule' | 'draft'>('now');
+  const schedulePublish = releaseMode === 'schedule';
+  const saveAsDraft = releaseMode === 'draft';
   const [publishAt, setPublishAt] = useState(() => daysFromNowAt(1, 8, 0));
   const reminderCron = 'relative_due_date';
   // One reminder per assignment (each one is a LINE message from the quota).
@@ -219,8 +223,12 @@ function NewAssignmentContent() {
           setDescription(assignment.description || '');
           setDueDate(assignment.due_date || daysFromNowAt(7, 23, 59));
           const publishMs = assignment.publish_at ? new Date(assignment.publish_at).getTime() : NaN;
-          setSchedulePublish(!Number.isNaN(publishMs) && publishMs > Date.now());
-          if (assignment.publish_at) setPublishAt(assignment.publish_at);
+          if (isAssignmentDraft(assignment)) {
+            setReleaseMode('draft');
+          } else {
+            setReleaseMode(!Number.isNaN(publishMs) && publishMs > Date.now() ? 'schedule' : 'now');
+            if (assignment.publish_at) setPublishAt(assignment.publish_at);
+          }
           // Work saved with several reminders keeps the earliest one.
           setReminderOffset(assignment.reminder_offsets_minutes?.length
             ? Math.max(...assignment.reminder_offsets_minutes)
@@ -531,6 +539,7 @@ function NewAssignmentContent() {
           is_exam: isExam,
           due_date: dueDate || editingAssignment.due_date,
           ...(!editIsPublished && schedulePublish ? { publish_at: new Date(publishAt).toISOString() } : {}),
+          ...(!editIsPublished && saveAsDraft ? { publish_at: DRAFT_PUBLISH_AT } : {}),
           reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
           reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
           total_points: totalPoints,
@@ -539,9 +548,13 @@ function NewAssignmentContent() {
           sample_work_description: isExam ? '' : sampleWorkDescription.trim(),
         });
         await dataService.replaceAssignmentQuestions(id, questionRows.map((row, index) => ({ ...row, id: questions[index].id })));
-        // Was scheduled, teacher switched to "publish now".
-        if (!editIsPublished && !schedulePublish) await dataService.publishAssignmentNow(id);
-        alert(language === 'th' ? 'บันทึกการแก้ไขเรียบร้อยแล้ว' : 'Changes saved');
+        // Was scheduled or a draft, teacher switched to "publish now".
+        if (!editIsPublished && releaseMode === 'now') await dataService.publishAssignmentNow(id);
+        alert(
+          !editIsPublished && saveAsDraft
+            ? language === 'th' ? 'บันทึกฉบับร่างแล้ว นักเรียนยังไม่เห็นงานนี้' : 'Draft saved. Students cannot see it yet.'
+            : language === 'th' ? 'บันทึกการแก้ไขเรียบร้อยแล้ว' : 'Changes saved'
+        );
         router.push(isFromDashboard ? '/dashboard' : `/classrooms/${editingAssignment.classroom_id}?tab=classwork`);
         return;
       }
@@ -558,7 +571,7 @@ function NewAssignmentContent() {
             description,
             is_exam: isExam,
             due_date: dueDate || daysFromNowAt(7, 23, 59),
-            publish_at: schedulePublish ? new Date(publishAt).toISOString() : undefined,
+            publish_at: saveAsDraft ? DRAFT_PUBLISH_AT : schedulePublish ? new Date(publishAt).toISOString() : undefined,
             reminder_cron: reminderCron,
             reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
             reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
@@ -574,7 +587,11 @@ function NewAssignmentContent() {
       }
 
       alert(
-        schedulePublish
+        saveAsDraft
+          ? language === 'th'
+            ? `บันทึกฉบับร่าง${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว\nนักเรียนจะยังไม่เห็นงานนี้ จนกว่าคุณครูจะกด "เผยแพร่ตอนนี้" ในหน้างานของห้องเรียน\nฉบับร่างที่ไม่ได้เผยแพร่ภายใน ${DRAFT_RETENTION_DAYS} วันจะถูกลบอัตโนมัติ`
+            : `Draft saved. Students won't see it until you press "Publish now" in the classwork list.\nDrafts not published within ${DRAFT_RETENTION_DAYS} days are deleted automatically.`
+          : schedulePublish
           ? language === 'th'
             ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
             : `Scheduled for ${formatDateTime(publishAt, 'en')}. Students will see it then.`
@@ -828,7 +845,7 @@ function NewAssignmentContent() {
               />
             </div>
 
-            {/* Publish time: now or scheduled */}
+            {/* Release: now, scheduled, or saved as a draft */}
             <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Send className="w-3.5 h-3.5 text-sky-500" />
@@ -841,27 +858,53 @@ function NewAssignmentContent() {
                 </p>
               ) : (
               <>
-              <div className="grid grid-cols-2 gap-2 max-w-md" role="radiogroup">
-                {[
-                  { value: false, label: language === 'th' ? 'เผยแพร่ทันที' : 'Publish now' },
-                  { value: true, label: language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule' },
-                ].map((option) => (
-                  <button
-                    key={String(option.value)}
-                    type="button"
-                    role="radio"
-                    aria-checked={schedulePublish === option.value}
-                    onClick={() => setSchedulePublish(option.value)}
-                    className={`px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 ${
-                      schedulePublish === option.value
-                        ? 'bg-sky-600 border-sky-600 text-white shadow-xs'
-                        : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
-                    }`}
-                  >
-                    {option.value ? <Clock className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-                    <span>{option.label}</span>
-                  </button>
-                ))}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup">
+                {([
+                  {
+                    value: 'now',
+                    icon: Send,
+                    label: language === 'th' ? 'เผยแพร่ทันที' : 'Publish now',
+                    hint: language === 'th' ? 'นักเรียนเห็นและแจ้งเข้า LINE ทันที' : 'Students see it now; LINE is notified',
+                    selected: 'bg-sky-600 border-sky-600 text-white shadow-xs',
+                  },
+                  {
+                    value: 'schedule',
+                    icon: Clock,
+                    label: language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule',
+                    hint: language === 'th' ? 'เผยแพร่เองเมื่อถึงเวลาที่เลือก' : 'Released automatically at a set time',
+                    selected: 'bg-sky-600 border-sky-600 text-white shadow-xs',
+                  },
+                  {
+                    value: 'draft',
+                    icon: FilePen,
+                    label: language === 'th' ? 'บันทึกฉบับร่าง' : 'Save as draft',
+                    hint: language === 'th' ? 'ยังไม่เผยแพร่ คุณครูกดเผยแพร่เองภายหลัง' : 'Not released; you publish it later',
+                    selected: 'bg-slate-700 border-slate-700 text-white shadow-xs dark:bg-slate-200 dark:border-slate-200 dark:text-slate-900',
+                  },
+                ] as const).map((option) => {
+                  const Icon = option.icon;
+                  const isSelected = releaseMode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      onClick={() => setReleaseMode(option.value)}
+                      className={`px-3 py-2.5 rounded-xl border transition-all cursor-pointer text-left flex items-start gap-2 ${
+                        isSelected
+                          ? option.selected
+                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
+                      } ${option.value === 'draft' && !isSelected ? 'border-dashed' : ''}`}
+                    >
+                      <Icon className="w-4 h-4 mt-0.5 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-bold">{option.label}</span>
+                        <span className={`block text-[10px] leading-snug mt-0.5 ${isSelected ? 'opacity-85' : 'text-slate-400 dark:text-slate-500'}`}>{option.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
               {schedulePublish && (
                 <div className="p-3 rounded-2xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 space-y-2">
@@ -870,6 +913,34 @@ function NewAssignmentContent() {
                     {language === 'th'
                       ? 'ก่อนถึงเวลานี้ นักเรียนจะยังไม่เห็นงานและส่งไม่ได้ เมื่อถึงเวลา งานจะขึ้นในไทม์ไลน์และแจ้งเข้า LINE group อัตโนมัติ'
                       : 'Students cannot see or submit before this time. At this time it appears on the timeline and is announced in the LINE group.'}
+                  </p>
+                </div>
+              )}
+              {saveAsDraft && (
+                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-600 space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                  <p className="flex items-start gap-1.5">
+                    <FilePen className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-500" />
+                    <span>
+                      {language === 'th'
+                        ? 'นักเรียนจะยังไม่เห็นงานนี้และไม่มีการแจ้งเข้า LINE จนกว่าคุณครูจะกด "เผยแพร่ตอนนี้" ในหน้างานของห้องเรียน (หรือกลับมาแก้ไขแล้วเลือก "เผยแพร่ทันที")'
+                        : 'Students won\'t see it and nothing is sent to LINE until you press "Publish now" in the classwork list (or edit it and choose "Publish now").'}
+                    </span>
+                  </p>
+                  <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400 font-bold">
+                    <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      {(() => {
+                        const expires = editingAssignment && isAssignmentDraft(editingAssignment) ? draftExpiresAt(editingAssignment) : null;
+                        if (expires) {
+                          return language === 'th'
+                            ? `ฉบับร่างนี้จะถูกลบอัตโนมัติ ${formatDateTime(expires, language)} หากยังไม่เผยแพร่`
+                            : `This draft is deleted automatically on ${formatDateTime(expires, language)} unless published.`;
+                        }
+                        return language === 'th'
+                          ? `ฉบับร่างที่ไม่ได้เผยแพร่ภายใน ${DRAFT_RETENTION_DAYS} วันจะถูกลบอัตโนมัติ`
+                          : `Drafts not published within ${DRAFT_RETENTION_DAYS} days are deleted automatically.`;
+                      })()}
+                    </span>
                   </p>
                 </div>
               )}
@@ -1473,13 +1544,29 @@ function NewAssignmentContent() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="flex-1 sm:flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl bg-slate-950 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-900 dark:hover:bg-slate-100 text-sm sm:text-xs font-bold shadow-lg shadow-black/15 transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            className={`flex-1 sm:flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl text-sm sm:text-xs font-bold shadow-lg transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50 ${
+              saveAsDraft && !editIsPublished
+                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border-2 border-dashed border-slate-400 dark:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700 shadow-black/5'
+                : 'bg-slate-950 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-900 dark:hover:bg-slate-100 shadow-black/15'
+            }`}
           >
-            <Send className="w-4 h-4 text-amber-500" />
+            {saveAsDraft && !editIsPublished
+              ? <FilePen className="w-4 h-4 text-slate-500" />
+              : schedulePublish && !editIsPublished
+              ? <Clock className="w-4 h-4 text-amber-500" />
+              : <Send className="w-4 h-4 text-amber-500" />}
             <span>
               {isSubmitting
                 ? isUploadingSample ? (language === 'th' ? 'กำลังอัปโหลดไฟล์...' : 'Uploading file...') : t('common.loading')
-                : editId ? (language === 'th' ? 'บันทึกการแก้ไข' : 'Save changes') : t('assignment_creator.buttons.publish')}
+                : saveAsDraft && !editIsPublished
+                ? (language === 'th' ? 'บันทึกฉบับร่าง' : 'Save draft')
+                : editId
+                ? (!editIsPublished && releaseMode === 'now'
+                  ? (language === 'th' ? 'บันทึกและเผยแพร่' : 'Save & publish')
+                  : (language === 'th' ? 'บันทึกการแก้ไข' : 'Save changes'))
+                : schedulePublish
+                ? (language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule')
+                : t('assignment_creator.buttons.publish')}
             </span>
           </button>
         </div>

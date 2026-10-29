@@ -5,6 +5,8 @@ import { pushLineGroupText } from '@/lib/line/messaging';
 import { buildPostLineMessage, type PostActivityType } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import type { LabelledClassroom } from '@/lib/utils/classroomLabel';
+import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import type { Assignment } from '@/types/database';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 
 export type ClassroomPost = {
@@ -16,6 +18,11 @@ export type ClassroomPost = {
   metadata?: Record<string, unknown>;
   created_at: string;
 };
+
+/** Timeline/LINE text for new work. The edit path matches the "งานใหม่:" / "ข้อสอบใหม่:" prefix. */
+export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date'>) {
+  return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${a.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE)})`;
+}
 
 /**
  * Adds a timeline post and announces it in the classroom's LINE group.

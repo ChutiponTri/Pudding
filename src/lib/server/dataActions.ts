@@ -5,7 +5,7 @@ import type { Actor } from '@/lib/auth/actor';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import type { ClassroomSignal } from '@/lib/realtime/signals';
-import { createClassroomPost } from '@/lib/server/classroomPosts';
+import { assignmentPostBody, createClassroomPost } from '@/lib/server/classroomPosts';
 import { newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
 import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
@@ -24,8 +24,8 @@ import {
   UNAUTHORIZED,
 } from '@/lib/server/access';
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
-import { isAssignmentPublished } from '@/lib/utils/assignmentWindow';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import { DRAFT_RETENTION_MS, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
+import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
 import { personNameError, studentProfileError } from '@/lib/utils/studentName';
 import type {
   Assignment,
@@ -892,7 +892,11 @@ export const dataActions = {
     const failed = results.find((r) => r.error);
     if (failed?.error) throw toDatabaseError(failed.error, 'assignments');
     const list = results.flatMap((r) => (r.data || []) as Assignment[]).sort(byCreatedDesc);
-    return actor.kind === 'teacher' ? list : list.filter((a) => isAssignmentPublished(a));
+    if (actor.kind !== 'teacher') return list.filter((a) => isAssignmentPublished(a));
+    // Drafts never published are deleted after DRAFT_RETENTION_DAYS; hide them until the sweep runs.
+    after(() => deleteExpiredAssignmentDraftsOccasionally(supabase));
+    const draftCutoff = Date.now() - DRAFT_RETENTION_MS;
+    return list.filter((a) => !isAssignmentDraft(a) || !a.created_at || new Date(a.created_at).getTime() >= draftCutoff);
   },
 
   async getAssignmentsByClassroomId(ctx: Ctx, classroomId: string) {
@@ -965,7 +969,8 @@ export const dataActions = {
     await attachFiles(supabase, [newAssignment.sample_work_url], id, [me.userId]);
 
     // Timeline post + LINE notification; best effort so creation is not blocked.
-    try {
+    // A draft gets its post when the teacher publishes it.
+    if (!isAssignmentDraft(row)) try {
       await createClassroomPost(supabase, {
         classroom,
         authorId: me.userId,
@@ -989,7 +994,8 @@ export const dataActions = {
 
     const due = new Date(patch.due_date ?? previous.due_date).getTime();
     const publishAt = patch.publish_at ?? previous.publish_at;
-    if (publishAt && patch.due_date && due <= new Date(publishAt).getTime()) {
+    const toDraft = isAssignmentDraft({ publish_at: publishAt });
+    if (publishAt && !toDraft && patch.due_date && due <= new Date(publishAt).getTime()) {
       throw new HttpError(400, 'กำหนดส่งต้องอยู่หลังเวลาเผยแพร่');
     }
 
@@ -1010,9 +1016,31 @@ export const dataActions = {
       after(() => removeFiles(supabase, oldKeys));
     }
 
-    // A rescheduled release moves its held-back timeline post (and LINE announcement) too.
+    const next = (updated as Assignment) || { ...previous, ...patch };
+    const wasDraft = isAssignmentDraft(previous);
     const nextPublishMs = patch.publish_at ? new Date(patch.publish_at).getTime() : NaN;
-    if (!Number.isNaN(nextPublishMs) && nextPublishMs > Date.now() && nextPublishMs !== new Date(previous.publish_at || 0).getTime()) {
+    if (toDraft && !wasDraft) {
+      // Scheduled work turned back into a draft: drop its held-back post (it was never announced).
+      await supabase.from('classroom_posts').delete().contains('metadata', { assignmentId: id, pendingLine: true });
+    } else if (wasDraft && !toDraft && !Number.isNaN(nextPublishMs) && nextPublishMs > Date.now()) {
+      // A draft given a release time: its timeline post (and LINE announcement) waits for that time.
+      try {
+        const classroom = await loadClassroom(supabase, previous.classroom_id);
+        if (classroom) {
+          await createClassroomPost(supabase, {
+            classroom,
+            authorId: requireTeacher(actor).userId,
+            activityType: next.is_exam ? 'exam' : 'assignment',
+            body: assignmentPostBody(next),
+            metadata: { assignmentId: id, dueDate: next.due_date, groupName: next.group_name || (next.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
+            publishAt: new Date(nextPublishMs).toISOString(),
+          });
+        }
+      } catch (postError) {
+        console.warn('Unable to schedule draft activity:', postError);
+      }
+    } else if (!toDraft && !Number.isNaN(nextPublishMs) && nextPublishMs > Date.now() && nextPublishMs !== new Date(previous.publish_at || 0).getTime()) {
+      // A rescheduled release moves its held-back timeline post (and LINE announcement) too.
       const publishIso = new Date(nextPublishMs).toISOString();
       const { data: scheduledPosts } = await supabase.from('classroom_posts').select('id, metadata').contains('metadata', { assignmentId: id, pendingLine: true });
       await Promise.all(
@@ -1023,7 +1051,6 @@ export const dataActions = {
     }
 
     // The timeline post spells out the title and due date; keep it in step.
-    const next = (updated as Assignment) || { ...previous, ...patch };
     const dueChanged = patch.due_date && new Date(patch.due_date).getTime() !== new Date(previous.due_date).getTime();
     if (dueChanged || (patch.title && patch.title !== previous.title)) {
       const { data: posts } = await supabase.from('classroom_posts').select('id, body, metadata').contains('metadata', { assignmentId: id });
@@ -1242,10 +1269,6 @@ export const dataActions = {
 export type DataActionName = keyof typeof dataActions;
 
 /** Body text of an assignment's timeline post (also what LINE announces). */
-function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date'>) {
-  return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${a.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE)})`;
-}
-
 async function submissionWithClassroom(supabase: Supabase, submissionId: string) {
   const { data: submission } = await supabase.from('submissions').select('id, assignment_id, student_id').eq('id', submissionId).maybeSingle();
   if (!submission) throw new HttpError(404, 'ไม่พบงานที่ส่ง');

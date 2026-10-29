@@ -6,6 +6,7 @@ import { withLiffLink } from '@/lib/line/liffLink';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { getAssignmentWindow, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
+import { deleteExpiredAssignmentDrafts } from '@/lib/server/assignmentDrafts';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 
 export const runtime = 'nodejs';
@@ -27,7 +28,8 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Run from a scheduler every five minutes (see supabase_reminder_cron.sql).
- * Also releases the LINE message for scheduled assignments.
+ * Also releases the LINE message for scheduled assignments and deletes drafts
+ * that were never published within DRAFT_RETENTION_DAYS.
  * Accepts GET (Vercel Cron, which sends `Authorization: Bearer $CRON_SECRET`)
  * and POST (pg_cron / any external scheduler).
  */
@@ -62,6 +64,7 @@ async function runReminders(request: NextRequest) {
     .returns<ReminderRow[]>();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const announced = await announceScheduledPosts(supabase, now);
+  const expiredDrafts = await deleteExpiredAssignmentDrafts(supabase, now);
   // Filtered here rather than with `neq`, which would also drop NULL rows.
   // Quizzes close at the deadline, so they get no reminder.
   // Unpublished (scheduled) work gets no reminder yet.
@@ -123,6 +126,6 @@ async function runReminders(request: NextRequest) {
     await supabase.from('assignments').update({ line_last_reminded_at: now.toISOString() }).eq('id', assignment.id);
     sent += 1;
   }
-  return NextResponse.json({ ok: true, checked: assignments.length, sent, failed, announced });
+  return NextResponse.json({ ok: true, checked: assignments.length, sent, failed, announced, expiredDrafts });
 }
 

@@ -3,7 +3,8 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { isAssignmentPublished } from '@/lib/utils/assignmentWindow';
+import { assignmentPostBody, createClassroomPost } from '@/lib/server/classroomPosts';
+import { isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 
 export const runtime = 'nodejs';
@@ -17,7 +18,8 @@ const STATUSES: SubmissionOverrideStatus[] = ['auto', 'force_closed', 'extended'
  * message quota); open student pages update right away, and the teacher can
  * ask the bot in the group ("พุดดิ้ง งาน") to post what is still open.
  * `action: 'publish_now'` instead releases scheduled work immediately (the class
- * reached the topic early); it is announced like a scheduled release.
+ * reached the topic early); it is announced like a scheduled release. A draft
+ * is published the same way and gets its timeline post and LINE message now.
  */
 export async function POST(request: NextRequest) {
   const { userId } = await auth();
@@ -42,7 +44,7 @@ export async function POST(request: NextRequest) {
 
   const { data: classroom } = await supabase
     .from('classrooms')
-    .select('id, name, teacher_id, teachers, line_group_id, invite_code')
+    .select('id, name, course_name, subject_code, teacher_id, teachers, line_group_id, invite_code')
     .eq('id', previous.classroom_id)
     .maybeSingle();
   const isTeacher =
@@ -52,6 +54,11 @@ export async function POST(request: NextRequest) {
 
   if (publishNow) {
     if (isAssignmentPublished(previous)) return NextResponse.json({ assignment: previous });
+    const wasDraft = isAssignmentDraft(previous);
+    // A draft may have sat past its deadline; publishing it would open already-closed work.
+    if (wasDraft && new Date(previous.due_date).getTime() <= Date.now()) {
+      return NextResponse.json({ error: 'กำหนดส่งของฉบับร่างนี้ผ่านไปแล้ว กรุณาแก้ไขกำหนดส่งก่อนเผยแพร่' }, { status: 400 });
+    }
     const nowIso = new Date().toISOString();
     const { data: published, error: publishError } = await supabase
       .from('assignments')
@@ -62,6 +69,22 @@ export async function POST(request: NextRequest) {
     if (publishError || !published) {
       console.error('Assignment publish-now failed:', publishError);
       return NextResponse.json({ error: 'เผยแพร่งานไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' }, { status: 500 });
+    }
+    if (wasDraft) {
+      // Drafts have no timeline post yet: post and announce it in LINE now.
+      try {
+        await createClassroomPost(supabase, {
+          classroom,
+          authorId: userId,
+          activityType: published.is_exam ? 'exam' : 'assignment',
+          body: assignmentPostBody(published),
+          metadata: { assignmentId, dueDate: published.due_date, groupName: published.group_name || (published.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
+        });
+      } catch (postError) {
+        console.warn('Unable to post published draft:', postError);
+      }
+      after(() => signalClassroom(classroom.id, { type: 'published', assignmentId }));
+      return NextResponse.json({ assignment: published });
     }
     // Move the held-back timeline post to now; announceScheduledPosts then
     // sends its LINE message once and refreshes open student pages.

@@ -6,7 +6,7 @@ import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 import { DateTimeField } from '@/components/DateTimeField';
 import { dataService } from '@/lib/supabase/dataService';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
-import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
+import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 
 /**
  * Lets a teacher change whether an assignment accepts work, from the classroom
@@ -136,10 +136,19 @@ export function AssignmentStatusDialog({
           </div>
         </div>
 
-        {assignmentWindow.isScheduled && assignment.publish_at && (
+        {(assignmentWindow.isScheduled || assignmentWindow.isDraft) && assignment.publish_at && (
           <div className="p-3.5 rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/40 space-y-2.5">
             <p className="text-[11px] leading-relaxed text-sky-800 dark:text-sky-300">
-              ตั้งเวลาเผยแพร่ไว้ <span className="font-black">{formatDateTime(assignment.publish_at, 'th')}</span> — สอนถึงหัวข้อนี้เร็วกว่ากำหนด? เปิดให้นักเรียนทำได้ทันที
+              {assignmentWindow.isDraft ? (
+                <>
+                  <span className="font-black">ฉบับร่าง</span> — นักเรียนยังไม่เห็นงานนี้ กดเผยแพร่เมื่อพร้อม
+                  {draftExpiresAt(assignment) && <> (ลบอัตโนมัติ {formatDateTime(draftExpiresAt(assignment), 'th')} หากยังไม่เผยแพร่)</>}
+                </>
+              ) : (
+                <>
+                  ตั้งเวลาเผยแพร่ไว้ <span className="font-black">{formatDateTime(assignment.publish_at, 'th')}</span> — สอนถึงหัวข้อนี้เร็วกว่ากำหนด? เปิดให้นักเรียนทำได้ทันที
+                </>
+              )}
             </p>
             <button
               type="button"

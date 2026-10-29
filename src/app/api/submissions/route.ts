@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
         throw proxyError;
       }
     }
-    if (assignmentWindow.isScheduled) {
+    if (assignmentWindow.isScheduled || assignmentWindow.isDraft) {
       return NextResponse.json({ error: 'งานนี้ยังไม่เปิดให้ส่ง' }, { status: 409 });
     }
     if (assignmentWindow.isQuizClosed) {

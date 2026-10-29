@@ -4,7 +4,28 @@ import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 type AssignmentDeadlineFields = Pick<Assignment, 'due_date' | 'status_override' | 'extended_until'> &
   Partial<Pick<Assignment, 'is_exam' | 'publish_at'>>;
 
-/** False while a scheduled assignment's publish time is still ahead. */
+/**
+ * A draft is stored with this publish time, so every check that hides
+ * unpublished work (student lists, LINE reminders, submissions) covers drafts
+ * too. Only the teacher publishes it, from the classwork list or the grading page.
+ */
+export const DRAFT_PUBLISH_AT = '9999-12-31T00:00:00.000Z';
+
+/** Drafts never published are deleted this long after they were created. */
+export const DRAFT_RETENTION_DAYS = 30;
+export const DRAFT_RETENTION_MS = DRAFT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+export function isAssignmentDraft(assignment: Partial<Pick<Assignment, 'publish_at'>>) {
+  return !!assignment.publish_at && new Date(assignment.publish_at).getUTCFullYear() >= 9999;
+}
+
+/** When an unpublished draft is deleted automatically. */
+export function draftExpiresAt(assignment: Partial<Pick<Assignment, 'created_at'>>) {
+  const created = assignment.created_at ? new Date(assignment.created_at).getTime() : NaN;
+  return Number.isNaN(created) ? null : new Date(created + DRAFT_RETENTION_MS).toISOString();
+}
+
+/** False while a scheduled assignment's publish time is still ahead (and for drafts). */
 export function isAssignmentPublished(assignment: Partial<Pick<Assignment, 'publish_at'>>, now: number = Date.now()) {
   const publishAt = assignment.publish_at ? new Date(assignment.publish_at).getTime() : NaN;
   return Number.isNaN(publishAt) || now >= publishAt;
@@ -52,7 +73,8 @@ export function getAssignmentWindow(
   const isQuizClosed = !!assignment.is_exam && hasDeadline && now > deadline + graceMs;
   const lateUntil = hasDeadline && !assignment.is_exam ? deadline + LATE_WINDOW_MS : null;
   const isLateClosed = lateUntil !== null && now > lateUntil + graceMs;
-  const isScheduled = !isAssignmentPublished(assignment, now);
+  const isDraft = isAssignmentDraft(assignment);
+  const isScheduled = !isDraft && !isAssignmentPublished(assignment, now);
 
   return {
     isForceClosed,
@@ -67,11 +89,13 @@ export function getAssignmentWindow(
     isLateClosed,
     /** Not released to students yet (publish_at is in the future). */
     isScheduled,
-    acceptsSubmissions: !isForceClosed && !isQuizClosed && !isLateClosed && !isScheduled,
+    /** Saved as a draft: hidden from students until the teacher publishes it. */
+    isDraft,
+    acceptsSubmissions: !isForceClosed && !isQuizClosed && !isLateClosed && !isScheduled && !isDraft,
   };
 }
 
-export type AssignmentStatusTone = 'scheduled' | 'open' | 'late' | 'closed';
+export type AssignmentStatusTone = 'draft' | 'scheduled' | 'open' | 'late' | 'closed';
 
 /**
  * Teacher-facing acceptance state, kept to three short labels:
@@ -83,6 +107,13 @@ export function getAssignmentStatus(
   language: 'th' | 'en' = 'th'
 ) {
   const th = language === 'th';
+  if (window.isDraft) {
+    return {
+      tone: 'draft' as AssignmentStatusTone,
+      label: th ? 'ฉบับร่าง' : 'Draft',
+      note: th ? 'นักเรียนยังไม่เห็นงานนี้ จนกว่าคุณครูจะกดเผยแพร่' : 'Hidden from students until you publish it',
+    };
+  }
   if (window.isScheduled && !window.isForceClosed) {
     return {
       tone: 'scheduled' as AssignmentStatusTone,
@@ -122,6 +153,7 @@ function formatLateUntil(lateUntil: number | null, language: 'th' | 'en') {
 }
 
 export const ASSIGNMENT_STATUS_CLASSES: Record<AssignmentStatusTone, string> = {
+  draft: 'bg-slate-100 text-slate-700 border-slate-300 border-dashed dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600',
   scheduled: 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-900',
   open: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900',
   late: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900',
