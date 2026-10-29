@@ -24,6 +24,8 @@ export interface StoredFile {
   size_bytes: number | null;
   sha256: string | null;
   original_filename: string | null;
+  /** Borrowed phone: the classmate this was uploaded for (onBehalfTag); null = the uploader's own work. */
+  on_behalf_of: string | null;
   status: StoredFileStatus;
   created_at: string;
   attached_at: string | null;
@@ -144,16 +146,25 @@ export async function attachFiles(supabase: Supabase, urls: Array<string | null 
 
 /**
  * After a student hands in: their other uploads for this assignment were
- * replaced or abandoned, so they go. Returns how many objects were removed.
+ * replaced or abandoned, so they go. Only uploads for the same person count:
+ * handing in a classmate's work (onBehalfOf) leaves the phone owner's own
+ * drafts alone, and the other way round. Returns how many objects were removed.
  */
-export async function discardDrafts(supabase: Supabase, assignmentId: string, ownerIds: string[], keepUrls: Array<string | null | undefined> = []) {
+export async function discardDrafts(
+  supabase: Supabase,
+  assignmentId: string,
+  ownerIds: string[],
+  keepUrls: Array<string | null | undefined> = [],
+  onBehalfOf = ''
+) {
   if (!ownerIds.length) return 0;
-  const { data, error } = await supabase
+  const query = supabase
     .from(STORED_FILES)
     .select('key, url')
     .eq('assignment_id', assignmentId)
     .in('owner_id', ownerIds)
     .in('status', OPEN_STATUSES);
+  const { data, error } = await (onBehalfOf ? query.eq('on_behalf_of', onBehalfOf) : query.is('on_behalf_of', null));
   if (error) {
     if (!isMissingTable(error)) console.warn('[storage] draft lookup failed:', error.message);
     return 0;

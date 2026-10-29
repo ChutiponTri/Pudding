@@ -10,13 +10,19 @@ export type ProxyStudent = Pick<User, 'id' | 'first_name' | 'last_name'> &
   Partial<Pick<User, 'line_uid' | 'student_id' | 'avatar_url' | 'institution'>>;
 
 const normalizeSchool = (value?: string | null) => (value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+const normalizeNumber = (value?: string | null) => (value || '').replace(/\s+/g, '').toLowerCase();
+/** Classmates are found by the last digits of their student number. */
+export const PROXY_MATCH_DIGITS = 3;
+const IN_CHUNK = 150;
 
 /**
  * The classmate a student acts for on a borrowed phone (their own phone is
- * broken or out of battery). Allowed only when the classmate is an admitted
- * student of the same classroom (same subject) and registered at the same
- * school as the phone's owner. The caller must already have checked that the
- * owner is an admitted student of this classroom.
+ * broken or out of battery). Only the classroom's admitted students are
+ * searched, so the classmate is in the same class, subject and semester; they
+ * must also be registered at the same school as the phone's owner. Matching
+ * uses the last PROXY_MATCH_DIGITS digits of the student number; when two
+ * classmates share them, the full number decides. The caller must already
+ * have checked that the owner is an admitted student of this classroom.
  */
 export async function resolveProxyStudent(
   supabase: Supabase,
@@ -24,41 +30,56 @@ export async function resolveProxyStudent(
   classroom: Classroom,
   rawStudentNumber: unknown
 ): Promise<ProxyStudent> {
-  const studentNumber = typeof rawStudentNumber === 'string' ? rawStudentNumber.trim() : '';
-  if (!studentNumber) throw new HttpError(400, 'กรุณากรอกรหัสนักเรียนของเพื่อน');
+  const typed = normalizeNumber(typeof rawStudentNumber === 'string' ? rawStudentNumber : '');
+  if (!typed) throw new HttpError(400, 'กรุณากรอกรหัสนักเรียนของเพื่อน');
+  if (typed.length < PROXY_MATCH_DIGITS) throw new HttpError(400, `กรุณากรอกรหัสนักเรียนของเพื่อนอย่างน้อย ${PROXY_MATCH_DIGITS} ตัวท้าย`);
+  const suffix = typed.slice(-PROXY_MATCH_DIGITS);
 
-  const [{ data: owner }, { data: candidates }] = await Promise.all([
-    supabase.from('users').select('id, student_id, institution').eq('id', actor.userId).maybeSingle(),
-    supabase
-      .from('users')
-      .select('id, first_name, last_name, line_uid, student_id, avatar_url, institution')
-      .eq('student_id', studentNumber)
-      .eq('role', 'student'),
-  ]);
+  const { data: owner } = await supabase.from('users').select('id, student_id, institution').eq('id', actor.userId).maybeSingle();
   const ownerSchool = normalizeSchool(owner?.institution);
   if (!ownerSchool) throw new HttpError(409, 'กรุณาระบุสถานศึกษาในข้อมูลส่วนตัวของคุณก่อนส่งงานแทนเพื่อน');
-  if (owner?.student_id?.trim() === studentNumber) throw new HttpError(400, 'นี่คือรหัสนักเรียนของคุณเอง');
 
-  const roster = classroom.students || [];
-  const sameSchool = ((candidates || []) as ProxyStudent[]).filter(
-    (user) => !actor.keys.includes(user.id) && normalizeSchool(user.institution) === ownerSchool
+  // Everyone admitted to this classroom: the roster plus students admitted through the join table only.
+  const { data: links } = await supabase.from('classroom_students').select('student_id, status').eq('classroom_id', classroom.id);
+  const memberIds = [
+    ...new Set([
+      ...(classroom.students || []).flatMap((s) => (s ? [s.id, s.line_uid] : [])),
+      ...(links || []).filter((l) => l.status !== 'pending_approval').map((l) => l.student_id as string),
+    ].filter((id): id is string => !!id && !actor.keys.includes(id))),
+  ];
+  const members: ProxyStudent[] = [];
+  for (let i = 0; i < memberIds.length; i += IN_CHUNK) {
+    const part = memberIds.slice(i, i + IN_CHUNK);
+    const quoted = part.map((id) => `"${id.replace(/["\\]/g, '')}"`).join(',');
+    const { data } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, line_uid, student_id, avatar_url, institution')
+      .eq('role', 'student')
+      .or(`id.in.(${quoted}),line_uid.in.(${quoted})`);
+    members.push(...((data || []) as ProxyStudent[]));
+  }
+
+  const candidates = [...new Map(members.map((u) => [u.id, u])).values()].filter(
+    (u) =>
+      !actor.keys.includes(u.id) &&
+      !(u.line_uid && actor.keys.includes(u.line_uid)) &&
+      normalizeSchool(u.institution) === ownerSchool &&
+      normalizeNumber(u.student_id).endsWith(suffix)
   );
-  const inRoster = (user: ProxyStudent) =>
-    roster.some((s) => s && (s.id === user.id || (!!user.line_uid && (s.id === user.line_uid || s.line_uid === user.line_uid))));
-  let match = sameSchool.find(inRoster);
-  if (!match && sameSchool.length) {
-    // Students admitted through the join table only.
-    const { data: links } = await supabase
-      .from('classroom_students')
-      .select('student_id, status')
-      .eq('classroom_id', classroom.id)
-      .in('student_id', sameSchool.flatMap((u) => [u.id, u.line_uid].filter(Boolean) as string[]));
-    const admitted = new Set((links || []).filter((l) => l.status !== 'pending_approval').map((l) => l.student_id));
-    match = sameSchool.find((u) => admitted.has(u.id) || (!!u.line_uid && admitted.has(u.line_uid)));
+  // Several share the last digits: the full number picks one.
+  const matches = candidates.length > 1 ? candidates.filter((u) => normalizeNumber(u.student_id) === typed) : candidates;
+
+  if (!matches.length && candidates.length > 1) {
+    throw new HttpError(409, `มีเพื่อนในห้องนี้ ${candidates.length} คนที่รหัส ${PROXY_MATCH_DIGITS} ตัวท้ายเป็น ${suffix} กรุณากรอกรหัสนักเรียนแบบเต็ม`);
   }
-  if (!match) {
-    throw new HttpError(404, 'ไม่พบเพื่อนรหัสนี้ในห้องเรียนนี้ (ต้องเป็นนักเรียนโรงเรียนเดียวกันและเรียนวิชาเดียวกัน)');
+  if (!matches.length) {
+    const ownNumber = normalizeNumber(owner?.student_id);
+    if (ownNumber && (ownNumber === typed || (typed.length === PROXY_MATCH_DIGITS && ownNumber.endsWith(suffix)))) {
+      throw new HttpError(400, 'นี่คือรหัสนักเรียนของคุณเอง');
+    }
+    throw new HttpError(404, 'ไม่พบเพื่อนรหัสนี้ในห้องเรียนนี้ (ต้องเรียนห้องและวิชาเดียวกันในภาคเรียนนี้ และอยู่โรงเรียนเดียวกัน)');
   }
+  const match = matches[0];
   if (!match.first_name?.trim() || !match.last_name?.trim()) {
     throw new HttpError(409, 'เพื่อนคนนี้ยังไม่ได้ลงทะเบียนชื่อ-นามสกุลในระบบ');
   }

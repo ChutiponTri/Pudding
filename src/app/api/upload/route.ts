@@ -6,7 +6,7 @@ import { getActor, type Actor } from '@/lib/auth/actor';
 import { classroomRole, errorResponse, FORBIDDEN, HttpError, loadClassroom, requireTeacherOfAssignment } from '@/lib/server/access';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { isMissingTable, removeFiles, STORED_FILES, sweepExpiredDraftsOccasionally, trackFile, type StoredFile } from '@/lib/storage/files';
-import { MAX_DRAFT_FILES_PER_ASSIGNMENT, maxBytesFor, uploadRejection, type UploadPurpose } from '@/lib/storage/uploadRules';
+import { MAX_DRAFT_FILES_PER_ASSIGNMENT, maxBytesFor, onBehalfTag, uploadRejection, type UploadPurpose } from '@/lib/storage/uploadRules';
 import type { Classroom } from '@/types/database';
 
 export const runtime = 'nodejs';
@@ -61,6 +61,8 @@ async function signUpload(supabase: Supabase, actor: Actor, body: Record<string,
   const sha256 = /^[a-f0-9]{64}$/.test(String(body.sha256 || '')) ? String(body.sha256) : null;
   const assignmentId = keySegment(String(body.assignment_id || 'general'));
   const purpose: UploadPurpose = actor.kind === 'teacher' ? 'sample' : 'submission';
+  // Borrowed phone: kept apart from the owner's own uploads (the submission re-checks the classmate).
+  const onBehalfOf = actor.kind === 'student' ? onBehalfTag(body.for_student) : '';
 
   const rejection = uploadRejection({ type: contentType, size });
   if (rejection) return NextResponse.json({ error: rejection, tooLarge: maxBytesFor(contentType) > 0 }, { status: 400 });
@@ -70,14 +72,15 @@ async function signUpload(supabase: Supabase, actor: Actor, body: Record<string,
   // The same file this user already stored for this assignment: let them reuse it instead of storing it twice.
   const owners = ownerIds(actor);
   if (sha256 && !body.force) {
-    const { data: existing, error } = await supabase
+    const query = supabase
       .from(STORED_FILES)
       .select('key, url, original_filename, created_at, status')
       .in('owner_id', owners)
       .eq('assignment_id', assignmentId)
       .eq('purpose', purpose)
       .eq('sha256', sha256)
-      .in('status', ['draft', 'attached'])
+      .in('status', ['draft', 'attached']);
+    const { data: existing, error } = await (onBehalfOf ? query.eq('on_behalf_of', onBehalfOf) : query.is('on_behalf_of', null))
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -114,6 +117,7 @@ async function signUpload(supabase: Supabase, actor: Actor, body: Record<string,
     size_bytes: size,
     sha256,
     original_filename: filename.slice(0, 200),
+    ...(onBehalfOf ? { on_behalf_of: onBehalfOf } : {}),
     status: 'uploading',
   });
   after(() => sweepExpiredDraftsOccasionally(supabase));
@@ -164,6 +168,7 @@ async function uploadThroughServer(supabase: Supabase, actor: Actor, req: NextRe
   const purpose: UploadPurpose = actor.kind === 'teacher' ? 'sample' : 'submission';
   await checkAssignmentAccess(supabase, actor, assignmentId, purpose);
   const sha256 = String(formData.get('sha256') || '');
+  const onBehalfOf = actor.kind === 'student' ? onBehalfTag(formData.get('for_student')) : '';
 
   const key = newKey(actor, purpose, assignmentId, file.name);
   await r2Client.send(
@@ -180,6 +185,7 @@ async function uploadThroughServer(supabase: Supabase, actor: Actor, req: NextRe
     size_bytes: file.size,
     sha256: /^[a-f0-9]{64}$/.test(sha256) ? sha256 : null,
     original_filename: file.name.slice(0, 200),
+    ...(onBehalfOf ? { on_behalf_of: onBehalfOf } : {}),
     status: 'draft',
   });
   after(() => sweepExpiredDraftsOccasionally(supabase));

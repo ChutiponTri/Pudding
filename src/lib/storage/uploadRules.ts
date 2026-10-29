@@ -33,6 +33,14 @@ export function uploadRejection(file: { type: string; size: number }): string | 
   return null;
 }
 
+/**
+ * How a borrowed-phone upload names the classmate it is for (their student
+ * number, as the phone sends it with the upload and the submission); '' = the
+ * phone owner's own work.
+ */
+export const onBehalfTag = (studentNumber?: unknown) =>
+  typeof studentNumber === 'string' ? studentNumber.replace(/\s+/g, '').toLowerCase().slice(0, 40) : '';
+
 /** An http(s) link a student or teacher pasted (a bare "www.…" gets https://); '' when it is not a link. */
 export function normalizeLink(raw?: string | null): string {
   const url = (raw || '').trim();

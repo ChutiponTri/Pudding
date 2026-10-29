@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS public.stored_files (
   size_bytes BIGINT,
   sha256 TEXT,                               -- hash of the file the user picked (duplicate check)
   original_filename TEXT,
+  on_behalf_of TEXT,                         -- borrowed phone: student number of the classmate it was uploaded for
   -- uploading: URL handed out, not confirmed yet
   -- draft:     uploaded, not part of a submitted answer / saved assignment yet
   -- attached:  in use by a submission or an assignment
@@ -30,6 +31,9 @@ CREATE TABLE IF NOT EXISTS public.stored_files (
   backed_up_at TIMESTAMPTZ,                  -- NULL = not backed up yet
   deleted_at TIMESTAMPTZ
 );
+
+-- Databases that ran an earlier version of this file.
+ALTER TABLE public.stored_files ADD COLUMN IF NOT EXISTS on_behalf_of TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_stored_files_assignment ON public.stored_files(assignment_id);
 CREATE INDEX IF NOT EXISTS idx_stored_files_owner_assignment ON public.stored_files(owner_id, assignment_id);

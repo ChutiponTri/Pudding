@@ -106,7 +106,7 @@ async function postJson(body: Record<string, unknown>) {
   return json;
 }
 
-async function uploadThroughServer(file: File, assignmentId: string, sha256: string | null): Promise<StoredUpload> {
+async function uploadThroughServer(file: File, assignmentId: string, sha256: string | null, forStudent?: string): Promise<StoredUpload> {
   if (file.size > SERVER_UPLOAD_MAX_BYTES) {
     throw new UploadError('เชื่อมต่อที่เก็บไฟล์ไม่ได้ และไฟล์นี้ใหญ่เกินกว่าจะส่งผ่านเซิร์ฟเวอร์ — กรุณาอัปโหลดไว้ที่ Google Drive แล้ววางลิงก์แทน', true);
   }
@@ -114,6 +114,7 @@ async function uploadThroughServer(file: File, assignmentId: string, sha256: str
   formData.append('file', file);
   formData.append('assignment_id', assignmentId);
   if (sha256) formData.append('sha256', sha256);
+  if (forStudent) formData.append('for_student', forStudent);
   const res = await authFetch('/api/upload', { method: 'POST', body: formData });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.url) {
@@ -133,21 +134,30 @@ export async function releaseUpload(key?: string | null) {
 }
 
 /**
- * Stores a file for an assignment ("draft" for a teacher's unsaved one).
+ * Stores a file for an assignment ("draft" for a teacher's unsaved one);
+ * forStudent = the classmate's student number when uploading on a borrowed phone.
  * onDuplicate decides what to do when this user already stored the same file
  * there: 'reuse' keeps the stored copy, 'replace' uploads again and drops it.
  * Throws UploadError with a message ready to show.
  */
 export async function uploadToStorage(
   file: File,
-  options: { assignmentId: string; onDuplicate?: (duplicate: DuplicateUpload) => 'reuse' | 'replace' | Promise<'reuse' | 'replace'> }
+  options: { assignmentId: string; forStudent?: string; onDuplicate?: (duplicate: DuplicateUpload) => 'reuse' | 'replace' | Promise<'reuse' | 'replace'> }
 ): Promise<StoredUpload> {
   const sha256 = await sha256Hex(file);
   const prepared = await optimizeImage(file);
   const rejection = uploadRejection(prepared);
   if (rejection) throw new UploadError(rejection, isAllowedUploadType(prepared.type));
 
-  const request = { action: 'sign', filename: prepared.name, contentType: prepared.type, size: prepared.size, sha256, assignment_id: options.assignmentId };
+  const request = {
+    action: 'sign',
+    filename: prepared.name,
+    contentType: prepared.type,
+    size: prepared.size,
+    sha256,
+    assignment_id: options.assignmentId,
+    for_student: options.forStudent,
+  };
   let signed = await postJson(request);
   let replacedKey: string | null = null;
   if (signed.duplicate) {
@@ -171,7 +181,7 @@ export async function uploadToStorage(
     result = { url: done.url, key: done.key, filename: file.name };
   } else {
     void releaseUpload(signed.key);
-    result = await uploadThroughServer(prepared, options.assignmentId, sha256);
+    result = await uploadThroughServer(prepared, options.assignmentId, sha256, options.forStudent);
   }
   if (replacedKey && replacedKey !== result.key) void releaseUpload(replacedKey);
   return result;

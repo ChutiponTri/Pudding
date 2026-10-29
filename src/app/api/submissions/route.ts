@@ -7,7 +7,7 @@ import { getActor } from '@/lib/auth/actor';
 import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
 import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
 import { attachFiles, discardDrafts } from '@/lib/storage/files';
-import { normalizeLink } from '@/lib/storage/uploadRules';
+import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
 import type { Classroom } from '@/types/database';
 
 /**
@@ -443,10 +443,10 @@ export async function POST(request: NextRequest) {
     }
 
     // The handed-in files are now in use (before replying, so leaving the page cannot drop them);
-    // this phone's other uploads for the assignment were replaced or abandoned.
+    // this phone's other uploads for the same student (own work, or this classmate's) were replaced or abandoned.
     const fileUrls = scoredAnswers.map((ans) => ans.file_url);
     await attachFiles(supabase, fileUrls, assignment_id, actor.keys);
-    after(() => discardDrafts(supabase, assignment_id, actor.keys, fileUrls));
+    after(() => discardDrafts(supabase, assignment_id, actor.keys, fileUrls, proxyStudent ? onBehalfTag(proxy_student_number) : ''));
     // Teacher pages with this classroom open refresh their counts now instead of polling.
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id }));
     return NextResponse.json({ success: true, submission: submissionRecord });

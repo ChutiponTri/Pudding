@@ -76,6 +76,11 @@ const DEFAULT_PRESETS: Preset[] = [
 ];
 
 const roundHalf = (n: number) => Math.round(n * 2) / 2;
+/** What the student wrote with a file; older submissions filled the box with "ส่งไฟล์แนบ: <name>" automatically. */
+const fileDescription = (text?: string) => {
+  const trimmed = (text || '').trim();
+  return /^ส่งไฟล์แนบ: [^\n]*$/.test(trimmed) ? '' : trimmed;
+};
 
 export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   submission,
@@ -528,6 +533,12 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                               className="max-h-[440px] object-contain select-none rounded-lg transition-transform duration-200"
                               style={{ transform: `scale(${controls.zoom}) rotate(${controls.rotate}deg)` }}
                             />
+                          </div>
+                        )}
+                        {fileDescription(ans.text_answer) && (
+                          <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-800 text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap">
+                            <span className="block text-[11px] font-bold text-slate-500 mb-1">{th ? 'คำอธิบายจากนักเรียน' : 'Student note'}</span>
+                            {fileDescription(ans.text_answer)}
                           </div>
                         )}
                       </div>

@@ -81,6 +81,11 @@ interface ProxyFriend {
   submittedAssignmentIds: string[];
   checkedSessionIds: string[];
 }
+/** "ห้อง 412 • ภาคเรียน 1/2568": who a borrowed-phone classmate must share a class and semester with. */
+const classAndTerm = (classroom: Classroom) =>
+  [roomLabel(classroom) || classroom.name, classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year]
+    .filter(Boolean)
+    .join(" • ");
 type AttendanceStatus = "on_time" | "late" | "absent" | "excused" | "idle";
 const statusLabels: Record<string, string> = {
   on_time: "มาตรงเวลา 🟢",
@@ -529,7 +534,8 @@ export default function LiffStudentPage() {
       }
       setProxyFriend({
         classroomId,
-        studentNumber,
+        // The full number from the server (the student may have typed only the last digits).
+        studentNumber: json.student.student_id || studentNumber,
         first_name: json.student.first_name,
         last_name: json.student.last_name,
         avatar_url: json.student.avatar_url,
@@ -1197,6 +1203,7 @@ export default function LiffStudentPage() {
     try {
       const uploaded = await uploadToStorage(file, {
         assignmentId: activeAssignment.id,
+        forStudent: activeProxy?.studentNumber,
         onDuplicate: (duplicate) =>
           // Already attached to another question here: just use it again.
           Object.values(studentAnswers).some((a) => a.file_key === duplicate.key) ||
@@ -1209,7 +1216,8 @@ export default function LiffStudentPage() {
       setStudentAnswers((prev) => ({
         ...prev,
         [questionId]: {
-          text: prev[questionId]?.text || `ส่งไฟล์แนบ: ${uploaded.filename}`,
+          // The description box keeps only what the student types; the file name shows on the upload button.
+          text: prev[questionId]?.text || "",
           file_url: uploaded.url,
           file_key: uploaded.key,
           file_name: uploaded.filename,
@@ -1225,11 +1233,10 @@ export default function LiffStudentPage() {
 
   const handleRemoveFile = (questionId: string) => {
     releaseAnswerFile(questionId);
-    setStudentAnswers((prev) => {
-      const answer = prev[questionId];
-      const autoText = answer?.file_name && answer.text === `ส่งไฟล์แนบ: ${answer.file_name}`;
-      return { ...prev, [questionId]: { ...answer, text: autoText ? "" : answer?.text || "", file_url: undefined, file_key: undefined, file_name: undefined } };
-    });
+    setStudentAnswers((prev) => ({
+      ...prev,
+      [questionId]: { ...prev[questionId], text: prev[questionId]?.text || "", file_url: undefined, file_key: undefined, file_name: undefined },
+    }));
   };
 
   // Submit Assignment with Real LINE Student Identity & Anti-Cheating Audit
@@ -2724,7 +2731,7 @@ export default function LiffStudentPage() {
             <div className="min-w-0 flex-1">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">ส่งแทนเพื่อน (ยืมเครื่อง)</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5">
-                สำหรับเพื่อนที่โทรศัพท์มีปัญหา ให้เพื่อนใช้เครื่องนี้ส่งงานของตัวเอง เพื่อนต้องเรียนวิชา {subjectName(selectedClassroom)} และอยู่โรงเรียนเดียวกับคุณ — คุณครูจะเห็นว่าส่งจากเครื่องของคุณ
+                สำหรับเพื่อนที่โทรศัพท์มีปัญหา ให้เพื่อนใช้เครื่องนี้ส่งงานของตัวเอง เพื่อนต้องเรียนวิชา {subjectName(selectedClassroom)} ห้องเดียวกันในภาคเรียนนี้ ({classAndTerm(selectedClassroom)}) และอยู่โรงเรียนเดียวกับคุณ — คุณครูจะเห็นว่าส่งจากเครื่องของคุณ
               </p>
             </div>
             <button type="button" onClick={closeProxySheet} aria-label="ปิด" className="w-9 h-9 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 cursor-pointer shrink-0">
@@ -2740,7 +2747,7 @@ export default function LiffStudentPage() {
                 handleProxyLookup();
               }}
             >
-              <Field label="รหัสนักเรียนของเพื่อน" required>
+              <Field label="รหัสนักเรียนของเพื่อน (กรอกแค่ 3 ตัวท้ายก็ได้)" required>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -2750,7 +2757,7 @@ export default function LiffStudentPage() {
                     setProxyNumberInput(e.target.value);
                     setProxyLookupError(null);
                   }}
-                  placeholder="เช่น 54101"
+                  placeholder="เช่น 101 หรือ 54101"
                   className={INPUT}
                 />
               </Field>
@@ -2776,6 +2783,7 @@ export default function LiffStudentPage() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{proxyFriend.first_name} {proxyFriend.last_name}</p>
                   <p className="text-xs text-slate-500 dark:text-slate-400">รหัส {proxyFriend.studentNumber}</p>
+                  <p className="text-[11px] text-slate-400 truncate">{subjectName(selectedClassroom)} • {classAndTerm(selectedClassroom)}</p>
                 </div>
                 <button
                   type="button"
@@ -2811,7 +2819,10 @@ export default function LiffStudentPage() {
                                 <button
                                   type="button"
                                   disabled={isCheckingIn}
-                                  onClick={() => handleStudentCheckIn(session.id, undefined, proxyFriend)}
+                                  onClick={() => {
+                                    if (!confirm(`ยืนยันเช็คชื่อ “${session.title}” ให้ ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nคุณครูจะเห็นว่าเช็คชื่อจากเครื่องของคุณ`)) return;
+                                    handleStudentCheckIn(session.id, undefined, proxyFriend);
+                                  }}
                                   className="shrink-0 h-9 px-3.5 rounded-xl bg-line hover:bg-line-dark text-white text-xs font-bold disabled:opacity-60 cursor-pointer"
                                 >
                                   เช็คชื่อให้เพื่อน
@@ -2839,6 +2850,7 @@ export default function LiffStudentPage() {
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    if (!confirm(`ยืนยันเริ่มทำ${a.is_exam ? "ข้อสอบ" : "งาน"} “${a.title}” แทน ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nสิ่งที่ส่งจะบันทึกเป็นของเพื่อน และคุณครูจะเห็นว่าส่งจากเครื่องของคุณ`)) return;
                                     setIsProxySheetOpen(false);
                                     handleOpenAssignment(a, proxyFriend);
                                   }}
