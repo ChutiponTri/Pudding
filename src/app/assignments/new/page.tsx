@@ -703,7 +703,7 @@ function NewAssignmentContent() {
               <Sparkles className="w-3.5 h-3.5" />
               <span>
                 {language === 'th'
-                  ? 'โหมดข้อสอบ: บันทึกทุกครั้งที่ออกจากหน้าจอ • ไม่อนุญาตให้ถ่ายรูป/แนบไฟล์'
+                  ? 'โหมดข้อสอบ: บันทึกทุกครั้งที่ออกจากหน้าจอ'
                   : 'Exam Mode: every screen exit is logged • no photos or file uploads'}
               </span>
             </span>
