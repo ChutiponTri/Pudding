@@ -9,6 +9,8 @@ import { Assignment, Course, Classroom, LearningIndicator, CourseLearningIndicat
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
+import { optimizeImage, UploadError, uploadToStorage } from '@/lib/storage/uploadClient';
+import { uploadRejection } from '@/lib/storage/uploadRules';
 import {
   PlusCircle,
   Trash2,
@@ -48,7 +50,6 @@ interface QuestionDraft {
   is_required: boolean;
 }
 
-const SAMPLE_FILE_MAX_BYTES = 4 * 1024 * 1024;
 
 function NewAssignmentContent() {
   const router = useRouter();
@@ -105,11 +106,14 @@ function NewAssignmentContent() {
   const [isUploadingSample, setIsUploadingSample] = useState(false);
   const [sampleUploadError, setSampleUploadError] = useState<string | null>(null);
 
-  const handleSampleFileSelect = (file: File) => {
+  const handleSampleFileSelect = async (picked: File) => {
     setSampleUploadError(null);
-    // The hosting platform rejects request bodies over about 4.5MB, so larger files never arrive.
-    if (file.size > SAMPLE_FILE_MAX_BYTES) {
-      setSampleUploadError("ไฟล์ต้องมีขนาดไม่เกิน 4MB — ถ้าไฟล์ใหญ่กว่านี้ ให้อัปโหลดไว้ที่ Google Drive แล้ววางลิงก์แทน");
+    // Large photos are shrunk without visible loss; anything still over the limit should be a link.
+    setIsUploadingSample(true);
+    const file = await optimizeImage(picked).finally(() => setIsUploadingSample(false));
+    const rejection = uploadRejection(file);
+    if (rejection) {
+      setSampleUploadError(rejection);
       return;
     }
     setSampleWorkFile(file);
@@ -457,24 +461,15 @@ function NewAssignmentContent() {
       if (!isExam && sampleWorkFile) {
         setIsUploadingSample(true);
         try {
-          const formData = new FormData();
-          formData.append("file", sampleWorkFile);
-          // The server adds a timestamp to the stored name, so drafts never collide.
-          formData.append("assignment_id", editingAssignment?.id || "draft");
-          formData.append("purpose", "sample");
-          const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
-          const uploadJson = await uploadRes.json().catch(() => ({}));
-          if (!uploadRes.ok || !uploadJson.url) {
-            throw new Error(
-              uploadRes.status === 413
-                ? "ไฟล์ใหญ่เกินไป กรุณาใช้ไฟล์ไม่เกิน 4MB หรือวางลิงก์ Google Drive แทน"
-                : uploadJson.error || "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ"
-            );
-          }
-          uploadedSampleUrl = uploadJson.url;
+          // Straight to storage; a failed earlier save already stored this file, so reuse it.
+          const uploaded = await uploadToStorage(sampleWorkFile, {
+            assignmentId: editingAssignment?.id || "draft",
+            onDuplicate: () => "reuse",
+          });
+          uploadedSampleUrl = uploaded.url;
         } catch (uploadError) {
           console.error("Sample work upload error:", uploadError);
-          const message = uploadError instanceof Error ? uploadError.message : "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ";
+          const message = uploadError instanceof UploadError ? uploadError.message : "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ";
           setSampleUploadError(message);
           alert(`${message}\n\nยังไม่ได้บันทึกงาน กรุณาแก้ไฟล์แล้วกดบันทึกอีกครั้ง`);
           return;
@@ -998,11 +993,12 @@ function NewAssignmentContent() {
                     )}
                     <input
                       type="file"
-                      accept="application/pdf,image/png,image/jpeg,image/webp"
+                      accept="application/pdf,image/*"
                       disabled={isUploadingSample}
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        if (file) handleSampleFileSelect(file);
+                        e.target.value = "";
+                        if (file) void handleSampleFileSelect(file);
                       }}
                       className="hidden"
                     />
@@ -1017,7 +1013,7 @@ function NewAssignmentContent() {
                   <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 font-medium truncate">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>แนบไฟล์ไว้ชั่วคราว — จะอัปโหลดขึ้น R2 หลังยืนยันสร้างงาน</span>
+                      <span>แนบไฟล์ไว้ชั่วคราว — จะอัปโหลดหลังกดบันทึกงาน</span>
                     </span>
                     <button
                       type="button"

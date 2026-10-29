@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { ADMIN_DATASETS, ADMIN_TABLES, getAdmin, loadDataset, loadTable, type AdminTable } from '@/lib/server/admin';
+import { AdminStorage } from '@/components/AdminStorage';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Pudding Admin', robots: { index: false, follow: false } };
@@ -155,6 +156,8 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
             </div>
           )}
         </section>
+
+        <AdminStorage />
 
         <section className="space-y-3">
           <h2 className="text-sm font-black">ตารางข้อมูลดิบ</h2>

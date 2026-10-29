@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ClassroomTeacher, Question, Submission, SubmissionAnswer, TeacherRole } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { Avatar } from '@/components/Avatar';
+import { isImageUrl, isPdfUrl as isPdf } from '@/lib/utils/referenceWork';
 import {
   AlertCircle,
   Award,
@@ -74,7 +75,6 @@ const DEFAULT_PRESETS: Preset[] = [
   { id: 'p6', category: 'integrity', text: 'ควรเรียบเรียงคำตอบด้วยความเข้าใจและสำนวนของตนเอง' },
 ];
 
-const isPdf = (url: string) => /\.pdf($|\?)/i.test(url);
 const roundHalf = (n: number) => Math.round(n * 2) / 2;
 
 export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
@@ -112,6 +112,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   });
 
   const [imageControls, setImageControls] = useState<Record<string, { zoom: number; rotate: number }>>({});
+  // Files that no longer load (e.g. backed up and removed from storage by an admin).
+  const [missingFiles, setMissingFiles] = useState<Record<string, boolean>>({});
   const [isSavingAll, setIsSavingAll] = useState(false);
 
   // Feedback chips: per teacher, remembered in this browser.
@@ -487,7 +489,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                     {ans?.file_url ? (
                       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 overflow-hidden">
                         <div className="flex items-center justify-end gap-1.5 px-3 py-2 border-b border-slate-200 dark:border-slate-800">
-                          {!isPdf(ans.file_url) && (
+                          {isImageUrl(ans.file_url) && !missingFiles[ans.file_url] && (
                             <>
                               <button type="button" onClick={() => setControls(Math.max(0.6, controls.zoom - 0.2), controls.rotate)} className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer" title={th ? 'ย่อ' : 'Zoom out'}>
                                 <ZoomOut className="w-4 h-4" />
@@ -505,12 +507,23 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                             <ExternalLink className="w-4 h-4" />
                           </a>
                         </div>
-                        {isPdf(ans.file_url) ? (
+                        {missingFiles[ans.file_url] ? (
+                          <p className="p-4 text-center text-xs text-slate-500">
+                            {th ? 'ไม่พบไฟล์นี้ในระบบแล้ว (อาจถูกเก็บสำรองและลบออกโดยผู้ดูแลระบบ)' : 'This file is no longer in storage (it may have been backed up and removed by an admin).'}
+                          </p>
+                        ) : isPdf(ans.file_url) ? (
                           <iframe src={ans.file_url} title={`answer-${idx + 1}`} className="w-full h-[480px] bg-white" />
+                        ) : !isImageUrl(ans.file_url) ? (
+                          // A link the student pasted (Google Drive, …): opened in a new tab.
+                          <a href={ans.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 p-4 text-sm font-semibold text-amber-700 dark:text-amber-400 hover:underline break-all">
+                            <ExternalLink className="w-4 h-4 shrink-0" />
+                            {ans.file_url}
+                          </a>
                         ) : (
                           <div className="flex items-center justify-center p-3 overflow-auto max-h-[480px]">
                             <img
                               src={ans.file_url}
+                              onError={() => setMissingFiles((prev) => ({ ...prev, [ans.file_url!]: true }))}
                               alt=""
                               className="max-h-[440px] object-contain select-none rounded-lg transition-transform duration-200"
                               style={{ transform: `scale(${controls.zoom}) rotate(${controls.rotate}deg)` }}

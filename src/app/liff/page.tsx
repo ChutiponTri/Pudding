@@ -35,6 +35,8 @@ import {
   ExternalLink,
   FileText,
   Smartphone,
+  Link2,
+  Trash2,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme/ThemeContext";
 import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
@@ -45,6 +47,8 @@ import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { isImageUrl, isPdfUrl, referenceWorkUrl } from "@/lib/utils/referenceWork";
+import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploadClient";
+import { formatMegabytes, IMAGE_MAX_BYTES, normalizeLink, PDF_MAX_BYTES } from "@/lib/storage/uploadRules";
 import { classroomTitle, roomLabel, subjectCode, subjectName } from "@/lib/utils/classroomLabel";
 import { personNameError, studentProfileError } from "@/lib/utils/studentName";
 
@@ -481,10 +485,21 @@ export default function LiffStudentPage() {
   const [activeAssignment, setActiveAssignment] = useState<Assignment | null>(null);
   const [activeQuestions, setActiveQuestions] = useState<Question[]>([]);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
-  const [studentAnswers, setStudentAnswers] = useState<Record<string, { text: string; file_url?: string }>>({});
+  // file_url/file_key/file_name: a file uploaded to our storage; link: a pasted link (Google Drive, …) instead.
+  const [studentAnswers, setStudentAnswers] = useState<Record<string, { text: string; file_url?: string; file_key?: string; file_name?: string; link?: string }>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
   const [uploadingQuestionId, setUploadingQuestionId] = useState<string | null>(null);
+  const [uploadToast, setUploadToast] = useState<string | null>(null);
+  // Uploads of the open assignment not handed in yet: dropped from storage when the student leaves without submitting.
+  const draftUploadKeysRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const keys = draftUploadKeysRef.current;
+    return () => {
+      keys.forEach((key) => void releaseUpload(key));
+      keys.clear();
+    };
+  }, [activeAssignment?.id]);
 
   // Borrowed phone: a classmate whose own phone has a problem submits through this one.
   const [isProxySheetOpen, setIsProxySheetOpen] = useState(false);
@@ -1163,33 +1178,58 @@ export default function LiffStudentPage() {
 
 
 
-  // Image / File Upload Handler
-  const handleFileUpload = async (questionId: string, file: File) => {
-    if (!currentStudent) return;
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("assignment_id", activeAssignment?.id || "general");
+  const showUploadToast = (message: string) => {
+    setUploadToast(message);
+    setTimeout(() => setUploadToast((current) => (current === message ? null : current)), 7000);
+  };
 
-      const res = await authFetch("/api/upload", {
-        method: "POST",
-        body: formData,
+  /** Drops a question's uploaded file from storage, unless another answer still uses it. */
+  const releaseAnswerFile = (questionId: string) => {
+    const key = studentAnswers[questionId]?.file_key;
+    if (!key || Object.entries(studentAnswers).some(([id, a]) => id !== questionId && a.file_key === key)) return;
+    draftUploadKeysRef.current.delete(key);
+    void releaseUpload(key);
+  };
+
+  // Image / PDF upload: straight to storage; big photos are shrunk without visible loss first.
+  const handleFileUpload = async (questionId: string, file: File) => {
+    if (!currentStudent || !activeAssignment) return;
+    try {
+      const uploaded = await uploadToStorage(file, {
+        assignmentId: activeAssignment.id,
+        onDuplicate: (duplicate) =>
+          // Already attached to another question here: just use it again.
+          Object.values(studentAnswers).some((a) => a.file_key === duplicate.key) ||
+          !confirm(`คุณเคยอัปโหลดไฟล์นี้ในงานนี้แล้ว (${duplicate.original_filename || file.name})\n\nกด "ตกลง" เพื่ออัปโหลดใหม่แทนไฟล์เดิม\nกด "ยกเลิก" เพื่อใช้ไฟล์เดิมที่อัปโหลดไว้`)
+            ? 'reuse'
+            : 'replace',
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.url) {
-        alert(json.error || "อัปโหลดไฟล์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
-        return;
-      }
+      if (studentAnswers[questionId]?.file_key !== uploaded.key) releaseAnswerFile(questionId);
+      draftUploadKeysRef.current.add(uploaded.key);
       setStudentAnswers((prev) => ({
         ...prev,
         [questionId]: {
-          text: prev[questionId]?.text || `ส่งไฟล์แนบ: ${file.name}`,
-          file_url: json.url,
+          text: prev[questionId]?.text || `ส่งไฟล์แนบ: ${uploaded.filename}`,
+          file_url: uploaded.url,
+          file_key: uploaded.key,
+          file_name: uploaded.filename,
+          link: "",
         },
       }));
     } catch (err) {
-      alert("เกิดข้อผิดพลาดในการอัปโหลดไฟล์");
+      console.error("Upload failed:", err);
+      const message = err instanceof UploadError ? err.message : "เกิดข้อผิดพลาดในการอัปโหลดไฟล์ กรุณาลองใหม่อีกครั้ง";
+      showUploadToast(err instanceof UploadError && err.tooLarge ? `${message}\n(วางลิงก์ได้ในช่อง "หรือวางลิงก์ไฟล์" ด้านล่าง)` : message);
     }
+  };
+
+  const handleRemoveFile = (questionId: string) => {
+    releaseAnswerFile(questionId);
+    setStudentAnswers((prev) => {
+      const answer = prev[questionId];
+      const autoText = answer?.file_name && answer.text === `ส่งไฟล์แนบ: ${answer.file_name}`;
+      return { ...prev, [questionId]: { ...answer, text: autoText ? "" : answer?.text || "", file_url: undefined, file_key: undefined, file_name: undefined } };
+    });
   };
 
   // Submit Assignment with Real LINE Student Identity & Anti-Cheating Audit
@@ -1199,7 +1239,7 @@ export default function LiffStudentPage() {
 
     const unanswered = activeQuestions
       .map((q, index) => ({ q, number: index + 1 }))
-      .filter(({ q }) => !(studentAnswers[q.id]?.text || "").trim() && !studentAnswers[q.id]?.file_url);
+      .filter(({ q }) => !(studentAnswers[q.id]?.text || "").trim() && !studentAnswers[q.id]?.file_url && !studentAnswers[q.id]?.link?.trim());
     const numbers = (items: typeof unanswered) => items.map((item) => item.number).join(", ");
     if (activeAssignment.is_exam) {
       // Quizzes are short; let the student hand in what they have, but make sure they mean it.
@@ -1214,13 +1254,20 @@ export default function LiffStudentPage() {
       if (unanswered.length && !confirm(`ยังไม่ได้ตอบข้อที่ไม่บังคับ ${unanswered.length} ข้อ (ข้อ ${numbers(unanswered)})\n\nต้องการส่งงานเลยหรือไม่?`)) return;
     }
 
+    const badLink = activeQuestions.findIndex((q) => !studentAnswers[q.id]?.file_url && studentAnswers[q.id]?.link?.trim() && !normalizeLink(studentAnswers[q.id]?.link));
+    if (badLink >= 0) {
+      alert(`ข้อ ${badLink + 1}: ลิงก์ไม่ถูกต้อง กรุณาวางลิงก์ที่ขึ้นต้นด้วย https:// (เช่น ลิงก์แชร์จาก Google Drive)`);
+      document.getElementById(`question-${activeQuestions[badLink].id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const currentAwaySeconds = awayStartRef.current ? secondsSince(awayStartRef.current) : 0;
       const answersPayload = activeQuestions.map((q) => ({
         question_id: q.id,
         answer_text: studentAnswers[q.id]?.text || "",
-        file_url: studentAnswers[q.id]?.file_url,
+        file_url: studentAnswers[q.id]?.file_url || normalizeLink(studentAnswers[q.id]?.link) || undefined,
       }));
 
       const sub = await dataService.submitStudentWork({
@@ -1240,6 +1287,8 @@ export default function LiffStudentPage() {
         },
       });
 
+      // Handed in: these files now belong to the submission and must not be dropped on leaving.
+      draftUploadKeysRef.current.clear();
       if (activeProxy) {
         const submittedId = activeAssignment.id;
         setProxyFriend((prev) => (prev ? { ...prev, submittedAssignmentIds: [...prev.submittedAssignmentIds, submittedId] } : prev));
@@ -1546,7 +1595,7 @@ export default function LiffStudentPage() {
     })),
   ].sort((a, b) => (new Date(b.created_at).getTime() || 0) - (new Date(a.created_at).getTime() || 0));
 
-  const answeredCount = activeQuestions.filter((q) => (studentAnswers[q.id]?.text || "").trim() || studentAnswers[q.id]?.file_url).length;
+  const answeredCount = activeQuestions.filter((q) => (studentAnswers[q.id]?.text || "").trim() || studentAnswers[q.id]?.file_url || studentAnswers[q.id]?.link?.trim()).length;
   const isPendingIn = (cls: Classroom) =>
     Boolean(cls.pending_students?.some((s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid));
 
@@ -1775,6 +1824,19 @@ export default function LiffStudentPage() {
           <div className="p-3.5 rounded-2xl bg-rose-600 text-white shadow-2xl shadow-rose-900/30 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
             <ShieldAlert className="w-6 h-6 shrink-0" />
             <p className="text-sm font-semibold leading-snug">{awayWarningToast}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Upload problem (file too big, wrong type, …) */}
+      {uploadToast && (
+        <div className={`fixed top-[calc(4rem+env(safe-area-inset-top))] inset-x-0 z-50 mx-auto w-full ${FRAME} px-4`}>
+          <div role="alert" className="p-3.5 rounded-2xl bg-amber-500 text-white shadow-2xl shadow-amber-900/30 flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
+            <AlertCircle className="w-6 h-6 shrink-0" />
+            <p className="flex-1 text-sm font-semibold leading-snug whitespace-pre-line">{uploadToast}</p>
+            <button type="button" onClick={() => setUploadToast(null)} aria-label="ปิด" className="shrink-0 p-0.5 rounded-lg hover:bg-white/20 cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
@@ -2474,7 +2536,9 @@ export default function LiffStudentPage() {
                     : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : [];
                   const isChoice = (q.type === 'multiple_choice' || q.type === 'true_false') && choiceOptions.length > 0;
                   const currentAnswer = studentAnswers[q.id]?.text || "";
-                  const isAnswered = Boolean(currentAnswer.trim() || studentAnswers[q.id]?.file_url);
+                  const isAnswered = Boolean(currentAnswer.trim() || studentAnswers[q.id]?.file_url || studentAnswers[q.id]?.link?.trim());
+                  const answer = studentAnswers[q.id];
+                  const isUploading = uploadingQuestionId === q.id;
 
                   return (
                     <div key={q.id} id={`question-${q.id}`} className={`${CARD} p-4 sm:p-5 space-y-4 scroll-mt-20`}>
@@ -2555,39 +2619,78 @@ export default function LiffStudentPage() {
                       )}
 
                       {isFileUpload && (
-                        <label className={`flex items-center justify-center gap-2 min-h-12 px-4 rounded-2xl border-2 border-dashed text-sm font-semibold cursor-pointer transition-colors ${
-                          studentAnswers[q.id]?.file_url
-                            ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300'
-                            : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-line hover:text-line'
-                        }`}>
-                          {uploadingQuestionId === q.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : studentAnswers[q.id]?.file_url ? (
-                            <CheckCircle2 className="w-4 h-4" />
-                          ) : (
-                            <Upload className="w-4 h-4" />
-                          )}
-                          <span>
-                            {uploadingQuestionId === q.id
-                              ? 'กำลังอัปโหลด...'
-                              : studentAnswers[q.id]?.file_url
-                                ? 'อัปโหลดแล้ว • แตะเพื่อเปลี่ยนไฟล์'
-                                : 'แนบรูป / ไฟล์งาน'}
-                          </span>
-                          <input
-                            type="file"
-                            accept="image/*,application/pdf"
-                            disabled={uploadingQuestionId === q.id}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                setUploadingQuestionId(q.id);
-                                handleFileUpload(q.id, file).finally(() => setUploadingQuestionId(null));
-                              }
-                            }}
-                            className="sr-only"
-                          />
-                        </label>
+                          <div className="space-y-2">
+                            <div className="flex items-stretch gap-2">
+                              <label className={`flex-1 min-w-0 flex items-center justify-center gap-2 min-h-12 px-4 rounded-2xl border-2 border-dashed text-sm font-semibold cursor-pointer transition-colors ${
+                                answer?.file_url
+                                  ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300'
+                                  : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-line hover:text-line'
+                              }`}>
+                                {isUploading ? (
+                                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                                ) : answer?.file_url ? (
+                                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                                ) : (
+                                  <Upload className="w-4 h-4 shrink-0" />
+                                )}
+                                <span className="truncate">
+                                  {isUploading
+                                    ? 'กำลังอัปโหลด...'
+                                    : answer?.file_url
+                                      ? `${answer.file_name || 'อัปโหลดแล้ว'} • แตะเพื่อเปลี่ยน`
+                                      : 'แนบรูป / ไฟล์ PDF'}
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  disabled={isUploading}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    // Picking the same file again must fire onChange next time too.
+                                    e.target.value = "";
+                                    if (file) {
+                                      setUploadingQuestionId(q.id);
+                                      handleFileUpload(q.id, file).finally(() => setUploadingQuestionId(null));
+                                    }
+                                  }}
+                                  className="sr-only"
+                                />
+                              </label>
+                              {answer?.file_url && !isUploading && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveFile(q.id)}
+                                  aria-label="ลบไฟล์ที่แนบ"
+                                  className="w-12 shrink-0 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-500 hover:text-rose-600 hover:ring-rose-300 flex items-center justify-center cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                            {!answer?.file_url && (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 px-3 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 focus-within:ring-2 focus-within:ring-line">
+                                  <Link2 className="w-4 h-4 text-slate-400 shrink-0" />
+                                  <input
+                                    type="url"
+                                    inputMode="url"
+                                    value={answer?.link || ""}
+                                    onChange={(e) =>
+                                      setStudentAnswers((prev) => ({
+                                        ...prev,
+                                        [q.id]: { ...prev[q.id], text: prev[q.id]?.text || "", link: e.target.value },
+                                      }))
+                                    }
+                                    placeholder="หรือวางลิงก์ไฟล์ (Google Drive ฯลฯ)"
+                                    className="flex-1 min-w-0 h-11 bg-transparent text-sm outline-none"
+                                  />
+                                </div>
+                                <p className="text-[11px] text-slate-400 px-1">
+                                  รูปภาพไม่เกิน {formatMegabytes(IMAGE_MAX_BYTES)} • PDF ไม่เกิน {formatMegabytes(PDF_MAX_BYTES)} — ไฟล์ใหญ่กว่านี้ให้วางลิงก์ที่เปิดดูได้แทน
+                                </p>
+                              </div>
+                            )}
+                          </div>
                       )}
                     </div>
                   );

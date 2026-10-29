@@ -332,7 +332,7 @@
   },
   "upload": {
     "drag_drop": "ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์",
-    "supported_formats": "รองรับไฟล์ PDF, JPG, PNG, WEBP ขนาดไม่เกิน 25MB",
+    "supported_formats": "รองรับรูปภาพ JPG, PNG, WEBP (ไม่เกิน 5MB) และ PDF (ไม่เกิน 10MB) — ไฟล์ใหญ่กว่านี้วางลิงก์แทนได้",
     "uploading_to_r2": "กำลังอัปโหลดไปยัง Cloudflare R2 Storage...",
     "upload_success": "อัปโหลดไฟล์สำเร็จ!",
     "upload_failed": "การอัปโหลดขัดข้อง กรุณาลองใหม่อีกครั้ง"

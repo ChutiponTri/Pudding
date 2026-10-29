@@ -10,10 +10,12 @@
     "db:verify": "node scripts/verify-supabase.mjs",
     "db:setup": "node scripts/setup-db.mjs",
     "storage:verify": "node scripts/test-connections.mjs",
+    "storage:cors": "node scripts/setup-r2-cors.mjs",
     "line:verify": "node scripts/verify-line-setup.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",
+    "@aws-sdk/s3-request-presigner": "^3.1144.0",
     "@clerk/nextjs": "^7.9.10",
     "@line/liff": "^2.31.1",
     "@supabase/ssr": "^0.12.7",

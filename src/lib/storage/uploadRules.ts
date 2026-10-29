@@ -1,0 +1,41 @@
+/**
+ * What may be stored in R2, shared by the browser (checks before uploading)
+ * and the server (enforces). Only images and PDFs; anything bigger than the
+ * limit should be shared as a link (Google Drive, OneDrive, …) instead.
+ */
+export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+export const PDF_TYPE = 'application/pdf';
+export const ALLOWED_UPLOAD_TYPES: readonly string[] = [...IMAGE_TYPES, PDF_TYPE];
+
+export const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const PDF_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Files a student may keep for one assignment before submitting (stops a bucket being flooded). */
+export const MAX_DRAFT_FILES_PER_ASSIGNMENT = 30;
+
+export type UploadPurpose = 'submission' | 'sample';
+
+export const isAllowedUploadType = (type: string) => ALLOWED_UPLOAD_TYPES.includes(type);
+
+/** The largest allowed size for a file type; 0 = type not allowed. */
+export const maxBytesFor = (type: string) => (type === PDF_TYPE ? PDF_MAX_BYTES : isAllowedUploadType(type) ? IMAGE_MAX_BYTES : 0);
+
+export const formatMegabytes = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)}MB`;
+
+/** Why a file cannot be uploaded (Thai, shown to students and teachers), or null when it can. */
+export function uploadRejection(file: { type: string; size: number }): string | null {
+  const max = maxBytesFor(file.type);
+  if (!max) return 'รองรับเฉพาะไฟล์รูปภาพ (JPG, PNG, WEBP, GIF) และ PDF — ไฟล์ชนิดอื่นให้อัปโหลดไว้ที่ Google Drive แล้ววางลิงก์แทน';
+  if (file.size > max) {
+    const kind = file.type === PDF_TYPE ? 'PDF' : 'รูปภาพ';
+    return `ไฟล์${kind}ใหญ่เกิน ${formatMegabytes(max)} (ไฟล์นี้ ${formatMegabytes(file.size)}) — ลดขนาดไฟล์ หรืออัปโหลดไว้ที่ Google Drive แล้ววางลิงก์แทน`;
+  }
+  return null;
+}
+
+/** An http(s) link a student or teacher pasted (a bare "www.…" gets https://); '' when it is not a link. */
+export function normalizeLink(raw?: string | null): string {
+  const url = (raw || '').trim();
+  if (/^https?:\/\/\S+$/i.test(url)) return url;
+  return /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(url) ? `https://${url}` : '';
+}

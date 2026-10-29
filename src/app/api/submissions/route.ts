@@ -6,6 +6,8 @@ import { parseTrueFalse } from '@/lib/utils/trueFalse';
 import { getActor } from '@/lib/auth/actor';
 import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
 import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
+import { attachFiles, discardDrafts } from '@/lib/storage/files';
+import { normalizeLink } from '@/lib/storage/uploadRules';
 import type { Classroom } from '@/types/database';
 
 /**
@@ -294,7 +296,7 @@ export async function POST(request: NextRequest) {
       const missingRequired = qsList.filter((q) => {
         if (q.is_required === false) return false;
         const ans = (answers || []).find((a: any) => a.question_id === q.id);
-        return !String(ans?.answer_text || '').trim() && !ans?.file_url;
+        return !String(ans?.answer_text || '').trim() && !normalizeLink(ans?.file_url);
       });
       if (missingRequired.length) {
         return NextResponse.json(
@@ -338,7 +340,8 @@ export async function POST(request: NextRequest) {
         scoredAnswers.push({
           question_id: q.id,
           answer_text: studentText,
-          file_url: studentAns?.file_url || null,
+          // An uploaded file or a pasted http(s) link; anything else is dropped.
+          file_url: normalizeLink(studentAns?.file_url) || null,
           teacher_score: questionScore,
         });
       }
@@ -439,6 +442,11 @@ export async function POST(request: NextRequest) {
       }, { status: 503 });
     }
 
+    // The handed-in files are now in use (before replying, so leaving the page cannot drop them);
+    // this phone's other uploads for the assignment were replaced or abandoned.
+    const fileUrls = scoredAnswers.map((ans) => ans.file_url);
+    await attachFiles(supabase, fileUrls, assignment_id, actor.keys);
+    after(() => discardDrafts(supabase, assignment_id, actor.keys, fileUrls));
     // Teacher pages with this classroom open refresh their counts now instead of polling.
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id }));
     return NextResponse.json({ success: true, submission: submissionRecord });

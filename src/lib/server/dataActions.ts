@@ -7,6 +7,7 @@ import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import type { ClassroomSignal } from '@/lib/realtime/signals';
 import { createClassroomPost } from '@/lib/server/classroomPosts';
 import { newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
+import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
 import {
   classroomForStudent,
   classroomRole,
@@ -691,8 +692,12 @@ export const dataActions = {
 
   async deleteClassroom({ supabase, actor }: Ctx, id: string) {
     await requireTeacherOfClassroom(supabase, actor, id);
+    // Its assignments (and their submissions) go with it, so their files go from storage too.
+    const { data: assignments } = await supabase.from('assignments').select('id').eq('classroom_id', id);
+    const fileKeys = await assignmentFileKeys(supabase, (assignments || []).map((a) => a.id as string));
     const { error } = await supabase.from('classrooms').delete().eq('id', id);
     if (error) throw toDatabaseError(error, 'classrooms');
+    after(() => removeFiles(supabase, fileKeys));
   },
 
   /**
@@ -950,6 +955,8 @@ export const dataActions = {
         throw toDatabaseError(qError, 'questions');
       }
     }
+    // The reference file was uploaded before the assignment existed; it now belongs to it.
+    await attachFiles(supabase, [newAssignment.sample_work_url], id, [me.userId]);
 
     // Timeline post + LINE notification; best effort so creation is not blocked.
     try {
@@ -989,6 +996,13 @@ export const dataActions = {
       ({ data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle());
     }
     if (error) throw toDatabaseError(error, 'assignments');
+
+    // A new reference file replaces the old one in storage.
+    if (patch.sample_work_url !== undefined && patch.sample_work_url !== previous.sample_work_url) {
+      await attachFiles(supabase, [patch.sample_work_url], id, [requireTeacher(actor).userId]);
+      const oldKeys = keysFromUrls([previous.sample_work_url]);
+      after(() => removeFiles(supabase, oldKeys));
+    }
 
     // A rescheduled release moves its held-back timeline post (and LINE announcement) too.
     const nextPublishMs = patch.publish_at ? new Date(patch.publish_at).getTime() : NaN;
@@ -1055,8 +1069,11 @@ export const dataActions = {
     const keep = new Set(rows.map((q) => q.id));
     const removed = [...existingIds].filter((qid) => !keep.has(qid));
     if (removed.length) {
+      // Their answers are deleted with them; so are files students uploaded for them.
+      const fileKeys = await questionFileKeys(supabase, removed);
       const { error } = await supabase.from('questions').delete().in('id', removed);
       if (error) throw toDatabaseError(error, 'questions');
+      after(() => removeFiles(supabase, fileKeys));
     }
     const totalPoints = rows.reduce((sum, q) => sum + Number(q.max_score || 0), 0);
     await supabase.from('assignments').update({ total_points: totalPoints }).eq('id', id);
@@ -1095,6 +1112,8 @@ export const dataActions = {
 
   async deleteAssignment({ supabase, actor }: Ctx, id: string) {
     const { assignment } = await requireTeacherOfAssignment(supabase, actor, id);
+    // Students' uploaded work and the reference file are deleted from storage with it.
+    const fileKeys = await assignmentFileKeys(supabase, [id]);
     await Promise.all([
       supabase.from('questions').delete().eq('assignment_id', id),
       supabase.from('submissions').delete().eq('assignment_id', id),
@@ -1102,6 +1121,7 @@ export const dataActions = {
     ]);
     const { error } = await supabase.from('assignments').delete().eq('id', id);
     if (error) throw toDatabaseError(error, 'assignments');
+    after(() => removeFiles(supabase, fileKeys));
     after(() => signalClassroom(assignment.classroom_id, { type: 'timeline' }));
     return true;
   },
