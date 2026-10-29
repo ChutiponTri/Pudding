@@ -1,6 +1,7 @@
 import 'server-only';
 import { clerkClient } from '@clerk/nextjs/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
+import { needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 
 export type TeacherLineStatus = 'connected' | 'missing_line' | 'conflict' | 'previous_account' | 'not_found';
 
@@ -70,6 +71,9 @@ export async function syncTeacherLineIdentity(clerkUserId: string): Promise<Teac
   const lineUid = lineAccount?.providerUserId;
 
   const supabase = createServiceSupabaseClient();
+  // A teacher row the student app once turned into a student (before teacher_line_uid) is made a teacher again first.
+  const { data: ownRow } = await supabase.from('users').select('id, role, line_uid, teacher_line_uid').eq('id', clerkUserId).maybeSingle();
+  if (ownRow && needsTeacherRepair(ownRow)) await repairTeacherRow(supabase, ownRow);
   const selectTeacher = () => supabase
     .from('users')
     .select('id, teacher_line_uid, line_bot_friend, is_line_connected, line_link_status')

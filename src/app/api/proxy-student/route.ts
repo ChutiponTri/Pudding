@@ -8,6 +8,27 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
+ * Lookups by the last 3 digits could be used to page through classmates'
+ * names, so each student gets a few per minute (per server instance; enough
+ * to stop trying 000–999, not a hard guarantee).
+ */
+const LOOKUPS_PER_MINUTE = 10;
+const recentLookups = new Map<string, number[]>();
+function tooManyLookups(lineUid: string) {
+  const now = Date.now();
+  const recent = (recentLookups.get(lineUid) || []).filter((t) => now - t < 60_000);
+  if (recentLookups.size > 1000) {
+    for (const [key, times] of recentLookups) if (!times.some((t) => now - t < 60_000)) recentLookups.delete(key);
+  }
+  if (recent.length >= LOOKUPS_PER_MINUTE) {
+    recentLookups.set(lineUid, recent);
+    return true;
+  }
+  recentLookups.set(lineUid, [...recent, now]);
+  return false;
+}
+
+/**
  * GET /api/proxy-student?classroomId=…&studentNumber=…
  * A student on a borrowed phone looks up the classmate they will submit for:
  * the classmate's name (to confirm), which of the classroom's work they have
@@ -20,6 +41,7 @@ export async function GET(request: NextRequest) {
     if (!classroomId) throw new HttpError(400, 'classroomId is required');
     const supabase = createServiceSupabaseClient();
     const actor = requireStudent(await getActor(request));
+    if (tooManyLookups(actor.lineUid)) throw new HttpError(429, 'ค้นหาบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่');
     const classroom = await loadClassroom(supabase, classroomId);
     if (!classroom) throw new HttpError(404, 'ไม่พบห้องเรียน');
     if ((await classroomRole(supabase, actor, classroom)) !== 'student') throw FORBIDDEN();

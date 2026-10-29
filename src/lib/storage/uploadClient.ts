@@ -136,17 +136,18 @@ export async function releaseUpload(key?: string | null) {
 
 /**
  * Stores a file for an assignment ("draft" for a teacher's unsaved one);
- * forStudent = the classmate's student number when uploading on a borrowed phone.
+ * forStudent = the classmate's student number when uploading on a borrowed phone;
+ * optimized = the file already went through optimizeImage.
  * onDuplicate decides what to do when this user already stored the same file
  * there: 'reuse' keeps the stored copy, 'replace' uploads again and drops it.
  * Throws UploadError with a message ready to show.
  */
 export async function uploadToStorage(
   file: File,
-  options: { assignmentId: string; forStudent?: string; onDuplicate?: (duplicate: DuplicateUpload) => 'reuse' | 'replace' | Promise<'reuse' | 'replace'> }
+  options: { assignmentId: string; forStudent?: string; optimized?: boolean; onDuplicate?: (duplicate: DuplicateUpload) => 'reuse' | 'replace' | Promise<'reuse' | 'replace'> }
 ): Promise<StoredUpload> {
   const sha256 = await sha256Hex(file);
-  const prepared = await optimizeImage(file);
+  const prepared = options.optimized ? file : await optimizeImage(file);
   const rejection = uploadRejection(prepared);
   if (rejection) throw new UploadError(rejection, isAllowedUploadType(prepared.type));
 

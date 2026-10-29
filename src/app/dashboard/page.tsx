@@ -935,8 +935,15 @@ export default function DashboardPage() {
     }
   };
 
+  // Checked on sign-in and when the profile window opens; while it is open, also
+  // when the teacher comes back to this tab (e.g. after adding Pudding Bot in LINE).
   useEffect(() => {
-    if (clerkUser?.id) loadTeacherLineLink();
+    if (!clerkUser?.id) return;
+    loadTeacherLineLink();
+    if (!isInstitutionModalOpen) return;
+    const onFocus = () => loadTeacherLineLink();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [clerkUser?.id, isInstitutionModalOpen]);
 
   const getRealLiffUrl = (cls: Classroom) => {
@@ -3542,22 +3549,40 @@ export default function DashboardPage() {
                   </div>
                 )}
                 {teacherLineLink.status === 'conflict' && (
-                  <p className="text-[11px] text-rose-700 dark:text-rose-300">บัญชี LINE นี้ถูกใช้กับบัญชีอื่นใน Pudding อยู่แล้ว (เช่น บัญชีนักเรียน) กรุณาติดต่อผู้ดูแลระบบ</p>
+                  <p className="text-[11px] text-rose-700 dark:text-rose-300">บัญชี LINE นี้เชื่อมกับบัญชีครูอีกบัญชีใน Pudding อยู่แล้ว กรุณาเข้าสู่ระบบด้วยบัญชีนั้น หรือติดต่อผู้ดูแลระบบ</p>
                 )}
                 {teacherLineLink.status === 'connected' && (
-                  <div className="flex items-center justify-between gap-3 pt-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                     <span className="text-[11px] text-slate-600 dark:text-slate-300">
-                      Pudding Bot: <b>{teacherLineLink.botFriend ? 'เป็นเพื่อนแล้ว ✅' : 'ยังไม่ได้เพิ่มเพื่อน'}</b>
+                      Pudding Bot:{' '}
+                      <b>
+                        {teacherLineLink.botFriend === true
+                          ? 'เป็นเพื่อนแล้ว ✅'
+                          : teacherLineLink.botFriend === false
+                            ? 'ยังไม่ได้เพิ่มเพื่อน'
+                            : 'ตรวจสอบสถานะไม่ได้ในขณะนี้'}
+                      </b>
                     </span>
-                    {!teacherLineLink.botFriend && teacherLineLink.addFriendUrl && (
-                      <a
-                        href={teacherLineLink.addFriendUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="shrink-0 px-3 py-1.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-[11px] font-black"
-                      >
-                        + เพิ่มเพื่อน Pudding Bot
-                      </a>
+                    {teacherLineLink.botFriend !== true && (
+                      <div className="flex items-center gap-1.5">
+                        {teacherLineLink.addFriendUrl && (
+                          <a
+                            href={teacherLineLink.addFriendUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="shrink-0 px-3 py-1.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-[11px] font-black"
+                          >
+                            + เพิ่มเพื่อน Pudding Bot
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={loadTeacherLineLink}
+                          className="shrink-0 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 cursor-pointer"
+                        >
+                          ตรวจสอบอีกครั้ง
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}

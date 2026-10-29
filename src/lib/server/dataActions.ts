@@ -7,6 +7,7 @@ import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import type { ClassroomSignal } from '@/lib/realtime/signals';
 import { createClassroomPost } from '@/lib/server/classroomPosts';
 import { newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
+import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
 import {
   classroomForStudent,
@@ -296,7 +297,10 @@ export const dataActions = {
       .or(`id.eq.${pgValue(lineUid)},line_uid.eq.${pgValue(lineUid)}`)
       .limit(2);
     if (readError) throw toDatabaseError(readError, 'users');
-    const existing = (existingRows || []).find((u) => u.id === lineUid) || existingRows?.[0];
+    // A teacher account holding this LINE id (from before teacher_line_uid) is repaired, never reused as the student.
+    for (const row of existingRows || []) if (needsTeacherRepair(row)) await repairTeacherRow(supabase, row);
+    const studentRows = (existingRows || []).filter((u) => !isClerkUserId(u.id));
+    const existing = studentRows.find((u) => u.id === lineUid) || studentRows[0];
     if (existing) {
       if (existing.first_name && !student.first_name) firstName = existing.first_name;
       if (existing.last_name && !student.last_name) lastName = existing.last_name;
@@ -381,7 +385,9 @@ export const dataActions = {
 
   async syncClerkUser({ supabase, actor }: Ctx, clerkUser: { firstName?: string | null; lastName?: string | null; imageUrl?: string | null; email?: string | null; institution?: string | null }) {
     const me = requireTeacher(actor);
-    const { data: existing } = await supabase.from('users').select('first_name, last_name, institution').eq('id', me.userId).maybeSingle();
+    const { data: existing } = await supabase.from('users').select('id, role, first_name, last_name, institution, line_uid, teacher_line_uid').eq('id', me.userId).maybeSingle();
+    // Frees a student LINE id left on this teacher row from before teacher_line_uid existed.
+    if (existing && needsTeacherRepair(existing)) await repairTeacherRow(supabase, existing);
     const record: Record<string, unknown> = {
       id: me.userId,
       // Names edited in the app win over Clerk's profile.

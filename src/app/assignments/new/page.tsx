@@ -464,6 +464,8 @@ function NewAssignmentContent() {
           // Straight to storage; a failed earlier save already stored this file, so reuse it.
           const uploaded = await uploadToStorage(sampleWorkFile, {
             assignmentId: editingAssignment?.id || "draft",
+            // Already shrunk when the teacher picked it.
+            optimized: true,
             onDuplicate: () => "reuse",
           });
           uploadedSampleUrl = uploaded.url;

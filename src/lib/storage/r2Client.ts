@@ -25,10 +25,23 @@ export const r2Client = new S3Client({
   responseChecksumValidation: 'WHEN_REQUIRED',
 });
 
-/** The bucket key of a public R2 URL; null for anything else (links, other hosts). */
+/**
+ * Earlier public URLs of the same bucket (e.g. the r2.dev address after moving
+ * to a custom domain), comma-separated. Files saved under them are still
+ * recognised, so deleting work still removes them from the bucket.
+ */
+const LEGACY_PUBLIC_URLS = (process.env.R2_LEGACY_PUBLIC_URLS || '')
+  .split(',')
+  .map((url) => url.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+const PUBLIC_URL_PREFIXES = [R2_PUBLIC_URL, ...LEGACY_PUBLIC_URLS].filter(Boolean);
+
+/** The bucket key of a public R2 URL (current or legacy address); null for anything else (links, other hosts). */
 export function keyFromPublicUrl(url?: string | null): string | null {
-  if (!url || !R2_PUBLIC_URL || !url.startsWith(`${R2_PUBLIC_URL}/`)) return null;
-  const key = decodeURIComponent(url.slice(R2_PUBLIC_URL.length + 1).split('?')[0]);
+  if (!url) return null;
+  const base = PUBLIC_URL_PREFIXES.find((prefix) => url.startsWith(`${prefix}/`));
+  if (!base) return null;
+  const key = decodeURIComponent(url.slice(base.length + 1).split('?')[0]);
   return key || null;
 }
 

@@ -81,6 +81,10 @@ interface ProxyFriend {
   submittedAssignmentIds: string[];
   checkedSessionIds: string[];
 }
+/** A page hidden this soon after tapping "attach file" is the camera / file picker, not leaving the quiz. */
+const FILE_PICKER_TAP_WINDOW_MS = 60_000;
+/** Longer than this in the camera / file picker counts as leaving the screen after all. */
+const FILE_PICKER_GRACE_SECONDS = 120;
 /** "ห้อง 412 • ภาคเรียน 1/2568": who a borrowed-phone classmate must share a class and semester with. */
 const classAndTerm = (classroom: Classroom) =>
   [roomLabel(classroom), classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year]
@@ -1103,6 +1107,11 @@ export default function LiffStudentPage() {
   // 3. Real-Time Anti-Cheating Listener ("ตรวจจับเวลาแอบกดออกจอ")
   // Quizzes only: homework may be done alongside other apps (references, camera).
   const isTrackingAway = Boolean(activeAssignment?.is_exam);
+  // Tapping "attach file" opens the camera or file picker, which hides the page
+  // like leaving the app does. That time away is logged but not counted, unless
+  // it lasts longer than taking a photo reasonably takes.
+  const filePickerOpenedAtRef = useRef<number | null>(null);
+  const awayForFileRef = useRef(false);
   useEffect(() => {
     setTabSwitchCount(0);
     tabSwitchCountRef.current = 0;
@@ -1111,13 +1120,31 @@ export default function LiffStudentPage() {
     awayStartRef.current = null;
     if (!activeAssignment || !isTrackingAway) return;
 
+    const isPickingFile = () => !!filePickerOpenedAtRef.current && Date.now() - filePickerOpenedAtRef.current < FILE_PICKER_TAP_WINDOW_MS;
+    const countAway = () =>
+      setTabSwitchCount((prev) => {
+        tabSwitchCountRef.current = prev + 1;
+        return prev + 1;
+      });
+
     const handleVisibilityChange = () => {
       if (document.hidden) {
         awayStartRef.current = Date.now();
-        setTabSwitchCount((prev) => {
-          tabSwitchCountRef.current = prev + 1;
-          return prev + 1;
-        });
+        if (isPickingFile()) {
+          awayForFileRef.current = true;
+          setAuditEvents((prev) => [
+            ...prev,
+            {
+              event_type: "tab_hidden" as const,
+              timestamp: new Date().toISOString(),
+              duration_seconds: 0,
+              details: "เปิดกล้อง/เลือกไฟล์เพื่อแนบคำตอบ (ไม่นับเป็นการออกจากหน้าจอ)",
+            },
+          ]);
+          return;
+        }
+        awayForFileRef.current = false;
+        countAway();
 
         const newEvent = {
           event_type: "tab_hidden" as const,
@@ -1129,15 +1156,28 @@ export default function LiffStudentPage() {
       } else {
         if (awayStartRef.current) {
           const durationSec = Math.max(1, Math.round((Date.now() - awayStartRef.current) / 1000));
-          setTotalAwaySeconds((prev) => prev + durationSec);
+          const wasPickingFile = awayForFileRef.current;
+          const tooLongForFile = wasPickingFile && durationSec > FILE_PICKER_GRACE_SECONDS;
+          awayForFileRef.current = false;
+          filePickerOpenedAtRef.current = null;
 
           setAuditEvents((prev) => {
             const copy = [...prev];
             if (copy.length > 0) {
-              copy[copy.length - 1].duration_seconds = durationSec;
+              copy[copy.length - 1] = {
+                ...copy[copy.length - 1],
+                duration_seconds: durationSec,
+                ...(tooLongForFile ? { details: `เปิดกล้อง/เลือกไฟล์นานเกิน ${FILE_PICKER_GRACE_SECONDS / 60} นาที (นับเป็นการออกจากหน้าจอ)` } : {}),
+              };
             }
             return copy;
           });
+          if (wasPickingFile && !tooLongForFile) {
+            awayStartRef.current = null;
+            return;
+          }
+          if (tooLongForFile) countAway();
+          setTotalAwaySeconds((prev) => prev + durationSec);
 
           setAwayWarningToast(
             `⚠️ ตรวจพบการออกจากหน้าจอเป็นเวลา ${durationSec} วินาที (ครั้งที่ ${tabSwitchCountRef.current}) — ระบบจะแนบรายงานให้อาจารย์เมื่อส่งคำตอบ`
@@ -1149,6 +1189,8 @@ export default function LiffStudentPage() {
     };
 
     const handleBlur = () => {
+      // In-page file choosers can blur the window without hiding it.
+      if (isPickingFile()) return;
       if (!awayStartRef.current) {
         awayStartRef.current = Date.now();
         setAuditEvents((prev) => [
@@ -1164,6 +1206,8 @@ export default function LiffStudentPage() {
     };
 
     const handleFocus = () => {
+      // Back from the camera / file picker: the visibility handler decides whether it counts.
+      if (awayForFileRef.current) return;
       if (awayStartRef.current && !document.hidden) {
         const durationSec = Math.max(1, Math.round((Date.now() - awayStartRef.current) / 1000));
         setTotalAwaySeconds((prev) => prev + durationSec);
@@ -2651,6 +2695,9 @@ export default function LiffStudentPage() {
                                   type="file"
                                   accept="image/*,application/pdf"
                                   disabled={isUploading}
+                                  onClick={() => {
+                                    filePickerOpenedAtRef.current = Date.now();
+                                  }}
                                   onChange={(e) => {
                                     const file = e.target.files?.[0];
                                     // Picking the same file again must fire onChange next time too.

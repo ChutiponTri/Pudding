@@ -4,6 +4,7 @@ import { auth } from '@clerk/nextjs/server';
 import type { NextRequest } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { LINE_TOKEN_HEADER } from '@/lib/auth/lineSession';
+import { needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 
 /** Who is calling: a signed-in teacher (Clerk) or a student verified through LINE. */
 export type Actor =
@@ -69,8 +70,13 @@ export async function getActor(request: NextRequest | Request): Promise<Actor | 
     const lineUid = await verifyLineToken(token);
     if (!lineUid) return null;
     const supabase = createServiceSupabaseClient();
-    const { data } = await supabase.from('users').select('id').eq('line_uid', lineUid).limit(1).maybeSingle();
-    const userId = data?.id || lineUid;
+    const { data } = await supabase.from('users').select('id, role, line_uid, teacher_line_uid').eq('line_uid', lineUid).limit(1).maybeSingle();
+    // A teacher's own account is never their student identity (legacy rows are repaired on the way).
+    let userId = data?.id || lineUid;
+    if (data && needsTeacherRepair(data)) {
+      await repairTeacherRow(supabase, data);
+      userId = lineUid;
+    }
     return { kind: 'student', lineUid, userId, keys: [...new Set([userId, lineUid])] };
   }
   const { userId } = await auth();
