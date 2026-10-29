@@ -8,7 +8,7 @@
  * the 4 setup steps; the follow-up below continues from it, so keep both in step.
  */
 
-export const PUDDING_WEB_URL = 'https://pudding-p.vercel.app';
+export const PUDDING_WEB_URL = 'https://www.pudding-p.com';
 
 type CategoryId = 'start' | 'students' | 'work' | 'grades' | 'other';
 

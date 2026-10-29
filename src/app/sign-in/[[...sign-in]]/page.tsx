@@ -17,7 +17,7 @@ export default function SignInPage() {
           <span>กลับสู่หน้าหลัก</span>
         </Link>
         <div className="flex items-center justify-center gap-2">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/25">
+          <div className="w-10 h-10 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/25">
             <span className="text-2xl select-none">🍮</span>
           </div>
           <span className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">

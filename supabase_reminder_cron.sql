@@ -22,7 +22,7 @@ SELECT cron.schedule(
   '*/5 * * * *',
   $$
   SELECT net.http_post(
-    url := 'https://pudding-p.vercel.app/api/line/reminders',
+    url := 'https://www.pudding-p.com/api/line/reminders',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'Authorization', 'Bearer <CRON_SECRET>'
