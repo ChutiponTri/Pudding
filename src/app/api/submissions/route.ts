@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { getAssignmentWindow, QUIZ_SUBMIT_GRACE_MS } from '@/lib/utils/assignmentWindow';
+import { getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { parseTrueFalse } from '@/lib/utils/trueFalse';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { getActor } from '@/lib/auth/actor';
@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
     if (!assignment) {
       return NextResponse.json({ error: 'ไม่พบงานหรือข้อสอบนี้ในระบบ อาจถูกลบไปแล้ว' }, { status: 404 });
     }
-    const assignmentWindow = getAssignmentWindow(assignment, Date.now(), QUIZ_SUBMIT_GRACE_MS);
+    const assignmentWindow = getAssignmentWindow(assignment, Date.now(), QUIZ_LATE_GRACE_MS);
     // Only admitted students of the assignment's classroom may submit.
     const classroom = await loadClassroom(supabase, assignment.classroom_id);
     if (!classroom || (await classroomRole(supabase, actor, classroom as Classroom)) !== 'student') {
@@ -196,6 +196,9 @@ export async function POST(request: NextRequest) {
     }
     if (assignmentWindow.isQuizClosed) {
       return NextResponse.json({ error: `หมดเวลาทำข้อสอบ “${assignment.title}” แล้ว ไม่สามารถส่งคำตอบได้` }, { status: 409 });
+    }
+    if (assignmentWindow.isLateClosed) {
+      return NextResponse.json({ error: `หมดเวลาส่งงาน “${assignment.title}” แล้ว (รับงานส่งช้าได้ถึง ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง) — ติดต่อคุณครูหากต้องการขอขยายเวลา` }, { status: 409 });
     }
     if (!assignmentWindow.acceptsSubmissions) {
       return NextResponse.json({ error: `คุณครูปิดรับ${assignment.is_exam ? 'ข้อสอบ' : 'งาน'} “${assignment.title}” แล้ว ไม่สามารถส่งได้` }, { status: 409 });
@@ -363,7 +366,8 @@ export async function POST(request: NextRequest) {
       student_id: targetUserDbId,
       student: studentInfo,
       // A quiz answer that arrives within the grace period counts as on time.
-      status: assignmentWindow.isPastDeadline && !assignment.is_exam ? 'late' : 'submitted',
+      // Quiz sheets that arrive in the hidden grace after the bell are late too (only teachers see it).
+      status: assignmentWindow.isPastDeadline ? 'late' : 'submitted',
       started_at: new Date(submittedAt.getTime() - (awaySeconds * 1000 + 120000)).toISOString(),
       submitted_at: submittedAt.toISOString(),
       time_spent_seconds: 120 + awaySeconds,

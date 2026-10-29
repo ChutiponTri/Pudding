@@ -496,7 +496,9 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
         const due = window.deadline
           ? `⏳ ${timeLeft(window.deadline, now)} (${formatDateTime(new Date(window.deadline).toISOString(), 'th', SCHOOL_TIME_ZONE)})`
           : '⏳ ไม่มีกำหนดส่ง';
-        const late = window.isPastDeadline ? '\n⚠️ ส่งตอนนี้จะนับว่าส่งช้า' : '';
+        const late = window.isPastDeadline
+          ? `\n⚠️ ส่งตอนนี้จะนับว่าส่งช้า${window.lateUntil ? ` • ปิดรับ ${formatDateTime(new Date(window.lateUntil).toISOString(), 'th', SCHOOL_TIME_ZONE)}` : ''}`
+          : '';
         const url = buildLiffUrl(link({ assignmentId: assignment.id }));
         return `【${index + 1}】${assignment.title}\n${due}${late}${url ? `\n${action}【${index + 1}】 👉 ${url}` : ''}`;
       });

@@ -6,7 +6,7 @@ import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 import { DateTimeField } from '@/components/DateTimeField';
 import { dataService } from '@/lib/supabase/dataService';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
-import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 
 /**
  * Lets a teacher change whether an assignment accepts work, from the classroom
@@ -42,8 +42,8 @@ export function AssignmentStatusDialog({
       icon: Clock,
       title: 'ตามกำหนดส่ง (อัตโนมัติ)',
       detail: assignment.is_exam
-        ? `เปิดรับคำตอบถึง ${dueLabel} แล้วปิดรับทันที`
-        : `เปิดรับงานถึง ${dueLabel} หลังจากนั้นรับงานส่งช้า`,
+        ? `เปิดรับคำตอบถึง ${dueLabel} แล้วปิดรับ (คำตอบที่มาถึงภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีบันทึกว่าส่งช้า — นักเรียนไม่เห็นข้อนี้)`
+        : `เปิดรับงานถึง ${dueLabel} หลังจากนั้นรับงานส่งช้าอีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง`,
       tone: 'emerald',
     },
     {
@@ -57,7 +57,7 @@ export function AssignmentStatusDialog({
       id: 'extended',
       icon: Unlock,
       title: 'ขยายเวลาส่ง',
-      detail: assignment.is_exam ? 'เปิดรับคำตอบถึงเวลาใหม่ที่เลือก' : 'ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก',
+      detail: assignment.is_exam ? 'เปิดรับคำตอบถึงเวลาใหม่ที่เลือก' : `ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก (รับงานส่งช้าต่ออีก ${LATE_WINDOW_HOURS} ชม.) — ใช้เปิดรับงานที่ปิดไปแล้วอีกครั้งได้`,
       tone: 'amber',
     },
   ];

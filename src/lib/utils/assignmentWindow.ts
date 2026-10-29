@@ -1,4 +1,5 @@
 import type { Assignment } from '@/types/database';
+import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 
 type AssignmentDeadlineFields = Pick<Assignment, 'due_date' | 'status_override' | 'extended_until'> &
   Partial<Pick<Assignment, 'is_exam' | 'publish_at'>>;
@@ -9,8 +10,18 @@ export function isAssignmentPublished(assignment: Partial<Pick<Assignment, 'publ
   return Number.isNaN(publishAt) || now >= publishAt;
 }
 
-/** Answers a student started before a quiz closed still get this long to arrive. */
-export const QUIZ_SUBMIT_GRACE_MS = 2 * 60 * 1000;
+/**
+ * A quiz answer sheet that was already open still arrives up to this long
+ * after the bell, and is saved as late. Students are never told: their screen
+ * shows the quiz closed at its deadline. Server-side (/api/submissions) and
+ * teacher-facing text only.
+ */
+export const QUIZ_LATE_GRACE_MS = 10 * 60 * 1000;
+export const QUIZ_LATE_GRACE_MINUTES = QUIZ_LATE_GRACE_MS / (60 * 1000);
+
+/** Homework past its deadline is still accepted (marked late) for this long, then closes by itself. */
+export const LATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const LATE_WINDOW_HOURS = LATE_WINDOW_MS / (60 * 60 * 1000);
 
 /**
  * Single source of truth for whether an assignment accepts submissions.
@@ -19,9 +30,11 @@ export const QUIZ_SUBMIT_GRACE_MS = 2 * 60 * 1000;
  * - force_closed: no submissions accepted
  * - extended:     deadline moves to extended_until
  * - auto:         deadline is due_date
- * After the deadline, homework is still accepted but marked late, while a
- * quiz (is_exam) closes. Pass graceMs on the server so an answer sheet that was
- * sent just before the bell is not rejected because of network delay.
+ * After the deadline, homework is still accepted but marked late for
+ * LATE_WINDOW_MS and then closes, while a quiz (is_exam) closes at once. The
+ * teacher can still extend (the late window follows the new deadline) or close
+ * early. Only the server passes graceMs (QUIZ_LATE_GRACE_MS), so a quiz
+ * still takes answer sheets that were open at the bell, as late.
  */
 export function getAssignmentWindow(
   assignment: AssignmentDeadlineFields,
@@ -37,6 +50,8 @@ export function getAssignmentWindow(
   const hasDeadline = !Number.isNaN(deadline);
   const isPastDeadline = hasDeadline && now > deadline;
   const isQuizClosed = !!assignment.is_exam && hasDeadline && now > deadline + graceMs;
+  const lateUntil = hasDeadline && !assignment.is_exam ? deadline + LATE_WINDOW_MS : null;
+  const isLateClosed = lateUntil !== null && now > lateUntil + graceMs;
   const isScheduled = !isAssignmentPublished(assignment, now);
 
   return {
@@ -46,9 +61,13 @@ export function getAssignmentWindow(
     isPastDeadline,
     /** Closed because a quiz's time is up (not a teacher override). */
     isQuizClosed,
+    /** Homework: late work is accepted until this time (null for quizzes / no deadline). */
+    lateUntil,
+    /** Closed because homework's late window is over (not a teacher override). */
+    isLateClosed,
     /** Not released to students yet (publish_at is in the future). */
     isScheduled,
-    acceptsSubmissions: !isForceClosed && !isQuizClosed && !isScheduled,
+    acceptsSubmissions: !isForceClosed && !isQuizClosed && !isLateClosed && !isScheduled,
   };
 }
 
@@ -77,14 +96,18 @@ export function getAssignmentStatus(
       label: th ? 'ปิดรับงาน' : 'Closed',
       note: window.isForceClosed
         ? th ? 'คุณครูปิดรับงานแล้ว' : 'Closed by the teacher'
-        : th ? 'หมดเวลาทำข้อสอบ' : 'Quiz time is over',
+        : window.isLateClosed
+          ? th ? `ปิดรับอัตโนมัติ (เลยกำหนดส่ง ${LATE_WINDOW_HOURS} ชม.)` : `Closed automatically ${LATE_WINDOW_HOURS}h after the deadline`
+          : th ? 'หมดเวลาทำข้อสอบ' : 'Quiz time is over',
     };
   }
   if (window.isPastDeadline && !isExam) {
     return {
       tone: 'late' as AssignmentStatusTone,
       label: th ? 'รับงานส่งช้า' : 'Accepting late',
-      note: th ? 'เลยกำหนดส่งแล้ว งานที่ส่งจะถูกบันทึกว่าส่งช้า' : 'Past due; new work is marked late',
+      note: th
+        ? `เลยกำหนดส่งแล้ว งานที่ส่งจะถูกบันทึกว่าส่งช้า • ปิดรับอัตโนมัติ ${formatLateUntil(window.lateUntil, language)}`
+        : `Past due; new work is marked late • closes automatically ${formatLateUntil(window.lateUntil, language)}`,
     };
   }
   return {
@@ -92,6 +115,10 @@ export function getAssignmentStatus(
     label: th ? 'เปิดรับงาน' : 'Accepting',
     note: window.isExtended ? (th ? 'ขยายเวลาส่งแล้ว' : 'Deadline extended') : '',
   };
+}
+
+function formatLateUntil(lateUntil: number | null, language: 'th' | 'en') {
+  return lateUntil === null ? '' : formatDateTime(new Date(lateUntil).toISOString(), language, SCHOOL_TIME_ZONE);
 }
 
 export const ASSIGNMENT_STATUS_CLASSES: Record<AssignmentStatusTone, string> = {

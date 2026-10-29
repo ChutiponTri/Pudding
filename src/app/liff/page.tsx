@@ -44,7 +44,8 @@ import { dataService } from "@/lib/supabase/dataService";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
-import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
+import { getAssignmentWindow, isAssignmentPublished, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindow";
+import { formatDateTime } from "@/lib/utils/datetime";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { isImageUrl, isPdfUrl, referenceWorkUrl } from "@/lib/utils/referenceWork";
 import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploadClient";
@@ -1078,6 +1079,8 @@ export default function LiffStudentPage() {
     if (!openWindow.acceptsSubmissions) {
       alert(openWindow.isQuizClosed
         ? `หมดเวลาทำข้อสอบ “${a.title}” แล้ว`
+        : openWindow.isLateClosed
+        ? `หมดเวลาส่งงาน “${a.title}” แล้ว (รับงานส่งช้าได้ถึง ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง) — ติดต่อคุณครูหากต้องการขอขยายเวลา`
         : `คุณครูปิดรับ${a.is_exam ? "ข้อสอบ" : "งาน"} “${a.title}” แล้ว ไม่สามารถส่งได้`);
       return;
     }
@@ -1999,7 +2002,7 @@ export default function LiffStudentPage() {
                       <WorkShortcut
                         key={hw.id}
                         tone={hwWindow.isPastDeadline ? "rose" : "amber"}
-                        badge={hwWindow.isPastDeadline ? "🔒 ปิดแล้ว · ส่งช้าได้" : "การบ้าน"}
+                        badge={hwWindow.isPastDeadline ? "⏰ เลยกำหนด · ส่งช้าได้" : "การบ้าน"}
                         title={hw.title}
                         meta={`${hwClass ? subjectName(hwClass) : 'รายวิชา'} • ${formatTimeLeft(hwWindow.deadline)}`}
                         action="ส่งงาน"
@@ -2170,10 +2173,10 @@ export default function LiffStudentPage() {
                         const isSubmitted = Boolean(submission);
                         const isGraded = Boolean(submission && gradedSubmissionIds.has(submission.id));
                         const window_ = getAssignmentWindow(assignment);
-                        // Quizzes only accept answers on time (plus a short grace), so trust their status.
-                        const isLateSubmitted = isSubmitted && (
+                        // Students are never told a quiz sheet arrived late (only teachers see that).
+                        const isLateSubmitted = isSubmitted && !assignment.is_exam && (
                           submission.status === 'late' ||
-                          (!assignment.is_exam && Boolean(submission.submitted_at && window_.deadline && new Date(submission.submitted_at).getTime() > window_.deadline))
+                          Boolean(submission.submitted_at && window_.deadline && new Date(submission.submitted_at).getTime() > window_.deadline)
                         );
                         const isClosed = !isSubmitted && !window_.acceptsSubmissions;
                         const isPastDue = !isSubmitted && !isClosed && window_.isPastDeadline;
@@ -2228,12 +2231,12 @@ export default function LiffStudentPage() {
                                   isLateSubmitted ? (
                                     <span className="font-semibold text-amber-600">ส่งช้า</span>
                                   ) : (
-                                    <span className="font-semibold text-emerald-600">ส่งตรงเวลา</span>
+                                    <span className="font-semibold text-emerald-600">{assignment.is_exam ? 'ส่งแล้ว' : 'ส่งตรงเวลา'}</span>
                                   )
                                 ) : isClosed ? (
-                                  <span className="font-semibold text-slate-500">{window_.isQuizClosed ? 'หมดเวลาทำข้อสอบ' : 'คุณครูปิดรับงานแล้ว'}</span>
+                                  <span className="font-semibold text-slate-500">{window_.isQuizClosed ? 'หมดเวลาทำข้อสอบ' : window_.isLateClosed ? 'หมดเวลาส่งงานช้าแล้ว' : 'คุณครูปิดรับงานแล้ว'}</span>
                                 ) : window_.isPastDeadline ? (
-                                  <span className="font-semibold text-rose-600">เลยกำหนดส่ง • ยังส่งได้ แต่จะบันทึกว่าส่งช้า</span>
+                                  <span className="font-semibold text-rose-600">เลยกำหนดส่ง • ส่งช้าได้ถึง {formatDateTime(new Date(window_.lateUntil ?? Date.now()).toISOString(), 'th')}</span>
                                 ) : (
                                   <span className="truncate">
                                     {window_.isExtended ? 'ขยายเวลา • ' : ''}{formatTimeLeft(window_.deadline)}
@@ -2489,8 +2492,8 @@ export default function LiffStudentPage() {
                     <span aria-hidden>🔒</span>
                     <span>
                       {activeAssignment.is_exam
-                        ? "ข้อสอบนี้ปิดแล้ว (หมดเวลา)"
-                        : "งานนี้ปิดแล้ว (เลยกำหนดส่ง) — ยังส่งได้ แต่จะถูกบันทึกว่าส่งช้า"}
+                        ? "หมดเวลาทำข้อสอบแล้ว กรุณากดส่งคำตอบทันที"
+                        : `เลยกำหนดส่งแล้ว — ส่งได้ถึง ${formatDateTime(new Date(getAssignmentWindow(activeAssignment).lateUntil ?? Date.now()).toISOString(), 'th')} แต่จะถูกบันทึกว่าส่งช้า`}
                     </span>
                   </div>
                 )}

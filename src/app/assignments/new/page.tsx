@@ -9,6 +9,7 @@ import { Assignment, Course, Classroom, LearningIndicator, CourseLearningIndicat
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
+import { LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { optimizeImage, UploadError, uploadToStorage } from '@/lib/storage/uploadClient';
 import { uploadRejection } from '@/lib/storage/uploadRules';
 import {
@@ -321,7 +322,25 @@ function NewAssignmentContent() {
   // Dropdown value: a fitting time, "none", or '' (please select; also when the chosen time no longer fits).
   const reminderSelectValue = effectiveReminderOffsets.length ? String(effectiveReminderOffsets[0]) : reminderOffset === null ? 'none' : '';
 
+  /**
+   * Quizzes take no photos or files. When a quiz needs one, offer homework mode
+   * instead: in class the teacher can watch students themselves. True when a
+   * file question may be added (now, or after switching to homework).
+   */
+  const offerHomeworkMode = (reason: string) => {
+    const ok = confirm(
+      language === 'th'
+        ? `${reason}\n\nแบบทดสอบไม่อนุญาตให้ถ่ายรูปหรือแนบไฟล์ เพราะระบบนับทุกครั้งที่นักเรียนออกจากหน้าจอ\nเปลี่ยนเป็นโหมด "การบ้าน" แทนหรือไม่? (หากทำในห้องเรียน คุณครูเฝ้าดูนักเรียนเองได้)`
+        : `${reason}\n\nQuizzes do not allow photos or file uploads, since every screen exit is counted.\nSwitch to homework mode instead? (In class, you can watch students yourself.)`
+    );
+    if (ok) setIsExam(false);
+    return ok;
+  };
+  const allowFileQuestion = () =>
+    !isExam || offerHomeworkMode(language === 'th' ? 'คำถามแบบแนบไฟล์ / ถ่ายรูป' : 'File upload / photo question');
+
   const handleAddQuestion = (type: QuestionType = 'short_answer') => {
+    if (type === 'file_upload' && !allowFileQuestion()) return;
     // Use courseIndicators first, fall back to global indicators
     const defaultIndId = courseIndicators[0]?.id || indicators[0]?.id || '';
     setQuestions((prev) => [
@@ -405,11 +424,12 @@ function NewAssignmentContent() {
     }
     const fileInQuiz = isExam ? questions.findIndex((q) => q.type === 'file_upload') : -1;
     if (fileInQuiz !== -1) {
-      alert(
-        language === 'th'
-          ? `ข้อที่ ${fileInQuiz + 1}: แบบทดสอบไม่อนุญาตให้ถ่ายรูปหรือแนบไฟล์ กรุณาเปลี่ยนประเภทคำถาม`
-          : `Question ${fileInQuiz + 1}: quizzes do not allow photos or file uploads. Please change the question type`
-      );
+      // Switching changes deadline, reminder and reference-file settings, so the teacher checks them before saving.
+      if (offerHomeworkMode(language === 'th' ? `ข้อที่ ${fileInQuiz + 1} เป็นคำถามแบบแนบไฟล์ / ถ่ายรูป` : `Question ${fileInQuiz + 1} asks for a file / photo`)) {
+        alert(language === 'th' ? 'เปลี่ยนเป็นโหมดการบ้านแล้ว ตรวจสอบกำหนดส่งและการแจ้งเตือน แล้วกดบันทึกอีกครั้ง' : 'Switched to homework mode. Check the deadline and reminder, then save again.');
+      } else {
+        alert(language === 'th' ? `กรุณาเปลี่ยนประเภทคำถามข้อที่ ${fileInQuiz + 1} ก่อนบันทึกแบบทดสอบ` : `Change the type of question ${fileInQuiz + 1} before saving the quiz.`);
+      }
       return;
     }
     const incompleteChoice = questions.findIndex(
@@ -866,8 +886,12 @@ function NewAssignmentContent() {
               <DateTimeField value={dueDate} onChange={setDueDate} presets="deadline" />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {isExam
-                  ? (language === 'th' ? 'ข้อสอบจะปิดรับคำตอบทันทีเมื่อถึงเวลานี้' : 'The quiz stops accepting answers at this time.')
-                  : (language === 'th' ? 'ส่งหลังเวลานี้ได้ แต่จะถูกบันทึกว่า "ส่งช้า"' : 'Work handed in after this time is marked late.')}
+                  ? (language === 'th'
+                    ? `ข้อสอบปิดรับเมื่อถึงเวลานี้ — นักเรียนที่เปิดข้อสอบค้างไว้ยังส่งได้อีก ${QUIZ_LATE_GRACE_MINUTES} นาที (บันทึกว่าส่งช้า) โดยนักเรียนจะไม่เห็นข้อนี้`
+                    : `The quiz closes at this time. Sheets already open may still arrive for ${QUIZ_LATE_GRACE_MINUTES} min (marked late); students are not told.`)
+                  : (language === 'th'
+                    ? `ส่งหลังเวลานี้ได้อีก ${LATE_WINDOW_HOURS} ชม. (บันทึกว่า "ส่งช้า") แล้วปิดรับเอง — ขยายเวลาหรือปิดรับเองได้ภายหลัง`
+                    : `Late work is accepted for ${LATE_WINDOW_HOURS}h after this time (marked late), then it closes. You can extend or close it later.`)}
               </p>
             </div>
 
@@ -1170,9 +1194,11 @@ function NewAssignmentContent() {
                     </label>
                     <select
                       value={q.type}
-                      onChange={(e) =>
-                        handleQuestionChange(idx, 'type', e.target.value as QuestionType)
-                      }
+                      onChange={(e) => {
+                        const type = e.target.value as QuestionType;
+                        if (type === 'file_upload' && !allowFileQuestion()) return;
+                        handleQuestionChange(idx, 'type', type);
+                      }}
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                     >
                       <option value="short_answer">
@@ -1181,12 +1207,9 @@ function NewAssignmentContent() {
                       <option value="multiple_choice">
                         {t('assignment_creator.questions_builder.type_multiple_choice')}
                       </option>
-                      {/* Quizzes take no photos or files. */}
-                      {(!isExam || q.type === 'file_upload') && (
-                        <option value="file_upload" disabled={isExam}>
-                          {t('assignment_creator.questions_builder.type_file_upload')}
-                        </option>
-                      )}
+                      <option value="file_upload">
+                        {t('assignment_creator.questions_builder.type_file_upload')}
+                      </option>
                       <option value="true_false">
                         {t('assignment_creator.questions_builder.type_true_false')}
                       </option>
@@ -1417,7 +1440,6 @@ function NewAssignmentContent() {
                 <span>{language === 'th' ? 'ปรนัย' : 'Multiple Choice'}</span>
               </button>
 
-{!isExam && (
               <button
                 type="button"
                 onClick={() => handleAddQuestion('file_upload')}
@@ -1426,7 +1448,6 @@ function NewAssignmentContent() {
                 <PlusCircle className="w-4 h-4" />
                 <span>{language === 'th' ? 'อัปโหลดไฟล์' : 'File Upload'}</span>
               </button>
-              )}
 
               <button
                 type="button"

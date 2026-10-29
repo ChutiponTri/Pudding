@@ -46,7 +46,7 @@ import {
   Layers,
   Rocket,
 } from 'lucide-react';
-import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 
 /**
@@ -389,6 +389,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     assignmentWindow?.deadline != null ? new Date(assignmentWindow.deadline).toISOString() : assignment?.due_date,
     language
   );
+  const lateUntilLabel = assignmentWindow?.lateUntil != null ? formatDateTime(new Date(assignmentWindow.lateUntil).toISOString(), language) : '';
   const th = language === 'th';
   // What "auto" actually does right now: homework keeps taking late work, a quiz closes.
   const autoBannerText = !assignment
@@ -400,14 +401,20 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     : assignment.is_exam
     ? assignmentWindow?.isPastDeadline
       ? th ? 'อัตโนมัติ: หมดเวลาแล้ว ปิดรับคำตอบ' : 'Automatic: time is up, answers are closed'
-      : th ? `อัตโนมัติ: เปิดรับคำตอบถึง ${deadlineLabel} แล้วปิดรับทันที` : `Automatic: open until ${deadlineLabel}, then closes`
+      : th
+        ? `อัตโนมัติ: เปิดรับคำตอบถึง ${deadlineLabel} แล้วปิดรับ (คำตอบที่ส่งเข้ามาภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีหลังหมดเวลาจะบันทึกว่าส่งช้า นักเรียนไม่เห็นข้อนี้)`
+        : `Automatic: open until ${deadlineLabel}, then closes (sheets arriving within ${QUIZ_LATE_GRACE_MINUTES} min after are saved as late; students are not told)`
+    : assignmentWindow?.isLateClosed
+    ? th
+      ? `อัตโนมัติ: ปิดรับแล้ว (เลยกำหนดส่ง ${LATE_WINDOW_HOURS} ชม.) — ใช้ "ขยายเวลา" หากต้องการเปิดรับอีกครั้ง`
+      : `Automatic: closed ${LATE_WINDOW_HOURS}h after the deadline. Extend the deadline to reopen.`
     : assignmentWindow?.isPastDeadline
     ? th
-      ? 'อัตโนมัติ: เลยกำหนดส่งแล้ว ยังรับงานส่งช้าอยู่ (บันทึกว่าส่งช้า) — กด "ล็อกปิดรับงานทันที" หากต้องการหยุดรับ'
-      : 'Automatic: past due, still accepting late work (marked late). Use "Close now" to stop.'
+      ? `อัตโนมัติ: เลยกำหนดส่งแล้ว รับงานส่งช้าถึง ${lateUntilLabel} แล้วปิดรับเอง — กด "ล็อกปิดรับงานทันที" หากต้องการหยุดรับก่อน`
+      : `Automatic: past due, accepting late work until ${lateUntilLabel}, then closes. Use "Close now" to stop earlier.`
     : th
-    ? `อัตโนมัติ: เปิดรับงานถึง ${deadlineLabel} หลังจากนั้นยังรับงานส่งช้าได้`
-    : `Automatic: open until ${deadlineLabel}; late work accepted after that`;
+    ? `อัตโนมัติ: เปิดรับงานถึง ${deadlineLabel} หลังจากนั้นรับงานส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง`
+    : `Automatic: open until ${deadlineLabel}; late work accepted for ${LATE_WINDOW_HOURS}h more, then closes`;
 
   return (
     <div className="space-y-8 pb-20">
@@ -607,7 +614,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     ? t('submission_control.status_banner_extended').replace(
                         '{time}',
                         formatDateTime(assignment?.extended_until || extendedDateTime, language)
-                      ) + (assignment?.is_exam ? '' : th ? ' (หลังจากนั้นรับงานส่งช้า)' : ' (late work accepted after that)')
+                      ) + (assignment?.is_exam ? '' : th ? ` (หลังจากนั้นรับงานส่งช้าอีก ${LATE_WINDOW_HOURS} ชม.)` : ` (late work accepted for ${LATE_WINDOW_HOURS}h after that)`)
                     : autoBannerText}
                 </span>
               </div>
