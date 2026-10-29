@@ -68,7 +68,8 @@ export async function optimizeImage(file: File): Promise<File> {
 
   let bitmap: ImageBitmap;
   try {
-    bitmap = await createImageBitmap(file);
+    // Apply the camera's rotation tag, or phone photos can come out sideways once re-encoded.
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => createImageBitmap(file));
   } catch {
     return file;
   }

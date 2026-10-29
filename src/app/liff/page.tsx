@@ -83,7 +83,7 @@ interface ProxyFriend {
 }
 /** "ห้อง 412 • ภาคเรียน 1/2568": who a borrowed-phone classmate must share a class and semester with. */
 const classAndTerm = (classroom: Classroom) =>
-  [roomLabel(classroom) || classroom.name, classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year]
+  [roomLabel(classroom), classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year]
     .filter(Boolean)
     .join(" • ");
 type AttendanceStatus = "on_time" | "late" | "absent" | "excused" | "idle";
