@@ -63,6 +63,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
+import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 import { EditStudentModal } from '@/components/EditStudentModal';
 
@@ -536,9 +537,7 @@ export default function DashboardPage() {
     return filteredSubmissions.filter(
       (s) =>
         examIds.has(s.assignment_id) &&
-        (s.is_flagged_suspicious ||
-          (s.tab_switch_count && s.tab_switch_count >= 3) ||
-          (s.total_time_away_seconds && s.total_time_away_seconds >= 30))
+        (s.is_flagged_suspicious || isSuspiciousActivity(s.tab_switch_count || 0, s.total_time_away_seconds || 0))
     ).length;
   }, [filteredSubmissions, filteredAssignments]);
 

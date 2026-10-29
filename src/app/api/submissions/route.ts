@@ -3,6 +3,7 @@ import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAssignmentWindow, QUIZ_SUBMIT_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { parseTrueFalse } from '@/lib/utils/trueFalse';
+import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { getActor } from '@/lib/auth/actor';
 import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
 import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
@@ -205,7 +206,7 @@ export async function POST(request: NextRequest) {
     const tracked = !!assignment.is_exam;
     const awaySeconds = tracked ? Number(antiCheating.away_time_seconds || 0) : 0;
     const tabSwitchCount = tracked ? Number(antiCheating.tab_switch_count || 0) : 0;
-    const isSuspicious = tabSwitchCount >= 3 || awaySeconds >= 30;
+    const isSuspicious = tracked && isSuspiciousActivity(tabSwitchCount, awaySeconds);
 
     const firstName = proxyStudent?.first_name || student_first_name || (student_name ? student_name.split(' ')[0] : 'นักเรียน');
     const lastName = proxyStudent?.last_name || student_last_name || (student_name ? student_name.split(' ').slice(1).join(' ') : '');
@@ -341,7 +342,8 @@ export async function POST(request: NextRequest) {
           question_id: q.id,
           answer_text: studentText,
           // An uploaded file or a pasted http(s) link; anything else is dropped.
-          file_url: normalizeLink(studentAns?.file_url) || null,
+          // Quizzes take no files or photos.
+          file_url: assignment.is_exam ? null : normalizeLink(studentAns?.file_url) || null,
           teacher_score: questionScore,
         });
       }

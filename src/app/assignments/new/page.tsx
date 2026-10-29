@@ -403,6 +403,15 @@ function NewAssignmentContent() {
       document.getElementById('line-reminder')?.focus();
       return;
     }
+    const fileInQuiz = isExam ? questions.findIndex((q) => q.type === 'file_upload') : -1;
+    if (fileInQuiz !== -1) {
+      alert(
+        language === 'th'
+          ? `ข้อที่ ${fileInQuiz + 1}: แบบทดสอบไม่อนุญาตให้ถ่ายรูปหรือแนบไฟล์ กรุณาเปลี่ยนประเภทคำถาม`
+          : `Question ${fileInQuiz + 1}: quizzes do not allow photos or file uploads. Please change the question type`
+      );
+      return;
+    }
     const incompleteChoice = questions.findIndex(
       (q) => q.type === 'multiple_choice' && q.options.filter((opt) => opt.trim()).length < 2
     );
@@ -657,8 +666,8 @@ function NewAssignmentContent() {
               <Sparkles className="w-3.5 h-3.5" />
               <span>
                 {language === 'th'
-                  ? 'โหมดข้อสอบ: เฝ้าระวังการสลับหน้าต่าง & ล็อกไฟล์ตัวอย่าง'
-                  : 'Exam Mode: Screen monitor active & sample work disabled'}
+                  ? 'โหมดข้อสอบ: บันทึกทุกครั้งที่ออกจากหน้าจอ • ไม่อนุญาตให้ถ่ายรูป/แนบไฟล์'
+                  : 'Exam Mode: every screen exit is logged • no photos or file uploads'}
               </span>
             </span>
           ) : (
@@ -1172,9 +1181,12 @@ function NewAssignmentContent() {
                       <option value="multiple_choice">
                         {t('assignment_creator.questions_builder.type_multiple_choice')}
                       </option>
-                      <option value="file_upload">
-                        {t('assignment_creator.questions_builder.type_file_upload')}
-                      </option>
+                      {/* Quizzes take no photos or files. */}
+                      {(!isExam || q.type === 'file_upload') && (
+                        <option value="file_upload" disabled={isExam}>
+                          {t('assignment_creator.questions_builder.type_file_upload')}
+                        </option>
+                      )}
                       <option value="true_false">
                         {t('assignment_creator.questions_builder.type_true_false')}
                       </option>
@@ -1405,6 +1417,7 @@ function NewAssignmentContent() {
                 <span>{language === 'th' ? 'ปรนัย' : 'Multiple Choice'}</span>
               </button>
 
+{!isExam && (
               <button
                 type="button"
                 onClick={() => handleAddQuestion('file_upload')}
@@ -1413,6 +1426,7 @@ function NewAssignmentContent() {
                 <PlusCircle className="w-4 h-4" />
                 <span>{language === 'th' ? 'อัปโหลดไฟล์' : 'File Upload'}</span>
               </button>
+              )}
 
               <button
                 type="button"

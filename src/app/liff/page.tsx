@@ -81,10 +81,6 @@ interface ProxyFriend {
   submittedAssignmentIds: string[];
   checkedSessionIds: string[];
 }
-/** A page hidden this soon after tapping "attach file" is the camera / file picker, not leaving the quiz. */
-const FILE_PICKER_TAP_WINDOW_MS = 60_000;
-/** Longer than this in the camera / file picker counts as leaving the screen after all. */
-const FILE_PICKER_GRACE_SECONDS = 120;
 /** "ห้อง 412 • ภาคเรียน 1/2568": who a borrowed-phone classmate must share a class and semester with. */
 const classAndTerm = (classroom: Classroom) =>
   [roomLabel(classroom), classroom.semester && classroom.year_ce ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year]
@@ -1106,12 +1102,9 @@ export default function LiffStudentPage() {
 
   // 3. Real-Time Anti-Cheating Listener ("ตรวจจับเวลาแอบกดออกจอ")
   // Quizzes only: homework may be done alongside other apps (references, camera).
+  // Quizzes take no photos or files, so every moment off the quiz counts, however
+  // short: looking an answer up in an AI chat app takes only seconds.
   const isTrackingAway = Boolean(activeAssignment?.is_exam);
-  // Tapping "attach file" opens the camera or file picker, which hides the page
-  // like leaving the app does. That time away is logged but not counted, unless
-  // it lasts longer than taking a photo reasonably takes.
-  const filePickerOpenedAtRef = useRef<number | null>(null);
-  const awayForFileRef = useRef(false);
   useEffect(() => {
     setTabSwitchCount(0);
     tabSwitchCountRef.current = 0;
@@ -1120,99 +1113,50 @@ export default function LiffStudentPage() {
     awayStartRef.current = null;
     if (!activeAssignment || !isTrackingAway) return;
 
-    const isPickingFile = () => !!filePickerOpenedAtRef.current && Date.now() - filePickerOpenedAtRef.current < FILE_PICKER_TAP_WINDOW_MS;
-    const countAway = () =>
+    const startAway = (event_type: "tab_hidden" | "window_blur", details: string) => {
+      awayStartRef.current = Date.now();
       setTabSwitchCount((prev) => {
         tabSwitchCountRef.current = prev + 1;
         return prev + 1;
       });
+      setAuditEvents((prev) => [...prev, { event_type, timestamp: new Date().toISOString(), duration_seconds: 0, details }]);
+    };
+
+    const endAway = () => {
+      if (!awayStartRef.current) return;
+      const durationSec = Math.max(1, Math.round((Date.now() - awayStartRef.current) / 1000));
+      awayStartRef.current = null;
+      setAuditEvents((prev) => {
+        if (!prev.length) return prev;
+        const copy = [...prev];
+        copy[copy.length - 1] = { ...copy[copy.length - 1], duration_seconds: durationSec };
+        return copy;
+      });
+      setTotalAwaySeconds((prev) => prev + durationSec);
+      setAwayWarningToast(
+        `⚠️ ตรวจพบการออกจากหน้าจอเป็นเวลา ${durationSec} วินาที (ครั้งที่ ${tabSwitchCountRef.current}) — ระบบจะแนบรายงานให้อาจารย์เมื่อส่งคำตอบ`
+      );
+      setTimeout(() => setAwayWarningToast(null), 5000);
+    };
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        awayStartRef.current = Date.now();
-        if (isPickingFile()) {
-          awayForFileRef.current = true;
-          setAuditEvents((prev) => [
-            ...prev,
-            {
-              event_type: "tab_hidden" as const,
-              timestamp: new Date().toISOString(),
-              duration_seconds: 0,
-              details: "เปิดกล้อง/เลือกไฟล์เพื่อแนบคำตอบ (ไม่นับเป็นการออกจากหน้าจอ)",
-            },
-          ]);
-          return;
-        }
-        awayForFileRef.current = false;
-        countAway();
-
-        const newEvent = {
-          event_type: "tab_hidden" as const,
-          timestamp: new Date().toISOString(),
-          duration_seconds: 0,
-          details: "นักเรียนสลับหน้าจอ หรือออกจากแอป LINE",
-        };
-        setAuditEvents((prev) => [...prev, newEvent]);
+        // Already away since the window lost focus: one trip, counted once.
+        if (awayStartRef.current) return;
+        startAway("tab_hidden", "นักเรียนสลับหน้าจอ หรือออกจากแอป LINE");
       } else {
-        if (awayStartRef.current) {
-          const durationSec = Math.max(1, Math.round((Date.now() - awayStartRef.current) / 1000));
-          const wasPickingFile = awayForFileRef.current;
-          const tooLongForFile = wasPickingFile && durationSec > FILE_PICKER_GRACE_SECONDS;
-          awayForFileRef.current = false;
-          filePickerOpenedAtRef.current = null;
-
-          setAuditEvents((prev) => {
-            const copy = [...prev];
-            if (copy.length > 0) {
-              copy[copy.length - 1] = {
-                ...copy[copy.length - 1],
-                duration_seconds: durationSec,
-                ...(tooLongForFile ? { details: `เปิดกล้อง/เลือกไฟล์นานเกิน ${FILE_PICKER_GRACE_SECONDS / 60} นาที (นับเป็นการออกจากหน้าจอ)` } : {}),
-              };
-            }
-            return copy;
-          });
-          if (wasPickingFile && !tooLongForFile) {
-            awayStartRef.current = null;
-            return;
-          }
-          if (tooLongForFile) countAway();
-          setTotalAwaySeconds((prev) => prev + durationSec);
-
-          setAwayWarningToast(
-            `⚠️ ตรวจพบการออกจากหน้าจอเป็นเวลา ${durationSec} วินาที (ครั้งที่ ${tabSwitchCountRef.current}) — ระบบจะแนบรายงานให้อาจารย์เมื่อส่งคำตอบ`
-          );
-          setTimeout(() => setAwayWarningToast(null), 5000);
-          awayStartRef.current = null;
-        }
+        endAway();
       }
     };
 
+    // Split screen or a floating chat bubble takes focus without hiding the page.
     const handleBlur = () => {
-      // In-page file choosers can blur the window without hiding it.
-      if (isPickingFile()) return;
-      if (!awayStartRef.current) {
-        awayStartRef.current = Date.now();
-        setAuditEvents((prev) => [
-          ...prev,
-          {
-            event_type: "window_blur" as const,
-            timestamp: new Date().toISOString(),
-            duration_seconds: 0,
-            details: "หน้าต่างเสียการโฟกัส (Window blur)",
-          },
-        ]);
-      }
+      if (awayStartRef.current || document.hidden) return;
+      startAway("window_blur", "หน้าต่างเสียการโฟกัส (เช่น แบ่งหน้าจอ หรือเปิดแอปลอยทับ)");
     };
 
     const handleFocus = () => {
-      // Back from the camera / file picker: the visibility handler decides whether it counts.
-      if (awayForFileRef.current) return;
-      if (awayStartRef.current && !document.hidden) {
-        const durationSec = Math.max(1, Math.round((Date.now() - awayStartRef.current) / 1000));
-        setTotalAwaySeconds((prev) => prev + durationSec);
-        awayStartRef.current = null;
-      }
+      if (!document.hidden) endAway();
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -2571,6 +2515,13 @@ export default function LiffStudentPage() {
 
               {!activeAssignment.is_exam && <ReferenceWork assignment={activeAssignment} />}
 
+              {isTrackingAway && (
+                <div role="note" className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-amber-900 dark:text-amber-200 text-xs leading-relaxed">
+                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                  <p>แบบทดสอบนี้ไม่อนุญาตให้ถ่ายรูปหรือแนบไฟล์ และระบบจะบันทึกทุกครั้งที่ออกจากหน้าจอ แม้เพียงไม่กี่วินาที แล้วรายงานให้คุณครูทราบ</p>
+                </div>
+              )}
+
               {activeQuestions.length === 0 && (
                 <div className={CARD}>
                   <EmptyState icon="📄" text="งานนี้ไม่มีคำถาม กดส่งเพื่อยืนยันการส่งงานได้เลย" />
@@ -2580,7 +2531,8 @@ export default function LiffStudentPage() {
               {/* Questions */}
               <div className="space-y-4">
                 {activeQuestions.map((q, idx) => {
-                  const isFileUpload = q.type === 'file_upload' || (q as any).allow_upload || (q as any).requires_file;
+                  // Quizzes take no photos or files (older quizzes may still have such a question: answer it in text).
+                  const isFileUpload = !activeAssignment?.is_exam && (q.type === 'file_upload' || (q as any).allow_upload || (q as any).requires_file);
                   // True/false questions created before options were saved have none; give them the standard pair.
                   const choiceOptions = Array.isArray(q.options) && q.options.length > 0
                     ? q.options
@@ -2695,9 +2647,6 @@ export default function LiffStudentPage() {
                                   type="file"
                                   accept="image/*,application/pdf"
                                   disabled={isUploading}
-                                  onClick={() => {
-                                    filePickerOpenedAtRef.current = Date.now();
-                                  }}
                                   onChange={(e) => {
                                     const file = e.target.files?.[0];
                                     // Picking the same file again must fire onChange next time too.

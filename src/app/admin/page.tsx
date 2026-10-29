@@ -1,24 +1,19 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { ADMIN_DATASETS, ADMIN_TABLES, getAdmin, loadDataset, loadTable, type AdminTable } from '@/lib/server/admin';
+import { ADMIN_DATASETS, ADMIN_TABLES, getAdmin, loadDataset } from '@/lib/server/admin';
 import { AdminStorage } from '@/components/AdminStorage';
+import { AdminHeader, AdminMain } from '@/components/AdminUi';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Pudding Admin', robots: { index: false, follow: false } };
 
-const PREVIEW_ROWS = 50;
 const FORMATS = ['jsonl', 'csv', 'json'] as const;
 
 const exportHref = (name: string, format: string, anonymize = true) =>
   `/api/admin/export?name=${name}&format=${format}${anonymize ? '' : '&anonymize=0'}`;
-
-const preview = (value: unknown) => {
-  if (value === null || value === undefined) return '';
-  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
-};
 
 function ExportLinks({ name, anonymize = true }: { name: string; anonymize?: boolean }) {
   return (
@@ -36,16 +31,18 @@ function ExportLinks({ name, anonymize = true }: { name: string; anonymize?: boo
   );
 }
 
-export default async function AdminPage({ searchParams }: { searchParams: Promise<{ table?: string }> }) {
+function StatCard({ href, className, children }: { href?: string; className: string; children: ReactNode }) {
+  return href ? <Link href={href} className={className}>{children}</Link> : <div className={className}>{children}</div>;
+}
+
+export default async function AdminPage() {
   const admin = await getAdmin();
   // Non-admins see the same page as a route that does not exist.
   if (!admin) notFound();
 
-  const { table } = await searchParams;
-  const selectedTable = (ADMIN_TABLES as readonly string[]).includes(table || '') ? (table as AdminTable) : null;
   const supabase = createServiceSupabaseClient();
 
-  const [counts, proxyActivity, flaggedCount, previewRows] = await Promise.all([
+  const [counts, proxyActivity, flaggedCount, unlinkedTeachers] = await Promise.all([
     Promise.all(
       ADMIN_TABLES.map(async (name) => {
         const { count, error } = await supabase.from(name).select('*', { count: 'exact', head: true });
@@ -54,52 +51,45 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     ),
     loadDataset(supabase, 'proxy_activity', false).catch(() => []),
     supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('is_flagged_suspicious', true),
-    selectedTable ? loadTable(supabase, selectedTable).then((rows) => rows.slice(0, PREVIEW_ROWS)) : Promise.resolve([]),
+    // Teachers the LINE bot cannot reach: no LINE id saved, or not its friend.
+    supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'teacher').or('teacher_line_uid.is.null,line_bot_friend.is.null,line_bot_friend.eq.false'),
   ]);
   const countOf = Object.fromEntries(counts);
-  const previewColumns = [...new Set(previewRows.flatMap((row) => Object.keys(row)))];
 
   const stats = [
-    { label: 'ผู้ใช้', value: countOf.users },
-    { label: 'ห้องเรียน', value: countOf.classrooms },
-    { label: 'งาน/ข้อสอบ', value: countOf.assignments },
-    { label: 'งานที่ส่ง', value: countOf.submissions },
-    { label: 'คำตอบ', value: countOf.submission_answers },
-    { label: 'บันทึกเช็คชื่อ', value: countOf.attendance_records },
+    { label: 'ผู้ใช้', value: countOf.users, href: '/admin/users' },
+    { label: 'ห้องเรียน', value: countOf.classrooms, href: '/admin/classrooms' },
+    { label: 'งาน/ข้อสอบ', value: countOf.assignments, href: '/admin/assignments' },
+    { label: 'งานที่ส่ง', value: countOf.submissions, href: '/admin/submissions' },
+    { label: 'บันทึกเช็คชื่อ', value: countOf.attendance_records, href: '/admin/attendance_records' },
+    { label: 'ครูที่บอท LINE ยังติดต่อไม่ได้', value: unlinkedTeachers.count ?? 0, tone: 'amber', href: '/admin/users?col=role&val=teacher' },
     { label: 'ส่ง/เช็คชื่อแทนเพื่อน', value: proxyActivity.length, tone: 'sky' },
-    { label: 'งานน่าสงสัย', value: flaggedCount.count ?? 0, tone: 'rose' },
+    { label: 'งานน่าสงสัย', value: flaggedCount.count ?? 0, tone: 'rose', href: '/admin/submissions?col=is_flagged_suspicious&val=true' },
   ];
 
   return (
     <div className="min-h-dvh bg-slate-50 dark:bg-slate-950">
-      <header className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-black">Pudding Admin</h1>
-            <p className="text-xs text-slate-500">ข้อมูลทั้งระบบ • {admin.primaryEmailAddress?.emailAddress}</p>
-          </div>
-          <Link href="/dashboard" className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:underline">
-            ← กลับหน้าครู
-          </Link>
-        </div>
-      </header>
+      <AdminHeader email={admin.primaryEmailAddress?.emailAddress} />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-8">
+      <AdminMain>
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {stats.map((stat) => (
-            <div
+            <StatCard
               key={stat.label}
+              href={stat.href}
               className={`p-4 rounded-2xl border bg-white dark:bg-slate-900 ${
                 stat.tone === 'sky'
                   ? 'border-sky-200 dark:border-sky-900'
                   : stat.tone === 'rose'
                     ? 'border-rose-200 dark:border-rose-900'
-                    : 'border-slate-200 dark:border-slate-800'
-              }`}
+                    : stat.tone === 'amber'
+                      ? 'border-amber-200 dark:border-amber-900'
+                      : 'border-slate-200 dark:border-slate-800'
+              } ${stat.href ? 'hover:bg-slate-50 dark:hover:bg-slate-800/60' : ''}`}
             >
               <p className="text-[11px] font-bold text-slate-500">{stat.label}</p>
               <p className="text-2xl font-black tabular-nums">{stat.value ?? '—'}</p>
-            </div>
+            </StatCard>
           ))}
         </section>
 
@@ -161,17 +151,17 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
 
         <section className="space-y-3">
           <h2 className="text-sm font-black">ตารางข้อมูลดิบ</h2>
-          <p className="text-xs text-slate-500">คอลัมน์ที่เป็น token/secret จะถูกตัดออกเสมอ</p>
+          <p className="text-xs text-slate-500">ค้นหา เปิดดู แก้ไข หรือลบแต่ละแถวได้ • คอลัมน์ที่เป็น token/secret จะถูกตัดออกเสมอ</p>
           <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
             <table className="w-full text-xs">
               <tbody>
                 {ADMIN_TABLES.map((name) => (
-                  <tr key={name} className={`border-b last:border-0 border-slate-100 dark:border-slate-800 ${name === selectedTable ? 'bg-amber-50 dark:bg-amber-950/30' : ''}`}>
+                  <tr key={name} className="border-b last:border-0 border-slate-100 dark:border-slate-800">
                     <td className="px-3 py-2 font-mono font-bold">{name}</td>
                     <td className="px-3 py-2 tabular-nums text-slate-500">{countOf[name] ?? 'ไม่พบตาราง'}</td>
                     <td className="px-3 py-2">
-                      <Link href={`/admin?table=${name}`} className="font-bold text-amber-700 dark:text-amber-400 hover:underline">
-                        ดูข้อมูล
+                      <Link href={`/admin/${name}`} className="font-bold text-amber-700 dark:text-amber-400 hover:underline">
+                        ดู / แก้ไข
                       </Link>
                     </td>
                     <td className="px-3 py-2"><ExportLinks name={name} /></td>
@@ -182,36 +172,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
           </div>
         </section>
 
-        {selectedTable && (
-          <section className="space-y-3">
-            <h2 className="text-sm font-black">
-              {selectedTable} <span className="font-normal text-slate-500">({previewRows.length} แถวแรก)</span>
-            </h2>
-            <div className="overflow-auto max-h-[70vh] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-              <table className="text-[11px] font-mono">
-                <thead className="sticky top-0 bg-slate-100 dark:bg-slate-800">
-                  <tr>
-                    {previewColumns.map((c) => (
-                      <th key={c} className="px-2 py-1.5 text-left whitespace-nowrap">{c}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {previewRows.map((row, i) => (
-                    <tr key={i} className="border-t border-slate-100 dark:border-slate-800 align-top">
-                      {previewColumns.map((c) => (
-                        <td key={c} className="px-2 py-1 whitespace-nowrap max-w-xs truncate" title={preview(row[c])}>
-                          {preview(row[c])}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-      </main>
+      </AdminMain>
     </div>
   );
 }

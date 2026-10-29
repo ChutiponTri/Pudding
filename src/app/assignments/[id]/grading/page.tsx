@@ -47,6 +47,7 @@ import {
   Rocket,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { isSuspiciousActivity } from '@/lib/utils/integrity';
 
 /**
  * Back button that returns to wherever the teacher came from. Links into this
@@ -359,7 +360,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // Leaving the screen is tracked during quizzes only, so homework never counts as suspicious.
   const tracksAway = !!assignment?.is_exam;
   const isSuspicious = (sub: Submission) =>
-    tracksAway && (sub.is_flagged_suspicious || sub.tab_switch_count >= 3 || sub.total_time_away_seconds >= 60);
+    tracksAway && (sub.is_flagged_suspicious || isSuspiciousActivity(sub.tab_switch_count || 0, sub.total_time_away_seconds || 0));
 
   const filteredRows = rosterRows.filter(({ student, submission: sub }) => {
     const studentName = `${student?.first_name || ''} ${student?.last_name || ''}`;

@@ -3,6 +3,7 @@
 import React from 'react';
 import { Submission, SubmissionEvent } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { isSuspiciousActivity, SUSPICIOUS_AWAY_SECONDS, SUSPICIOUS_TAB_SWITCHES } from '@/lib/utils/integrity';
 import {
   X,
   ShieldAlert,
@@ -35,8 +36,7 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
 
   const isHighRisk =
     submission.is_flagged_suspicious ||
-    submission.tab_switch_count >= 4 ||
-    submission.total_time_away_seconds >= 60;
+    isSuspiciousActivity(submission.tab_switch_count, submission.total_time_away_seconds);
 
   const getEventIcon = (type: string) => {
     switch (type) {
@@ -112,7 +112,7 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
               </span>
               <p
                 className={`text-2xl font-black mt-1 ${
-                  submission.tab_switch_count >= 4
+                  submission.tab_switch_count >= SUSPICIOUS_TAB_SWITCHES
                     ? 'text-rose-600 dark:text-rose-400'
                     : 'text-slate-800 dark:text-slate-100'
                 }`}
@@ -128,7 +128,7 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
               </span>
               <p
                 className={`text-2xl font-black mt-1 ${
-                  submission.total_time_away_seconds >= 60
+                  submission.total_time_away_seconds >= SUSPICIOUS_AWAY_SECONDS
                     ? 'text-rose-600 dark:text-rose-400'
                     : 'text-slate-800 dark:text-slate-100'
                 }`}

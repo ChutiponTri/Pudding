@@ -47,6 +47,7 @@ export const ADMIN_TABLES = [
   'attendance_sessions',
   'attendance_records',
   'stored_files',
+  'learning_indicators',
 ] as const;
 export type AdminTable = (typeof ADMIN_TABLES)[number];
 
