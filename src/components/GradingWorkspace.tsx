@@ -5,9 +5,12 @@ import { ClassroomTeacher, Question, Submission, SubmissionAnswer, TeacherRole }
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { Avatar } from '@/components/Avatar';
 import { isImageUrl, isPdfUrl as isPdf } from '@/lib/utils/referenceWork';
+import { isObjectiveAnswerCorrect, isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade';
+import { TRUE_FALSE_OPTIONS } from '@/lib/utils/trueFalse';
 import {
   AlertCircle,
   Award,
+  KeyRound,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -50,6 +53,11 @@ interface GradingWorkspaceProps {
     teacherName: string,
     teacherRole: TeacherRole
   ) => Promise<void>;
+  /**
+   * Corrects a choice / true-false answer key; the server re-scores every
+   * submitted answer to it. Missing = the key can't be changed here.
+   */
+  onUpdateAnswerKey?: (questionId: string, idealAnswer: string) => Promise<{ question: Question; rescored: number; keptManual: number }>;
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -93,6 +101,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   onPrevStudent,
   onNextStudent,
   onSaveGrade,
+  onUpdateAnswerKey,
 }) => {
   const { t, language } = useLanguage();
   const th = language === 'th';
@@ -120,6 +129,49 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   // Files that no longer load (e.g. backed up and removed from storage by an admin).
   const [missingFiles, setMissingFiles] = useState<Record<string, boolean>>({});
   const [isSavingAll, setIsSavingAll] = useState(false);
+  // Answer key being corrected: question id -> the option picked as the new key.
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+  const [savingKeyId, setSavingKeyId] = useState<string | null>(null);
+
+  const saveAnswerKey = async (q: Question) => {
+    const key = keyDrafts[q.id];
+    if (!onUpdateAnswerKey || !key || key === q.ideal_answer) return;
+    if (!confirm(
+      th
+        ? `เปลี่ยนเฉลยข้อ ${questions.indexOf(q) + 1} เป็น "${key}"?\n\nระบบจะตรวจคำตอบข้อนี้ของนักเรียนทุกคนที่ส่งแล้วใหม่ตามเฉลยนี้ และคำนวณคะแนนรวมใหม่\nคะแนนที่คุณครูปรับเองรายคนไว้แล้วจะไม่ถูกเปลี่ยน`
+        : `Change the answer key of question ${questions.indexOf(q) + 1} to "${key}"?\n\nEvery submitted answer to it is re-scored with the new key and totals are recalculated.\nScores you adjusted by hand are kept.`
+    )) return;
+    setSavingKeyId(q.id);
+    try {
+      const result = await onUpdateAnswerKey(q.id, key);
+      // This student's score follows the new key unless the teacher set it by hand (same rule as the server).
+      const ans = answers[q.id];
+      const g = grades[q.id];
+      const oldAuto = String(scoreObjectiveAnswer(q, ans?.text_answer));
+      if (!isResearcher && g && (g.savedScore === '' || Number(g.savedScore) === Number(oldAuto))) {
+        const next = String(scoreObjectiveAnswer(result.question, ans?.text_answer));
+        setGrades((prev) => ({
+          ...prev,
+          [q.id]: { ...prev[q.id], score: g.score === g.savedScore ? next : prev[q.id].score, savedScore: next },
+        }));
+        setAnswers((prev) => (prev[q.id] ? { ...prev, [q.id]: { ...prev[q.id], teacher_score: Number(next) } } : prev));
+      }
+      setKeyDrafts((prev) => {
+        const { [q.id]: _done, ...rest } = prev;
+        return rest;
+      });
+      alert(
+        th
+          ? `บันทึกเฉลยใหม่แล้ว • ตรวจใหม่ ${result.rescored} คำตอบ${result.keptManual ? ` • คงคะแนนที่คุณครูปรับเองไว้ ${result.keptManual} คำตอบ` : ''}`
+          : `Answer key saved • ${result.rescored} answer(s) re-scored${result.keptManual ? ` • ${result.keptManual} manual score(s) kept` : ''}`
+      );
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกเฉลยไม่สำเร็จ' : 'Could not save the answer key');
+    } finally {
+      setSavingKeyId(null);
+    }
+  };
 
   // Feedback chips: per teacher, remembered in this browser.
   const presetsKey = `pudding_feedback_presets_${grader.teacher_id}`;
@@ -437,7 +489,10 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
               const controls = imageControls[q.id] || { zoom: 1, rotate: 0 };
               const setControls = (zoom: number, rotate: number) => setImageControls((prev) => ({ ...prev, [q.id]: { zoom, rotate } }));
               const otherGrades = Object.values(ans?.co_grades || {}).filter((r) => r.teacher_id !== grader.teacher_id);
-              const isObjective = q.type === 'multiple_choice' || q.type === 'true_false';
+              const isObjective = isObjectiveQuestion(q);
+              const choiceOptions = q.options?.length ? q.options : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : [];
+              const isCorrect = isObjectiveAnswerCorrect(q, ans?.text_answer);
+              const editingKey = keyDrafts[q.id] !== undefined;
 
               return (
                 <section
@@ -542,6 +597,109 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                           </div>
                         )}
                       </div>
+                    ) : isObjective && choiceOptions.length > 0 ? (
+                      // Every option, with the student's pick and the key marked; the key can be corrected here.
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {!ans?.text_answer ? (
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">{th ? 'ไม่ได้ตอบ' : 'Not answered'}</span>
+                          ) : isCorrect === null ? (
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">{th ? 'ยังไม่มีเฉลย' : 'No answer key'}</span>
+                          ) : isCorrect ? (
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">✓ {th ? 'ตอบถูก' : 'Correct'}</span>
+                          ) : (
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300">✗ {th ? 'ตอบผิด' : 'Incorrect'}</span>
+                          )}
+                          <span className="text-[11px] text-slate-400">{th ? 'ตรวจอัตโนมัติจากเฉลย' : 'Auto-scored from the answer key'}</span>
+                          {onUpdateAnswerKey && !isResearcher && !editingKey && (
+                            <button
+                              type="button"
+                              onClick={() => setKeyDrafts((prev) => ({ ...prev, [q.id]: q.ideal_answer || '' }))}
+                              className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-600 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                            >
+                              <KeyRound className="w-3.5 h-3.5" />
+                              {th ? 'แก้เฉลย' : 'Fix answer key'}
+                            </button>
+                          )}
+                        </div>
+                        {editingKey && (
+                          <p className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
+                            {th ? 'เลือกคำตอบที่ถูกต้อง แล้วกด "บันทึกเฉลยใหม่" — คำตอบข้อนี้ของนักเรียนทุกคนจะถูกตรวจใหม่' : 'Pick the correct answer, then "Save new key"; every student\'s answer to this question is re-scored.'}
+                          </p>
+                        )}
+                        <div className="grid gap-1.5" role={editingKey ? 'radiogroup' : undefined}>
+                          {choiceOptions.map((opt, optIdx) => {
+                            const picked = (ans?.text_answer || '').trim() === opt.trim();
+                            const isKey = isObjectiveAnswerCorrect({ ...q, ideal_answer: editingKey ? keyDrafts[q.id] : q.ideal_answer }, opt) === true;
+                            const body = (
+                              <>
+                                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${
+                                  isKey ? 'bg-emerald-600 text-white' : 'bg-white dark:bg-slate-700 text-slate-500 ring-1 ring-slate-200 dark:ring-slate-600'
+                                }`}>
+                                  {isKey ? '✓' : q.type === 'true_false' ? '' : String.fromCharCode(65 + optIdx)}
+                                </span>
+                                <span className="flex-1 min-w-0 break-words">{opt}</span>
+                                {picked && (
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${
+                                    isKey ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
+                                  }`}>
+                                    {th ? 'นักเรียนเลือก' : 'Student'}
+                                  </span>
+                                )}
+                                {isKey && !picked && <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 shrink-0">{th ? 'เฉลย' : 'Key'}</span>}
+                              </>
+                            );
+                            const cls = `w-full px-3 py-2 rounded-xl border text-sm text-left flex items-center gap-2.5 ${
+                              isKey
+                                ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100'
+                                : picked
+                                ? 'border-rose-300 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-900 text-rose-900 dark:text-rose-100'
+                                : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300'
+                            }`;
+                            return editingKey ? (
+                              <button
+                                key={optIdx}
+                                type="button"
+                                role="radio"
+                                aria-checked={isKey}
+                                onClick={() => setKeyDrafts((prev) => ({ ...prev, [q.id]: opt }))}
+                                className={`${cls} cursor-pointer hover:brightness-95 dark:hover:brightness-125`}
+                              >
+                                {body}
+                              </button>
+                            ) : (
+                              <div key={optIdx} className={cls}>{body}</div>
+                            );
+                          })}
+                        </div>
+                        {ans?.text_answer && !choiceOptions.some((opt) => opt.trim() === ans.text_answer!.trim()) && (
+                          <p className="text-xs text-slate-500">{th ? 'คำตอบที่ส่งมา: ' : 'Submitted answer: '}<b>{ans.text_answer}</b></p>
+                        )}
+                        {editingKey && (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={savingKeyId === q.id}
+                              onClick={() => setKeyDrafts((prev) => {
+                                const { [q.id]: _cancel, ...rest } = prev;
+                                return rest;
+                              })}
+                              className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer disabled:opacity-50"
+                            >
+                              {th ? 'ยกเลิก' : 'Cancel'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={savingKeyId === q.id || !keyDrafts[q.id] || keyDrafts[q.id] === q.ideal_answer}
+                              onClick={() => saveAnswerKey(q)}
+                              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            >
+                              {savingKeyId === q.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
+                              {th ? 'บันทึกเฉลยใหม่' : 'Save new key'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     ) : ans?.text_answer ? (
                       <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap">
                         {ans.text_answer}
@@ -551,7 +709,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                         {th ? 'นักเรียนไม่ได้ตอบข้อนี้' : 'No answer for this question'}
                       </div>
                     )}
-                    {isObjective && q.ideal_answer && (
+                    {isObjective && q.ideal_answer && choiceOptions.length === 0 && (
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         <span className="font-bold">{th ? 'เฉลย: ' : 'Answer key: '}</span>
                         {q.ideal_answer}
@@ -616,6 +774,11 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                       </div>
                     </div>
 
+                    {isObjective && !isResearcher && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {th ? 'คะแนนข้อนี้ตรวจอัตโนมัติจากเฉลย ปรับเองรายคนได้ เช่น ให้คะแนนบางส่วน' : 'Scored automatically from the key; you can still adjust it for this student.'}
+                      </p>
+                    )}
                     <textarea
                       rows={2}
                       value={g?.comment ?? ''}

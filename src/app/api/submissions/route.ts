@@ -2,7 +2,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MS } from '@/lib/utils/assignmentWindow';
-import { parseTrueFalse } from '@/lib/utils/trueFalse';
+import { isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { getActor } from '@/lib/auth/actor';
 import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
@@ -16,20 +16,6 @@ import type { Classroom } from '@/types/database';
  * text or its letter/number (ก/ข/…, A/B/…, 1/2/…). Text must match exactly
  * (ignoring case and spacing); "10" is not "100".
  */
-function isChoiceCorrect(ideal: string, studentText: string, options: unknown): boolean {
-  const norm = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
-  const answer = norm(studentText);
-  if (!answer) return false;
-  if (norm(ideal) === answer) return true;
-  const list = Array.isArray(options) ? options.map((o) => String(o)) : [];
-  const key = ideal.trim().replace(/^(ข้อ|ตัวเลือก|option)\s*/i, '').replace(/[.)]$/, '').trim();
-  let index = -1;
-  if (/^[ก-ฮ]$/.test(key)) index = 'กขคงจฉชซฌญ'.indexOf(key);
-  else if (/^[a-z]$/i.test(key)) index = key.toUpperCase().charCodeAt(0) - 65;
-  else if (/^\d+$/.test(key)) index = Number(key) - 1;
-  return index >= 0 && index < list.length && norm(list[index]) === answer;
-}
-
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -321,21 +307,10 @@ export async function POST(request: NextRequest) {
 
         let questionScore: number | undefined = undefined;
 
-        if (q.type === 'multiple_choice' || q.type === 'true_false') {
-          const ideal = (q.ideal_answer || '').trim();
-          if (ideal && studentText) {
-            // True/false compares meaning ("จริง" = "ถูก" = "True"); other
-            // objective questions keep the text comparison.
-            const idealBool = q.type === 'true_false' ? parseTrueFalse(ideal) : null;
-            const studentBool = q.type === 'true_false' ? parseTrueFalse(studentText) : null;
-            const isMatch = idealBool !== null && studentBool !== null
-              ? idealBool === studentBool
-              : isChoiceCorrect(ideal, studentText, q.options);
-            questionScore = isMatch ? Number(q.max_score) : 0;
-            runningScore += questionScore;
-          } else {
-            questionScore = 0;
-          }
+        if (isObjectiveQuestion(q)) {
+          // Choice and true/false answers are scored from the answer key right away.
+          questionScore = scoreObjectiveAnswer(q, studentText);
+          runningScore += questionScore;
         } else {
           // Written / file answers wait for the teacher.
           allGraded = false;
@@ -352,11 +327,9 @@ export async function POST(request: NextRequest) {
       }
 
       if (totalMax > 0) assignmentMaxScore = totalMax;
-      if (allGraded) {
-        calculatedTotalScore = runningScore;
-      } else if (runningScore > 0) {
-        calculatedTotalScore = runningScore;
-      }
+      // The total is only given once every question has a score: with written or
+      // file answers still to grade, students see their choice scores but no total yet.
+      if (allGraded) calculatedTotalScore = Math.round(runningScore * 10) / 10;
     }
 
     const submittedAt = new Date();

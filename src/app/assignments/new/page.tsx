@@ -454,7 +454,11 @@ function NewAssignmentContent() {
 
     const noAnswerKey = questions
       .map((q, i) => ({ q, n: i + 1 }))
-      .filter(({ q }) => q.type === 'multiple_choice' && !q.options.some((opt) => opt.trim() && opt === q.ideal_answer));
+      .filter(({ q }) =>
+        q.type === 'multiple_choice'
+          ? !q.options.some((opt) => opt.trim() && opt === q.ideal_answer)
+          : q.type === 'true_false' && parseTrueFalse(q.ideal_answer) === null
+      );
     if (
       noAnswerKey.length &&
       !confirm(
@@ -487,8 +491,11 @@ function NewAssignmentContent() {
         question_text: q.question_text || 'คำถามข้อนี้',
         indicator_id: q.indicator_id,
         options: q.type === 'multiple_choice' ? q.options.map((opt) => opt.trim()).filter(Boolean) : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : undefined,
-        ideal_answer: q.ideal_answer,
-        rubric_criteria: q.rubric_criteria,
+        ideal_answer: q.type === 'true_false'
+          ? (parseTrueFalse(q.ideal_answer) === null ? '' : parseTrueFalse(q.ideal_answer) ? 'ถูก' : 'ผิด')
+          : q.ideal_answer,
+        // Choice and true/false are scored from the key alone.
+        rubric_criteria: q.type === 'multiple_choice' || q.type === 'true_false' ? '' : q.rubric_criteria,
         max_score: Number(q.max_score) || 5,
         is_required: isExam ? true : q.is_required,
       }));
@@ -526,7 +533,8 @@ function NewAssignmentContent() {
           !confirm(
             `มีนักเรียนส่งงานนี้แล้ว ${editSubmissionCount} คน\n` +
               (removedCount ? `• ข้อที่ลบ (${removedCount} ข้อ) จะลบคำตอบของนักเรียนในข้อนั้นด้วย\n` : '') +
-              '• คะแนนที่ตรวจไปแล้วจะไม่ถูกคำนวณใหม่อัตโนมัติ\n\nต้องการบันทึกการแก้ไขหรือไม่?'
+              '• ข้อปรนัย / ถูก-ผิด ที่เปลี่ยนเฉลยหรือคะแนน จะตรวจคำตอบที่ส่งแล้วใหม่อัตโนมัติ (คะแนนที่คุณครูปรับเองรายคนยังคงไว้)\n' +
+              '• ข้อเขียน / แนบไฟล์ ที่ตรวจไปแล้ว คะแนนไม่เปลี่ยน\n\nต้องการบันทึกการแก้ไขหรือไม่?'
           )
         ) {
           return;
@@ -1372,102 +1380,125 @@ function NewAssignmentContent() {
                   />
                 </div>
 
-                {/* Multiple Choice Options Builder */}
+                {/* Multiple Choice Options Builder: tap the circle to mark the correct option */}
                 {q.type === 'multiple_choice' && (
                   <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      {t('assignment_creator.questions_builder.options_label')}
-                    </label>
-                    <div className="space-y-2">
-                      {q.options.map((opt, optIdx) => (
-                        <div key={optIdx} className="flex items-center gap-2">
-                          <span className="w-6 text-center text-xs font-bold text-slate-400">
-                            {String.fromCharCode(65 + optIdx)}
-                          </span>
-                          <input
-                            type="text"
-                            value={opt}
-                            onChange={(e) => handleOptionChange(idx, optIdx, e.target.value)}
-                            placeholder={language === 'th' ? `ตัวเลือก ${'กขคงจฉชซ'[optIdx] || optIdx + 1}` : `Option ${String.fromCharCode(65 + optIdx)}`}
-                            className="flex-1 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
-                          />
-                        </div>
-                      ))}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        {t('assignment_creator.questions_builder.options_label')}
+                      </label>
+                      {q.options.some((opt) => opt.trim() && opt === q.ideal_answer) ? (
+                        <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          {language === 'th' ? 'เลือกข้อที่ถูกแล้ว • ระบบตรวจให้อัตโนมัติ' : 'Correct answer set • auto-scored'}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
+                          {language === 'th' ? 'กดวงกลมหน้าตัวเลือกที่ถูกต้อง' : 'Tap the circle next to the correct option'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-2" role="radiogroup" aria-label={language === 'th' ? 'คำตอบที่ถูกต้อง' : 'Correct answer'}>
+                      {q.options.map((opt, optIdx) => {
+                        const isCorrect = !!opt.trim() && q.ideal_answer === opt;
+                        return (
+                          <div key={optIdx} className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={isCorrect}
+                              disabled={!opt.trim()}
+                              onClick={() => handleQuestionChange(idx, 'ideal_answer', opt)}
+                              title={language === 'th' ? 'ตั้งเป็นคำตอบที่ถูกต้อง' : 'Mark as the correct answer'}
+                              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black shrink-0 border-2 transition-all ${
+                                isCorrect
+                                  ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                                  : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-600 text-slate-400 hover:border-emerald-500 hover:text-emerald-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-slate-300 disabled:hover:text-slate-400'
+                              }`}
+                            >
+                              {isCorrect ? <Check className="w-4 h-4" /> : String.fromCharCode(65 + optIdx)}
+                            </button>
+                            <input
+                              type="text"
+                              value={opt}
+                              onChange={(e) => handleOptionChange(idx, optIdx, e.target.value)}
+                              placeholder={language === 'th' ? `ตัวเลือก ${'กขคงจฉชซ'[optIdx] || optIdx + 1}` : `Option ${String.fromCharCode(65 + optIdx)}`}
+                              className={`flex-1 px-3 py-1.5 rounded-lg border text-xs text-slate-900 dark:text-white ${
+                                isCorrect
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 dark:border-emerald-700 font-bold'
+                                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'
+                              }`}
+                            />
+                            {isCorrect && (
+                              <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 shrink-0">
+                                {language === 'th' ? 'ข้อที่ถูก' : 'Correct'}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
 
-                {/* Ideal Answer & Rubric */}
+                {/* True/false: pick the correct answer (auto-scored, no rubric) */}
+                {q.type === 'true_false' && (
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        {language === 'th' ? 'คำตอบที่ถูกต้อง' : 'Correct answer'}
+                      </label>
+                      {parseTrueFalse(q.ideal_answer) !== null ? (
+                        <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          {language === 'th' ? 'ระบบตรวจให้อัตโนมัติ' : 'Auto-scored'}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
+                          {language === 'th' ? 'เลือก ถูก หรือ ผิด' : 'Choose true or false'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 max-w-sm" role="radiogroup">
+                      {TRUE_FALSE_OPTIONS.map((option) => {
+                        const isSelected = parseTrueFalse(q.ideal_answer) === (option === 'ถูก');
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            role="radio"
+                            aria-checked={isSelected}
+                            onClick={() => handleQuestionChange(idx, 'ideal_answer', option)}
+                            className={`py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                              isSelected
+                                ? option === 'ถูก'
+                                  ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                                  : 'bg-rose-600 border-rose-600 text-white shadow-xs'
+                                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
+                            }`}
+                          >
+                            {option === 'ถูก' ? '✓ ถูก' : '✗ ผิด'}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Ideal Answer & Rubric: written / file questions (choices are scored from the key above) */}
+                {q.type !== 'multiple_choice' && q.type !== 'true_false' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                       {t('assignment_creator.questions_builder.ideal_answer')}
                     </label>
-                    {q.type === 'true_false' ? (
-                      // Pick the correct answer so auto-grading matches what students select.
-                      <div className="grid grid-cols-2 gap-2" role="radiogroup">
-                        {TRUE_FALSE_OPTIONS.map((option) => {
-                          const isSelected = parseTrueFalse(q.ideal_answer) === (option === 'ถูก');
-                          return (
-                            <button
-                              key={option}
-                              type="button"
-                              role="radio"
-                              aria-checked={isSelected}
-                              onClick={() => handleQuestionChange(idx, 'ideal_answer', option)}
-                              className={`py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                                isSelected
-                                  ? option === 'ถูก'
-                                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
-                                    : 'bg-rose-600 border-rose-600 text-white shadow-xs'
-                                  : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
-                              }`}
-                            >
-                              {option === 'ถูก' ? '✓ ถูก' : '✗ ผิด'}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : q.type === 'multiple_choice' ? (
-                      // Pick the correct option, so auto-grading compares exactly what students select.
-                      q.options.some((opt) => opt.trim()) ? (
-                        <div className="grid gap-1.5" role="radiogroup">
-                          {q.options.map((opt, optIdx) => {
-                            if (!opt.trim()) return null;
-                            const isSelected = q.ideal_answer === opt;
-                            return (
-                              <button
-                                key={optIdx}
-                                type="button"
-                                role="radio"
-                                aria-checked={isSelected}
-                                onClick={() => handleQuestionChange(idx, 'ideal_answer', opt)}
-                                className={`px-3 py-2 rounded-xl text-xs font-bold border text-left flex items-center gap-2 transition-all cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
-                                    : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-slate-400'
-                                }`}
-                              >
-                                <span className="w-5 text-center shrink-0">{isSelected ? '✓' : String.fromCharCode(65 + optIdx)}</span>
-                                <span className="min-w-0 truncate">{opt}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-slate-400 py-2">
-                          {language === 'th' ? 'กรอกตัวเลือกด้านบนก่อน แล้วเลือกข้อที่ถูกต้องที่นี่' : 'Fill in the options above, then pick the correct one here.'}
-                        </p>
-                      )
-                    ) : (
-                      <textarea
-                        rows={2}
-                        value={q.ideal_answer}
-                        onChange={(e) => handleQuestionChange(idx, 'ideal_answer', e.target.value)}
-                        placeholder={t('assignment_creator.questions_builder.ideal_answer_hint')}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                      />
-                    )}
+                    <textarea
+                      rows={2}
+                      value={q.ideal_answer}
+                      onChange={(e) => handleQuestionChange(idx, 'ideal_answer', e.target.value)}
+                      placeholder={t('assignment_creator.questions_builder.ideal_answer_hint')}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                    />
                   </div>
 
                   <div className="space-y-1.5">
@@ -1483,6 +1514,7 @@ function NewAssignmentContent() {
                     />
                   </div>
                 </div>
+                )}
               </div>
             ))}
           </div>

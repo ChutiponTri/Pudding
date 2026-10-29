@@ -978,6 +978,12 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           onSaveGrade={(subId, qId, score, comment, teacherId, teacherName, teacherRole) =>
             dataService.saveTeacherGrade(subId, qId, score, comment, teacherId, teacherName, teacherRole as TeacherRole)
           }
+          onUpdateAnswerKey={async (questionId, idealAnswer) => {
+            const result = await dataService.updateAnswerKey(assignmentId, questionId, idealAnswer);
+            setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, ideal_answer: result.question.ideal_answer } : q)));
+            refreshSubmissions();
+            return result;
+          }}
         />
       )}
     </div>

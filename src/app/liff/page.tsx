@@ -495,6 +495,9 @@ export default function LiffStudentPage() {
   const [studentAnswers, setStudentAnswers] = useState<Record<string, { text: string; file_url?: string; file_key?: string; file_name?: string; link?: string }>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
+  // What the server scored at hand-in: choice / true-false answers are scored at once;
+  // the total only exists when every question was (all choices), otherwise it waits for the teacher.
+  const [submittedResult, setSubmittedResult] = useState<{ submission: Submission; total: number | null; max: number; autoScored: number; pending: number } | null>(null);
   const [uploadingQuestionId, setUploadingQuestionId] = useState<string | null>(null);
   const [uploadToast, setUploadToast] = useState<string | null>(null);
   // Uploads of the open assignment not handed in yet: dropped from storage when the student leaves without submitting.
@@ -1086,6 +1089,7 @@ export default function LiffStudentPage() {
     }
     setStudentAnswers({});
     setSubmissionSuccess(false);
+    setSubmittedResult(null);
     setActiveQuestions([]);
     setActiveAssignment(a);
     setActiveProxy(forFriend || null);
@@ -1292,6 +1296,27 @@ export default function LiffStudentPage() {
         setProxyFriend((prev) => (prev ? { ...prev, submittedAssignmentIds: [...prev.submittedAssignmentIds, submittedId] } : prev));
       } else {
         setSubmissions((prev) => ({ ...prev, [activeAssignment.id]: sub }));
+        const scored = ((sub as Submission & { answers?: Array<{ teacher_score?: number | null }> }).answers || []);
+        const autoScored = scored.filter((ans) => ans.teacher_score != null).length;
+        const total = sub.total_score != null && autoScored === activeQuestions.length ? Number(sub.total_score) : null;
+        setSubmittedResult({
+          submission: sub,
+          total,
+          max: sub.max_total_score || activeAssignment.total_points || 20,
+          autoScored,
+          pending: activeQuestions.length - autoScored,
+        });
+        if (total !== null) {
+          // Fully scored already (all choice questions): shown here, so not announced again as a new result.
+          setGradedSubmissionIds((prev) => new Set(prev).add(sub.id));
+          setSeenScores((prev) => {
+            const next = { ...prev, [sub.id]: total };
+            try {
+              if (seenScoresKey) localStorage.setItem(seenScoresKey, JSON.stringify(next));
+            } catch {}
+            return next;
+          });
+        }
       }
       setSubmissionSuccess(true);
     } catch (err) {
@@ -2453,6 +2478,31 @@ export default function LiffStudentPage() {
                   {isTrackingAway ? "ระบบบันทึกคำตอบและรายงานความซื่อสัตย์ส่งถึงคุณครูแล้ว" : "ระบบบันทึกงานของคุณและส่งถึงคุณครูแล้ว"}
                 </p>
               </div>
+              {submittedResult && submittedResult.total !== null ? (
+                <div className="p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white space-y-1">
+                  <p className="text-xs font-semibold text-emerald-50">คะแนนของคุณ (ตรวจอัตโนมัติ)</p>
+                  <p className="text-4xl font-black tabular-nums">
+                    {submittedResult.total}
+                    <span className="text-xl font-bold text-emerald-100"> / {submittedResult.max}</span>
+                  </p>
+                </div>
+              ) : submittedResult && submittedResult.autoScored > 0 ? (
+                <div className="p-4 rounded-2xl bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-200 dark:ring-sky-900 text-sm text-sky-800 dark:text-sky-200 space-y-1">
+                  <p className="font-bold">ข้อปรนัยตรวจแล้ว {submittedResult.autoScored} ข้อ</p>
+                  <p className="text-xs text-sky-700/80 dark:text-sky-300/80">
+                    อีก {submittedResult.pending} ข้อรอคุณครูตรวจ • คะแนนรวมจะแสดงเมื่อคุณครูตรวจครบทุกข้อ
+                  </p>
+                </div>
+              ) : null}
+              {submittedResult && submittedResult.autoScored > 0 && activeAssignment && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenGradedDetail(activeAssignment, submittedResult.submission)}
+                  className="w-full h-11 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+                >
+                  ดูคะแนนรายข้อ
+                </button>
+              )}
               {isTrackingAway && (
               <dl className="grid grid-cols-2 gap-3 text-left">
                 <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800">

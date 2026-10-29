@@ -26,6 +26,8 @@ import {
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { DRAFT_RETENTION_MS, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
+import { recomputeSubmissionTotals, regradeObjectiveQuestions } from '@/lib/server/grading';
+import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
 import { personNameError, studentProfileError } from '@/lib/utils/studentName';
 import type {
   Assignment,
@@ -1073,6 +1075,9 @@ export const dataActions = {
    * Replaces an assignment's questions with the edited set (full edit). Questions
    * keep their id, so students' answers stay attached; a question left out is
    * deleted together with its answers. total_points follows the new scores.
+   * Submitted choice / true-false answers are re-scored when their answer key,
+   * options or points changed (scores the teacher adjusted by hand are kept),
+   * and every submission's total follows the new set of questions.
    */
   async replaceAssignmentQuestions(
     { supabase, actor }: Ctx,
@@ -1080,9 +1085,10 @@ export const dataActions = {
     questionsData: Array<Omit<Question, 'assignment_id' | 'id'> & { id?: string }>
   ) {
     await requireTeacherOfAssignment(supabase, actor, id);
-    const { data: existing, error: loadError } = await supabase.from('questions').select('id').eq('assignment_id', id);
+    const { data: existing, error: loadError } = await supabase.from('questions').select('*').eq('assignment_id', id);
     if (loadError) throw toDatabaseError(loadError, 'questions');
-    const existingIds = new Set((existing || []).map((q) => q.id as string));
+    const previousById = new Map(((existing || []) as Question[]).map((q) => [q.id, q]));
+    const existingIds = new Set(previousById.keys());
     const stamp = Date.now();
     const rows: Question[] = questionsData.map((q, idx) => ({
       ...q,
@@ -1110,7 +1116,42 @@ export const dataActions = {
     }
     const totalPoints = rows.reduce((sum, q) => sum + Number(q.max_score || 0), 0);
     await supabase.from('assignments').update({ total_points: totalPoints }).eq('id', id);
+
+    const keyChanged = (before: Question | undefined, after: Question) =>
+      !before ||
+      before.type !== after.type ||
+      (before.ideal_answer || '') !== (after.ideal_answer || '') ||
+      Number(before.max_score) !== Number(after.max_score) ||
+      JSON.stringify(before.options || []) !== JSON.stringify(after.options || []);
+    const changed = rows
+      .filter((q) => isObjectiveQuestion(q) && previousById.has(q.id) && keyChanged(previousById.get(q.id), q))
+      .map((q) => ({ before: previousById.get(q.id) || null, after: q }));
+    await regradeObjectiveQuestions(supabase, id, changed);
+    // Added / removed questions and new points change every total.
+    await recomputeSubmissionTotals(supabase, id);
     return rows;
+  },
+
+  /**
+   * Corrects one choice / true-false question's answer key from the grading
+   * page and re-scores every submitted answer to it (manual adjustments kept).
+   */
+  async updateAnswerKey({ supabase, actor }: Ctx, assignmentId: string, questionId: string, idealAnswer: string) {
+    const { assignment } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
+    const { data: row, error } = await supabase.from('questions').select('*').eq('id', questionId).eq('assignment_id', assignmentId).maybeSingle();
+    if (error) throw toDatabaseError(error, 'questions');
+    const before = row as Question | null;
+    if (!before) throw new HttpError(404, 'ไม่พบคำถามนี้');
+    if (!isObjectiveQuestion(before)) throw new HttpError(400, 'แก้เฉลยได้เฉพาะข้อปรนัยและข้อถูก/ผิด');
+    const key = String(idealAnswer || '').trim();
+    if (!key) throw new HttpError(400, 'กรุณาเลือกคำตอบที่ถูกต้อง');
+    const corrected: Question = { ...before, ideal_answer: key };
+    const { error: updateError } = await supabase.from('questions').update({ ideal_answer: key }).eq('id', questionId);
+    if (updateError) throw toDatabaseError(updateError, 'questions');
+    const result = await regradeObjectiveQuestions(supabase, assignmentId, [{ before, after: corrected }]);
+    // Students with the result open see the new score.
+    after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId }));
+    return { question: corrected, ...result };
   },
 
   /**
@@ -1256,12 +1297,9 @@ export const dataActions = {
     );
     if (writeError) throw toDatabaseError(writeError, 'submission_answers');
     if (isOfficial) {
-      // Total = sum of official scores across every answer of this submission.
-      const { data: rows, error: totalError } = await supabase.from('submission_answers').select('teacher_score').eq('submission_id', submissionId);
-      if (totalError) throw toDatabaseError(totalError, 'submission_answers');
-      const total = Math.round((rows || []).reduce((sum, r) => sum + Number(r.teacher_score ?? 0), 0) * 10) / 10;
-      const { error: subError } = await supabase.from('submissions').update({ total_score: total }).eq('id', submissionId);
-      if (subError) throw toDatabaseError(subError, 'submissions');
+      // Total = sum of official scores, set once every question has one.
+      const { data: sub } = await supabase.from('submissions').select('assignment_id').eq('id', submissionId).maybeSingle();
+      if (sub?.assignment_id) await recomputeSubmissionTotals(supabase, sub.assignment_id, [submissionId]);
     }
   },
 };

@@ -493,6 +493,15 @@ export const dataService = {
     return call<Question[]>('replaceAssignmentQuestions', id, questionsData);
   },
 
+  /** Corrects a choice / true-false answer key; submitted answers are re-scored. */
+  async updateAnswerKey(
+    assignmentId: string,
+    questionId: string,
+    idealAnswer: string
+  ): Promise<{ question: Question; rescored: number; keptManual: number }> {
+    return call('updateAnswerKey', assignmentId, questionId, idealAnswer);
+  },
+
   async deleteAssignment(id: string): Promise<boolean> {
     return call<boolean>('deleteAssignment', id);
   },
