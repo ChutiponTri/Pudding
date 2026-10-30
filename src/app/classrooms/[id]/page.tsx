@@ -2791,16 +2791,17 @@ export default function ClassroomWorkspacePage() {
                     <p className="text-xs font-bold text-slate-400">ไม่มีคำขอเข้าร่วมห้องเรียนที่รอการอนุมัติ</p>
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-72 overflow-y-auto">
-                    <div className="flex items-center justify-between pb-1">
+                  <div className="space-y-2">
+                    {/* Bulk actions stay above the scrolling list; buttons go full-width on narrow screens */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
                       <span className="text-xs font-bold text-slate-500">
                         รอการอนุมัติ {classroom.pending_students.length} คน
                       </span>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 w-full sm:w-auto">
                         <button
                           type="button"
                           onClick={() => setBulkPendingAction('admit')}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-xs cursor-pointer"
+                          className="flex-1 sm:flex-none justify-center px-2.5 py-2 sm:py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
                         >
                           <UserCheck className="w-3.5 h-3.5" />
                           อนุมัติทั้งหมด
@@ -2808,7 +2809,7 @@ export default function ClassroomWorkspacePage() {
                         <button
                           type="button"
                           onClick={() => setBulkPendingAction('reject')}
-                          className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:border-rose-900 dark:text-rose-300 font-bold text-[11px] inline-flex items-center gap-1 shadow-xs cursor-pointer"
+                          className="flex-1 sm:flex-none justify-center px-2.5 py-2 sm:py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:border-rose-900 dark:text-rose-300 font-bold text-[11px] inline-flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
                         >
                           <UserX className="w-3.5 h-3.5" />
                           ปฏิเสธทั้งหมด
@@ -2816,16 +2817,17 @@ export default function ClassroomWorkspacePage() {
                       </div>
                     </div>
 
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
                     {classroom.pending_students.map((p) => (
                       <div
                         key={p.id}
                         className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs"
                       >
-                        <div>
-                          <p className="font-bold text-slate-900 dark:text-white">
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 dark:text-white break-words">
                             {p.first_name} {p.last_name}
                           </p>
-                          <p className="text-[10px] text-slate-400 font-mono">
+                          <p className="text-[10px] text-slate-400 font-mono break-all">
                             รหัส: {p.student_id || '-'} • {p.email || 'LINE Login'}
                           </p>
                           <InstitutionTag institution={p.institution} otherSchool={isOtherSchool(p.institution)} />
@@ -2848,6 +2850,7 @@ export default function ClassroomWorkspacePage() {
                         </div>
                       </div>
                     ))}
+                    </div>
                   </div>
                 )}
               </div>
