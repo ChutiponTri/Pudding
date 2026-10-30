@@ -81,7 +81,7 @@ export const Navbar: React.FC = () => {
   }
 
   return (
-    <header className="sticky top-0 z-30 w-full border-b border-slate-200/70 dark:border-slate-800/80 bg-white/80 dark:bg-slate-950/75 backdrop-blur-xl supports-[backdrop-filter]:bg-white/65 dark:supports-[backdrop-filter]:bg-slate-950/60 transition-colors pt-[env(safe-area-inset-top)]">
+    <header className="sticky top-0 z-30 w-full border-b border-slate-200/70 dark:border-slate-800/80 bg-white/80 dark:bg-slate-950/75 backdrop-blur-xl supports-backdrop-filter:bg-white/65 dark:supports-backdrop-filter:bg-slate-950/60 transition-colors pt-[env(safe-area-inset-top)]">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
         {/* Left Section: Sidebar Toggle Button + Brand Logo */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0 min-[420px]:shrink">
