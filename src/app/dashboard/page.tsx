@@ -1282,7 +1282,7 @@ export default function DashboardPage() {
           <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
             {totalStudents}
           </p>
-          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium mt-1 block">
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium mt-1 hidden sm:block">
             {language === 'th' ? 'เชิญผ่าน LINE LIFF ได้ทันที' : 'Invitable via LINE LIFF'}
           </span>
         </div>
@@ -1303,7 +1303,7 @@ export default function DashboardPage() {
           <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
             {pendingGradingCount}
           </p>
-          <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium mt-1 block">
+          <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium mt-1 hidden sm:block">
             {language === 'th' ? 'มีคำตอบรอการตรวจแบบ Continuous View' : 'Answers awaiting continuous review'}
           </span>
         </Link>

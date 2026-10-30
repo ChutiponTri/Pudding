@@ -415,6 +415,20 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           </div>
         </div>
 
+        {/* Compact progress for phones, where the header progress block is hidden */}
+        <div className="md:hidden px-3 sm:px-6 pb-2.5 flex items-center gap-3 text-[11px]">
+          <div className="flex-1 h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+            <div
+              className="h-full bg-emerald-500 rounded-full transition-all"
+              style={{ width: `${questions.length ? (gradedCount / questions.length) * 100 : 0}%` }}
+            />
+          </div>
+          <span className="text-slate-500 dark:text-slate-400 shrink-0">{th ? 'ตรวจแล้ว' : 'Graded'} {gradedCount}/{questions.length}</span>
+          <span className="font-black text-slate-900 dark:text-white tabular-nums shrink-0">
+            {runningTotal}/{maxTotal}
+          </span>
+        </div>
+
         {isResearcher && (
           <div className="px-3 sm:px-6 py-2 bg-purple-50 dark:bg-purple-950/40 border-t border-purple-200 dark:border-purple-900/50 text-xs text-purple-900 dark:text-purple-200 flex items-center gap-2">
             <FlaskConical className="w-4 h-4 shrink-0" />

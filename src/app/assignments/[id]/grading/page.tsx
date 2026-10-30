@@ -700,7 +700,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       {/* Submissions Table & Filter Controls */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
         {/* Table Filters Bar */}
-        <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
           {/* Search Box */}
           <div className="relative w-full sm:w-72">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -771,8 +771,127 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
 
+        {/* Phone list: one card per student instead of a sideways-scrolling table */}
+        <ul className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800">
+          {filteredRows.length === 0 ? (
+            <li className="py-8 text-center text-xs text-slate-400">{t('common.no_data')}</li>
+          ) : (
+            filteredRows.map(({ key, student, submission: sub }) => {
+              const isGraded = sub?.total_score != null;
+              const isLate = sub?.status === 'late';
+              const fullName = student?.first_name
+                ? `${student.first_name} ${student.last_name || ''}`.trim()
+                : (language === 'th' ? 'ไม่พบข้อมูลนักเรียน' : 'Unknown student');
+              const initials = (student?.first_name?.[0] || '?') + (student?.last_name?.[0] || '');
+              return (
+                <li key={key} className={`p-4 space-y-3 ${sub ? '' : 'bg-slate-50/40 dark:bg-slate-900/40'}`}>
+                  <div className="flex items-center gap-3">
+                    {student?.avatar_url ? (
+                      <img src={student.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-white dark:ring-slate-900" />
+                    ) : (
+                      <span className="w-9 h-9 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-xs font-black flex items-center justify-center shrink-0">
+                        {initials}
+                      </span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold text-sm text-slate-900 dark:text-white truncate">{fullName}</p>
+                      <p className="text-[11px] text-slate-400 font-mono truncate">
+                        {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ยังไม่ระบุรหัสนักเรียน' : 'No student ID')}
+                      </p>
+                    </div>
+                    {sub && (isGraded ? (
+                      <span className="shrink-0 inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
+                        <span className="text-sm tabular-nums">{sub.total_score}</span>
+                        <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
+                      </span>
+                    ) : (
+                      <span className="shrink-0 inline-flex items-center px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
+                        {t('grading.pending_eval')}
+                      </span>
+                    ))}
+                  </div>
+
+                  {!sub ? (
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                        {language === 'th' ? 'ยังไม่ส่ง' : 'Not submitted'}
+                      </span>
+                      <span className="text-slate-400 italic">{language === 'th' ? 'รอนักเรียนส่งงาน' : 'Awaiting student'}</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[11px]">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold ${
+                            isLate
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              : sub.status === 'submitted'
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isLate ? 'bg-amber-500' : sub.status === 'submitted' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                          {sub.status === 'submitted'
+                            ? t('grading.status_badges.submitted')
+                            : isLate
+                            ? t('grading.status_badges.late')
+                            : t('grading.status_badges.pending')}
+                        </span>
+                        {sub.submitted_at && <span className="text-slate-400">{formatDateTime(sub.submitted_at, language)}</span>}
+                        <span className="text-slate-400 font-mono">· {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}</span>
+                      </div>
+
+                      {(tracksAway || sub.submitted_by) && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          {tracksAway && (
+                            <AntiCheatingBadge
+                              isFlagged={sub.is_flagged_suspicious}
+                              tabSwitchCount={sub.tab_switch_count}
+                              totalTimeAwaySeconds={sub.total_time_away_seconds}
+                            />
+                          )}
+                          {sub.submitted_by && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-900 text-[11px] font-bold">
+                              📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
+                            </span>
+                          )}
+                          {tracksAway && sub.is_flagged_suspicious && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAudit(sub)}
+                              className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                            >
+                              <span>{t('grading.actions.view_audit')}</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={!grader}
+                        onClick={() => handleOpenGrading(sub)}
+                        className={`w-full h-10 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                          isGraded
+                            ? 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:bg-slate-50'
+                            : 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+                        }`}
+                      >
+                        <span>{isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                </li>
+              );
+            })
+          )}
+        </ul>
+
         {/* Table Content */}
-        <div className="overflow-x-auto">
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full min-w-[46rem] text-left text-xs">
             <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 tracking-wide font-semibold border-b border-slate-100 dark:border-slate-800">
               <tr>
