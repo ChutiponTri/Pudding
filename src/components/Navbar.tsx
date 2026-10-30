@@ -96,7 +96,7 @@ export const Navbar: React.FC = () => {
           </button>
 
           {/* Brand Logo - Pudding (พุดดิ้ง) */}
-          <Link href="/dashboard" className="flex items-center gap-2.5 sm:gap-3 group min-w-0">
+          <Link href={isSignedIn ? "/dashboard" : "/"} className="flex items-center gap-2.5 sm:gap-3 group min-w-0">
             <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-md shadow-amber-500/25 group-hover:scale-105 group-hover:-rotate-3 transition-all duration-300 shrink-0">
               <span className="text-xl sm:text-2xl select-none group-hover:scale-110 transition-transform">🍮</span>
             </div>
