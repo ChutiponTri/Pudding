@@ -6,14 +6,28 @@ import { Globe } from 'lucide-react';
 
 export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className = '' }) => {
   const { language, setLanguage } = useLanguage();
+  const isThai = language === 'th';
 
   return (
+    <>
+    {/* Phones: one round button like the theme toggle, showing the current
+        language; each tap swaps to the other one. */}
+    <button
+      type="button"
+      onClick={() => setLanguage(isThai ? 'en' : 'th')}
+      className={`md:hidden p-2 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all cursor-pointer ${className}`}
+      aria-label={isThai ? 'Switch to English' : 'เปลี่ยนเป็นภาษาไทย'}
+      title={isThai ? 'Switch to English' : 'เปลี่ยนเป็นภาษาไทย'}
+    >
+      <span className="w-4 h-4 flex items-center justify-center text-sm leading-none">{isThai ? '🇹🇭' : '🇬🇧'}</span>
+    </button>
+
     <div
-      className={`inline-flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 text-xs font-medium ${className}`}
+      className={`hidden md:inline-flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 text-xs font-medium ${className}`}
       role="group"
       aria-label="Language Selector"
     >
-      <div className="hidden md:block pl-1.5 pr-0.5 text-slate-400 dark:text-slate-500">
+      <div className="pl-1.5 pr-0.5 text-slate-400 dark:text-slate-500">
         <Globe className="w-3.5 h-3.5" />
       </div>
       <button
@@ -27,7 +41,7 @@ export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className =
         title="ภาษาไทย (ค่าเริ่มต้น)"
       >
         <span>🇹🇭</span>
-        <span className='hidden md:block'>ไทย</span>
+        <span>ไทย</span>
       </button>
       <button
         type="button"
@@ -40,8 +54,9 @@ export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className =
         title="English"
       >
         <span>🇬🇧</span>
-        <span className='hidden md:block'>EN</span>
+        <span>EN</span>
       </button>
     </div>
+    </>
   );
 };
