@@ -3,7 +3,7 @@
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { dataService } from '@/lib/supabase/dataService';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
@@ -190,6 +190,10 @@ export default function ClassroomWorkspacePage() {
   const recordIndex = useMemo(() => indexRecords(records), [records]);
 
   const [tab, setTab] = useState<Tab>((search.get('tab') as Tab) || 'overview');
+  // +1 when moving to a tab on the right, -1 to the left; drives the slide direction.
+  const [tabDirection, setTabDirection] = useState<1 | -1>(1);
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const [tabIndicator, setTabIndicator] = useState<{ left: number; width: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [gradesLoading, setGradesLoading] = useState(false);
   const [notice, setNotice] = useState('');
@@ -1357,6 +1361,20 @@ export default function ClassroomWorkspacePage() {
   }, [classroom?.students, recordIndex]);
 
   // Loading skeleton
+  // Slide the desktop tab highlight under the active tab; re-measure when tab widths change.
+  useLayoutEffect(() => {
+    const bar = tabBarRef.current;
+    if (!bar) return;
+    const measure = () => {
+      const active = bar.querySelector<HTMLElement>('[aria-current="page"]');
+      if (active) setTabIndicator({ left: active.offsetLeft, width: active.offsetWidth });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    bar.querySelectorAll('button').forEach((button) => observer.observe(button));
+    return () => observer.disconnect();
+  }, [tab, classroom]);
+
   if (loading && !classroom) {
     return (
       <div className="min-h-dvh flex items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
@@ -1387,6 +1405,8 @@ export default function ClassroomWorkspacePage() {
 
   const selectTab = (next: Tab) => {
     if (next === tab) return;
+    const order = tabs.map((t) => t.id);
+    setTabDirection(order.indexOf(next) > order.indexOf(tab) ? 1 : -1);
     setTab(next);
     // Native history keeps ?tab in sync without a router round-trip.
     window.history.replaceState(null, '', `/classrooms/${classroom.id}?tab=${next}`);
@@ -1503,7 +1523,14 @@ export default function ClassroomWorkspacePage() {
           </div>
 
           {/* Navigation Tab Bar (desktop; mobile uses the bottom bar below) */}
-          <div className="hidden lg:flex items-center gap-1.5 pb-3">
+          <div ref={tabBarRef} className="hidden lg:flex relative items-center gap-1.5 pb-3">
+            {tabIndicator && (
+              <span
+                aria-hidden
+                className="absolute top-0 left-0 bottom-3 rounded-2xl bg-amber-500 shadow-xs transition-[transform,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                style={{ transform: `translateX(${tabIndicator.left}px)`, width: tabIndicator.width }}
+              />
+            )}
             {tabs.map((item) => {
               const Icon = item.icon;
               const isActive = tab === item.id;
@@ -1512,9 +1539,9 @@ export default function ClassroomWorkspacePage() {
                   key={item.id}
                   onClick={() => selectTab(item.id)}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                  className={`relative px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                     isActive
-                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                      ? `text-slate-950 font-black ${tabIndicator ? '' : 'bg-amber-500 shadow-xs'}`
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
                   }`}
                 >
@@ -1541,7 +1568,15 @@ export default function ClassroomWorkspacePage() {
             aria-label="เมนูห้องเรียน"
             className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]"
           >
-            <div className="grid grid-cols-5 px-1 py-1.5">
+            <div className="relative grid grid-cols-5 px-1 py-1.5">
+              {/* One column-wide track slides to the active tab; the pill inside matches the icon highlight. */}
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-y-1.5 left-1 w-[calc((100%-0.5rem)/5)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                style={{ transform: `translateX(${tabs.findIndex((t) => t.id === tab) * 100}%)` }}
+              >
+                <span className="absolute top-1 left-1/2 -translate-x-1/2 h-7 w-12 rounded-full bg-amber-100 dark:bg-amber-950/70" />
+              </span>
               {tabs.map((item) => {
                 const Icon = item.icon;
                 const isActive = tab === item.id;
@@ -1551,14 +1586,14 @@ export default function ClassroomWorkspacePage() {
                     onClick={() => selectTab(item.id)}
                     aria-current={isActive ? 'page' : undefined}
                     aria-label={item.label}
-                    className={`min-w-0 flex flex-col items-center gap-1 py-1 rounded-2xl text-[11px] transition-colors cursor-pointer ${
+                    className={`relative min-w-0 flex flex-col items-center gap-1 py-1 rounded-2xl text-[11px] transition-colors cursor-pointer ${
                       isActive
                         ? 'text-amber-600 dark:text-amber-400 font-black'
                         : 'text-slate-500 dark:text-slate-400 font-semibold hover:text-slate-700 dark:hover:text-slate-200'
                     }`}
                   >
-                    <span className={`px-3.5 py-1 rounded-full transition-colors ${isActive ? 'bg-amber-100 dark:bg-amber-950/70' : ''}`}>
-                      <Icon className="w-5 h-5" />
+                    <span className="px-3.5 py-1 rounded-full">
+                      <Icon className={`w-5 h-5 transition-transform duration-300 ${isActive ? 'scale-110' : ''}`} />
                     </span>
                     <span className="max-w-full truncate">{item.shortLabel}</span>
                   </button>
@@ -1567,8 +1602,14 @@ export default function ClassroomWorkspacePage() {
             </div>
           </nav>
 
-          {/* Tab content fades and rises slightly on switch (opacity/transform only, so it stays on the GPU). */}
-          <div key={tab} className="animate-in fade-in slide-in-from-bottom-1 [--tw-duration:220ms]">
+          {/* Tab content slides in from the side of the tab being moved to (opacity/transform only, so it stays on the GPU).
+              The outer wrapper clips the offset so the page never scrolls sideways mid-slide. */}
+          <div className="overflow-x-clip">
+          <div
+            key={tab}
+            className="animate-in fade-in [--tw-duration:320ms]"
+            style={{ '--tw-enter-translate-x': `${tabDirection * 2.5}rem` } as CSSProperties}
+          >
           {/* ============================================================ */}
           {/* TAB 1: OVERVIEW (ภาพรวม & Facebook-style Teacher Timeline) */}
           {/* ============================================================ */}
@@ -2250,6 +2291,7 @@ export default function ClassroomWorkspacePage() {
               )}
             </section>
           )}
+          </div>
           </div>
         </main>
       </div>

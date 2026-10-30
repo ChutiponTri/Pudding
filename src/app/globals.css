@@ -130,6 +130,52 @@ video {
   --tw-enter-translate-x: -100%;
 }
 
+/* Modals: every centered dialog pops in and every bottom sheet rises, matched by
+   the shared overlay classes so new dialogs get it without extra markup. */
+@keyframes pudding-backdrop {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pudding-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 0.75rem, 0) scale3d(0.96, 0.96, 1);
+  }
+}
+@keyframes pudding-sheet {
+  from {
+    opacity: 0.6;
+    transform: translate3d(0, 2.5rem, 0);
+  }
+}
+.fixed.inset-0.backdrop-blur-xs {
+  animation: pudding-backdrop 200ms ease-out both;
+}
+.fixed.inset-0.backdrop-blur-xs.items-center > :first-child {
+  animation: pudding-pop 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.fixed.inset-0.backdrop-blur-xs.items-end > :first-child {
+  animation: pudding-sheet 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@media (min-width: 640px) {
+  .fixed.inset-0.backdrop-blur-xs.items-end > :first-child {
+    animation-name: pudding-pop;
+  }
+}
+
+/* Tactile press feedback. Uses `scale` (not `transform`) so it never fights
+   translate utilities, and sits in the base layer so any transition/scale
+   utility on the element still wins. */
+@layer base {
+  :where(button, [role="button"], a[class*="rounded"]) {
+    transition: scale 120ms ease-out;
+  }
+  :where(button, [role="button"], a[class*="rounded"]):active:not(:disabled, [aria-disabled="true"]) {
+    scale: 0.97;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
