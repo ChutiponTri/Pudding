@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
@@ -13,7 +13,7 @@ import {
   Sparkles,
   Users,
 } from 'lucide-react';
-import { dataService } from '@/lib/supabase/dataService';
+import { dataService, CLASSROOMS_CHANGED_EVENT } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
 import { useSidebar } from '@/components/SidebarContext';
 
@@ -27,42 +27,71 @@ function periodLabel(cls: Classroom): string {
 export const GlobalClassroomSidebar: React.FC = () => {
   const pathname = usePathname();
   const { isOpen, setIsOpen, closeSidebar } = useSidebar();
-  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  // Tagged with the teacher it was fetched for, so a different session never sees it.
+  const [list, setList] = useState<{ teacherId: string; items: Classroom[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const { user, isLoaded } = useUser();
   const teacherId = user?.id;
 
-  // Load only the signed-in teacher's classrooms (owner or co-teacher), the
-  // same scope the dashboard uses.
-  const loadClassrooms = async () => {
-    if (!teacherId) return;
-    try {
-      setLoading(true);
-      const data = await dataService.getClassrooms(teacherId, { withRoster: false });
-      setClassrooms(data);
-    } catch (err) {
-      console.warn('Failed to load classrooms for sidebar:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Bumped whenever the classroom list may have changed (create/edit/delete,
+  // roster changes) so the next open, or the open sidebar, refetches.
+  const [listVersion, setListVersion] = useState(0);
+  // `${teacherId}:${listVersion}` of the last fetch; toggling the sidebar
+  // reuses the cached list instead of refetching.
+  const loadedKey = useRef<string | null>(null);
 
-  // Reload when opened, and when the signed-in teacher changes.
   useEffect(() => {
-    if (isOpen && isLoaded) {
-      loadClassrooms();
-    }
-  }, [isOpen, isLoaded, teacherId]);
+    const bump = () => setListVersion((v) => v + 1);
+    const events = [CLASSROOMS_CHANGED_EVENT, 'pudding_student_enrolled', 'pudding_student_admitted', 'pudding_student_rejected'];
+    events.forEach((name) => window.addEventListener(name, bump));
+    return () => events.forEach((name) => window.removeEventListener(name, bump));
+  }, []);
+
+  // Load only the signed-in teacher's classrooms (owner or co-teacher), the
+  // same scope the dashboard uses. Fetch lazily on first open, then only when
+  // the session or the classroom list changes.
+  useEffect(() => {
+    if (!isOpen || !isLoaded || !teacherId) return;
+    const key = `${teacherId}:${listVersion}`;
+    if (loadedKey.current === key) return;
+    loadedKey.current = key;
+
+    let cancelled = false;
+    let settled = false;
+    setLoading(true);
+    dataService
+      .getClassrooms(teacherId, { withRoster: false })
+      .then((data) => {
+        if (!cancelled) setList({ teacherId, items: data });
+      })
+      .catch((err) => {
+        console.warn('Failed to load classrooms for sidebar:', err);
+        // Allow a retry on the next open.
+        if (!cancelled) loadedKey.current = null;
+      })
+      .finally(() => {
+        settled = true;
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      if (settled) return;
+      cancelled = true;
+      setLoading(false);
+      // Closed or superseded mid-request: let the next run fetch again.
+      if (loadedKey.current === key) loadedKey.current = null;
+    };
+  }, [isOpen, isLoaded, teacherId, listVersion]);
 
   // Sort classrooms from newest to oldest
   const sortedClassrooms = useMemo(() => {
-    // Signed out: show nothing rather than a previous teacher's list.
-    return (teacherId ? [...classrooms] : []).sort((a, b) => {
+    // Signed out or another teacher: show nothing rather than a previous teacher's list.
+    const classrooms = teacherId && list?.teacherId === teacherId ? list.items : [];
+    return [...classrooms].sort((a, b) => {
       const timeA = new Date(a.created_at || 0).getTime();
       const timeB = new Date(b.created_at || 0).getTime();
       return timeB - timeA;
     });
-  }, [classrooms, teacherId]);
+  }, [list, teacherId]);
 
   // Group classrooms by Course / Subject while maintaining newest-to-oldest order
   const groupedCourses = useMemo(() => {
@@ -150,7 +179,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
 
         {/* Classrooms List: Smooth Scroll with no horizontal overflow */}
         <div className="flex-1 overflow-y-auto p-3 space-y-4 overflow-x-hidden min-w-0">
-          {loading ? (
+          {loading && sortedClassrooms.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-400 space-y-2">
               <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
               <p>กำลังโหลดห้องเรียน...</p>

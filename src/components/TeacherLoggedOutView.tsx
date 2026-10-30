@@ -183,11 +183,12 @@ export const TeacherLoggedOutView: React.FC = () => {
             {th ? "พร้อมสอนใน 3 ขั้นตอน" : "Ready to teach in 3 steps"}
           </h2>
         </div>
-        <ol className="grid gap-3 sm:gap-4 md:grid-cols-3">
+        {/* Phones: swipe sideways instead of a long vertical stack */}
+        <ol className="flex sm:grid gap-3 sm:gap-4 md:grid-cols-3 overflow-x-auto sm:overflow-visible snap-x snap-mandatory scroll-px-4 -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 sm:pb-0 scrollbar-none">
           {steps.map((step, index) => (
             <li
               key={step.title}
-              className="relative flex md:flex-col gap-4 p-5 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/80 dark:ring-slate-800"
+              className="relative w-[78%] shrink-0 snap-start sm:w-auto flex flex-col sm:flex-row md:flex-col gap-4 p-5 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/80 dark:ring-slate-800"
             >
               <div className="flex items-center gap-3 shrink-0">
                 <span className="w-11 h-11 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 flex items-center justify-center">
@@ -215,9 +216,10 @@ export const TeacherLoggedOutView: React.FC = () => {
             {th ? "ลดงานเอกสาร เพิ่มเวลาสอน" : "Less admin, more teaching"}
           </h2>
         </div>
-        <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+        {/* Phones: swipe sideways instead of a long vertical stack */}
+        <div className="flex sm:grid gap-3 sm:gap-4 sm:grid-cols-2 xl:grid-cols-4 overflow-x-auto sm:overflow-visible snap-x snap-mandatory scroll-px-4 -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 sm:pb-0 scrollbar-none">
           {features.map((feature) => (
-            <div key={feature.title} className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/80 dark:ring-slate-800 flex sm:flex-col gap-4">
+            <div key={feature.title} className="w-[78%] shrink-0 snap-start sm:w-auto p-5 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/80 dark:ring-slate-800 flex flex-col gap-4">
               <span className={`w-11 h-11 rounded-2xl ${feature.tint} flex items-center justify-center shrink-0`}>{feature.icon}</span>
               <div className="min-w-0 space-y-1">
                 <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">{feature.title}</h3>

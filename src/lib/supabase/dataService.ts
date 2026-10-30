@@ -77,6 +77,13 @@ export type ClassroomChangeEvent = {
   payload?: unknown;
 };
 
+/** Same-tab notice that the teacher's classroom list (names, terms, counts) changed. */
+export const CLASSROOMS_CHANGED_EVENT = 'pudding_classrooms_changed';
+function notifyClassroomsChanged(detail: { classroomId?: string; action: string }) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(CLASSROOMS_CHANGED_EVENT, { detail }));
+}
+
 /** Same-browser notice (other tabs, other components) after a local change. */
 function notifyLocal(eventName: string, detail: unknown) {
   if (typeof window === 'undefined') return;
@@ -283,15 +290,20 @@ export const dataService = {
   },
 
   async createClassroom(data: Omit<Classroom, 'id' | 'created_at' | 'student_count' | 'students'>): Promise<Classroom> {
-    return call<Classroom>('createClassroom', data);
+    const created = await call<Classroom>('createClassroom', data);
+    notifyClassroomsChanged({ classroomId: created?.id, action: 'created' });
+    return created;
   },
 
   async updateClassroom(id: string, data: Partial<Classroom>): Promise<Classroom | null> {
-    return call<Classroom | null>('updateClassroom', id, data);
+    const updated = await call<Classroom | null>('updateClassroom', id, data);
+    notifyClassroomsChanged({ classroomId: id, action: 'updated' });
+    return updated;
   },
 
   async deleteClassroom(id: string): Promise<void> {
     await call('deleteClassroom', id);
+    notifyClassroomsChanged({ classroomId: id, action: 'deleted' });
   },
 
   async addStudentToClassroom(
@@ -319,6 +331,7 @@ export const dataService = {
 
   async removeStudentFromClassroom(classroomId: string, studentId: string): Promise<void> {
     await call('removeStudentFromClassroom', classroomId, studentId);
+    notifyClassroomsChanged({ classroomId, action: 'student_removed' });
   },
 
   /**
