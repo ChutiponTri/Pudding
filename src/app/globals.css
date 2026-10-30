@@ -131,7 +131,10 @@ video {
 }
 
 /* Modals: every centered dialog pops in and every bottom sheet rises, matched by
-   the shared overlay classes so new dialogs get it without extra markup. */
+   the shared overlay classes so new dialogs get it without extra markup.
+   Unlayered on purpose: it supersedes any animate-* utility left on these
+   overlays/panels, so there is a single source of truth. Opt out with
+   `data-no-enter` on the overlay. */
 @keyframes pudding-backdrop {
   from {
     opacity: 0;
@@ -149,29 +152,30 @@ video {
     transform: translate3d(0, 2.5rem, 0);
   }
 }
-.fixed.inset-0.backdrop-blur-xs {
+.fixed.inset-0.backdrop-blur-xs:not([data-no-enter]) {
   animation: pudding-backdrop 200ms ease-out both;
 }
-.fixed.inset-0.backdrop-blur-xs.items-center > :first-child {
+.fixed.inset-0.backdrop-blur-xs.items-center:not([data-no-enter]) > :first-child {
   animation: pudding-pop 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.fixed.inset-0.backdrop-blur-xs.items-end > :first-child {
+.fixed.inset-0.backdrop-blur-xs.items-end:not([data-no-enter]) > :first-child {
   animation: pudding-sheet 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @media (min-width: 640px) {
-  .fixed.inset-0.backdrop-blur-xs.items-end > :first-child {
+  .fixed.inset-0.backdrop-blur-xs.items-end:not([data-no-enter]) > :first-child {
     animation-name: pudding-pop;
   }
 }
 
 /* Tactile press feedback. Uses `scale` (not `transform`) so it never fights
    translate utilities, and sits in the base layer so any transition/scale
-   utility on the element still wins. */
+   utility on the element still wins. Opt out with `data-no-press`
+   (e.g. drag handles, large surfaces where shrinking looks odd). */
 @layer base {
   :where(button, [role="button"], a[class*="rounded"]) {
     transition: scale 120ms ease-out;
   }
-  :where(button, [role="button"], a[class*="rounded"]):active:not(:disabled, [aria-disabled="true"]) {
+  :where(button, [role="button"], a[class*="rounded"]):active:not(:disabled, [aria-disabled="true"], [data-no-press], [draggable="true"]) {
     scale: 0.97;
   }
 }

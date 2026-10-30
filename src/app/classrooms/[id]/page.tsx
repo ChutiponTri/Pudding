@@ -1361,19 +1361,25 @@ export default function ClassroomWorkspacePage() {
   }, [classroom?.students, recordIndex]);
 
   // Loading skeleton
-  // Slide the desktop tab highlight under the active tab; re-measure when tab widths change.
+  // Slide the desktop tab highlight under the active tab; re-measure when tab widths change
+  // (font swap, resize). Keyed on whether the bar exists, not on `classroom`, so background
+  // refreshes don't re-measure.
+  const hasClassroom = !!classroom;
   useLayoutEffect(() => {
     const bar = tabBarRef.current;
     if (!bar) return;
     const measure = () => {
       const active = bar.querySelector<HTMLElement>('[aria-current="page"]');
-      if (active) setTabIndicator({ left: active.offsetLeft, width: active.offsetWidth });
+      // The bar is display:none below lg; keep the last position instead of collapsing to 0.
+      if (!active || active.offsetWidth === 0) return;
+      const next = { left: active.offsetLeft, width: active.offsetWidth };
+      setTabIndicator((prev) => (prev && prev.left === next.left && prev.width === next.width ? prev : next));
     };
     measure();
     const observer = new ResizeObserver(measure);
     bar.querySelectorAll('button').forEach((button) => observer.observe(button));
     return () => observer.disconnect();
-  }, [tab, classroom]);
+  }, [tab, hasClassroom]);
 
   if (loading && !classroom) {
     return (
@@ -1603,8 +1609,9 @@ export default function ClassroomWorkspacePage() {
           </nav>
 
           {/* Tab content slides in from the side of the tab being moved to (opacity/transform only, so it stays on the GPU).
-              The outer wrapper clips the offset so the page never scrolls sideways mid-slide. */}
-          <div className="overflow-x-clip">
+              The outer wrapper clips the offset so the page never scrolls sideways mid-slide; it bleeds
+              to <main>'s edges so card shadows and focus rings near the gutter aren't clipped. */}
+          <div className="overflow-x-clip -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
           <div
             key={tab}
             className="animate-in fade-in [--tw-duration:320ms]"
