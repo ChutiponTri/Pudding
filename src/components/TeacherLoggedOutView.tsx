@@ -21,6 +21,16 @@ const LineMark: React.FC<{ className?: string }> = ({ className = "w-5 h-5" }) =
   </svg>
 );
 
+const SignInButton: React.FC<{ th: boolean; className?: string }> = ({ th, className = "" }) => (
+  <Link
+    href="/sign-in"
+    className={`h-13 px-6 rounded-2xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-base shadow-lg shadow-emerald-600/25 transition-all hover:-translate-y-0.5 active:scale-[0.98] inline-flex items-center justify-center gap-2.5 ${className}`}
+  >
+    <LineMark className="w-5 h-5" />
+    <span>{th ? "เข้าสู่ระบบด้วย LINE" : "Sign in with LINE"}</span>
+  </Link>
+);
+
 export const TeacherLoggedOutView: React.FC = () => {
   const { language } = useLanguage();
   const th = language === "th";
@@ -70,16 +80,6 @@ export const TeacherLoggedOutView: React.FC = () => {
     },
   ];
 
-  const SignInButton = ({ className = "" }: { className?: string }) => (
-    <Link
-      href="/sign-in"
-      className={`h-13 px-6 rounded-2xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-base shadow-lg shadow-emerald-600/25 transition-all hover:-translate-y-0.5 active:scale-[0.98] inline-flex items-center justify-center gap-2.5 ${className}`}
-    >
-      <LineMark className="w-5 h-5" />
-      <span>{th ? "เข้าสู่ระบบด้วย LINE" : "Sign in with LINE"}</span>
-    </Link>
-  );
-
   return (
     <div className="space-y-10 sm:space-y-16 pb-6 sm:pb-10">
       {/* HERO */}
@@ -116,7 +116,7 @@ export const TeacherLoggedOutView: React.FC = () => {
             </p>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 pt-1">
-              <SignInButton className="w-full sm:w-auto" />
+              <SignInButton th={th} className="w-full sm:w-auto" />
               <Link
                 href="/sign-up"
                 className="h-13 px-6 rounded-2xl bg-white/80 hover:bg-white text-slate-950 font-bold text-sm transition-all active:scale-[0.98] inline-flex items-center justify-center gap-1.5 ring-1 ring-white/70"
@@ -176,7 +176,7 @@ export const TeacherLoggedOutView: React.FC = () => {
       </section>
 
       {/* HOW IT WORKS */}
-      <section className="space-y-5 sm:space-y-7">
+      <section id="how-it-works" className="scroll-mt-24 space-y-5 sm:space-y-7">
         <div className="text-center space-y-1.5">
           <p className="text-xs font-bold text-amber-600 dark:text-amber-400">{th ? "เริ่มต้นใช้งาน" : "Getting started"}</p>
           <h2 className="text-xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
@@ -188,7 +188,7 @@ export const TeacherLoggedOutView: React.FC = () => {
           {steps.map((step, index) => (
             <li
               key={step.title}
-              className="relative w-[78%] shrink-0 snap-start sm:w-auto flex flex-col sm:flex-row md:flex-col gap-4 p-5 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/80 dark:ring-slate-800"
+              className="relative w-[64%] shrink-0 snap-start sm:w-auto flex flex-col sm:flex-row md:flex-col gap-4 p-4 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/80 dark:ring-slate-800"
             >
               <div className="flex items-center gap-3 shrink-0">
                 <span className="w-11 h-11 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 flex items-center justify-center">
@@ -209,7 +209,7 @@ export const TeacherLoggedOutView: React.FC = () => {
       </section>
 
       {/* FEATURES */}
-      <section className="space-y-5 sm:space-y-7">
+      <section id="features" className="scroll-mt-24 space-y-5 sm:space-y-7">
         <div className="text-center space-y-1.5">
           <p className="text-xs font-bold text-amber-600 dark:text-amber-400">{th ? "ทุกอย่างที่คุณครูต้องใช้" : "Everything you need"}</p>
           <h2 className="text-xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
@@ -219,7 +219,7 @@ export const TeacherLoggedOutView: React.FC = () => {
         {/* Phones: swipe sideways instead of a long vertical stack */}
         <div className="flex sm:grid gap-3 sm:gap-4 sm:grid-cols-2 xl:grid-cols-4 overflow-x-auto sm:overflow-visible snap-x snap-mandatory scroll-px-4 -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 sm:pb-0 scrollbar-none">
           {features.map((feature) => (
-            <div key={feature.title} className="w-[78%] shrink-0 snap-start sm:w-auto p-5 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/80 dark:ring-slate-800 flex flex-col gap-4">
+            <div key={feature.title} className="w-[64%] shrink-0 snap-start sm:w-auto p-4 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/80 dark:ring-slate-800 flex flex-col gap-4">
               <span className={`w-11 h-11 rounded-2xl ${feature.tint} flex items-center justify-center shrink-0`}>{feature.icon}</span>
               <div className="min-w-0 space-y-1">
                 <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">{feature.title}</h3>
@@ -242,7 +242,7 @@ export const TeacherLoggedOutView: React.FC = () => {
               : "Students don't sign up here. Once you create a class, you'll get a LINE link to share with them."}
           </p>
         </div>
-        <SignInButton className="w-full sm:w-auto" />
+        <SignInButton th={th} className="w-full sm:w-auto" />
       </section>
     </div>
   );

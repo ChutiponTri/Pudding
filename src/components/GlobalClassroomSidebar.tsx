@@ -12,7 +12,11 @@ import {
   GraduationCap,
   Sparkles,
   Users,
+  ListChecks,
+  UserPlus,
+  Home,
 } from 'lucide-react';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService, CLASSROOMS_CHANGED_EVENT } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
 import { useSidebar } from '@/components/SidebarContext';
@@ -24,9 +28,80 @@ function periodLabel(cls: Classroom): string {
   return [term, year].filter(Boolean).join('/');
 }
 
+/** Sidebar body for signed-out visitors: no classroom data, just ways in. */
+const GuestSidebarContent: React.FC<{ onNavigate: () => void }> = ({ onNavigate }) => {
+  const { language } = useLanguage();
+  const th = language === 'th';
+
+  const links = [
+    { href: '/', icon: <Home className="w-4 h-4" />, label: th ? 'หน้าแรก' : 'Home' },
+    { href: '/#how-it-works', icon: <ListChecks className="w-4 h-4" />, label: th ? 'เริ่มต้นใช้งาน' : 'Getting started' },
+    { href: '/#features', icon: <Sparkles className="w-4 h-4" />, label: th ? 'ฟีเจอร์' : 'Features' },
+  ];
+
+  return (
+    <div className="flex-1 overflow-y-auto p-3 space-y-4 overflow-x-hidden min-w-0">
+        {/* Sign-in card */}
+        <div className="rounded-2xl bg-linear-to-br from-amber-300 via-amber-400 to-orange-400 p-4 text-slate-950 space-y-3">
+          <div className="space-y-1">
+            <p className="text-sm font-black">{th ? 'ยินดีต้อนรับสู่พุดดิ้ง' : 'Welcome to Pudding'}</p>
+            <p className="text-xs font-medium text-slate-950/75 leading-relaxed">
+              {th ? 'เข้าสู่ระบบเพื่อดูห้องเรียน รายวิชา และงานของคุณครู' : 'Sign in to see your classes, courses and work.'}
+            </p>
+          </div>
+          <Link
+            href="/sign-in"
+            onClick={onNavigate}
+            className="w-full h-11 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-sm font-bold flex items-center justify-center gap-2 shadow-sm shadow-emerald-700/25 transition-all active:scale-[0.98]"
+          >
+            {th ? 'เข้าสู่ระบบด้วย LINE' : 'Sign in with LINE'}
+          </Link>
+          <Link
+            href="/sign-up"
+            onClick={onNavigate}
+            className="w-full h-10 rounded-xl bg-white/80 hover:bg-white text-slate-950 text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            {th ? 'ครูใหม่? สมัครใช้งาน' : 'New teacher? Sign up'}
+          </Link>
+        </div>
+
+        {/* Page sections */}
+        <nav className="space-y-1">
+          {links.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              onClick={onNavigate}
+              className="flex items-center gap-3 min-h-11 px-3 py-2.5 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white transition-all"
+            >
+              <span className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                {link.icon}
+              </span>
+              <span className="truncate">{link.label}</span>
+            </Link>
+          ))}
+        </nav>
+
+        {/* Students land here by mistake: point them back to LINE */}
+        <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 ring-1 ring-slate-200/80 dark:ring-slate-800 space-y-1">
+          <p className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+            <GraduationCap className="w-3.5 h-3.5 text-amber-500" />
+            {th ? 'สำหรับนักเรียน' : 'For students'}
+          </p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            {th
+              ? 'นักเรียนไม่ต้องเข้าสู่ระบบที่นี่ ใช้ลิงก์ LINE ที่คุณครูส่งให้ในกลุ่มห้องเรียน'
+              : "Students don't sign in here. Use the LINE link your teacher shared in the class group."}
+          </p>
+        </div>
+    </div>
+  );
+};
+
 export const GlobalClassroomSidebar: React.FC = () => {
   const pathname = usePathname();
-  const { isOpen, setIsOpen, closeSidebar } = useSidebar();
+  const { isOpen, closeSidebar } = useSidebar();
   // Tagged with the teacher it was fetched for, so a different session never sees it.
   const [list, setList] = useState<{ teacherId: string; items: Classroom[] } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -112,6 +187,8 @@ export const GlobalClassroomSidebar: React.FC = () => {
     }
   };
 
+  const isGuest = isLoaded && !user;
+
   // Do not render on LIFF student portal
   if (!isOpen || pathname.startsWith('/liff')) return null;
 
@@ -133,8 +210,8 @@ export const GlobalClassroomSidebar: React.FC = () => {
               🍮
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm font-black text-slate-900 dark:text-white truncate">ห้องเรียนและรายวิชา</h2>
-              <p className="text-[10px] text-slate-500 font-medium truncate">รายวิชาทั้งหมด</p>
+              <h2 className="text-sm font-black text-slate-900 dark:text-white truncate">{isGuest ? 'พุดดิ้ง' : 'ห้องเรียนและรายวิชา'}</h2>
+              <p className="text-[10px] text-slate-500 font-medium truncate">{isGuest ? 'สำหรับคุณครูผู้สอน' : 'รายวิชาทั้งหมด'}</p>
             </div>
           </div>
           <button
@@ -146,6 +223,10 @@ export const GlobalClassroomSidebar: React.FC = () => {
           </button>
         </div>
 
+        {isGuest ? (
+          <GuestSidebarContent onNavigate={handleItemClick} />
+        ) : (
+        <>
         {/* Quick Actions Shortcuts */}
         <div className="p-3 grid grid-cols-2 gap-2 shrink-0">
           <Link
@@ -179,7 +260,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
 
         {/* Classrooms List: Smooth Scroll with no horizontal overflow */}
         <div className="flex-1 overflow-y-auto p-3 space-y-4 overflow-x-hidden min-w-0">
-          {loading && sortedClassrooms.length === 0 ? (
+          {(!isLoaded || loading) && sortedClassrooms.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-400 space-y-2">
               <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
               <p>กำลังโหลดห้องเรียน...</p>
@@ -244,6 +325,8 @@ export const GlobalClassroomSidebar: React.FC = () => {
             ))
           )}
         </div>
+        </>
+        )}
 
         {/* Footer */}
         <div className="p-3 border-t border-slate-200/80 dark:border-slate-800 text-center shrink-0">
