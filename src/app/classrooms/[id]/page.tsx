@@ -147,12 +147,13 @@ type Post = {
   metadata?: { assignmentId?: string; groupName?: string; publishAt?: string };
 };
 
-const tabs: Array<{ id: Tab; label: string; icon: typeof BookOpen }> = [
-  { id: 'overview', label: 'ภาพรวม', icon: ClipboardList },
-  { id: 'classwork', label: 'งานและเนื้อหา', icon: BookOpen },
-  { id: 'attendance', label: 'เช็คชื่อ', icon: CalendarCheck },
-  { id: 'people', label: 'ผู้สอนและผู้เรียน', icon: Users },
-  { id: 'grades', label: 'คะแนน', icon: FileText },
+// shortLabel keeps all five tabs on one row of the mobile bottom bar.
+const tabs: Array<{ id: Tab; label: string; shortLabel: string; icon: typeof BookOpen }> = [
+  { id: 'overview', label: 'ภาพรวม', shortLabel: 'ภาพรวม', icon: ClipboardList },
+  { id: 'classwork', label: 'งานและเนื้อหา', shortLabel: 'งาน', icon: BookOpen },
+  { id: 'attendance', label: 'เช็คชื่อ', shortLabel: 'เช็คชื่อ', icon: CalendarCheck },
+  { id: 'people', label: 'ผู้สอนและผู้เรียน', shortLabel: 'สมาชิก', icon: Users },
+  { id: 'grades', label: 'คะแนน', shortLabel: 'คะแนน', icon: FileText },
 ];
 
 const statusLabels: Record<AttendanceStatus, string> = {
@@ -1378,6 +1379,13 @@ export default function ClassroomWorkspacePage() {
     );
   }
 
+  const selectTab = (next: Tab) => {
+    if (next === tab) return;
+    setTab(next);
+    // Native history keeps ?tab in sync without a router round-trip.
+    window.history.replaceState(null, '', `/classrooms/${classroom.id}?tab=${next}`);
+  };
+
   return (
     <div className="min-h-dvh bg-slate-50 dark:bg-slate-950 -mx-4 sm:-mx-6 lg:-mx-8 -my-5 sm:-my-8">
       {/* Mobile Top App Bar (sits under the global navbar, whose menu button opens the drawer) */}
@@ -1399,7 +1407,7 @@ export default function ClassroomWorkspacePage() {
         {/* ============================================================== */}
         {/* MAIN WORKSPACE CONTENT AREA (Full Width, No inner sidebar) */}
         {/* ============================================================== */}
-        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-8">
           {/* Header Row (title is in the mobile bar below lg; actions show on every size) */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4 mb-5 sm:mb-6">
             <div className="hidden lg:flex items-center gap-3 min-w-0">
@@ -1490,22 +1498,17 @@ export default function ClassroomWorkspacePage() {
             </div>
           )}
 
-          {/* Navigation Tab Bar */}
-          <div className="flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-2 mb-5 sm:mb-6 overflow-x-auto scrollbar-none -mx-1 px-1">
+          {/* Navigation Tab Bar (desktop; mobile uses the bottom bar below) */}
+          <div className="hidden lg:flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-2 mb-6">
             {tabs.map((item) => {
               const Icon = item.icon;
               const isActive = tab === item.id;
               return (
                 <button
                   key={item.id}
-                  onClick={() => {
-                    if (item.id === tab) return;
-                    setTab(item.id);
-                    // Native history keeps ?tab in sync without a router round-trip.
-                    window.history.replaceState(null, '', `/classrooms/${classroom.id}?tab=${item.id}`);
-                  }}
+                  onClick={() => selectTab(item.id)}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`px-3.5 sm:px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                  className={`px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                     isActive
                       ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
@@ -1517,6 +1520,37 @@ export default function ClassroomWorkspacePage() {
               );
             })}
           </div>
+
+          {/* Mobile bottom tab bar: all five tabs at once, icon above a short label. */}
+          <nav
+            aria-label="เมนูห้องเรียน"
+            className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]"
+          >
+            <div className="grid grid-cols-5 px-1 py-1.5">
+              {tabs.map((item) => {
+                const Icon = item.icon;
+                const isActive = tab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => selectTab(item.id)}
+                    aria-current={isActive ? 'page' : undefined}
+                    aria-label={item.label}
+                    className={`min-w-0 flex flex-col items-center gap-1 py-1 rounded-2xl text-[11px] transition-colors cursor-pointer ${
+                      isActive
+                        ? 'text-amber-600 dark:text-amber-400 font-black'
+                        : 'text-slate-500 dark:text-slate-400 font-semibold hover:text-slate-700 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <span className={`px-3.5 py-1 rounded-full transition-colors ${isActive ? 'bg-amber-100 dark:bg-amber-950/70' : ''}`}>
+                      <Icon className="w-5 h-5" />
+                    </span>
+                    <span className="max-w-full truncate">{item.shortLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
 
           {/* Tab content fades and rises slightly on switch (opacity/transform only, so it stays on the GPU). */}
           <div key={tab} className="animate-in fade-in slide-in-from-bottom-1 [--tw-duration:220ms]">
