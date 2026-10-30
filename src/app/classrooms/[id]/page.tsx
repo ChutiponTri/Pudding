@@ -1388,28 +1388,28 @@ export default function ClassroomWorkspacePage() {
 
   return (
     <div className="min-h-dvh bg-slate-50 dark:bg-slate-950 -mx-4 sm:-mx-6 lg:-mx-8 -my-5 sm:-my-8">
-      {/* Mobile Top App Bar (sits under the global navbar, whose menu button opens the drawer) */}
-      <div className="lg:hidden sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800 px-4 py-2.5 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold text-amber-600 truncate">
-              {[course?.code || classroom.subject_code, course?.name || classroom.course_name].filter(Boolean).join(' · ') || 'CLASSROOM'}
-            </p>
-            <h1 className="text-sm font-black text-slate-900 dark:text-white truncate">{classroom.name}</h1>
-          </div>
-        </div>
-        <button onClick={loadWorkspace} aria-label="รีเฟรช" className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
-          <RefreshCw className="w-4 h-4" />
-        </button>
-      </div>
-
       <div className="max-w-[1700px] mx-auto min-h-dvh flex">
         {/* ============================================================== */}
         {/* MAIN WORKSPACE CONTENT AREA (Full Width, No inner sidebar) */}
         {/* ============================================================== */}
-        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-8">
-          {/* Header Row (title is in the mobile bar below lg; actions show on every size) */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 lg:gap-4 mb-5 sm:mb-6">
+        <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-8">
+          {/* Sticky header: course/classroom labels, actions and (desktop) tabs stay in view while scrolling,
+              pinned just under the global navbar. */}
+          <div className="sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 pt-2.5 lg:pt-6 mb-5 sm:mb-6 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 lg:gap-4 pb-2.5 lg:pb-4">
+            {/* Mobile title row */}
+            <div className="lg:hidden flex items-center justify-between gap-3 min-w-0">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold text-amber-600 truncate">
+                  {[course?.code || classroom.subject_code, course?.name || classroom.course_name].filter(Boolean).join(' · ') || 'CLASSROOM'}
+                </p>
+                <h1 className="text-sm font-black text-slate-900 dark:text-white truncate">{classroom.name}</h1>
+              </div>
+              <button onClick={loadWorkspace} aria-label="รีเฟรช" className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+
             <div className="hidden lg:flex items-center gap-3 min-w-0">
               <div className="min-w-0 space-y-1">
                 {/* Code, course name and semester share one height and type size. */}
@@ -1430,12 +1430,13 @@ export default function ClassroomWorkspacePage() {
                 </div>
                 <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight break-words">{classroom.name}</h1>
                 {course?.description && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-2 max-w-2xl">{course.description}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-1 max-w-2xl">{course.description}</p>
                 )}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 [&>*]:shrink-0">
+            {/* One compact row on mobile so the sticky header stays short. */}
+            <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 [&>*]:shrink-0">
               {/* Secondary: Invite Students Modal Trigger */}
               <button
                 type="button"
@@ -1443,12 +1444,12 @@ export default function ClassroomWorkspacePage() {
                   setShowInviteModal(true);
                   setInviteTab('search');
                 }}
-                className="h-10 sm:h-auto px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center justify-center sm:justify-start gap-1.5 shadow-xs transition-all cursor-pointer"
+                className="min-w-0 h-9 sm:h-auto px-2 sm:px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] sm:text-xs font-bold inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-xs transition-all cursor-pointer"
               >
-                <UserPlus className="w-3.5 h-3.5 text-amber-500" />
-                <span>เชิญนักเรียน</span>
+                <UserPlus className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                <span className="truncate">เชิญนักเรียน</span>
                 {(classroom.pending_students?.length || 0) > 0 && (
-                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                  <span className="w-2 h-2 shrink-0 rounded-full bg-rose-500 animate-ping" />
                 )}
               </button>
 
@@ -1462,10 +1463,10 @@ export default function ClassroomWorkspacePage() {
                     .then((d) => setLineConnection(d))
                     .catch(() => {});
                 }}
-                className="h-10 sm:h-auto px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center justify-center sm:justify-start gap-1.5 shadow-xs transition-all cursor-pointer"
+                className="min-w-0 h-9 sm:h-auto px-2 sm:px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] sm:text-xs font-bold inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-xs transition-all cursor-pointer"
               >
                 <span
-                  className={`w-2 h-2 rounded-full ${
+                  className={`w-2 h-2 shrink-0 rounded-full ${
                     classroom.line_connection_status === 'connected' || classroom.line_group_id
                       ? 'bg-emerald-500'
                       : classroom.line_connection_status === 'waiting'
@@ -1473,33 +1474,26 @@ export default function ClassroomWorkspacePage() {
                       : 'bg-slate-400'
                   }`}
                 />
-                <span>เชื่อมบอท LINE</span>
+                <span className="truncate">
+                  <span className="hidden sm:inline">เชื่อม</span>บอท LINE
+                </span>
               </button>
 
               {/* Primary: Create Assignment or Exam */}
               <Link
                 href={`/assignments/new?classroomId=${classroom.id}&from=classroom`}
-                className="col-span-2 order-first sm:order-none h-11 sm:h-auto px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm sm:text-xs inline-flex items-center justify-center sm:justify-start gap-1.5 shadow-sm transition-all"
+                className="min-w-0 order-first sm:order-none h-9 sm:h-auto px-2 sm:px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] sm:text-xs inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-sm transition-all"
               >
-                <Plus className="w-4 h-4" />
-                <span>สร้างงาน / ข้อสอบ</span>
+                <Plus className="w-4 h-4 shrink-0" />
+                <span className="truncate">
+                  สร้างงาน<span className="hidden sm:inline"> / ข้อสอบ</span>
+                </span>
               </Link>
             </div>
           </div>
 
-
-          {/* Toast Notification Notice */}
-          {notice && (
-            <div role="status" className="mb-5 sm:mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 animate-in fade-in">
-              <span className="min-w-0 break-words">{notice}</span>
-              <button onClick={() => setNotice('')} aria-label="ปิด" className="text-amber-600 hover:text-amber-800 p-1 shrink-0">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-
           {/* Navigation Tab Bar (desktop; mobile uses the bottom bar below) */}
-          <div className="hidden lg:flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-2 mb-6">
+          <div className="hidden lg:flex items-center gap-1.5 pb-3">
             {tabs.map((item) => {
               const Icon = item.icon;
               const isActive = tab === item.id;
@@ -1520,6 +1514,17 @@ export default function ClassroomWorkspacePage() {
               );
             })}
           </div>
+          </div>
+
+          {/* Toast Notification Notice */}
+          {notice && (
+            <div role="status" className="mb-5 sm:mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 animate-in fade-in">
+              <span className="min-w-0 break-words">{notice}</span>
+              <button onClick={() => setNotice('')} aria-label="ปิด" className="text-amber-600 hover:text-amber-800 p-1 shrink-0">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           {/* Mobile bottom tab bar: all five tabs at once, icon above a short label. */}
           <nav
