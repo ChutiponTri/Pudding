@@ -11,6 +11,7 @@ import { EditStudentModal } from '@/components/EditStudentModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ReferenceWorkLink } from '@/components/ReferenceWorkLink';
 import { formatDateTime } from '@/lib/utils/datetime';
+import { roomLabel } from '@/lib/utils/classroomLabel';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
 import {
@@ -1379,6 +1380,11 @@ export default function ClassroomWorkspacePage() {
     );
   }
 
+  const courseCode = course?.code || classroom.subject_code || 'CLASSROOM';
+  const courseName = course?.name || classroom.course_name || '';
+  const room = roomLabel(classroom) || classroom.name;
+  const semester = classroom.academic_year || 'ปัจจุบัน';
+
   const selectTab = (next: Tab) => {
     if (next === tab) return;
     setTab(next);
@@ -1397,46 +1403,50 @@ export default function ClassroomWorkspacePage() {
               pinned just under the global navbar. */}
           <div className="sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 pt-2.5 lg:pt-6 mb-5 sm:mb-6 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 lg:gap-4 pb-2.5 lg:pb-4">
-            {/* Mobile title row */}
-            <div className="lg:hidden flex items-center justify-between gap-3 min-w-0">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold text-amber-600 truncate">
-                  {[course?.code || classroom.subject_code, course?.name || classroom.course_name].filter(Boolean).join(' · ') || 'CLASSROOM'}
-                </p>
-                <h1 className="text-sm font-black text-slate-900 dark:text-white truncate">{classroom.name}</h1>
-              </div>
-              <button onClick={loadWorkspace} aria-label="รีเฟรช" className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
+            {/* Mobile title row: code, course name, room and semester sit on one line (course name truncates). */}
+            <div className="lg:hidden flex items-center gap-2 min-w-0">
+              <span className="shrink-0 h-7 inline-flex items-center px-2 rounded-lg bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 font-mono text-xs font-black">
+                {courseCode}
+              </span>
+              {courseName && (
+                <span className="min-w-0 flex-1 truncate text-base font-black text-slate-900 dark:text-white">{courseName}</span>
+              )}
+              <h1 className={`shrink-0 h-7 inline-flex items-center px-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black ${courseName ? '' : 'ml-auto'}`}>
+                {room}
+              </h1>
+              <span className="shrink-0 h-7 inline-flex items-center gap-1 px-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300" title={`ภาคเรียน ${semester}`}>
+                <CalendarCheck className="w-3.5 h-3.5 text-slate-400" />
+                {semester}
+              </span>
+              <button onClick={loadWorkspace} aria-label="รีเฟรช" className="-mr-2 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="hidden lg:flex items-center gap-3 min-w-0">
-              <div className="min-w-0 space-y-1">
-                {/* Code, course name and semester share one height and type size. */}
-                <div className="flex items-center gap-2 min-w-0 h-6 text-xs">
-                  <span className="shrink-0 h-6 inline-flex items-center px-2 rounded-md bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 font-mono font-bold">
-                    {course?.code || classroom.subject_code || 'CLASSROOM'}
-                  </span>
-                  {(course?.name || classroom.course_name) && (
-                    <span className="min-w-0 truncate font-bold text-slate-700 dark:text-slate-200">
-                      {course?.name || classroom.course_name}
-                    </span>
-                  )}
-                  <span aria-hidden className="shrink-0 w-px h-3.5 bg-slate-300 dark:bg-slate-700" />
-                  <span className="shrink-0 h-6 inline-flex items-center gap-1 px-2 rounded-md bg-slate-100 dark:bg-slate-800 font-semibold text-slate-600 dark:text-slate-300">
-                    <CalendarCheck className="w-3.5 h-3.5 text-slate-400" />
-                    ภาคเรียน {classroom.academic_year || 'ปัจจุบัน'}
-                  </span>
-                </div>
-                <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight break-words">{classroom.name}</h1>
-                {course?.description && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-1 max-w-2xl">{course.description}</p>
+            {/* Desktop title: course code and name lead at the same size as the room, all on one line,
+                so the header grows sideways rather than down. */}
+            <div className="hidden lg:block flex-1 min-w-0 space-y-1">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="shrink-0 h-9 inline-flex items-center px-3 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 font-mono text-xl font-black">
+                  {courseCode}
+                </span>
+                {courseName && (
+                  <span className="min-w-0 truncate text-2xl font-black text-slate-900 dark:text-white tracking-tight">{courseName}</span>
                 )}
+                <span aria-hidden className="shrink-0 w-px h-6 bg-slate-300 dark:bg-slate-700" />
+                <h1 className="shrink-0 text-2xl font-black text-slate-900 dark:text-white tracking-tight">{room}</h1>
+                <span className="shrink-0 h-7 inline-flex items-center gap-1 px-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  <CalendarCheck className="w-3.5 h-3.5 text-slate-400" />
+                  ภาคเรียน {semester}
+                </span>
               </div>
+              {course?.description && (
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed line-clamp-1 max-w-3xl">{course.description}</p>
+              )}
             </div>
 
             {/* One compact row on mobile so the sticky header stays short. */}
-            <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 [&>*]:shrink-0">
+            <div className="lg:shrink-0 grid grid-cols-[1.2fr_1fr_1fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 [&>*]:shrink-0">
               {/* Secondary: Invite Students Modal Trigger */}
               <button
                 type="button"
