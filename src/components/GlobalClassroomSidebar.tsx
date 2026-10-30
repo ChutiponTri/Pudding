@@ -205,15 +205,16 @@ export const GlobalClassroomSidebar: React.FC = () => {
       <aside className="fixed inset-y-0 left-0 w-80 max-w-[86vw] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-r border-slate-200/80 dark:border-slate-800 shadow-2xl lg:shadow-none flex flex-col z-50 animate-in slide-in-from-left duration-300 select-none overflow-hidden pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
         {/* Header */}
         <div className="h-16 px-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center font-bold text-base shadow-md shadow-amber-500/25 shrink-0">
+          {/* Same destination as the navbar brand logo */}
+          <Link href={user ? '/dashboard' : '/'} onClick={handleItemClick} className="flex items-center gap-2.5 min-w-0 group">
+            <div className="w-9 h-9 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center font-bold text-base shadow-md shadow-amber-500/25 group-hover:scale-105 group-hover:-rotate-3 transition-all duration-300 shrink-0">
               🍮
             </div>
             <div className="min-w-0">
               <h2 className="text-sm font-black text-slate-900 dark:text-white truncate">{isGuest ? 'พุดดิ้ง' : 'ห้องเรียนและรายวิชา'}</h2>
               <p className="text-[10px] text-slate-500 font-medium truncate">{isGuest ? 'สำหรับคุณครูผู้สอน' : 'รายวิชาทั้งหมด'}</p>
             </div>
-          </div>
+          </Link>
           <button
             onClick={closeSidebar}
             className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer shrink-0"
