@@ -37,6 +37,7 @@ import {
   Smartphone,
   Link2,
   Trash2,
+  PencilLine,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme/ThemeContext";
 import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
@@ -47,6 +48,7 @@ import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 import { getAssignmentWindow, isAssignmentPublished, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindow";
 import { formatDateTime } from "@/lib/utils/datetime";
+import { canEditSubmission, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { isImageUrl, isPdfUrl, referenceWorkUrl } from "@/lib/utils/referenceWork";
 import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploadClient";
@@ -315,6 +317,8 @@ export default function LiffStudentPage() {
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
   // Submissions whose every answer has a teacher score (grading finished).
   const [gradedSubmissionIds, setGradedSubmissionIds] = useState<Set<string>>(new Set());
+  // Submissions a teacher has scored at all (even partly): homework stops being editable.
+  const [teacherGradedIds, setTeacherGradedIds] = useState<Set<string>>(new Set());
   // Results the student has already opened: submission id -> score they saw.
   // Kept per device; a re-grade with a new score is announced again.
   const [seenScores, setSeenScores] = useState<Record<string, number>>({});
@@ -504,6 +508,8 @@ export default function LiffStudentPage() {
   const [studentAnswers, setStudentAnswers] = useState<Record<string, { text: string; file_url?: string; file_key?: string; file_name?: string; link?: string }>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
+  // Handed-in homework being edited (its answers are loaded into the form); null = new work.
+  const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
   // What the server scored at hand-in: choice / true-false answers are scored at once;
   // the total only exists when every question was (all choices), otherwise it waits for the teacher.
   const [submittedResult, setSubmittedResult] = useState<{ submission: Submission; total: number | null; max: number; autoScored: number; pending: number } | null>(null);
@@ -976,6 +982,9 @@ export default function LiffStudentPage() {
             })
             .map((submission) => submission.id)
         );
+        const teacherGraded = new Set(
+          studentSubmissions.filter((submission) => isTeacherGraded(submission, answersBySubmission.get(submission.id))).map((submission) => submission.id)
+        );
 
         if (seq !== loadSeq) return;
 
@@ -989,6 +998,7 @@ export default function LiffStudentPage() {
         setAssignments(relevantAssigns);
         setSubmissions(subMap);
         setGradedSubmissionIds(graded);
+        setTeacherGradedIds(teacherGraded);
         if (currentStudent.line_uid) {
           loadAllActiveAttendance(enrolled, currentStudent.line_uid);
         }
@@ -1071,8 +1081,32 @@ export default function LiffStudentPage() {
     if (currentStudent?.line_uid) loadClassroomPosts(selectedClassroom, currentStudent.line_uid);
   }, [selectedClassroom?.id, currentStudent?.line_uid]);
 
+  /** Homework the student may still change: before grading and closing, or reopened by the teacher. Quizzes never. */
+  const canEditWork = (a: Assignment, s?: Submission) =>
+    !!s && canEditSubmission(s, a.is_exam, { acceptsSubmissions: getAssignmentWindow(a).acceptsSubmissions, teacherGraded: teacherGradedIds.has(s.id) });
+
+  /** Handed-in answers back in the form: files we stored show as attached, anything else as a pasted link. */
+  const answersToForm = (answers: Record<string, SubmissionAnswer>) =>
+    Object.fromEntries(
+      Object.entries(answers).map(([questionId, ans]) => {
+        const url = ans.file_url || "";
+        const stored = url.match(/\/submissions\/.+\/\d+-[a-z0-9]+_([^/?#]+)/);
+        return [
+          questionId,
+          stored
+            ? { text: ans.text_answer || "", file_url: url, file_name: decodeURIComponent(stored[1]) }
+            : { text: ans.text_answer || "", link: url },
+        ];
+      })
+    );
+
+  const handleEditSubmission = (a: Assignment, s: Submission, answers: Record<string, SubmissionAnswer>) => {
+    setViewingGradedSub(null);
+    handleOpenAssignment(a, undefined, { submission: s, answers });
+  };
+
   // When opening an assignment, fetch questions (Protected by admission gate)
-  const handleOpenAssignment = async (a: Assignment, forFriend?: ProxyFriend) => {
+  const handleOpenAssignment = async (a: Assignment, forFriend?: ProxyFriend, edit?: { submission: Submission; answers: Record<string, SubmissionAnswer> }) => {
     // Check the assignment's own classroom: shortcuts on the overview open
     // work before selectedClassroom has updated.
     const assignmentClassroom = classrooms.find((c) => c.id === a.classroom_id);
@@ -1087,7 +1121,8 @@ export default function LiffStudentPage() {
       return;
     }
     const openWindow = getAssignmentWindow(a);
-    if (!openWindow.acceptsSubmissions) {
+    // Work the teacher reopened for this student may be edited even after it closed.
+    if (!openWindow.acceptsSubmissions && !edit?.submission.reopened_at) {
       alert(openWindow.isQuizClosed
         ? `หมดเวลาทำข้อสอบ “${a.title}” แล้ว`
         : openWindow.isLateClosed
@@ -1095,7 +1130,8 @@ export default function LiffStudentPage() {
         : `คุณครูปิดรับ${a.is_exam ? "ข้อสอบ" : "งาน"} “${a.title}” แล้ว ไม่สามารถส่งได้`);
       return;
     }
-    setStudentAnswers({});
+    setStudentAnswers(edit ? answersToForm(edit.answers) : {});
+    setEditingSubmission(edit?.submission || null);
     setSubmissionSuccess(false);
     setSubmittedResult(null);
     setActiveQuestions([]);
@@ -1264,6 +1300,7 @@ export default function LiffStudentPage() {
         return;
       }
       if (unanswered.length && !confirm(`ยังไม่ได้ตอบข้อที่ไม่บังคับ ${unanswered.length} ข้อ (ข้อ ${numbers(unanswered)})\n\nต้องการส่งงานเลยหรือไม่?`)) return;
+      if (editingSubmission && !confirm("ส่งงานที่แก้ไขแทนงานเดิม?\nงานเดิมจะถูกแทนที่ และคุณครูจะตรวจงานนี้ใหม่")) return;
     }
 
     const badLink = activeQuestions.findIndex((q) => !studentAnswers[q.id]?.file_url && studentAnswers[q.id]?.link?.trim() && !normalizeLink(studentAnswers[q.id]?.link));
@@ -1306,6 +1343,16 @@ export default function LiffStudentPage() {
         setProxyFriend((prev) => (prev ? { ...prev, submittedAssignmentIds: [...prev.submittedAssignmentIds, submittedId] } : prev));
       } else {
         setSubmissions((prev) => ({ ...prev, [activeAssignment.id]: sub }));
+        if (editingSubmission) {
+          // The earlier version's scores were replaced along with it.
+          const without = (prev: Set<string>) => {
+            const next = new Set(prev);
+            next.delete(sub.id);
+            return next;
+          };
+          setGradedSubmissionIds(without);
+          setTeacherGradedIds(without);
+        }
         const scored = ((sub as Submission & { answers?: Array<{ teacher_score?: number | null }> }).answers || []);
         const autoScored = scored.filter((ans) => ans.teacher_score != null).length;
         const total = sub.total_score != null && autoScored === activeQuestions.length ? Number(sub.total_score) : null;
@@ -2284,7 +2331,7 @@ export default function LiffStudentPage() {
                               </span>
                               {!isClosed && (
                                 <span className="font-bold text-line shrink-0 flex items-center gap-0.5">
-                                  {isSubmitted ? 'ดูผล' : 'เริ่มทำ'}
+                                  {isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : 'ดูผล') : 'เริ่มทำ'}
                                   <ChevronRight className="w-3.5 h-3.5" />
                                 </span>
                               )}
@@ -2439,7 +2486,7 @@ export default function LiffStudentPage() {
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={() => {
-                if (submissionSuccess || confirm("ต้องการออกจากหน้าข้อสอบหรือไม่? (ข้อมูลที่ตอบไว้จะยังไม่ถูกส่ง)")) {
+                if (submissionSuccess || confirm(editingSubmission ? "ต้องการออกโดยไม่บันทึกการแก้ไขหรือไม่? (งานที่ส่งไว้เดิมยังอยู่)" : "ต้องการออกจากหน้าข้อสอบหรือไม่? (ข้อมูลที่ตอบไว้จะยังไม่ถูกส่ง)")) {
                   if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
                   setActiveAssignment(null);
                 }
@@ -2487,7 +2534,7 @@ export default function LiffStudentPage() {
                 <CheckCircle2 className="w-10 h-10" />
               </div>
               <div className="space-y-1.5">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">ส่งงานเรียบร้อยแล้ว!</h2>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">{editingSubmission ? "ส่งงานที่แก้ไขแล้ว!" : "ส่งงานเรียบร้อยแล้ว!"}</h2>
                 <p className="text-sm text-slate-500 max-w-xs mx-auto">
                   {isTrackingAway ? "ระบบบันทึกคำตอบและรายงานความซื่อสัตย์ส่งถึงคุณครูแล้ว" : "ระบบบันทึกงานของคุณและส่งถึงคุณครูแล้ว"}
                 </p>
@@ -2551,7 +2598,7 @@ export default function LiffStudentPage() {
                   </span>
                 </div>
                 <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white leading-snug">{activeAssignment.title}</h1>
-                {getAssignmentWindow(activeAssignment).isPastDeadline && (
+                {getAssignmentWindow(activeAssignment).isPastDeadline && !editingSubmission?.reopened_at && (
                   <div role="status" className="flex items-start gap-2 p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/50 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-700 dark:text-rose-300 text-xs font-bold">
                     <span aria-hidden>🔒</span>
                     <span>
@@ -2579,6 +2626,18 @@ export default function LiffStudentPage() {
                   </div>
                 )}
               </div>
+
+              {editingSubmission && (
+                <div role="status" className="flex items-start gap-3 p-3.5 rounded-2xl bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-200 dark:ring-violet-900 text-violet-900 dark:text-violet-200">
+                  <span className="w-9 h-9 rounded-xl bg-violet-100 dark:bg-violet-900/60 flex items-center justify-center shrink-0">
+                    <PencilLine className="w-4.5 h-4.5" />
+                  </span>
+                  <div className="min-w-0 text-xs leading-relaxed">
+                    <p className="text-sm font-bold">กำลังแก้ไขงานที่ส่งแล้ว</p>
+                    <p className="opacity-80">เปลี่ยนไฟล์หรือคำตอบที่ต้องการ แล้วกดส่งอีกครั้ง งานใหม่จะแทนที่งานเดิม{editingSubmission.reopened_at ? "" : " • แก้ไขได้จนกว่าคุณครูจะตรวจหรือปิดรับงาน"}</p>
+                  </div>
+                </div>
+              )}
 
               {!activeAssignment.is_exam && <ReferenceWork assignment={activeAssignment} />}
 
@@ -2776,7 +2835,7 @@ export default function LiffStudentPage() {
                   className="w-full h-14 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-base shadow-xl shadow-emerald-600/25 flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 cursor-pointer"
                 >
                   {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-                  <span>{isSubmitting ? "กำลังส่ง..." : activeQuestions.length > 0 ? `ส่งคำตอบ (${answeredCount}/${activeQuestions.length})` : "ยืนยันการส่งงาน"}</span>
+                  <span>{isSubmitting ? "กำลังส่ง..." : editingSubmission ? "ส่งงานที่แก้ไข" : activeQuestions.length > 0 ? `ส่งคำตอบ (${answeredCount}/${activeQuestions.length})` : "ยืนยันการส่งงาน"}</span>
                 </button>
               </div>
             </>
@@ -3168,9 +3227,35 @@ export default function LiffStudentPage() {
             })}
           </div>
 
+          {canEditWork(viewingGradedSub.assignment, viewingGradedSub.submission) ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => handleEditSubmission(viewingGradedSub.assignment, viewingGradedSub.submission, viewingGradedSub.answers)}
+                className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform"
+              >
+                <PencilLine className="w-4 h-4" />
+                แก้ไขงานที่ส่ง
+              </button>
+              <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
+                {viewingGradedSub.submission.reopened_at
+                  ? "คุณครูเปิดให้แก้ไขงานนี้ • ส่งใหม่แล้วคุณครูจะตรวจอีกครั้ง"
+                  : "แนบไฟล์ผิดหรือต้องการแก้คำตอบ? แก้ไขได้จนกว่าคุณครูจะตรวจหรือปิดรับงาน"}
+              </p>
+            </div>
+          ) : !viewingGradedSub.assignment.is_exam && viewingGradedSub.submission.status !== 'pending' ? (
+            <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
+              {teacherGradedIds.has(viewingGradedSub.submission.id) ? "คุณครูตรวจงานนี้แล้ว" : "ปิดรับงานแล้ว"} จึงแก้ไขไม่ได้ — หากต้องการแก้ไข ให้ติดต่อคุณครู
+            </p>
+          ) : null}
+
           <button
             onClick={() => setViewingGradedSub(null)}
-            className="w-full h-12 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+            className={`w-full h-12 rounded-2xl font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform ${
+              canEditWork(viewingGradedSub.assignment, viewingGradedSub.submission)
+                ? "ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200"
+                : "bg-slate-900 dark:bg-white text-white dark:text-slate-900"
+            }`}
           >
             ตกลง
           </button>

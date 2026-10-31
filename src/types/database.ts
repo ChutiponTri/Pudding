@@ -171,6 +171,8 @@ export interface Submission {
   submitted_by?: string | null;
   /** That classmate's name, attached for teachers. */
   submitted_by_name?: string;
+  /** Homework only: when the teacher let the student edit it again; cleared once they hand in. */
+  reopened_at?: string | null;
 }
 
 export interface TeacherGradeRecord {

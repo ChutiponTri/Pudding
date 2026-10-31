@@ -701,6 +701,11 @@ export const dataService = {
    * Records roster students who never handed in, so they can be graded (with
    * zero: an official 0 on every question). Returns the created submissions.
    */
+  /** Lets a student edit handed-in homework again (open), or takes that back. */
+  async setSubmissionReopened(submissionId: string, open: boolean): Promise<{ reopened_at: string | null }> {
+    return call<{ reopened_at: string | null }>('setSubmissionReopened', submissionId, open);
+  },
+
   async recordMissingSubmissions(assignmentId: string, rosterIds: string[], zero: boolean, teacherName: string): Promise<Submission[]> {
     return call<Submission[]>('recordMissingSubmissions', assignmentId, rosterIds, zero, teacherName);
   },

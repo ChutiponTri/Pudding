@@ -46,6 +46,7 @@ import {
   Calendar,
   Layers,
   Rocket,
+  PencilLine,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
@@ -422,6 +423,64 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const handleGradeMissing = async (row: RosterRow) => {
     const [created] = await recordMissing([row], false);
     if (created) handleOpenGrading({ ...created, student: (created.student || row.student) as User });
+  };
+
+  // Homework only: let one student edit handed-in work again (after grading or
+  // closing), e.g. a wrong file attached. Scores stay until they hand in again.
+  const [reopeningId, setReopeningId] = useState<string | null>(null);
+  const handleToggleReopen = async (sub: Submission) => {
+    const open = !sub.reopened_at;
+    const name = sub.student?.first_name || (th ? 'นักเรียน' : 'the student');
+    const message = open
+      ? th
+        ? `เปิดให้ ${name} แก้ไขงานที่ส่งแล้ว?
+นักเรียนแก้ไขได้แม้ปิดรับงานแล้ว เมื่อส่งใหม่ คะแนนและความเห็นเดิมจะถูกล้างเพื่อตรวจใหม่`
+        : `Let ${name} edit this work again?
+They can edit it even if closed. Handing in again clears the current score and comments for regrading.`
+      : th
+      ? `ยกเลิกการเปิดให้ ${name} แก้ไขงาน?`
+      : `Stop letting ${name} edit this work?`;
+    if (!confirm(message)) return;
+    setReopeningId(sub.id);
+    try {
+      const { reopened_at } = await dataService.setSubmissionReopened(sub.id, open);
+      setSubmissions((prev) => prev.map((s) => (s.id === sub.id ? { ...s, reopened_at } : s)));
+      showToast(open ? (th ? 'เปิดให้นักเรียนแก้ไขงานแล้ว' : 'The student can edit it now') : th ? 'ปิดการแก้ไขแล้ว' : 'Editing closed');
+      void refreshSubmissions();
+    } catch (err) {
+      alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
+    } finally {
+      setReopeningId(null);
+    }
+  };
+  const reopenControl = (sub: Submission) => {
+    if (assignment?.is_exam || !isHandedIn(sub) || !grader || grader.role === 'researcher') return null;
+    const busy = reopeningId === sub.id;
+    return sub.reopened_at ? (
+      <span className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 ring-1 ring-violet-200 dark:ring-violet-900 text-[11px] font-bold whitespace-nowrap">
+        <PencilLine className="w-3 h-3" />
+        {th ? 'เปิดให้แก้ไขอยู่' : 'Editing allowed'}
+        <button
+          type="button"
+          onClick={() => handleToggleReopen(sub)}
+          disabled={busy}
+          className="ml-0.5 px-1.5 py-0.5 rounded-full bg-white/80 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 text-[10px] cursor-pointer disabled:opacity-50"
+        >
+          {th ? 'ยกเลิก' : 'Undo'}
+        </button>
+      </span>
+    ) : (
+      <button
+        type="button"
+        onClick={() => handleToggleReopen(sub)}
+        disabled={busy}
+        title={th ? 'ให้นักเรียนแก้ไขงานที่ส่งแล้ว (เช่น แนบไฟล์ผิด)' : 'Let the student fix and hand in again'}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap text-slate-600 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-700 hover:text-violet-700 hover:ring-violet-300 dark:hover:text-violet-300 dark:hover:ring-violet-800 cursor-pointer disabled:opacity-50 transition-colors"
+      >
+        <PencilLine className="w-3 h-3" />
+        {th ? 'ให้แก้ไขงาน' : 'Allow edit'}
+      </button>
+    );
   };
 
   // Actions on a student with nothing handed in: grade by hand, or a quick 0.
@@ -1058,8 +1117,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         <span className="text-slate-400 font-mono">· {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}</span>
                       </div>
 
-                      {(tracksAway || sub.submitted_by) && (
+                      {(tracksAway || sub.submitted_by || reopenControl(sub)) && (
                         <div className="flex flex-wrap items-center gap-2">
+                          {reopenControl(sub)}
                           {tracksAway && (
                             <AntiCheatingBadge
                               isFlagged={sub.is_flagged_suspicious}
@@ -1218,7 +1278,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               totalTimeAwaySeconds={sub.total_time_away_seconds}
                             />
                           ) : (
-                            !sub.submitted_by && <span className="text-slate-400">-</span>
+                            reopenControl(sub) || (!sub.submitted_by && <span className="text-slate-400">-</span>)
                           )}
                           {sub.submitted_by && (
                             <span

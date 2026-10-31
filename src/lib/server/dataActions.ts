@@ -1410,6 +1410,33 @@ export const dataActions = {
   },
 
   /**
+   * Lets a student edit handed-in homework again (after it was graded or
+   * closed), or takes that back. Scores stay until the student hands in the
+   * edited work, which replaces them. Quizzes are never reopened.
+   */
+  async setSubmissionReopened({ supabase, actor }: Ctx, submissionId: string, open: boolean) {
+    const { classroom } = await requireTeacherOfSubmission(supabase, actor, submissionId);
+    const me = requireTeacher(actor);
+    const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
+    if (role === 'researcher') throw FORBIDDEN();
+    const { data: sub, error: readError } = await supabase.from('submissions').select('id, assignment_id, status').eq('id', submissionId).maybeSingle();
+    if (readError) throw toDatabaseError(readError, 'submissions');
+    if (!sub) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
+    const { data: assignment } = await supabase.from('assignments').select('id, is_exam').eq('id', sub.assignment_id).maybeSingle();
+    if (assignment?.is_exam) throw new HttpError(400, 'ข้อสอบส่งซ้ำหรือแก้ไขไม่ได้');
+    if (sub.status !== 'submitted' && sub.status !== 'late') throw new HttpError(400, 'นักเรียนยังไม่ได้ส่งงานนี้');
+    const reopenedAt = open ? new Date().toISOString() : null;
+    const { error } = await supabase.from('submissions').update({ reopened_at: reopenedAt }).eq('id', submissionId);
+    if (error) {
+      if (error.message.includes('reopened_at')) throw new HttpError(503, 'ฐานข้อมูลยังไม่รองรับการเปิดให้แก้ไขงาน — รัน supabase_submission_reopen_update.sql ใน Supabase SQL Editor');
+      throw toDatabaseError(error, 'submissions');
+    }
+    // The student's LIFF page reloads their work and shows the edit button.
+    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+    return { reopened_at: reopenedAt };
+  },
+
+  /**
    * Records work a student never handed in so the teacher can grade it, e.g. a
    * zero once submissions are closed. The row stays 'pending' (not handed in),
    * so the student may still hand in over it while the assignment accepts work.

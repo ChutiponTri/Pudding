@@ -7,7 +7,8 @@ import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { getActor } from '@/lib/auth/actor';
 import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
 import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
-import { attachFiles, discardDrafts } from '@/lib/storage/files';
+import { attachFiles, discardDrafts, keysFromUrls, removeFiles } from '@/lib/storage/files';
+import { isHandedIn, isTeacherGraded } from '@/lib/utils/gradingStatus';
 import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
 import type { Classroom, Question } from '@/types/database';
 
@@ -188,15 +189,13 @@ export async function POST(request: NextRequest) {
     if (assignmentWindow.isScheduled || assignmentWindow.isDraft) {
       return NextResponse.json({ error: 'งานนี้ยังไม่เปิดให้ส่ง' }, { status: 409 });
     }
-    if (assignmentWindow.isQuizClosed) {
-      return NextResponse.json({ error: `หมดเวลาทำข้อสอบ “${assignment.title}” แล้ว ไม่สามารถส่งคำตอบได้` }, { status: 409 });
-    }
-    if (assignmentWindow.isLateClosed) {
-      return NextResponse.json({ error: `หมดเวลาส่งงาน “${assignment.title}” แล้ว (รับงานส่งช้าได้ถึง ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง) — ติดต่อคุณครูหากต้องการขอขยายเวลา` }, { status: 409 });
-    }
-    if (!assignmentWindow.acceptsSubmissions) {
-      return NextResponse.json({ error: `คุณครูปิดรับ${assignment.is_exam ? 'ข้อสอบ' : 'งาน'} “${assignment.title}” แล้ว ไม่สามารถส่งได้` }, { status: 409 });
-    }
+    const closedError = assignmentWindow.isQuizClosed
+      ? `หมดเวลาทำข้อสอบ “${assignment.title}” แล้ว ไม่สามารถส่งคำตอบได้`
+      : assignmentWindow.isLateClosed
+      ? `หมดเวลาส่งงาน “${assignment.title}” แล้ว (รับงานส่งช้าได้ถึง ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง) — ติดต่อคุณครูหากต้องการขอขยายเวลา`
+      : !assignmentWindow.acceptsSubmissions
+      ? `คุณครูปิดรับ${assignment.is_exam ? 'ข้อสอบ' : 'งาน'} “${assignment.title}” แล้ว ไม่สามารถส่งได้`
+      : null;
 
     // Leaving the screen is tracked during quizzes only; homework may be done
     // alongside other apps (looking up references, taking photos).
@@ -221,9 +220,37 @@ export async function POST(request: NextRequest) {
       const { data } = await supabase.from('users').select('id').eq('id', student_id).maybeSingle();
       existingUser = data;
     }
-    if (existingUser?.id) {
-      targetUserDbId = existingUser.id;
-    } else {
+    if (existingUser?.id) targetUserDbId = existingUser.id;
+
+    // Reuse the existing row id on resubmission. submissions has a UNIQUE
+    // (assignment_id, student_id) constraint, so a new id for the same student
+    // (e.g. after editing their student number) would make the upsert fail.
+    // `*` so databases without reopened_at yet still work.
+    const { data: existingSubmission } = await supabase
+      .from('submissions')
+      .select('*')
+      .eq('assignment_id', assignment_id)
+      .eq('student_id', targetUserDbId)
+      .maybeSingle();
+    const { data: previousAnswers } = existingSubmission
+      ? await supabase.from('submission_answers').select('file_url, graded_at').eq('submission_id', existingSubmission.id)
+      : { data: [] as Array<{ file_url: string | null; graded_at: string | null }> };
+    // Handing in again replaces the answers and the teacher's scores. A quiz is
+    // never retaken; homework may be edited until it is graded or closes, or
+    // whenever the teacher reopened it for this student.
+    const isEdit = !!existingSubmission && isHandedIn(existingSubmission);
+    const reopened = isEdit && !!existingSubmission.reopened_at;
+    if (isEdit && assignment.is_exam) {
+      return NextResponse.json({ error: 'ส่งข้อสอบนี้ไปแล้ว ไม่สามารถส่งซ้ำได้' }, { status: 409 });
+    }
+    if (closedError && !reopened) {
+      return NextResponse.json({ error: isEdit ? `ปิดรับงาน “${assignment.title}” แล้ว จึงแก้ไขงานที่ส่งไม่ได้ — ติดต่อคุณครูหากต้องการแก้ไข` : closedError }, { status: 409 });
+    }
+    if (isEdit && !reopened && isTeacherGraded(existingSubmission, previousAnswers || [])) {
+      return NextResponse.json({ error: 'คุณครูตรวจงานนี้แล้ว จึงแก้ไขไม่ได้ — ติดต่อคุณครูหากต้องการแก้ไขงาน' }, { status: 409 });
+    }
+
+    if (!existingUser?.id) {
       // LIFF syncs the profile on login, so this only runs for legacy clients.
       const { error: userError } = await supabase.from('users').insert({
         id: targetUserDbId,
@@ -240,23 +267,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Reuse the existing row id on resubmission. submissions has a UNIQUE
-    // (assignment_id, student_id) constraint, so a new id for the same student
-    // (e.g. after editing their student number) would make the upsert fail.
-    const { data: existingSubmission } = await supabase
-      .from('submissions')
-      .select('id, status')
-      .eq('assignment_id', assignment_id)
-      .eq('student_id', targetUserDbId)
-      .maybeSingle();
-    // Handing in again would overwrite the answers and erase the teacher's
-    // scores, and would let a quiz be retaken; only an unfinished draft may be replaced.
-    if (existingSubmission && existingSubmission.status !== 'pending') {
-      return NextResponse.json(
-        { error: assignment.is_exam ? 'ส่งข้อสอบนี้ไปแล้ว ไม่สามารถส่งซ้ำได้' : 'ส่งงานนี้ไปแล้ว ไม่สามารถส่งซ้ำได้' },
-        { status: 409 }
-      );
-    }
     const subId = existingSubmission?.id || `sub-${assignment_id}-${targetUserDbId}`;
 
     const studentInfo = proxyStudent
@@ -346,9 +356,9 @@ export async function POST(request: NextRequest) {
       assignment_id,
       student_id: targetUserDbId,
       student: studentInfo,
-      // A quiz answer that arrives within the grace period counts as on time.
       // Quiz sheets that arrive in the hidden grace after the bell are late too (only teachers see it).
-      status: assignmentWindow.isPastDeadline ? 'late' : 'submitted',
+      // Work the teacher reopened keeps its original on-time / late mark.
+      status: reopened ? existingSubmission.status : assignmentWindow.isPastDeadline ? 'late' : 'submitted',
       started_at: new Date(submittedAt.getTime() - (awaySeconds * 1000 + 120000)).toISOString(),
       submitted_at: submittedAt.toISOString(),
       time_spent_seconds: 120 + awaySeconds,
@@ -377,6 +387,8 @@ export async function POST(request: NextRequest) {
         max_total_score: assignmentMaxScore,
         // Only borrowed-phone work names a sender, so databases without the column are unaffected otherwise.
         ...(submissionRecord.submitted_by ? { submitted_by: submissionRecord.submitted_by } : {}),
+        // Handing in ends a reopen (only touched where the column exists).
+        ...(existingSubmission && 'reopened_at' in existingSubmission ? { reopened_at: null } : {}),
       };
       let { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
       // Databases without submissions.submitted_by yet still save the work.
@@ -388,9 +400,9 @@ export async function POST(request: NextRequest) {
       if (subErr) throw subErr;
       console.log('[POST /api/submissions] Supabase submissions upsert succeeded:', subId);
 
-      // Replacing a row the teacher recorded as not handed in (e.g. a zero):
-      // the real work is graded afresh, without that earlier score.
-      if (existingSubmission?.status === 'pending') {
+      // Replacing a row the teacher recorded as not handed in (e.g. a zero), or
+      // edited homework: the new work is graded afresh, without earlier scores or comments.
+      if (existingSubmission) {
         const { error: clearError } = await supabase.from('submission_answers').delete().eq('submission_id', subId);
         if (clearError) throw clearError;
       }
@@ -440,6 +452,9 @@ export async function POST(request: NextRequest) {
     // this phone's other uploads for the same student (own work, or this classmate's) were replaced or abandoned.
     const fileUrls = scoredAnswers.map((ans) => ans.file_url);
     await attachFiles(supabase, fileUrls, assignment_id, actor.keys);
+    // Edited homework: files from the earlier version that are no longer used go too.
+    const droppedKeys = keysFromUrls((previousAnswers || []).map((ans) => ans.file_url).filter((url) => !fileUrls.includes(url)));
+    if (droppedKeys.length) after(() => removeFiles(supabase, droppedKeys));
     after(() => discardDrafts(supabase, assignment_id, actor.keys, fileUrls, proxyStudent ? onBehalfTag(proxy_student_number) : ''));
     // Teacher pages with this classroom open refresh their counts now instead of polling.
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id }));

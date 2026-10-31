@@ -18,6 +18,26 @@ export const isScoredMissing = (sub: SubmissionScore) => !isHandedIn(sub) && isG
 /** Still outstanding: nothing handed in and nothing scored by the teacher. */
 export const isMissing = (sub: SubmissionScore | null | undefined) => !sub || (!isHandedIn(sub) && !isGraded(sub));
 
+/** A teacher has scored it: a total, or an official score on any answer (auto-scored choices have no graded_at). */
+export const isTeacherGraded = (
+  sub: Pick<Submission, 'total_score'>,
+  answers: Array<{ graded_at?: string | null }> = []
+) => isGraded(sub) || answers.some((a) => !!a.graded_at);
+
+/**
+ * Whether the student may still change handed-in work. Quizzes: never.
+ * Homework: while it still accepts work and no teacher has graded it, or at
+ * any time once the teacher reopened it for them.
+ */
+export function canEditSubmission(
+  sub: Pick<Submission, 'status' | 'total_score' | 'reopened_at'>,
+  isExam: boolean | undefined,
+  { acceptsSubmissions, teacherGraded }: { acceptsSubmissions: boolean; teacherGraded: boolean }
+): boolean {
+  if (isExam || !isHandedIn(sub)) return false;
+  return !!sub.reopened_at || (acceptsSubmissions && !teacherGraded);
+}
+
 type IntegrityFields = Pick<Submission, 'status' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'>;
 
 /**
