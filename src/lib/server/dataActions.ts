@@ -11,6 +11,7 @@ import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/
 import { THAI_INSTITUTIONS, canonicalInstitution, sameInstitution } from '@/lib/data/thaiInstitutions';
 import { pushTeacherProfileToClerk, readClerkTeacherProfile } from '@/lib/server/clerkTeacherProfile';
 import { TEACHER_NAME_PLACEHOLDER, isTeacherProfileComplete } from '@/lib/utils/teacherProfile';
+import { rememberTeacherProfile } from '@/lib/server/teacherProfileGuard';
 import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
 import {
   classroomForStudent,
@@ -431,6 +432,7 @@ export const dataActions = {
     if (!isTeacherProfileComplete({ first_name: fn, last_name: ln, institution: inst })) return false;
     const { error } = await supabase.from('users').update({ first_name: fn, last_name: ln, institution: inst, updated_at: new Date().toISOString() }).eq('id', me.userId);
     if (error) throw toDatabaseError(error, 'users');
+    rememberTeacherProfile(me.userId, true);
     registeredInstitutionsCache = null;
     // Mirror to Clerk so the Clerk dashboard shows the same name and institution.
     await pushTeacherProfileToClerk(me.userId, { first_name: fn, last_name: ln, institution: inst! });
@@ -481,6 +483,8 @@ export const dataActions = {
     if (error && error.message.includes('clerk_id')) ({ data, error } = await supabase.from('users').upsert(record).select().single());
     if (error) throw toDatabaseError(error, 'users');
     const saved = data as User;
+    // Requests on this instance see the new state at once (other instances within the guard's 60 s).
+    rememberTeacherProfile(me.userId, isTeacherProfileComplete(saved));
     // A complete profile Clerk does not have yet (saved before Clerk sync existed): copy it over.
     if (clerkProfile && !clerkProfile.synced && isTeacherProfileComplete(saved)) {
       after(() => pushTeacherProfileToClerk(me.userId, { first_name: saved.first_name, last_name: saved.last_name || '', institution: saved.institution || '' }));

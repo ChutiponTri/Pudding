@@ -1,4 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
+import { hasCompleteTeacherProfile } from '@/lib/server/teacherProfileGuard';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
@@ -13,7 +14,8 @@ const CONNECT_INTENT_TTL_MS = 15 * 60 * 1000;
 
 async function getOwnedClassroom(classroomId: string) {
   const { userId } = await auth();
-  if (!userId) return { userId: null, classroom: null };
+  // A teacher who still has to fill in their profile is treated as signed out here.
+  if (!userId || !(await hasCompleteTeacherProfile(userId))) return { userId: null, classroom: null };
   const supabase = createServiceSupabaseClient();
   const { data: classroom } = await supabase
     .from('classrooms')

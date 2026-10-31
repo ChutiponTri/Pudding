@@ -1,4 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
+import { hasCompleteTeacherProfile, profileIncompleteResponse } from '@/lib/server/teacherProfileGuard';
 import { NextResponse } from 'next/server';
 import { syncTeacherLineIdentity } from '@/lib/line/teacherIdentity';
 
@@ -12,6 +13,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!(await hasCompleteTeacherProfile(userId))) return profileIncompleteResponse();
 
   try {
     const identity = await syncTeacherLineIdentity(userId);

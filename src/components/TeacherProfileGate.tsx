@@ -220,7 +220,9 @@ export function TeacherProfileGate() {
       // The server already updated Clerk; refresh this browser's copy (navbar name, greeting).
       await user.reload().catch(() => undefined);
       announceTeacherProfile({ id: user.id, role: 'teacher', ...profile } as User);
-      setRequired(false);
+      // While the profile was incomplete the server refused this page's other
+      // requests; load the page again now that they are allowed.
+      window.location.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : tr('บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง', 'Save failed, please try again'));
     } finally {

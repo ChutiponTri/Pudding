@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getActor } from '@/lib/auth/actor';
 import { errorResponse, HttpError } from '@/lib/server/access';
 import { createDataContext, dataActions, type DataActionName } from '@/lib/server/dataActions';
+import { requireCompleteTeacherProfile } from '@/lib/server/teacherProfileGuard';
+
+/** What a teacher may call before their first name, last name and institution are filled in. */
+const PROFILE_SETUP_ACTIONS = new Set<string>(['syncClerkUser', 'updateTeacherProfile']);
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,7 +24,9 @@ export async function POST(request: NextRequest) {
     if (typeof action !== 'string' || !Object.prototype.hasOwnProperty.call(dataActions, action)) {
       throw new HttpError(400, 'Unknown action');
     }
-    const ctx = createDataContext(await getActor(request));
+    const actor = await getActor(request, { allowIncompleteProfile: true });
+    if (actor?.kind === 'teacher' && !PROFILE_SETUP_ACTIONS.has(action)) await requireCompleteTeacherProfile(actor.userId);
+    const ctx = createDataContext(actor);
     const handler = dataActions[action] as (c: typeof ctx, ...a: unknown[]) => Promise<unknown>;
     const result = await handler(ctx, ...args);
     return NextResponse.json({ result: result ?? null });

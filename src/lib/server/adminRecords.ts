@@ -4,6 +4,8 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { assignmentFileKeys, removeFiles } from '@/lib/storage/files';
 import { ADMIN_TABLES, type AdminTable } from '@/lib/server/admin';
+import { rememberTeacherProfile } from '@/lib/server/teacherProfileGuard';
+import { isTeacherProfileComplete } from '@/lib/utils/teacherProfile';
 
 type Supabase = ReturnType<typeof createServiceSupabaseClient>;
 // Rows of arbitrary tables; columns differ per table.
@@ -166,6 +168,8 @@ export async function updateRecord(supabase: Supabase, table: AdminTable, id: st
   if ('updated_at' in current && !('updated_at' in patch)) patch.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from(table).update(patch).eq(primaryKeyOf(table), id).select('*').maybeSingle();
   if (error) throw new Error(error.message);
+  // A teacher's name/institution cleared here blocks their requests at once on this instance.
+  if (table === 'users') rememberTeacherProfile(id, isTeacherProfileComplete(data as Row | null));
   const classroomId = table === 'classrooms' ? id : (data as Row | null)?.classroom_id;
   // Open teacher and student pages pick the change up.
   if (classroomId) after(() => signalClassroom(classroomId, { type: 'timeline' }));
@@ -194,6 +198,7 @@ export async function deleteRecord(supabase: Supabase, table: AdminTable, id: st
   }
   const { error } = await supabase.from(table).delete().eq(primaryKeyOf(table), id);
   if (error) throw new Error(error.message);
+  if (table === 'users') rememberTeacherProfile(id, false);
   if (fileKeys.length) after(() => removeFiles(supabase, fileKeys));
   const classroomId = table === 'classrooms' ? null : current.classroom_id;
   if (classroomId) after(() => signalClassroom(classroomId, { type: 'timeline' }));
