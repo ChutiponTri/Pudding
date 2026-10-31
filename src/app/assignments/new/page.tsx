@@ -57,6 +57,16 @@ interface QuestionDraft {
   is_required: boolean;
 }
 
+/** Phones get the short text (small screens, little room); from sm up the full one, unchanged. */
+function MobileText({ short, full }: { short: React.ReactNode; full: React.ReactNode }) {
+  return (
+    <>
+      <span className="sm:hidden">{short}</span>
+      <span className="hidden sm:inline">{full}</span>
+    </>
+  );
+}
+
 /** What the chosen mode means, shown next to (desktop) or under (mobile) the mode toggle. */
 function ModeHint({ isExam, language }: { isExam: boolean; language: string }) {
   return isExam ? (
@@ -303,7 +313,7 @@ function NewAssignmentContent() {
                 : ['', '', '', ''],
               ideal_answer: q.ideal_answer || '',
               rubric_criteria: q.rubric_criteria || '',
-              max_score: Number(q.max_score) || 5,
+              max_score: Number(q.max_score) || defaultMaxScore(q.type),
               is_required: q.is_required !== false,
             })));
           }
@@ -438,6 +448,16 @@ function NewAssignmentContent() {
     }, QUESTION_EXIT_MS);
   };
 
+  // A score still at the old type's default follows the new type (e.g. 1 → 10 for
+  // file upload); a score the teacher typed stays.
+  const handleQuestionTypeChange = (index: number, type: QuestionType) => {
+    setQuestions((prev) =>
+      prev.map((q, i) =>
+        i !== index ? q : { ...q, type, max_score: Number(q.max_score) === defaultMaxScore(q.type) ? defaultMaxScore(type) : q.max_score }
+      )
+    );
+  };
+
   const handleQuestionChange = (
     index: number,
     field: keyof QuestionDraft,
@@ -559,7 +579,7 @@ function NewAssignmentContent() {
           : q.ideal_answer,
         // Choice and true/false are scored from the key alone.
         rubric_criteria: q.type === 'multiple_choice' || q.type === 'true_false' ? '' : q.rubric_criteria,
-        max_score: Number(q.max_score) || 5,
+        max_score: Number(q.max_score) || defaultMaxScore(q.type),
         is_required: isExam ? true : q.is_required,
       }));
       // Upload the reference file first: if it fails, nothing is saved and the
@@ -718,26 +738,36 @@ function NewAssignmentContent() {
           className="inline-flex items-center gap-2 max-w-full px-3.5 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span className="truncate">{returnTo ? 'กลับไปหน้าตรวจงาน' : isFromDashboard ? 'กลับสู่แดชบอร์ด (Dashboard)' : 'กลับไปหน้าห้องเรียน (งานและเนื้อหา)'}</span>
+          <span className="truncate">
+            <MobileText
+              short={returnTo ? 'กลับไปตรวจงาน' : isFromDashboard ? 'กลับแดชบอร์ด' : 'กลับไปห้องเรียน'}
+              full={returnTo ? 'กลับไปหน้าตรวจงาน' : isFromDashboard ? 'กลับสู่แดชบอร์ด (Dashboard)' : 'กลับไปหน้าห้องเรียน (งานและเนื้อหา)'}
+            />
+          </span>
         </button>
       </div>
 
       {/* Page Header */}
       <div>
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-xs font-bold mb-2">
+        <div className="hidden sm:inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-xs font-bold mb-2">
           <span>{isExam ? '🛡️ ' + t('assignment_creator.mode_exam') : '📚 ' + t('assignment_creator.mode_assignment')}</span>
         </div>
-        <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+        <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
           {editId ? (language === 'th' ? 'แก้ไขงาน / ข้อสอบ' : 'Edit assignment / quiz') : t('assignment_creator.title')}
         </h1>
         {editingAssignment && editSubmissionCount > 0 && (
           <p role="status" className="mt-3 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-xs font-semibold text-amber-900 dark:text-amber-200">
-            {language === 'th'
-              ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — แก้ไขได้ทุกส่วน แต่ถ้าลบคำถาม คำตอบของข้อนั้นจะหายไป และคะแนนที่ตรวจแล้วจะไม่คำนวณใหม่`
-              : `${editSubmissionCount} students have submitted. Removing a question deletes its answers, and existing scores are not recalculated.`}
+            <MobileText
+              short={language === 'th'
+                ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — ลบคำถามแล้วคำตอบข้อนั้นจะหายไป`
+                : `${editSubmissionCount} submitted — removing a question deletes its answers.`}
+              full={language === 'th'
+                ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — แก้ไขได้ทุกส่วน แต่ถ้าลบคำถาม คำตอบของข้อนั้นจะหายไป และคะแนนที่ตรวจแล้วจะไม่คำนวณใหม่`
+                : `${editSubmissionCount} students have submitted. Removing a question deletes its answers, and existing scores are not recalculated.`}
+            />
           </p>
         )}
-        <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
+        <p className="hidden sm:block text-slate-500 dark:text-slate-400 text-sm mt-1">
           {t('assignment_creator.subtitle')}
         </p>
       </div>
@@ -762,8 +792,8 @@ function NewAssignmentContent() {
               />
             )}
             {([
-              { exam: false, icon: BookOpen, label: t('assignment_creator.mode_assignment'), pill: 'bg-emerald-600' },
-              { exam: true, icon: ShieldAlert, label: t('assignment_creator.mode_exam'), pill: 'bg-purple-600' },
+              { exam: false, icon: BookOpen, short: language === 'th' ? 'การบ้าน' : 'Assignment', label: t('assignment_creator.mode_assignment'), pill: 'bg-emerald-600' },
+              { exam: true, icon: ShieldAlert, short: language === 'th' ? 'ข้อสอบ' : 'Quiz', label: t('assignment_creator.mode_exam'), pill: 'bg-purple-600' },
             ] as const).map((option) => {
               const Icon = option.icon;
               const selected = isExam === option.exam;
@@ -782,7 +812,9 @@ function NewAssignmentContent() {
                   }`}
                 >
                   <Icon className={`w-3.5 h-3.5 shrink-0 transition-transform duration-300 ${selected ? 'scale-110' : ''}`} />
-                  <span>{option.label}</span>
+                  <span>
+                    <MobileText short={option.short} full={option.label} />
+                  </span>
                 </button>
               );
             })}
@@ -792,7 +824,7 @@ function NewAssignmentContent() {
             <ModeHint isExam={isExam} language={language} />
           </span>
         </div>
-        <div key={`hint-${isExam}`} className="lg:hidden -mt-5 animate-in fade-in slide-in-from-top-1">
+        <div key={`hint-${isExam}`} className="hidden sm:block lg:hidden -mt-5 animate-in fade-in slide-in-from-top-1">
           <ModeHint isExam={isExam} language={language} />
         </div>
 
@@ -807,7 +839,7 @@ function NewAssignmentContent() {
             {/* Parent Course Selector */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                {t('assignment_creator.fields.parent_course')} *
+                <MobileText short={language === 'th' ? 'รายวิชา' : 'Course'} full={t('assignment_creator.fields.parent_course')} /> *
               </label>
               <select
                 value={selectedCourseId}
@@ -826,10 +858,10 @@ function NewAssignmentContent() {
             {/* Target Classrooms / Sections Multi-select */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                {t('assignment_creator.fields.classroom_label')} *
+                <MobileText short={language === 'th' ? 'ห้องเรียน' : 'Classrooms'} full={t('assignment_creator.fields.classroom_label')} /> *
               </label>
               {editingAssignment && (
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                <p className="hidden sm:block text-[11px] text-slate-500 dark:text-slate-400">
                   {language === 'th' ? 'งานที่สร้างแล้วย้ายห้องไม่ได้ (แก้ไขเฉพาะห้องนี้)' : 'Saved work stays in its classroom.'}
                 </p>
               )}
@@ -877,7 +909,7 @@ function NewAssignmentContent() {
                 type="text"
                 value={groupName}
                 onChange={(e) => setGroupName(e.target.value)}
-                placeholder={existingGroups.length ? 'เลือกหมวดหมู่ด้านล่าง หรือพิมพ์ชื่อหมวดหมู่ใหม่' : isExam ? 'เช่น สอบกลางภาค' : 'เช่น ใบงานบทที่ 1'}
+                placeholder={existingGroups.length ? 'เลือกด้านล่าง หรือพิมพ์ชื่อใหม่' : isExam ? 'เช่น สอบกลางภาค' : 'เช่น ใบงานบทที่ 1'}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500"
               />
               {existingGroups.length > 0 && (
@@ -926,7 +958,7 @@ function NewAssignmentContent() {
             <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Send className="w-3.5 h-3.5 text-amber-500" />
-                <span>{language === 'th' ? 'เวลาเผยแพร่ให้นักเรียน' : 'Release to students'}</span>
+                <span><MobileText short={language === 'th' ? 'การเผยแพร่' : 'Release'} full={language === 'th' ? 'เวลาเผยแพร่ให้นักเรียน' : 'Release to students'} /></span>
               </label>
               {editIsPublished ? (
                 <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -935,7 +967,7 @@ function NewAssignmentContent() {
                 </p>
               ) : (
               <>
-              <div ref={trackReleaseToggle} className="relative grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup">
+              <div ref={trackReleaseToggle} className="relative grid grid-cols-3 gap-2" role="radiogroup">
                 {/* Highlight slides to the chosen option (down the stack on phones, across on wider screens). */}
                 {releaseIndicator && (
                   <span
@@ -951,6 +983,7 @@ function NewAssignmentContent() {
                     value: 'draft',
                     icon: FilePen,
                     label: language === 'th' ? 'บันทึกฉบับร่าง' : 'Save as draft',
+                    short: language === 'th' ? 'ฉบับร่าง' : 'Draft',
                     hint: language === 'th' ? 'ยังไม่เผยแพร่ คุณครูกดเผยแพร่เองภายหลัง' : 'Not released; you publish it later',
                     text: 'text-white dark:text-slate-900',
                   },
@@ -958,6 +991,7 @@ function NewAssignmentContent() {
                     value: 'schedule',
                     icon: Clock,
                     label: language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule',
+                    short: language === 'th' ? 'ตั้งเวลา' : 'Schedule',
                     hint: language === 'th' ? 'เผยแพร่เองเมื่อถึงเวลาที่เลือก' : 'Released automatically at a set time',
                     text: 'text-slate-950',
                   },
@@ -965,6 +999,7 @@ function NewAssignmentContent() {
                     value: 'now',
                     icon: Send,
                     label: language === 'th' ? 'เผยแพร่ทันที' : 'Publish now',
+                    short: language === 'th' ? 'ทันที' : 'Now',
                     hint: language === 'th' ? 'นักเรียนเห็นและแจ้งเข้า LINE ทันที' : 'Students see it now; LINE is notified',
                     text: 'text-slate-950',
                   },
@@ -979,16 +1014,18 @@ function NewAssignmentContent() {
                       aria-checked={isSelected}
                       data-active={isSelected}
                       onClick={() => setReleaseMode(option.value)}
-                      className={`relative px-3 py-2.5 rounded-xl border transition-colors duration-300 cursor-pointer text-left flex items-start gap-2 ${
+                      className={`relative min-w-0 px-1.5 sm:px-3 py-2.5 rounded-xl border transition-colors duration-300 cursor-pointer text-center sm:text-left flex flex-col sm:flex-row items-center sm:items-start gap-1 sm:gap-2 ${
                         isSelected
                           ? `border-transparent ${option.text} ${releaseIndicator ? '' : RELEASE_PILL[option.value]}`
                           : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-amber-400'
                       } ${option.value === 'draft' && !isSelected ? 'border-dashed' : ''}`}
                     >
-                      <Icon className={`w-4 h-4 mt-0.5 shrink-0 transition-transform duration-300 ${isSelected ? 'scale-110' : ''}`} />
-                      <span className="min-w-0">
-                        <span className="block text-xs font-bold">{option.label}</span>
-                        <span className={`block text-[10px] leading-snug mt-0.5 transition-colors duration-300 ${isSelected ? 'opacity-85' : 'text-slate-400 dark:text-slate-500'}`}>{option.hint}</span>
+                      <Icon className={`w-4 h-4 sm:mt-0.5 shrink-0 transition-transform duration-300 ${isSelected ? 'scale-110' : ''}`} />
+                      <span className="min-w-0 max-w-full">
+                        <span className="block text-xs font-bold truncate sm:whitespace-normal">
+                          <MobileText short={option.short} full={option.label} />
+                        </span>
+                        <span className={`hidden sm:block text-[10px] leading-snug mt-0.5 transition-colors duration-300 ${isSelected ? 'opacity-85' : 'text-slate-400 dark:text-slate-500'}`}>{option.hint}</span>
                       </span>
                     </button>
                   );
@@ -1001,9 +1038,12 @@ function NewAssignmentContent() {
                 <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-2">
                   <DateTimeField value={publishAt} onChange={setPublishAt} presets="start" />
                   <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
-                    {language === 'th'
-                      ? 'ก่อนถึงเวลานี้ นักเรียนจะยังไม่เห็นงานและส่งไม่ได้ เมื่อถึงเวลา งานจะขึ้นในไทม์ไลน์และแจ้งเข้า LINE group อัตโนมัติ'
-                      : 'Students cannot see or submit before this time. At this time it appears on the timeline and is announced in the LINE group.'}
+                    <MobileText
+                      short={language === 'th' ? 'นักเรียนเห็นงานและได้แจ้งเตือน LINE เมื่อถึงเวลานี้' : 'Students see it (and LINE is notified) at this time.'}
+                      full={language === 'th'
+                        ? 'ก่อนถึงเวลานี้ นักเรียนจะยังไม่เห็นงานและส่งไม่ได้ เมื่อถึงเวลา งานจะขึ้นในไทม์ไลน์และแจ้งเข้า LINE group อัตโนมัติ'
+                        : 'Students cannot see or submit before this time. At this time it appears on the timeline and is announced in the LINE group.'}
+                    />
                   </p>
                 </div>
                 </div>
@@ -1014,9 +1054,12 @@ function NewAssignmentContent() {
                   <p className="flex items-start gap-1.5">
                     <FilePen className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-500" />
                     <span>
-                      {language === 'th'
-                        ? 'นักเรียนจะยังไม่เห็นงานนี้และไม่มีการแจ้งเข้า LINE จนกว่าคุณครูจะกด "เผยแพร่ตอนนี้" ในหน้างานของห้องเรียน (หรือกลับมาแก้ไขแล้วเลือก "เผยแพร่ทันที")'
-                        : 'Students won\'t see it and nothing is sent to LINE until you press "Publish now" in the classwork list (or edit it and choose "Publish now").'}
+                      <MobileText
+                        short={language === 'th' ? 'นักเรียนยังไม่เห็นงาน จนกว่าคุณครูจะกดเผยแพร่' : 'Hidden from students until you publish it.'}
+                        full={language === 'th'
+                          ? 'นักเรียนจะยังไม่เห็นงานนี้และไม่มีการแจ้งเข้า LINE จนกว่าคุณครูจะกด "เผยแพร่ตอนนี้" ในหน้างานของห้องเรียน (หรือกลับมาแก้ไขแล้วเลือก "เผยแพร่ทันที")'
+                          : 'Students won\'t see it and nothing is sent to LINE until you press "Publish now" in the classwork list (or edit it and choose "Publish now").'}
+                      />
                     </span>
                   </p>
                   <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400 font-bold">
@@ -1029,9 +1072,14 @@ function NewAssignmentContent() {
                             ? `ฉบับร่างนี้จะถูกลบอัตโนมัติ ${formatDateTime(expires, language)} หากยังไม่เผยแพร่`
                             : `This draft is deleted automatically on ${formatDateTime(expires, language)} unless published.`;
                         }
-                        return language === 'th'
-                          ? `ฉบับร่างที่ไม่ได้เผยแพร่ภายใน ${DRAFT_RETENTION_DAYS} วันจะถูกลบอัตโนมัติ`
-                          : `Drafts not published within ${DRAFT_RETENTION_DAYS} days are deleted automatically.`;
+                        return (
+                          <MobileText
+                            short={language === 'th' ? `ลบอัตโนมัติหากไม่เผยแพร่ใน ${DRAFT_RETENTION_DAYS} วัน` : `Deleted if not published in ${DRAFT_RETENTION_DAYS} days.`}
+                            full={language === 'th'
+                              ? `ฉบับร่างที่ไม่ได้เผยแพร่ภายใน ${DRAFT_RETENTION_DAYS} วันจะถูกลบอัตโนมัติ`
+                              : `Drafts not published within ${DRAFT_RETENTION_DAYS} days are deleted automatically.`}
+                          />
+                        );
                       })()}
                     </span>
                   </p>
@@ -1047,17 +1095,22 @@ function NewAssignmentContent() {
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5 text-amber-500" />
-                <span>{t('assignment_creator.fields.due_date_label')}</span>
+                <span><MobileText short={language === 'th' ? 'กำหนดส่ง' : 'Due'} full={t('assignment_creator.fields.due_date_label')} /></span>
               </label>
               <DateTimeField value={dueDate} onChange={setDueDate} presets="deadline" />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {isExam
-                  ? (language === 'th'
-                    ? `ข้อสอบปิดรับเมื่อถึงเวลานี้ — นักเรียนที่เปิดข้อสอบค้างไว้ยังส่งได้อีก ${QUIZ_LATE_GRACE_MINUTES} นาที (บันทึกว่าส่งช้า) โดยนักเรียนจะไม่เห็นข้อนี้`
-                    : `The quiz closes at this time. Sheets already open may still arrive for ${QUIZ_LATE_GRACE_MINUTES} min (marked late); students are not told.`)
-                  : (language === 'th'
-                    ? `ส่งหลังเวลานี้ได้อีก ${LATE_WINDOW_HOURS} ชม. (บันทึกว่า "ส่งช้า") แล้วปิดรับเอง — ขยายเวลาหรือปิดรับเองได้ภายหลัง`
-                    : `Late work is accepted for ${LATE_WINDOW_HOURS}h after this time (marked late), then it closes. You can extend or close it later.`)}
+                <MobileText
+                  short={isExam
+                    ? (language === 'th' ? 'ปิดรับข้อสอบเมื่อถึงเวลานี้' : 'The quiz closes at this time.')
+                    : (language === 'th' ? `ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง` : `Late work accepted for ${LATE_WINDOW_HOURS}h.`)}
+                  full={isExam
+                    ? (language === 'th'
+                      ? `ข้อสอบปิดรับเมื่อถึงเวลานี้ — นักเรียนที่เปิดข้อสอบค้างไว้ยังส่งได้อีก ${QUIZ_LATE_GRACE_MINUTES} นาที (บันทึกว่าส่งช้า) โดยนักเรียนจะไม่เห็นข้อนี้`
+                      : `The quiz closes at this time. Sheets already open may still arrive for ${QUIZ_LATE_GRACE_MINUTES} min (marked late); students are not told.`)
+                    : (language === 'th'
+                      ? `ส่งหลังเวลานี้ได้อีก ${LATE_WINDOW_HOURS} ชม. (บันทึกว่า "ส่งช้า") แล้วปิดรับเอง — ขยายเวลาหรือปิดรับเองได้ภายหลัง`
+                      : `Late work is accepted for ${LATE_WINDOW_HOURS}h after this time (marked late), then it closes. You can extend or close it later.`)}
+                />
               </p>
             </div>
 
@@ -1066,13 +1119,16 @@ function NewAssignmentContent() {
             <div className="space-y-2 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-emerald-500" />
-                <span>{t('assignment_creator.fields.line_reminder_label')}</span>
+                <span><MobileText short={language === 'th' ? 'แจ้งเตือนทาง LINE' : 'LINE reminder'} full={t('assignment_creator.fields.line_reminder_label')} /></span>
               </label>
               {selectedClassroomsLineReady && reminderOptions.length === 0 ? (
                 <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300">
-                  {language === 'th'
-                    ? 'เหลือเวลาก่อนกำหนดส่งไม่ถึง 30 นาที จึงไม่สามารถตั้งเวลาเตือนได้'
-                    : 'Less than 30 minutes until the due date, so no reminder can be scheduled.'}
+                  <MobileText
+                    short={language === 'th' ? 'ใกล้กำหนดส่งเกินไป ตั้งเตือนไม่ได้' : 'Too close to the due date for a reminder.'}
+                    full={language === 'th'
+                      ? 'เหลือเวลาก่อนกำหนดส่งไม่ถึง 30 นาที จึงไม่สามารถตั้งเวลาเตือนได้'
+                      : 'Less than 30 minutes until the due date, so no reminder can be scheduled.'}
+                  />
                 </div>
               ) : selectedClassroomsLineReady ? (
                 <div className="relative max-w-md">
@@ -1095,13 +1151,13 @@ function NewAssignmentContent() {
                 </div>
               ) : (
                 <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
-                  <p>ห้องเรียนที่เลือกยังไม่ได้เชื่อมต่อ LINE Bot จึงยังตั้งเวลาทวงงานไม่ได้</p>
+                  <p><MobileText short="ห้องนี้ยังไม่ได้เชื่อม LINE Bot" full="ห้องเรียนที่เลือกยังไม่ได้เชื่อมต่อ LINE Bot จึงยังตั้งเวลาทวงงานไม่ได้" /></p>
                   <button type="button" onClick={() => router.push('/dashboard')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold">
                     ไปเชื่อมต่อ LINE Bot <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )}
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              <p className="hidden sm:block text-[11px] text-slate-500 dark:text-slate-400">
                 {selectedClassroomsLineReady
                   ? effectiveReminderOffsets.length
                     ? 'เตือน 1 ครั้งตามเวลาที่เลือก — ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน'
@@ -1128,14 +1184,14 @@ function NewAssignmentContent() {
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                     {t('assignment_creator.sample_work.title')}
                   </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                  <p className="hidden sm:block text-xs text-slate-500 dark:text-slate-400">
                     {t('assignment_creator.sample_work.subtitle')}
                   </p>
                 </div>
               </div>
               <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl sm:rounded-full leading-relaxed bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                 <span className="sm:hidden">
-                  {language === 'th' ? 'โหมดการบ้าน: สามารถแนบตัวอย่างและแนวทางการตอบ' : 'Assignment mode: sample work and guidelines can be attached'}
+                  {language === 'th' ? 'แนบไฟล์ ลิงก์ หรือคำแนะนำให้นักเรียนดูได้' : 'Attach a file, link or tips for students'}
                 </span>
                 <span className="hidden sm:inline">{language === 'th' ? 'เปิดใช้งานสำหรับโหมดการบ้าน' : 'Active for Assignment'}</span>
               </span>
@@ -1158,7 +1214,7 @@ function NewAssignmentContent() {
               <div className="space-y-1.5 md:col-span-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {t('assignment_creator.sample_work.work_url_label')} (หรือแนบไฟล์ไว้ชั่วคราว)
+                    <MobileText short={language === 'th' ? 'ลิงก์หรือไฟล์ตัวอย่าง' : 'Link or file'} full={<>{t('assignment_creator.sample_work.work_url_label')} (หรือแนบไฟล์ไว้ชั่วคราว)</>} />
                   </label>
                   {(sampleWorkPreviewUrl || sampleWorkUrl) && (
                     <a
@@ -1168,7 +1224,7 @@ function NewAssignmentContent() {
                       className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
                     >
                       <ExternalLink className="w-3 h-3" />
-                      <span>เปิดดูไฟล์ตัวอย่าง</span>
+                      <span><MobileText short="เปิดดู" full="เปิดดูไฟล์ตัวอย่าง" /></span>
                     </a>
                   )}
                 </div>
@@ -1217,7 +1273,7 @@ function NewAssignmentContent() {
                   <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 font-medium truncate">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>แนบไฟล์ไว้ชั่วคราว — จะอัปโหลดหลังกดบันทึกงาน</span>
+                      <span className="truncate"><MobileText short="แนบไฟล์แล้ว (อัปโหลดตอนบันทึก)" full="แนบไฟล์ไว้ชั่วคราว — จะอัปโหลดหลังกดบันทึกงาน" /></span>
                     </span>
                     <button
                       type="button"
@@ -1236,7 +1292,7 @@ function NewAssignmentContent() {
 
               <div className="space-y-1.5 md:col-span-2">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  {t('assignment_creator.sample_work.work_desc_label')}
+                  <MobileText short={language === 'th' ? 'คำแนะนำ' : 'Tips'} full={t('assignment_creator.sample_work.work_desc_label')} />
                 </label>
                 <textarea
                   rows={2}
@@ -1256,9 +1312,12 @@ function NewAssignmentContent() {
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                {language === 'th' ? 'ปิดการใช้งานตัวอย่างผลงานในโหมดข้อสอบ' : 'Sample Works Disabled in Exam Mode'}
+                <MobileText
+                  short={language === 'th' ? 'ข้อสอบแนบตัวอย่างผลงานไม่ได้' : 'No sample work in quizzes'}
+                  full={language === 'th' ? 'ปิดการใช้งานตัวอย่างผลงานในโหมดข้อสอบ' : 'Sample Works Disabled in Exam Mode'}
+                />
               </h4>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              <p className="hidden sm:block text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {t('assignment_creator.sample_work.exam_disabled_notice')}
               </p>
             </div>
@@ -1272,7 +1331,7 @@ function NewAssignmentContent() {
               <h2 className="text-lg font-black text-slate-900 dark:text-white">
                 {t('assignment_creator.questions_builder.title')}
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="hidden sm:block text-xs text-slate-500 dark:text-slate-400">
                 {language === 'th'
                   ? 'กำหนดประเภทข้อสอบ เกณฑ์การประเมิน (Rubric) และตัวชี้วัด'
                   : 'Configure question types, rubric scoring, and standard indicators'}
@@ -1338,7 +1397,7 @@ function NewAssignmentContent() {
                     {/* Score */}
                     <div className="flex items-center gap-1.5 text-xs">
                       <span className="text-slate-500 font-semibold">
-                        {t('assignment_creator.questions_builder.max_score')}:
+                        <MobileText short={language === 'th' ? 'คะแนน' : 'Pts'} full={t('assignment_creator.questions_builder.max_score')} />:
                       </span>
                       <input
                         type="number"
@@ -1377,7 +1436,7 @@ function NewAssignmentContent() {
                       onChange={(e) => {
                         const type = e.target.value as QuestionType;
                         if (type === 'file_upload' && !allowFileQuestion()) return;
-                        handleQuestionChange(idx, 'type', type);
+                        handleQuestionTypeChange(idx, type);
                       }}
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                     >
@@ -1491,11 +1550,17 @@ function NewAssignmentContent() {
                       {q.options.some((opt) => opt.trim() && opt === q.ideal_answer) ? (
                         <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          {language === 'th' ? 'เลือกข้อที่ถูกแล้ว • ระบบตรวจให้อัตโนมัติ' : 'Correct answer set • auto-scored'}
+                          <MobileText
+                            short={language === 'th' ? 'ตรวจอัตโนมัติ' : 'Auto-scored'}
+                            full={language === 'th' ? 'เลือกข้อที่ถูกแล้ว • ระบบตรวจให้อัตโนมัติ' : 'Correct answer set • auto-scored'}
+                          />
                         </span>
                       ) : (
                         <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
-                          {language === 'th' ? 'กดวงกลมหน้าตัวเลือกที่ถูกต้อง' : 'Tap the circle next to the correct option'}
+                          <MobileText
+                            short={language === 'th' ? 'แตะวงกลมข้อที่ถูก' : 'Tap the correct one'}
+                            full={language === 'th' ? 'กดวงกลมหน้าตัวเลือกที่ถูกต้อง' : 'Tap the circle next to the correct option'}
+                          />
                         </span>
                       )}
                     </div>
@@ -1626,7 +1691,7 @@ function NewAssignmentContent() {
           {/* QUESTION ADDER PLACEMENT: AT THE BOTTOM OF THE LAST QUESTION ITEM */}
           <div className="p-4 sm:p-6 rounded-3xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 text-center space-y-3">
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              {t('assignment_creator.questions_builder.add_question_hint')}
+              <MobileText short={language === 'th' ? 'เพิ่มคำถาม' : 'Add a question'} full={t('assignment_creator.questions_builder.add_question_hint')} />
             </p>
             {/* Phones: one row of four (icon above a short label); wider screens: the full labels in a wrapped row. */}
             <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-2.5">
