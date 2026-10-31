@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { personNameError } from '@/lib/utils/studentName';
+import { canonicalInstitution } from '@/lib/data/thaiInstitutions';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,7 +29,7 @@ export async function PATCH(request: NextRequest) {
   const lastName = typeof body.lastName === 'string' ? body.lastName.trim() : '';
   const studentNumber = typeof body.studentNumber === 'string' ? body.studentNumber.trim() : '';
   // Omitted (older clients) leaves the school unchanged.
-  const institution = typeof body.institution === 'string' ? body.institution.trim() : undefined;
+  const institution = typeof body.institution === 'string' ? canonicalInstitution(body.institution) : undefined;
   if (!classroomId || !studentKey) return NextResponse.json({ error: 'classroomId and studentId are required' }, { status: 400 });
   const nameError = personNameError(firstName, lastName);
   if (nameError) return NextResponse.json({ error: nameError }, { status: 400 });

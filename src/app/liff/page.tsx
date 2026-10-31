@@ -45,6 +45,7 @@ import { dataService, type ClassroomChangeEvent } from "@/lib/supabase/dataServi
 import type { Liff } from "@line/liff";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
+import { canonicalInstitution, institutionLabel } from "@/lib/data/thaiInstitutions";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
 import { formatDateTime } from "@/lib/utils/datetime";
@@ -778,7 +779,7 @@ export default function LiffStudentPage() {
     const fn = inputFirstName.trim();
     const ln = inputLastName.trim();
     const sid = inputStudentId.trim();
-    const inst = inputInstitution.trim();
+    const inst = canonicalInstitution(inputInstitution);
     const email = inputEmail.trim();
 
     if (!fn || !ln || sid.length < 3 || !inst || !currentStudent) {
@@ -1751,7 +1752,7 @@ export default function LiffStudentPage() {
                         {currentStudent.student_id ? `รหัส ${currentStudent.student_id}` : "ยังไม่ได้ใส่รหัสนักเรียน"}
                       </p>
                       {currentStudent.institution && (
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">🏫 {currentStudent.institution}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">🏫 {institutionLabel(currentStudent.institution, "th")}</p>
                       )}
                     </div>
                   </div>

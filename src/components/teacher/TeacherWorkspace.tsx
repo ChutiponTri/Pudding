@@ -74,6 +74,7 @@ import { ASSIGNMENT_STATUS_CLASSES, isAssignmentDraft, isAssignmentPublished } f
 import { formatDateTime } from '@/lib/utils/datetime';
 import { GradingBar } from '@/components/AssignmentProgressCard';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
+import { canonicalInstitution, institutionLabel } from '@/lib/data/thaiInstitutions';
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { EditStudentModal } from '@/components/EditStudentModal';
@@ -960,7 +961,7 @@ export function TeacherWorkspace({
     if (!clerkUser?.id) return;
     const fn = teacherFirstNameInput.trim();
     const ln = teacherLastNameInput.trim();
-    const inst = teacherInstitutionInput.trim();
+    const inst = canonicalInstitution(teacherInstitutionInput);
     if (!fn || !ln || !inst) return;
     try {
       // 1. Save to Supabase
@@ -1248,7 +1249,7 @@ export function TeacherWorkspace({
               title={tr('คลิกเพื่อเลือกหรือแก้ไขสถานศึกษา', 'Click to choose or edit your institution')}
             >
               <Building2 className="w-3.5 h-3.5" />
-              <span className="truncate">{teacherProfile?.institution || (language === 'th' ? '+ ระบุสถานศึกษา' : '+ Specify School')}</span>
+              <span className="truncate">{institutionLabel(teacherProfile?.institution, language) || (language === 'th' ? '+ ระบุสถานศึกษา' : '+ Specify School')}</span>
               <Edit2 className="w-3 h-3 opacity-70 ml-0.5" />
             </button>
           </div>
@@ -2409,7 +2410,7 @@ export function TeacherWorkspace({
                         <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5 flex-wrap">
                           {tchr.institution && (
                             <span className="text-slate-600 dark:text-slate-300">
-                              🏫 {tchr.institution}
+                              🏫 {institutionLabel(tchr.institution, language)}
                             </span>
                           )}
                           <span className="font-mono">{tchr.email}</span>
@@ -2483,7 +2484,7 @@ export function TeacherWorkspace({
                 {newCoTeacherRole === 'assistant' ? (
                   <>
                     <Search className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                    <span>{tr('ค้นหาเฉพาะครูใน', 'Only search teachers at')} <b>{teacherProfile?.institution || tr('สถาบันเดียวกับคุณ', 'your institution')}</b></span>
+                    <span>{tr('ค้นหาเฉพาะครูใน', 'Only search teachers at')} <b>{institutionLabel(teacherProfile?.institution, language) || tr('สถาบันเดียวกับคุณ', 'your institution')}</b></span>
                   </>
                 ) : (
                   <>
@@ -2531,7 +2532,7 @@ export function TeacherWorkspace({
                               {`${tchr.first_name || ''} ${tchr.last_name || ''}`.trim() || tchr.name || tr('ครูผู้สอน', 'Teacher')}
                             </span>
                             <span className="text-[10px] text-slate-400 block truncate">
-                              {tchr.institution ? `🏫 ${tchr.institution} • ` : ''}{tchr.email}
+                              {tchr.institution ? `🏫 ${institutionLabel(tchr.institution, language)} • ` : ''}{tchr.email}
                             </span>
                           </div>
                         </div>
@@ -3356,7 +3357,7 @@ export function TeacherWorkspace({
                                 {found.first_name} {found.last_name}
                               </span>
                               <span className="text-[10px] text-slate-400">
-                                ID: {found.student_id || '-'} • 🏫 {found.institution || '-'}
+                                ID: {found.student_id || '-'} • 🏫 {institutionLabel(found.institution, language) || '-'}
                               </span>
                             </div>
                           </div>
@@ -3396,7 +3397,7 @@ export function TeacherWorkspace({
                             </div>
                             <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono mt-0.5 flex-wrap">
                               {std.institution && (
-                                <span className="text-slate-600 dark:text-slate-300">🏫 {std.institution}</span>
+                                <span className="text-slate-600 dark:text-slate-300">🏫 {institutionLabel(std.institution, language)}</span>
                               )}
                               {std.email && <span>• {std.email}</span>}
                             </div>
@@ -3475,7 +3476,7 @@ export function TeacherWorkspace({
                               )}
                             </div>
                             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
-                              <span>🏫 {std.institution || tr('ไม่ระบุสถานศึกษา', 'No institution')}</span>
+                              <span>🏫 {institutionLabel(std.institution, language) || tr('ไม่ระบุสถานศึกษา', 'No institution')}</span>
                               {std.line_uid && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
                                   <Check className="w-3 h-3" /> LINE Verified
@@ -3767,7 +3768,7 @@ export function TeacherWorkspace({
               {teacherProfile?.institution && (
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-600 dark:text-slate-400">
                   <span>{language === 'th' ? 'สถานศึกษาปัจจุบัน: ' : 'Current institution: '}</span>
-                  <b className="text-slate-900 dark:text-white">{teacherProfile.institution}</b>
+                  <b className="text-slate-900 dark:text-white">{institutionLabel(teacherProfile.institution, language)}</b>
                 </div>
               )}
 

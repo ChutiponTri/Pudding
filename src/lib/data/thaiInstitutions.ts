@@ -109,7 +109,9 @@ export function searchInstitutions(
   const combined: EducationalInstitution[] = [...THAI_INSTITUTIONS];
   
   for (const extra of extraInstitutions) {
-    if (extra && !combined.some((c) => c.name.toLowerCase() === extra.toLowerCase())) {
+    // A registered value may be either the Thai or English name of a listed
+    // institution; only genuinely unknown names become extra entries.
+    if (extra && !findInstitution(extra) && !combined.some((c) => normalizeInstitution(c.name) === normalizeInstitution(extra))) {
       combined.unshift({
         id: `custom-${Math.abs(extra.split('').reduce((a, b) => (a << 5) - a + b.charCodeAt(0), 0))}`,
         name: extra,
@@ -124,12 +126,12 @@ export function searchInstitutions(
     return combined.slice(0, 15);
   }
 
-  return combined.filter(
-    (inst) =>
-      inst.name.toLowerCase().includes(trimmed) ||
-      inst.nameEn.toLowerCase().includes(trimmed) ||
-      inst.province.toLowerCase().includes(trimmed)
-  );
+  // Every word must appear in the Thai name, English name or province (either language).
+  const words = trimmed.split(/\s+/);
+  return combined.filter((inst) => {
+    const haystack = [inst.name, inst.nameEn, inst.province, PROVINCE_EN[inst.province] ?? ''].join(' ').toLowerCase();
+    return words.every((word) => haystack.includes(word));
+  });
 }
 
 const PROVINCE_EN: Record<string, string> = {
@@ -163,12 +165,46 @@ export function provinceLabel(province: string, language: 'th' | 'en'): string {
   return language === 'en' ? PROVINCE_EN[province] ?? province : province;
 }
 
+const normalizeInstitution = (value?: string | null) => (value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+const INSTITUTION_INDEX = new Map<string, EducationalInstitution>();
+for (const inst of THAI_INSTITUTIONS) {
+  INSTITUTION_INDEX.set(normalizeInstitution(inst.name), inst);
+  INSTITUTION_INDEX.set(normalizeInstitution(inst.nameEn), inst);
+}
+
+/** Looks up a listed institution by its Thai or English name. */
+export function findInstitution(value?: string | null): EducationalInstitution | undefined {
+  return INSTITUTION_INDEX.get(normalizeInstitution(value));
+}
+
 /**
- * Display name for a stored institution value. Stored values are the Thai
- * names, so known institutions show their English name in English mode and
- * anything else is shown as typed.
+ * The value to store for an institution: the Thai name for listed
+ * institutions (whichever language it was given in), otherwise the trimmed
+ * input as typed.
  */
-export function institutionLabel(name: string, language: 'th' | 'en'): string {
-  if (language !== 'en' || !name) return name;
-  return THAI_INSTITUTIONS.find((inst) => inst.name === name)?.nameEn ?? name;
+export function canonicalInstitution(value?: string | null): string {
+  const trimmed = (value || '').trim().replace(/\s+/g, ' ');
+  return findInstitution(trimmed)?.name ?? trimmed;
+}
+
+/** Comparison key that treats the Thai and English names of an institution as equal. */
+export function institutionKey(value?: string | null): string {
+  return normalizeInstitution(canonicalInstitution(value));
+}
+
+export function sameInstitution(a?: string | null, b?: string | null): boolean {
+  return institutionKey(a) === institutionKey(b);
+}
+
+/**
+ * Display name for a stored institution value. Listed institutions show their
+ * name in the current language whichever language was stored; anything else
+ * is shown as typed.
+ */
+export function institutionLabel(name: string | null | undefined, language: 'th' | 'en'): string {
+  if (!name) return '';
+  const inst = findInstitution(name);
+  if (!inst) return name;
+  return language === 'en' ? inst.nameEn : inst.name;
 }

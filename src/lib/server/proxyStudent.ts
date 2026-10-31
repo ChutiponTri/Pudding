@@ -1,4 +1,5 @@
 import 'server-only';
+import { institutionKey } from '@/lib/data/thaiInstitutions';
 import type { Actor } from '@/lib/auth/actor';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 import type { Classroom, User } from '@/types/database';
@@ -9,7 +10,7 @@ type Supabase = ReturnType<typeof createServiceSupabaseClient>;
 export type ProxyStudent = Pick<User, 'id' | 'first_name' | 'last_name'> &
   Partial<Pick<User, 'line_uid' | 'student_id' | 'avatar_url' | 'institution'>>;
 
-const normalizeSchool = (value?: string | null) => (value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+const normalizeSchool = institutionKey;
 const normalizeNumber = (value?: string | null) => (value || '').replace(/\s+/g, '').toLowerCase();
 /** Classmates are found by the last digits of their student number. */
 export const PROXY_MATCH_DIGITS = 3;

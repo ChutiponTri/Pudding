@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, Building, Check, ChevronDown, School, GraduationCap } from 'lucide-react';
-import { searchInstitutions, institutionLabel, provinceLabel, EducationalInstitution } from '@/lib/data/thaiInstitutions';
+import { searchInstitutions, institutionLabel, provinceLabel, sameInstitution, EducationalInstitution } from '@/lib/data/thaiInstitutions';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 interface Props {
@@ -137,7 +137,7 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
               </div>
             ) : (
               results.map((inst) => {
-                const isSelected = value === inst.name;
+                const isSelected = sameInstitution(value, inst.name);
                 return (
                   <button
                     key={inst.id}

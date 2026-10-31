@@ -8,6 +8,7 @@ import type { ClassroomSignal } from '@/lib/realtime/signals';
 import { assignmentPostBody, createClassroomPost } from '@/lib/server/classroomPosts';
 import { newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
 import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
+import { THAI_INSTITUTIONS, canonicalInstitution, sameInstitution } from '@/lib/data/thaiInstitutions';
 import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
 import {
   classroomForStudent,
@@ -320,7 +321,7 @@ export const dataActions = {
     let firstName = student.first_name?.trim() || '';
     let lastName = student.last_name?.trim() || '';
     let studentCode: string | null = student.student_id?.trim() || null;
-    let institution: string | null = student.institution?.trim() || null;
+    let institution: string | null = canonicalInstitution(student.institution) || null;
     // LINE userId is the stable identity; reuse an older row found by line_uid.
     const { data: existingRows, error: readError } = await supabase
       .from('users')
@@ -375,7 +376,7 @@ export const dataActions = {
       first_name: data.first_name.trim(),
       last_name: data.last_name.trim(),
       student_id: data.student_id.trim(),
-      institution: data.institution.trim(),
+      institution: canonicalInstitution(data.institution),
       email: data.email?.trim() || null,
     };
     const nameError = personNameError(fields.first_name, fields.last_name);
@@ -406,7 +407,7 @@ export const dataActions = {
     if (userId !== me.userId) throw FORBIDDEN();
     const fn = profile.first_name.trim();
     const ln = profile.last_name.trim();
-    const inst = profile.institution.trim();
+    const inst = canonicalInstitution(profile.institution);
     if (!fn || !ln || !inst) return false;
     const { error } = await supabase.from('users').update({ first_name: fn, last_name: ln, institution: inst, updated_at: new Date().toISOString() }).eq('id', me.userId);
     if (error) throw toDatabaseError(error, 'users');
@@ -427,7 +428,7 @@ export const dataActions = {
       avatar_url: clerkUser.imageUrl || null,
       email: clerkUser.email || '',
       role: 'teacher',
-      institution: clerkUser.institution || existing?.institution || null,
+      institution: canonicalInstitution(clerkUser.institution || existing?.institution) || null,
       updated_at: new Date().toISOString(),
     };
     let { data, error } = await supabase.from('users').upsert({ ...record, clerk_id: me.userId }).select().single();
@@ -448,7 +449,7 @@ export const dataActions = {
     const user = (data as User) || null;
     if (!user || actor.kind === 'student' || user.id === actor.userId) return user;
     const myInstitution = await teacherInstitution(supabase, actor.userId);
-    if (myInstitution && user.institution?.trim() === myInstitution) return user;
+    if (myInstitution && sameInstitution(user.institution, myInstitution)) return user;
     const myStudents = await findClassroomsContainingStudent(supabase, [user.id, user.line_uid || ''].filter(Boolean));
     if (myStudents.some((c) => isTeacherOf(c, actor.userId))) return user;
     throw FORBIDDEN();
@@ -480,14 +481,19 @@ export const dataActions = {
     requireTeacher(actor);
     let req = supabase.from('users').select('id, first_name, last_name, institution, avatar_url, email, role').eq('role', 'teacher');
     const q = searchTerm(query || '');
-    if (q) req = req.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,email.ilike.%${q}%,institution.ilike.%${q}%`);
+    if (q) {
+      // Institutions are stored by Thai name; let an English query match them too.
+      const lower = q.toLowerCase();
+      const byEnglishName = THAI_INSTITUTIONS.filter((inst) => inst.nameEn.toLowerCase().includes(lower)).map((inst) => `institution.eq.${pgValue(inst.name)}`);
+      req = req.or([`first_name.ilike.%${q}%`, `last_name.ilike.%${q}%`, `email.ilike.%${q}%`, `institution.ilike.%${q}%`, ...byEnglishName].join(','));
+    }
     const { data, error } = await req.order('first_name').limit(50);
     if (error) {
       console.warn('searchTeachers error:', error.message);
       return [];
     }
     const list = (data || []) as User[];
-    if (institution) list.sort((a, b) => Number(b.institution === institution) - Number(a.institution === institution));
+    if (institution) list.sort((a, b) => Number(sameInstitution(b.institution, institution)) - Number(sameInstitution(a.institution, institution)));
     return list;
   },
 
@@ -499,7 +505,7 @@ export const dataActions = {
       console.warn('getRegisteredInstitutions error:', error.message);
       return [];
     }
-    const value = [...new Set((data || []).map((d: { institution: string }) => d.institution.trim()).filter(Boolean))];
+    const value = [...new Set((data || []).map((d: { institution: string }) => canonicalInstitution(d.institution)).filter(Boolean))];
     registeredInstitutionsCache = { value, expiresAt: Date.now() + 5 * 60 * 1000 };
     return value;
   },

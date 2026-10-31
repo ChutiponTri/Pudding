@@ -7,10 +7,9 @@ import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 import { dataService } from '@/lib/supabase/dataService';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { personNameError } from '@/lib/utils/studentName';
+import { canonicalInstitution, institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
 
 type StudentFields = { first_name: string; last_name: string; student_id?: string; institution?: string };
-
-const normalize = (value?: string) => (value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
 /**
  * Lets a teacher fix a student's name, surname, student number and school
@@ -37,7 +36,7 @@ export function EditStudentModal({
   const [studentNumber, setStudentNumber] = useState(student.student_id || '');
   const [institution, setInstitution] = useState(student.institution || '');
   const [registeredInstitutions, setRegisteredInstitutions] = useState<string[]>([]);
-  const otherSchool = !!teacherInstitution && !!institution.trim() && normalize(institution) !== normalize(teacherInstitution);
+  const otherSchool = !!teacherInstitution && !!institution.trim() && !sameInstitution(institution, teacherInstitution);
 
   useEffect(() => {
     dataService.getRegisteredInstitutions().then(setRegisteredInstitutions).catch(() => {});
@@ -68,7 +67,7 @@ export function EditStudentModal({
         first_name: firstName.trim(),
         last_name: lastName.trim(),
         student_id: studentNumber.trim() || undefined,
-        institution: institution.trim() || undefined,
+        institution: canonicalInstitution(institution) || undefined,
       });
     } catch {
       setError(tr('บันทึกข้อมูลนักเรียนไม่สำเร็จ', 'Could not save the student'));
@@ -130,7 +129,7 @@ export function EditStudentModal({
               <div className="mt-2 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-[11px] font-bold text-rose-700 dark:text-rose-300 flex items-start gap-1.5">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
                 <span>
-                  {tr('โรงเรียนนี้ต่างจากโรงเรียนของคุณครู', 'This school differs from yours')} ({teacherInstitution}){' '}
+                  {tr('โรงเรียนนี้ต่างจากโรงเรียนของคุณครู', 'This school differs from yours')} ({institutionLabel(teacherInstitution, language)}){' '}
                   <button type="button" onClick={() => setInstitution(teacherInstitution || '')} className="underline cursor-pointer">
                     {tr('ใช้โรงเรียนของคุณครู', 'Use your school')}
                   </button>

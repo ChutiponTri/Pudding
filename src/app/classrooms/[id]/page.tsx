@@ -20,6 +20,7 @@ import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
 import { MobileText } from '@/components/MobileText';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
 import {
   ArrowLeft,
   AlertCircle,
@@ -106,9 +107,6 @@ const downloadCsv = (filename: string, rows: Array<Array<string | number>>) => {
 };
 
 const csvDateStamp = () => new Date().toLocaleDateString('th-TH').replaceAll('/', '-');
-
-const sameInstitution = (a?: string, b?: string) =>
-  (a || '').trim().replace(/\s+/g, ' ').toLowerCase() === (b || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
 /** Submissions may reference the student by users.id, LINE uid or school number. */
 const findStudentSubmission = (submissions: Submission[], assignmentId: string, student: User) =>
@@ -1310,12 +1308,13 @@ export default function ClassroomWorkspacePage() {
   const confirmOtherSchool = (students: Array<Pick<User, 'first_name' | 'last_name' | 'institution'>>) => {
     const others = students.filter((student) => isOtherSchool(student.institution));
     if (!others.length) return true;
-    const lines = others.map((student) => `• ${student.first_name} ${student.last_name} — ${student.institution}`).join('\n');
+    const lines = others.map((student) => `• ${student.first_name} ${student.last_name} — ${institutionLabel(student.institution, language)}`).join('\n');
+    const teacherSchool = institutionLabel(teacherInstitution, language);
     return confirm(
       tr(
-        `⚠️ นักเรียนต่อไปนี้ระบุโรงเรียนต่างจากโรงเรียนของคุณครู (${teacherInstitution})\n\n${lines}\n\n` +
+        `⚠️ นักเรียนต่อไปนี้ระบุโรงเรียนต่างจากโรงเรียนของคุณครู (${teacherSchool})\n\n${lines}\n\n` +
           'หากนักเรียนกรอกชื่อโรงเรียนผิด คุณครูสามารถแก้ไขได้ภายหลังที่แท็บ "ผู้สอนและผู้เรียน"\n\nยืนยันรับเข้าห้องเรียนหรือไม่?',
-        `⚠️ These students listed a different school from yours (${teacherInstitution})\n\n${lines}\n\n` +
+        `⚠️ These students listed a different school from yours (${teacherSchool})\n\n${lines}\n\n` +
           'If a student typed the school wrong, you can fix it later in the "People" tab.\n\nAdmit them to the classroom?'
       )
     );
@@ -2791,7 +2790,7 @@ export default function ClassroomWorkspacePage() {
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">
                   {teacherInstitution
-                    ? tr(`ค้นหาได้เฉพาะนักเรียนของ ${teacherInstitution} — ถ้าชื่อโรงเรียนไม่ตรง ให้เข้าผ่านลิงก์เชิญแล้วแก้ภายหลัง`, `Only students of ${teacherInstitution} can be found — if the school name differs, have them join by invite link and fix it later`)
+                    ? tr(`ค้นหาได้เฉพาะนักเรียนของ ${institutionLabel(teacherInstitution, language)} — ถ้าชื่อโรงเรียนไม่ตรง ให้เข้าผ่านลิงก์เชิญแล้วแก้ภายหลัง`, `Only students of ${institutionLabel(teacherInstitution, language)} can be found — if the school name differs, have them join by invite link and fix it later`)
                     : tr('ระบุโรงเรียนของคุณครูที่แดชบอร์ดก่อน จึงจะค้นหานักเรียนได้', 'Set your school on the dashboard first to search students')}
                 </p>
 
@@ -3094,9 +3093,9 @@ export default function ClassroomWorkspacePage() {
                 <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed space-y-1">
                   <p className="font-black flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />
-                    {tr(`${otherSchool.length} คนระบุโรงเรียนต่างจากของคุณครู (${teacherInstitution})`, `${otherSchool.length} listed a different school from yours (${teacherInstitution})`)}
+                    {tr(`${otherSchool.length} คนระบุโรงเรียนต่างจากของคุณครู (${institutionLabel(teacherInstitution, language)})`, `${otherSchool.length} listed a different school from yours (${institutionLabel(teacherInstitution, language)})`)}
                   </p>
-                  <p>{otherSchool.map((p) => `${p.first_name} ${p.last_name} — ${p.institution}`).join(', ')}</p>
+                  <p>{otherSchool.map((p) => `${p.first_name} ${p.last_name} — ${institutionLabel(p.institution, language)}`).join(', ')}</p>
                   <p>{tr('หากนักเรียนกรอกชื่อโรงเรียนผิด แก้ไขได้ภายหลังที่แท็บ "ผู้สอนและผู้เรียน"', 'If a student typed the school wrong, you can fix it later in the "People" tab')}</p>
                 </div>
               )}
@@ -3229,16 +3228,16 @@ export default function ClassroomWorkspacePage() {
 }
 
 function InstitutionTag({ institution, otherSchool }: { institution?: string; otherSchool: boolean }) {
-  const { tr } = useLanguage();
+  const { tr, language } = useLanguage();
   if (!institution?.trim()) {
     return <p className="text-[10px] text-slate-400 mt-0.5 truncate">{tr('🏫 ไม่ระบุโรงเรียน', '🏫 No school')}</p>;
   }
   return (
     <p
       className={`text-[10px] mt-0.5 truncate ${otherSchool ? 'font-bold text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}
-      title={otherSchool ? tr('โรงเรียนไม่ตรงกับโรงเรียนของคุณครู', 'School differs from yours') : institution}
+      title={otherSchool ? tr('โรงเรียนไม่ตรงกับโรงเรียนของคุณครู', 'School differs from yours') : institutionLabel(institution, language)}
     >
-      {otherSchool ? '⚠️' : '🏫'} {institution}
+      {otherSchool ? '⚠️' : '🏫'} {institutionLabel(institution, language)}
       {otherSchool && <span className="ml-1 px-1.5 py-px rounded-full bg-rose-100 dark:bg-rose-950 text-[9px]">{tr('ต่างโรงเรียน', 'Other school')}</span>}
     </p>
   );
