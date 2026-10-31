@@ -10,8 +10,9 @@ import { newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '
 import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 import { THAI_INSTITUTIONS, canonicalInstitution, sameInstitution } from '@/lib/data/thaiInstitutions';
 import { pushTeacherProfileToClerk, readClerkTeacherProfile } from '@/lib/server/clerkTeacherProfile';
-import { TEACHER_NAME_PLACEHOLDER, isTeacherProfileComplete } from '@/lib/utils/teacherProfile';
-import { rememberTeacherProfile } from '@/lib/server/teacherProfileGuard';
+import { TEACHER_NAME_PLACEHOLDER, isTeacherProfileComplete, teacherAccessOf } from '@/lib/utils/teacherProfile';
+import { rememberTeacherAccess } from '@/lib/server/teacherProfileGuard';
+import { notifyAdminNewTeacher } from '@/lib/server/adminNotify';
 import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
 import {
   classroomForStudent,
@@ -430,10 +431,17 @@ export const dataActions = {
     const ln = profile.last_name.trim();
     const inst = canonicalInstitution(profile.institution);
     if (!isTeacherProfileComplete({ first_name: fn, last_name: ln, institution: inst })) return false;
+    const { data: before } = await supabase.from('users').select('first_name, last_name, institution, email, teacher_approval').eq('id', me.userId).maybeSingle();
     const { error } = await supabase.from('users').update({ first_name: fn, last_name: ln, institution: inst, updated_at: new Date().toISOString() }).eq('id', me.userId);
     if (error) throw toDatabaseError(error, 'users');
-    rememberTeacherProfile(me.userId, true);
+    const access = teacherAccessOf({ first_name: fn, last_name: ln, institution: inst, teacher_approval: before?.teacher_approval });
+    rememberTeacherAccess(me.userId, access);
     registeredInstitutionsCache = null;
+    // A new teacher just finished signing up: ask the admin to review them (once,
+    // when the profile first becomes complete, so the email has a name and school).
+    if (access === 'pending' && !isTeacherProfileComplete(before)) {
+      after(() => notifyAdminNewTeacher({ id: me.userId, first_name: fn, last_name: ln, institution: inst!, email: before?.email }));
+    }
     // Mirror to Clerk so the Clerk dashboard shows the same name and institution.
     await pushTeacherProfileToClerk(me.userId, { first_name: fn, last_name: ln, institution: inst! });
     return true;
@@ -484,7 +492,12 @@ export const dataActions = {
     if (error) throw toDatabaseError(error, 'users');
     const saved = data as User;
     // Requests on this instance see the new state at once (other instances within the guard's 60 s).
-    rememberTeacherProfile(me.userId, isTeacherProfileComplete(saved));
+    const access = teacherAccessOf(saved);
+    rememberTeacherAccess(me.userId, access);
+    // Rare: the profile became complete from Clerk's copy, not the popup. Still a new sign-up to review.
+    if (access === 'pending' && !isTeacherProfileComplete(existing)) {
+      after(() => notifyAdminNewTeacher({ id: me.userId, first_name: saved.first_name, last_name: saved.last_name || '', institution: saved.institution || '', email: saved.email }));
+    }
     // A complete profile Clerk does not have yet (saved before Clerk sync existed): copy it over.
     if (clerkProfile && !clerkProfile.synced && isTeacherProfileComplete(saved)) {
       after(() => pushTeacherProfileToClerk(me.userId, { first_name: saved.first_name, last_name: saved.last_name || '', institution: saved.institution || '' }));

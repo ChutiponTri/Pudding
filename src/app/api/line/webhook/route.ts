@@ -10,6 +10,9 @@ import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
 import type { Assignment } from '@/types/database';
+import { reserveLineTestSend, releaseLineTestSend } from '@/lib/server/lineTestQuota';
+import { teacherAccessMessage } from '@/lib/server/teacherProfileGuard';
+import { teacherAccessOf } from '@/lib/utils/teacherProfile';
 
 export const runtime = 'nodejs';
 
@@ -637,7 +640,7 @@ export async function POST(request: NextRequest) {
     const liffUrl = getLiffUrl();
 
     const { data: linkedTeacher } = lineUserId
-      ? await supabase.from('users').select('id, first_name, last_name, role').eq('teacher_line_uid', lineUserId).eq('role', 'teacher').maybeSingle()
+      ? await supabase.from('users').select('id, first_name, last_name, institution, role, teacher_approval').eq('teacher_line_uid', lineUserId).eq('role', 'teacher').maybeSingle()
       : { data: null };
 
     {
@@ -653,6 +656,12 @@ export async function POST(request: NextRequest) {
         await replySafely(event.replyToken, 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับบัญชีครูใน Pudding กรุณาเข้าสู่ระบบเว็บ Pudding ด้วย LINE');
         continue;
       }
+      // Same gate as the web app: profile complete and approved by the admin.
+      const teacherAccess = teacherAccessOf(linkedTeacher);
+      if (teacherAccess !== 'ok') {
+        await replySafely(event.replyToken, teacherAccessMessage(teacherAccess));
+        continue;
+      }
       const { data: allTeacherClasses } = await supabase.from('classrooms').select('id, name, course_name, subject_code, teacher_id, teachers, line_group_id, line_connection_status');
       const teacherClasses = (allTeacherClasses || []).filter((item) => item.teacher_id === linkedTeacher.id || (item.teachers || []).some((teacher: { teacher_id?: string }) => teacher.teacher_id === linkedTeacher.id));
       if (normalizedCommand === 'status') {
@@ -665,10 +674,17 @@ export async function POST(request: NextRequest) {
         } else if (!target.line_group_id) {
           await replySafely(event.replyToken, 'ห้องนี้ยังไม่ได้เชื่อม LINE Group');
         } else {
+          // Shares the web button's quota: a group push is billed per member.
+          const reservation = await reserveLineTestSend(supabase, { teacherId: linkedTeacher.id, classroomId: target.id, source: 'line' });
+          if (!reservation.ok) {
+            await replySafely(event.replyToken, reservation.message);
+            continue;
+          }
           try {
             await pushLineGroupText(target.line_group_id, `✅ ทดสอบแจ้งเตือนจาก Pudding: ${classroomTitle(target)}`);
-            await replySafely(event.replyToken, 'ส่งข้อความทดสอบแล้ว');
+            await replySafely(event.replyToken, `ส่งข้อความทดสอบแล้ว (ห้องนี้ทดสอบได้อีก ${reservation.quota.remaining} ครั้งใน ${reservation.quota.windowDays} วัน)`);
           } catch (error) {
+            await releaseLineTestSend(supabase, reservation.id);
             console.error('LINE teacher test push failed:', error);
             await replySafely(event.replyToken, 'ส่งข้อความทดสอบไม่สำเร็จ กรุณาตรวจการตั้งค่า LINE Bot');
           }

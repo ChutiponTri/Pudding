@@ -5,7 +5,7 @@ import type { NextRequest } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { LINE_TOKEN_HEADER } from '@/lib/auth/lineSession';
 import { needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
-import { hasCompleteTeacherProfile } from '@/lib/server/teacherProfileGuard';
+import { canUseTeacherApp } from '@/lib/server/teacherProfileGuard';
 
 /** Who is calling: a signed-in teacher (Clerk) or a student verified through LINE. */
 export type Actor =
@@ -64,8 +64,8 @@ async function verifyLineToken(token: string): Promise<string | null> {
 /**
  * The caller of an API request. A LINE token header means a student (the LIFF
  * app); otherwise the Clerk session decides. null = not signed in, or a
- * teacher whose first name, last name or institution is missing (they may
- * only fill those in; see teacherProfileGuard). Pass allowIncompleteProfile
+ * teacher who may not use the app yet: name or institution missing, or not
+ * approved by the admin (see teacherProfileGuard). Pass allowIncompleteProfile
  * to get such a teacher anyway and decide per action.
  */
 export async function getActor(
@@ -88,6 +88,6 @@ export async function getActor(
   }
   const { userId } = await auth();
   if (!userId) return null;
-  if (!options.allowIncompleteProfile && !(await hasCompleteTeacherProfile(userId))) return null;
+  if (!options.allowIncompleteProfile && !(await canUseTeacherApp(userId))) return null;
   return { kind: 'teacher', userId };
 }

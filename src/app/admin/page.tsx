@@ -42,7 +42,7 @@ export default async function AdminPage() {
 
   const supabase = createServiceSupabaseClient();
 
-  const [counts, proxyActivity, flaggedCount, unlinkedTeachers] = await Promise.all([
+  const [counts, proxyActivity, flaggedCount, unlinkedTeachers, pendingTeachers] = await Promise.all([
     Promise.all(
       ADMIN_TABLES.map(async (name) => {
         const { count, error } = await supabase.from(name).select('*', { count: 'exact', head: true });
@@ -53,10 +53,13 @@ export default async function AdminPage() {
     supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('is_flagged_suspicious', true),
     // Teachers the LINE bot cannot reach: no LINE id saved, or not its friend.
     supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'teacher').or('teacher_line_uid.is.null,line_bot_friend.is.null,line_bot_friend.eq.false'),
+    // New sign-ups that cannot use the app until approved (NULL = never decided).
+    supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'teacher').or('teacher_approval.is.null,teacher_approval.eq.pending'),
   ]);
   const countOf = Object.fromEntries(counts);
 
   const stats = [
+    { label: 'ครูรออนุมัติ', value: pendingTeachers.error ? null : pendingTeachers.count ?? 0, tone: 'amber', href: '/admin/teachers?status=pending' },
     { label: 'ผู้ใช้', value: countOf.users, href: '/admin/users' },
     { label: 'ห้องเรียน', value: countOf.classrooms, href: '/admin/classrooms' },
     { label: 'งาน/ข้อสอบ', value: countOf.assignments, href: '/admin/assignments' },
@@ -145,6 +148,16 @@ export default async function AdminPage() {
               </table>
             </div>
           )}
+        </section>
+
+        <section className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl border border-amber-200 dark:border-amber-900 bg-white dark:bg-slate-900">
+          <div>
+            <h2 className="text-sm font-black">บัญชีครู</h2>
+            <p className="text-xs text-slate-500">อนุมัติหรือปฏิเสธครูที่สมัครใหม่ และดูการใช้ปุ่มทดสอบส่ง LINE ของครูแต่ละคน</p>
+          </div>
+          <Link href="/admin/teachers" className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold">
+            จัดการครู{pendingTeachers.count ? ` (รอ ${pendingTeachers.count})` : ''} →
+          </Link>
         </section>
 
         <AdminStorage />

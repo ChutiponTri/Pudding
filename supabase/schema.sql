@@ -23,9 +23,11 @@ CREATE TABLE IF NOT EXISTS public.users (
   avatar_url TEXT,
   email TEXT,
   is_line_connected BOOLEAN DEFAULT FALSE,
+  teacher_approval TEXT CHECK (teacher_approval IS NULL OR teacher_approval IN ('pending', 'approved', 'rejected')), -- teachers: NULL/pending until the admin approves
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Teacher approval and the LINE test-message quota table: see supabase_teacher_approval_update.sql
 
 -- Index for fast LINE LIFF lookup
 ALTER TABLE IF EXISTS public.users ADD COLUMN IF NOT EXISTS clerk_id TEXT UNIQUE;

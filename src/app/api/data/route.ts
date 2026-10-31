@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getActor } from '@/lib/auth/actor';
 import { errorResponse, HttpError } from '@/lib/server/access';
 import { createDataContext, dataActions, type DataActionName } from '@/lib/server/dataActions';
-import { requireCompleteTeacherProfile } from '@/lib/server/teacherProfileGuard';
+import { requireTeacherAccess } from '@/lib/server/teacherProfileGuard';
 
-/** What a teacher may call before their first name, last name and institution are filled in. */
+/** What a teacher may call before their profile is complete and the admin has approved them. */
 const PROFILE_SETUP_ACTIONS = new Set<string>(['syncClerkUser', 'updateTeacherProfile']);
 
 export const runtime = 'nodejs';
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
       throw new HttpError(400, 'Unknown action');
     }
     const actor = await getActor(request, { allowIncompleteProfile: true });
-    if (actor?.kind === 'teacher' && !PROFILE_SETUP_ACTIONS.has(action)) await requireCompleteTeacherProfile(actor.userId);
+    if (actor?.kind === 'teacher' && !PROFILE_SETUP_ACTIONS.has(action)) await requireTeacherAccess(actor.userId);
     const ctx = createDataContext(actor);
     const handler = dataActions[action] as (c: typeof ctx, ...a: unknown[]) => Promise<unknown>;
     const result = await handler(ctx, ...args);

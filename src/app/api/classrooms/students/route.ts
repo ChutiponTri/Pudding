@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { hasCompleteTeacherProfile, profileIncompleteResponse } from '@/lib/server/teacherProfileGuard';
+import { getTeacherAccess, teacherBlockedResponse } from '@/lib/server/teacherProfileGuard';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { personNameError } from '@/lib/utils/studentName';
@@ -22,7 +22,8 @@ type ClassroomRow = { id: string; teacher_id?: string | null; teachers?: Array<{
 export async function PATCH(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!(await hasCompleteTeacherProfile(userId))) return profileIncompleteResponse();
+  const access = await getTeacherAccess(userId);
+  if (access !== 'ok') return teacherBlockedResponse(access);
 
   const body = await request.json().catch(() => ({}));
   const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';

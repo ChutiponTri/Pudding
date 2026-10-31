@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dataService, type ClassroomChangeEvent } from '@/lib/supabase/dataService';
 import { fetchCached, readCache, TEACHER_DASHBOARD_CACHE_KEY, watchClassrooms } from '@/lib/cache/sessionCache';
@@ -353,7 +354,7 @@ export function TeacherWorkspace({
       if (!response.ok) throw new Error(result.error || 'LINE connection failed');
       setLineConnection(result);
       setLineConnectionStatuses((current) => ({ ...current, [activeClassroom.id]: result.status }));
-      showToast(action === 'disconnect' ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group') : action === 'test' ? tr('ส่งข้อความทดสอบแล้ว', 'Test message sent') : tr('พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย', 'Ready: add Pudding Bot to your LINE group'));
+      showToast(action === 'disconnect' ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group') : action === 'test' ? tr('ส่งข้อความทดสอบแล้ว', 'Test message sent') + testQuotaNote(result.testQuota, tr) : tr('พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย', 'Ready: add Pudding Bot to your LINE group'));
     } catch (error) {
       showToast(error instanceof Error ? error.message : tr('ไม่สามารถเชื่อมต่อ LINE Group ได้', 'Could not connect the LINE group'));
     } finally {

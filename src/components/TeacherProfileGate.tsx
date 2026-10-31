@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useClerk, useUser } from '@clerk/nextjs';
 import { Loader2, LogOut } from 'lucide-react';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter } from '@/components/ModalSheet';
@@ -13,8 +13,20 @@ import {
   TEACHER_NAME_PLACEHOLDER,
   TEACHER_PROFILE_UPDATED_EVENT,
   isTeacherProfileComplete,
+  teacherAccessOf,
   type TeacherProfileFields as ProfileValues,
 } from '@/lib/utils/teacherProfile';
+import {
+  TEACHER_ACCESS_RECHECK_EVENT,
+  rememberApprovedHere,
+  setTeacherAccessState,
+  useTeacherAccess,
+  wasApprovedHere,
+} from '@/lib/hooks/useTeacherAccess';
+
+/** The only page a teacher who is not approved yet may see. */
+export const PENDING_APPROVAL_PATH = '/pending-approval';
+const AUTH_PATH = /^\/(sign-in|sign-up)(\/|$)/;
 import type { User } from '@/types/database';
 
 const inputClass =
@@ -104,11 +116,24 @@ export function announceTeacherProfile(profile: User) {
  * using any page. On sign-in this syncs the users row with Clerk; if anything
  * is missing it shows a popup above everything else that cannot be dismissed
  * (only signing out leaves it).
+ *
+ * Then the admin must approve the account: until then every page is covered
+ * and the teacher is sent to /pending-approval (the server refuses their
+ * requests anyway). A browser that last saw the teacher approved shows pages
+ * at once while the check runs.
  */
 export function TeacherProfileGate() {
   const { isSignedIn, user } = useUser();
   const { signOut } = useClerk();
   const pathname = usePathname();
+  const router = useRouter();
+  const { access, userId: checkedUserId } = useTeacherAccess();
+  // Read after mount so server and first client render match.
+  const [approvedHere, setApprovedHere] = useState<boolean | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setApprovedHere(user?.id ? wasApprovedHere(user.id) : null);
+  }, [user?.id]);
   const { tr, language } = useLanguage();
   const [required, setRequired] = useState(false);
   const [firstName, setFirstName] = useState('');
@@ -156,6 +181,9 @@ export function TeacherProfileGate() {
         .then((profile) => {
           if (cancelled || !profile) return;
           announceTeacherProfile(profile);
+          const nextAccess = teacherAccessOf(profile);
+          setTeacherAccessState({ userId: clerkUser.id, access: nextAccess, profile });
+          if (nextAccess !== 'incomplete') rememberApprovedHere(clerkUser.id, nextAccess === 'ok');
           if (isTeacherProfileComplete(profile)) {
             setRequired(false);
             return;
@@ -181,10 +209,12 @@ export function TeacherProfileGate() {
     check();
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onFocus);
+    window.addEventListener(TEACHER_ACCESS_RECHECK_EVENT, check);
     return () => {
       cancelled = true;
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onFocus);
+      window.removeEventListener(TEACHER_ACCESS_RECHECK_EVENT, check);
     };
   }, [isSignedIn, clerkProfileKey]);
 
@@ -197,7 +227,29 @@ export function TeacherProfileGate() {
     return () => window.removeEventListener(TEACHER_PROFILE_UPDATED_EVENT, onUpdated);
   }, []);
 
-  if (!isSignedIn || !required || /^\/(sign-in|sign-up)(\/|$)/.test(pathname)) return null;
+  const onAuthPage = AUTH_PATH.test(pathname);
+  const onPendingPage = pathname === PENDING_APPROVAL_PATH;
+  const knownAccess = isSignedIn && checkedUserId === user?.id ? access : null;
+  const blocked = knownAccess === 'pending' || knownAccess === 'rejected';
+
+  // Not approved: only the waiting page. Approved: the waiting page has nothing to say.
+  useEffect(() => {
+    if (onAuthPage) return;
+    if (blocked && !onPendingPage) router.replace(PENDING_APPROVAL_PATH);
+    else if (knownAccess === 'ok' && onPendingPage) router.replace('/');
+  }, [blocked, knownAccess, onAuthPage, onPendingPage, router]);
+
+  if (!isSignedIn || onAuthPage) return null;
+  if (!required) {
+    // Cover the page while it is (or may be) off limits: known to be blocked, or
+    // not checked yet in a browser that has never seen this teacher approved.
+    const cover = !onPendingPage && (blocked || (knownAccess === null && approvedHere === false));
+    return cover ? (
+      <div className="fixed inset-0 z-[85] bg-slate-50 dark:bg-slate-950 flex items-center justify-center" aria-busy="true">
+        <Loader2 className="w-6 h-6 animate-spin text-amber-500" />
+      </div>
+    ) : null;
+  }
 
   const canSave = Boolean(firstName.trim() && lastName.trim() && institution.trim()) && !saving;
 

@@ -16,3 +16,24 @@ export function isTeacherProfileComplete(profile: TeacherProfileFields | null | 
   const first = profile.first_name?.trim() || '';
   return Boolean(first && first !== TEACHER_NAME_PLACEHOLDER && profile.last_name?.trim() && profile.institution?.trim());
 }
+
+/** The admin's decision on a teacher account; null (never decided) means pending. */
+export type TeacherApproval = 'pending' | 'approved' | 'rejected';
+
+/**
+ * What a signed-in teacher may do:
+ *   'incomplete' -> must fill in name and institution first (profile popup)
+ *   'pending'    -> waiting for the admin to approve (/pending-approval)
+ *   'rejected'   -> refused by the admin (/pending-approval)
+ *   'ok'         -> may use everything
+ */
+export type TeacherAccess = 'incomplete' | 'pending' | 'rejected' | 'ok';
+
+export function teacherAccessOf(
+  row: (TeacherProfileFields & { teacher_approval?: string | null }) | null | undefined
+): TeacherAccess {
+  if (!isTeacherProfileComplete(row)) return 'incomplete';
+  if (row?.teacher_approval === 'approved') return 'ok';
+  if (row?.teacher_approval === 'rejected') return 'rejected';
+  return 'pending';
+}

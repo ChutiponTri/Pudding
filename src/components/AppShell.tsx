@@ -6,7 +6,7 @@ import { useSidebar } from '@/components/SidebarContext';
 import { GlobalClassroomSidebar } from '@/components/GlobalClassroomSidebar';
 import { Navbar } from '@/components/Navbar';
 import { SessionCacheSync } from '@/components/SessionCacheSync';
-import { TeacherProfileGate } from '@/components/TeacherProfileGate';
+import { PENDING_APPROVAL_PATH, TeacherProfileGate } from '@/components/TeacherProfileGate';
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
@@ -21,6 +21,15 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   if (isLiff) {
     return <>{children}</>;
   }
+  // Waiting for the admin's approval: no sidebar or navbar (they would load classroom data).
+  if (pathname === PENDING_APPROVAL_PATH) {
+    return (
+      <>
+        <TeacherProfileGate />
+        {children}
+      </>
+    );
+  }
   if (isAdmin) {
     return (
       <>
@@ -33,7 +42,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   return (
     <div className="min-h-dvh flex flex-col">
       <SessionCacheSync />
-      {/* Every teacher page waits until name, last name and institution are set. */}
+      {/* Every teacher page waits until name, last name and institution are set
+          and the admin has approved the account. */}
       <TeacherProfileGate />
       <GlobalClassroomSidebar />
       {/* The sidebar pushes content only on desktop; on phones and iPads it

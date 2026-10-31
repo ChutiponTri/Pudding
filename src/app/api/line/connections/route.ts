@@ -1,5 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
-import { hasCompleteTeacherProfile } from '@/lib/server/teacherProfileGuard';
+import { canUseTeacherApp } from '@/lib/server/teacherProfileGuard';
+import { getAdmin } from '@/lib/server/admin';
+import { getLineTestQuota, releaseLineTestSend, reserveLineTestSend } from '@/lib/server/lineTestQuota';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
@@ -14,8 +16,8 @@ const CONNECT_INTENT_TTL_MS = 15 * 60 * 1000;
 
 async function getOwnedClassroom(classroomId: string) {
   const { userId } = await auth();
-  // A teacher who still has to fill in their profile is treated as signed out here.
-  if (!userId || !(await hasCompleteTeacherProfile(userId))) return { userId: null, classroom: null };
+  // A teacher who still has to fill in their profile or wait for approval is treated as signed out here.
+  if (!userId || !(await canUseTeacherApp(userId))) return { userId: null, classroom: null };
   const supabase = createServiceSupabaseClient();
   const { data: classroom } = await supabase
     .from('classrooms')
@@ -43,11 +45,15 @@ export async function GET(request: NextRequest) {
       line_connection_token_expires_at: null,
     }).eq('id', classroomId);
   }
+  const status = isExpired ? 'disconnected' : (classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected'));
+  // Only a connected group can be tested; skip the quota query while polling a waiting link.
+  const testQuota = classroom.line_group_id ? await getLineTestQuota(createServiceSupabaseClient(), userId, classroomId) : null;
   return NextResponse.json({
-    status: isExpired ? 'disconnected' : (classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected')),
+    status,
     groupName: classroom.line_group_name || undefined,
     connectedAt: classroom.line_connected_at,
     expiresAt: isExpired ? undefined : classroom.line_connection_token_expires_at,
+    testQuota: testQuota || undefined,
   });
 }
 
@@ -87,11 +93,32 @@ export async function POST(request: NextRequest) {
 
   if (action === 'test') {
     if (!classroom.line_group_id) return NextResponse.json({ error: 'LINE Group is not connected' }, { status: 409 });
-    await pushLineGroupText(
-      classroom.line_group_id,
-      withLiffLink(`✅ Pudding เชื่อมต่อ “${classroomTitle(classroom)}” สำเร็จแล้ว`, 'นักเรียนกดเพื่อเข้าห้องเรียน', { classroomId: classroom.id, inviteCode: classroom.invite_code })
-    );
-    return NextResponse.json({ status: 'connected' });
+    // Each test is billed per group member, so it is rationed (see lineTestQuota).
+    const reservation = await reserveLineTestSend(supabase, { teacherId: userId, classroomId, source: 'web' });
+    // The platform admin is never limited (checked only when the quota says no, to skip a Clerk call).
+    if (!reservation.ok && !(await getAdmin())) {
+      return NextResponse.json(
+        { error: reservation.message, testQuota: reservation.quota },
+        { status: 429, headers: reservation.retryAfterSeconds ? { 'Retry-After': String(reservation.retryAfterSeconds) } : undefined }
+      );
+    }
+    try {
+      await pushLineGroupText(
+        classroom.line_group_id,
+        withLiffLink(`✅ Pudding เชื่อมต่อ “${classroomTitle(classroom)}” สำเร็จแล้ว`, 'นักเรียนกดเพื่อเข้าห้องเรียน', { classroomId: classroom.id, inviteCode: classroom.invite_code })
+      );
+    } catch (pushError) {
+      // Nothing was delivered, so it does not count.
+      if (reservation.ok) await releaseLineTestSend(supabase, reservation.id);
+      console.error('LINE test push failed:', pushError);
+      return NextResponse.json({ error: 'ส่งข้อความทดสอบไม่สำเร็จ กรุณาตรวจว่าบอทยังอยู่ในกลุ่ม LINE' }, { status: 502 });
+    }
+    return NextResponse.json({
+      status: 'connected',
+      groupName: classroom.line_group_name || undefined,
+      connectedAt: classroom.line_connected_at,
+      testQuota: reservation.ok ? reservation.quota : undefined,
+    });
   }
 
   // "create": record which teacher wants to connect this classroom. Only that

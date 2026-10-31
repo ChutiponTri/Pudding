@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { dataService } from '@/lib/supabase/dataService';
 import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
+import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
@@ -377,7 +378,7 @@ export default function ClassroomWorkspacePage() {
         action === 'disconnect'
           ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group')
           : action === 'test'
-          ? tr('ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว', 'Test message sent to the LINE group')
+          ? tr('ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว', 'Test message sent to the LINE group') + testQuotaNote(result.testQuota, tr)
           : tr('พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย', 'Ready: add Pudding Bot to your LINE group')
       );
     } catch (error) {

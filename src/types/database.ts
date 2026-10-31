@@ -15,6 +15,8 @@ export interface User {
   institution?: string; // โรงเรียน / สถานศึกษา
   enrollment_status?: 'active' | 'pending_approval';
   is_line_connected?: boolean;
+  /** Teachers only: the admin's approval (null = not decided yet = pending). */
+  teacher_approval?: 'pending' | 'approved' | 'rejected' | null;
 }
 
 export type TeacherRole = 'primary' | 'assistant' | 'researcher';
