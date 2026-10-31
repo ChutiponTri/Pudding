@@ -363,6 +363,19 @@ export async function POST(request: NextRequest) {
     return rows;
   };
 
+  /**
+   * Reopening undoes markUncheckedAbsent: its rows (absent, never checked in,
+   * not set by a teacher) are removed so those students can check in again.
+   */
+  const clearAutoAbsent = () =>
+    supabase
+      .from('attendance_records')
+      .delete()
+      .eq('session_id', sessionId)
+      .eq('status', 'absent')
+      .is('checked_at', null)
+      .is('adjusted_by', null);
+
   if (action === 'close') {
     const failed = await updateSession({ status: 'closed', closed_at: new Date().toISOString() });
     if (failed) return failed;
@@ -383,6 +396,7 @@ export async function POST(request: NextRequest) {
     if (typeof body.startsAt === 'string') fields.starts_at = body.startsAt;
     const failed = await updateSession(fields);
     if (failed) return failed;
+    if (fields.status === 'open') await clearAutoAbsent();
     const records = fields.status === 'closed' ? await markUncheckedAbsent() : [];
     return NextResponse.json({ success: true, sessionId, records });
   }

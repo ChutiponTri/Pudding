@@ -1102,6 +1102,8 @@ export default function ClassroomWorkspacePage() {
           ...(late !== undefined ? { late_until_minutes: late } : {}),
         });
         setEditingSession(null);
+        // Reopening clears the automatic absences on the server; pick that up.
+        if (newStatus === 'open') loadAttendance();
       } else {
         setNotice(tr('อัปเดตคาบเช็คชื่อไม่สำเร็จ', 'Could not update the period'));
       }
@@ -3396,8 +3398,7 @@ function AttendancePanel({
     session?.id || sessions.find((s) => s.status === 'open')?.id || sessions[0]?.id || null
   );
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [renaming, setRenaming] = useState<AttendanceSession | null>(null);
-  const [renameValue, setRenameValue] = useState('');
+  const [editing, setEditing] = useState<AttendanceSession | null>(null);
 
   // Keep expanded session in sync with parent session (adjusted during render
   // when the parent's session changes, instead of in an effect).
@@ -3415,16 +3416,8 @@ function AttendancePanel({
     return new Map([...groups].map(([id, list]) => [id, indexRecords(list)]));
   }, [records]);
 
-  const startRename = (item: AttendanceSession) => {
-    setRenaming(item);
-    setRenameValue(item.title);
-  };
+  const clockOf = (iso: string) => new Date(iso).toLocaleTimeString(tr('th-TH', 'en-US'), { hour: '2-digit', minute: '2-digit' });
 
-  const saveRename = () => {
-    if (!renaming || !onUpdateSession || !renameValue.trim()) return;
-    if (renameValue.trim() !== renaming.title) onUpdateSession(renaming.id, renameValue.trim());
-    setRenaming(null);
-  };
 
   // Open sessions sit right under the controls/overview; finished ones follow
   // in class order (class 1, class 2, ...).
@@ -3651,23 +3644,32 @@ function AttendancePanel({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            startRename(item);
+                            setEditing(item);
                           }}
                           className="-ml-1 p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                          title={tr('แก้ไขชื่อคาบ', 'Rename period')}
-                          aria-label={tr('แก้ไขชื่อคาบ', 'Rename period')}
+                          title={tr('แก้ไขคาบเช็คชื่อ', 'Edit period')}
+                          aria-label={tr('แก้ไขคาบเช็คชื่อ', 'Edit period')}
                         >
                           <Pencil className="w-3 h-3" />
                         </button>
                       )}
                     </div>
+                    {/* Phones: the time window drops to its own line under the timestamp. */}
                     <p className={`text-[11px] mt-0.5 ${isOpen ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400'}`}>
-                      {isOpen
-                        ? tr(
-                            `เริ่มเมื่อ ${new Date(item.starts_at).toLocaleTimeString(tr('th-TH', 'en-US'))} • ตรงเวลาภายใน ${item.on_time_until_minutes} นาที • สายได้ถึง ${item.late_until_minutes} นาที`,
-                            `Started ${new Date(item.starts_at).toLocaleTimeString('en-US')} • on time within ${item.on_time_until_minutes} min • late up to ${item.late_until_minutes} min`
-                          )
-                        : `${new Date(item.starts_at).toLocaleString(tr('th-TH', 'en-US'))} • ${tr('ตรงเวลา', 'on time')} ${item.on_time_until_minutes}m / ${tr('สาย', 'late')} ${item.late_until_minutes}m`}
+                      <span>
+                        {isOpen
+                          ? `${tr('เริ่มเมื่อ', 'Started')} ${new Date(item.starts_at).toLocaleTimeString(tr('th-TH', 'en-US'))}`
+                          : new Date(item.starts_at).toLocaleString(tr('th-TH', 'en-US'))}
+                      </span>
+                      <span className="hidden sm:inline"> • </span>
+                      <span className="block sm:inline">
+                        {isOpen
+                          ? tr(
+                              `ตรงเวลาภายใน ${item.on_time_until_minutes} นาที • สายได้ถึง ${item.late_until_minutes} นาที`,
+                              `on time within ${item.on_time_until_minutes} min • late up to ${item.late_until_minutes} min`
+                            )
+                          : `${tr('ตรงเวลา', 'on time')} ${item.on_time_until_minutes}m / ${tr('สาย', 'late')} ${item.late_until_minutes}m`}
+                      </span>
                     </p>
                   </div>
                 </div>
@@ -3743,52 +3745,22 @@ function AttendancePanel({
         )}
       </div>
 
-      {/* Rename dialog, portaled out of the animated tab panel: its transform
+      {/* Settings sheet, portaled out of the animated tab panel: its transform
           would otherwise confine this fixed overlay to the panel. */}
-      {renaming &&
+      {editing &&
+        onUpdateSession &&
         createPortal(
-          <div
-            className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
-            onClick={(e) => e.target === e.currentTarget && setRenaming(null)}
-          >
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl">
-              <div>
-                <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                  <Pencil className="w-4 h-4 text-amber-500" />
-                  <span>{tr('แก้ไขชื่อคาบ', 'Rename period')}</span>
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">{tr('ชื่อใหม่จะแสดงในรายการคาบและไฟล์ CSV', 'The new name shows in the period list and CSV files')}</p>
-              </div>
-              <input
-                autoFocus
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveRename();
-                  if (e.key === 'Escape') setRenaming(null);
-                }}
-                placeholder={tr('เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร', 'e.g. Period 1, Thai for Communication')}
-                className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setRenaming(null)}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
-                >
-                  {tr('ยกเลิก', 'Cancel')}
-                </button>
-                <button
-                  type="button"
-                  onClick={saveRename}
-                  disabled={!renameValue.trim() || isUpdatingSession}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black cursor-pointer disabled:opacity-50"
-                >
-                  {tr('บันทึกชื่อ', 'Save name')}
-                </button>
-              </div>
-            </div>
-          </div>,
+          <SessionSettingsSheet
+            key={editing.id}
+            session={editing}
+            busy={!!isUpdatingSession}
+            clockOf={clockOf}
+            onClose={() => setEditing(null)}
+            onSave={(fields) => {
+              onUpdateSession(editing.id, fields.title, fields.status, fields.startsAt, fields.onTime, fields.late);
+              setEditing(null);
+            }}
+          />,
           document.body
         )}
     </section>
@@ -3796,6 +3768,197 @@ function AttendancePanel({
 }
 
 const EMPTY_RECORD_INDEX = new Map<string, AttendanceRecord>();
+
+/** Minutes field with − / + buttons, big enough to tap on phones. */
+function MinuteStepper({ value, min, onChange, label, hint }: { value: number; min: number; onChange: (v: number) => void; label: string; hint: string }) {
+  const { tr } = useLanguage();
+  const set = (v: number) => onChange(Math.max(min, Number.isFinite(v) ? Math.round(v) : min));
+  return (
+    <div className="space-y-1">
+      <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{label}</label>
+      <div className="flex items-stretch rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 overflow-hidden">
+        <button type="button" onClick={() => set(value - 5)} disabled={value <= min} aria-label={tr('ลด 5 นาที', 'Minus 5 minutes')} className="px-3 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 cursor-pointer">
+          −
+        </button>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={min}
+          value={value}
+          onChange={(e) => set(Number(e.target.value))}
+          className="w-full min-w-0 py-2.5 bg-transparent text-center text-sm font-black text-slate-900 dark:text-white outline-none"
+        />
+        <button type="button" onClick={() => set(value + 5)} aria-label={tr('เพิ่ม 5 นาที', 'Plus 5 minutes')} className="px-3 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">
+          +
+        </button>
+      </div>
+      <p className="text-[10px] text-slate-400">{hint}</p>
+    </div>
+  );
+}
+
+type SessionSettings = { title: string; status?: 'open' | 'closed'; startsAt?: string; onTime: number; late: number };
+
+/**
+ * Edit a period in one place: name, start time, the on-time / late windows,
+ * quick extensions and whether it still accepts check-ins. A bottom sheet on
+ * phones, a centered dialog from sm up.
+ */
+function SessionSettingsSheet({
+  session,
+  busy,
+  clockOf,
+  onClose,
+  onSave,
+}: {
+  session: AttendanceSession;
+  busy: boolean;
+  clockOf: (iso: string) => string;
+  onClose: () => void;
+  onSave: (fields: SessionSettings) => void;
+}) {
+  const { tr } = useLanguage();
+  const [title, setTitle] = useState(session.title);
+  const [startsAt, setStartsAt] = useState(session.starts_at);
+  const [onTime, setOnTime] = useState(session.on_time_until_minutes);
+  const [late, setLate] = useState(session.late_until_minutes);
+  const [accepting, setAccepting] = useState(session.status === 'open');
+
+  const at = (minutes: number) => clockOf(new Date(new Date(startsAt).getTime() + minutes * 60_000).toISOString());
+  const wasOpen = session.status === 'open';
+  const statusChanged = accepting !== wasOpen;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const save = () => {
+    if (!title.trim()) return;
+    onSave({
+      title: title.trim(),
+      status: statusChanged ? (accepting ? 'open' : 'closed') : undefined,
+      startsAt: startsAt !== session.starts_at ? startsAt : undefined,
+      onTime,
+      late: Math.max(onTime, late),
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 w-full sm:max-w-md shadow-xl max-h-[92dvh] flex flex-col">
+        <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
+            <Pencil className="w-4 h-4 text-amber-500" />
+            <span>{tr('แก้ไขคาบเช็คชื่อ', 'Edit period')}</span>
+          </h3>
+          <button type="button" onClick={onClose} aria-label={tr('ปิด', 'Close')} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4 overflow-y-auto">
+          <div className="space-y-1">
+            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('ชื่อคาบ', 'Period name')}</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && save()}
+              placeholder={tr('เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร', 'e.g. Period 1, Thai for Communication')}
+              className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('เวลาเริ่ม', 'Start time')}</label>
+            <DateTimeField value={startsAt} onChange={setStartsAt} presets="start" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <MinuteStepper
+              label={tr('ตรงเวลาภายใน (นาที)', 'On time within (min)')}
+              value={onTime}
+              min={1}
+              onChange={(v) => {
+                setOnTime(v);
+                if (late < v) setLate(v);
+              }}
+              hint={tr(`ถึง ${at(onTime)}`, `until ${at(onTime)}`)}
+            />
+            <MinuteStepper
+              label={tr('สายได้ถึง (นาที)', 'Late until (min)')}
+              value={late}
+              min={onTime}
+              onChange={setLate}
+              hint={tr(`หลัง ${at(late)} ถือว่าขาด`, `absent after ${at(late)}`)}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mr-1">{tr('ขยายเวลา', 'Extend')}</span>
+            {[5, 10, 15, 30].map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setLate((v) => Math.max(onTime, v) + m)}
+                className="px-3 py-1.5 rounded-full border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-[11px] font-bold hover:bg-amber-50 dark:hover:bg-amber-950/40 cursor-pointer"
+              >
+                +{m} {tr('นาที', 'min')}
+              </button>
+            ))}
+          </div>
+
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('การรับเช็คชื่อ', 'Check-ins')}</span>
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800">
+              {[
+                [true, tr('🟢 เปิดรับ', '🟢 Open')],
+                [false, tr('⚪ ปิดรับ', '⚪ Closed')],
+              ].map(([value, label]) => (
+                <button
+                  key={String(value)}
+                  type="button"
+                  aria-pressed={accepting === value}
+                  onClick={() => setAccepting(value as boolean)}
+                  className={`py-2 rounded-xl text-xs font-black transition-colors cursor-pointer ${
+                    accepting === value ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {statusChanged && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-300 animate-in fade-in slide-in-from-top-1">
+                {accepting
+                  ? tr('เปิดรับอีกครั้ง: นักเรียนที่ถูกตั้งเป็น "ขาด" อัตโนมัติจะกลับเป็นยังไม่เช็ค และเช็คชื่อได้', 'Reopening: students marked absent automatically go back to unchecked and can check in')
+                  : tr('ปิดรับ: นักเรียนที่ยังไม่เช็คชื่อจะถูกตั้งเป็น "ขาด"', 'Closing: students who have not checked in are marked absent')}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-2 px-5 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] border-t border-slate-100 dark:border-slate-800">
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer">
+            {tr('ยกเลิก', 'Cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={!title.trim() || busy}
+            className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black cursor-pointer disabled:opacity-50"
+          >
+            {tr('บันทึก', 'Save')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Height-animated disclosure. Children stay mounted while closing so the
