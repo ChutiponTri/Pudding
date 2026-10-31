@@ -11,13 +11,46 @@ export function SemesterSelect({
   onChange,
   options,
   currentPeriod,
+  compact = false,
 }: {
   value: SemesterKey;
   onChange: (key: SemesterKey) => void;
   options: Array<{ semester: number; yearCE: number }>;
   currentPeriod: { semester: number; yearCE: number };
+  /** Full-width with the label folded into the field, for narrow panels such as the sidebar. */
+  compact?: boolean;
 }) {
   const { t, language } = useLanguage();
+  const items = (
+    <>
+      {options.map((opt) => (
+        <option key={semesterKeyOf(opt.semester, opt.yearCE)} value={semesterKeyOf(opt.semester, opt.yearCE)}>
+          {formatAcademicPeriod(opt.semester, opt.yearCE, language)}{' '}
+          {opt.semester === currentPeriod.semester && opt.yearCE === currentPeriod.yearCE
+            ? `(${t('classroom_mgmt.fields.active_semester')})`
+            : ''}
+        </option>
+      ))}
+      <option value={ALL_SEMESTERS}>{t('classroom_mgmt.fields.all_semesters')}</option>
+    </>
+  );
+
+  if (compact) {
+    return (
+      <label className="relative flex items-center min-w-0 w-full">
+        <span className="sr-only">{t('classroom_mgmt.fields.filter_semester_label')}</span>
+        <Calendar className="w-3.5 h-3.5 absolute left-3 text-amber-500 pointer-events-none" aria-hidden="true" />
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full min-w-0 h-11 lg:h-9 pl-8 pr-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:border-amber-500 cursor-pointer truncate"
+        >
+          {items}
+        </select>
+      </label>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2 min-w-0">
       <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold hidden sm:inline shrink-0">
@@ -29,15 +62,7 @@ export function SemesterSelect({
         onChange={(e) => onChange(e.target.value)}
         className="w-full sm:w-auto h-10 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:border-amber-500 cursor-pointer shadow-xs"
       >
-        {options.map((opt) => (
-          <option key={semesterKeyOf(opt.semester, opt.yearCE)} value={semesterKeyOf(opt.semester, opt.yearCE)}>
-            {formatAcademicPeriod(opt.semester, opt.yearCE, language)}{' '}
-            {opt.semester === currentPeriod.semester && opt.yearCE === currentPeriod.yearCE
-              ? `(${t('classroom_mgmt.fields.active_semester')})`
-              : ''}
-          </option>
-        ))}
-        <option value={ALL_SEMESTERS}>{t('classroom_mgmt.fields.all_semesters')}</option>
+        {items}
       </select>
     </div>
   );

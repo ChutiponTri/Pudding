@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
@@ -15,11 +15,22 @@ import {
   ListChecks,
   UserPlus,
   Home,
+  ChevronDown,
+  GripVertical,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService, CLASSROOMS_CHANGED_EVENT } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
 import { useSidebar } from '@/components/SidebarContext';
+import { SemesterSelect } from '@/components/SemesterSelect';
+import { getDefaultAcademicPeriod } from '@/lib/utils/academicYear';
+import { ALL_SEMESTERS, filterClassroomsBySemester, semesterKeyFromParam, semesterKeyOf, semesterOptions } from '@/lib/utils/semesterFilter';
+import { applySavedOrder, mergeVisibleOrder, useSidebarPrefs } from '@/lib/hooks/useSidebarPrefs';
+
+/** Subject group key for classrooms with neither a course name nor a code. */
+const GENERAL_KEY = '__general__';
+
+type CourseGroup = { key: string; label: string; items: Classroom[] };
 
 /** Short "term/year" label, e.g. "เทอม 1/2568", so the same room in another year is told apart. */
 function periodLabel(cls: Classroom, th: boolean): string {
@@ -100,7 +111,7 @@ const GuestSidebarContent: React.FC<{ onNavigate: () => void }> = ({ onNavigate 
 };
 
 /** Last list per browser tab, so a reload paints the sidebar at once while it refreshes. */
-const LIST_CACHE_KEY = 'pudding_sidebar_classrooms';
+const LIST_CACHE_KEY = 'pudding_sidebar_classrooms_v2';
 
 function readCachedList(teacherId: string): Classroom[] | null {
   try {
@@ -179,31 +190,138 @@ export const GlobalClassroomSidebar: React.FC = () => {
     };
   }, [onLiff, isLoaded, teacherId, listVersion]);
 
-  // Sort classrooms from newest to oldest
-  const sortedClassrooms = useMemo(() => {
-    // Signed out or another teacher: show nothing rather than a previous teacher's list.
-    // Before the first fetch returns, this tab's cached list paints at once (the
-    // sidebar renders nothing until it opens after mount, so hydration is unaffected).
-    const classrooms = !teacherId ? [] : list?.teacherId === teacherId ? list.items : readCachedList(teacherId) || [];
-    return [...classrooms].sort((a, b) => {
-      const timeA = new Date(a.created_at || 0).getTime();
-      const timeB = new Date(b.created_at || 0).getTime();
-      return timeB - timeA;
-    });
-  }, [list, teacherId]);
+  // Signed out or another teacher: show nothing rather than a previous teacher's list.
+  // Before the first fetch returns, this tab's cached list paints at once (the
+  // sidebar renders nothing until it opens after mount, so hydration is unaffected).
+  const allClassrooms = useMemo(
+    () => (!teacherId ? [] : list?.teacherId === teacherId ? list.items : readCachedList(teacherId) || []),
+    [list, teacherId]
+  );
 
-  // Group classrooms by Course / Subject while maintaining newest-to-oldest order
+  // Term filter: the dashboard's options and filter. The list already carries
+  // each classroom's effective term (its course's when it has none), so no
+  // course data is needed here.
+  const { prefs, update: updatePrefs } = useSidebarPrefs(teacherId);
+  const currentPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
+  const termOptions = useMemo(() => semesterOptions([], allClassrooms, currentPeriod.yearCE), [allClassrooms, currentPeriod.yearCE]);
+  const currentTermKey = semesterKeyOf(currentPeriod.semester, currentPeriod.yearCE);
+  const storedTerm = semesterKeyFromParam(prefs.term ?? null, currentTermKey);
+  const termKey =
+    storedTerm === ALL_SEMESTERS || termOptions.some((o) => semesterKeyOf(o.semester, o.yearCE) === storedTerm) ? storedTerm : currentTermKey;
+  const filteredClassrooms = useMemo(
+    () => filterClassroomsBySemester(allClassrooms, [], termKey, currentPeriod.yearCE),
+    [allClassrooms, termKey, currentPeriod.yearCE]
+  );
+
+  // Group by subject. Subjects default to newest classroom first, then follow
+  // the order the teacher dragged them into; classrooms inside are by name.
   const groupedCourses = useMemo(() => {
-    const map = new Map<string, { label: string; subjectCode?: string; items: Classroom[] }>();
-    for (const cls of sortedClassrooms) {
-      const key = cls.course_name || cls.subject_code || tr('รายวิชาทั่วไป', 'General');
-      if (!map.has(key)) {
-        map.set(key, { label: key, subjectCode: cls.subject_code, items: [] });
-      }
+    const collator = new Intl.Collator(language === 'th' ? 'th' : 'en', { numeric: true, sensitivity: 'base' });
+    const byNewest = [...filteredClassrooms].sort(
+      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+    const map = new Map<string, CourseGroup>();
+    for (const cls of byNewest) {
+      const key = cls.course_name || cls.subject_code || GENERAL_KEY;
+      if (!map.has(key)) map.set(key, { key, label: key === GENERAL_KEY ? tr('รายวิชาทั่วไป', 'General') : key, items: [] });
       map.get(key)!.items.push(cls);
     }
-    return Array.from(map.values());
-  }, [sortedClassrooms, tr]);
+    const groups = Array.from(map.values());
+    for (const group of groups) group.items.sort((a, b) => collator.compare(a.name || '', b.name || ''));
+    return applySavedOrder(groups, (g) => g.key, prefs.order);
+  }, [filteredClassrooms, language, tr, prefs.order]);
+
+  // While dragging, the subjects show in this live order.
+  const [dragOrder, setDragOrder] = useState<string[] | null>(null);
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const groupRefs = useRef(new Map<string, HTMLElement>());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const visibleGroups = useMemo(() => {
+    if (!dragOrder) return groupedCourses;
+    const byKey = new Map(groupedCourses.map((g) => [g.key, g]));
+    return dragOrder.map((key) => byKey.get(key)).filter((g): g is CourseGroup => !!g);
+  }, [dragOrder, groupedCourses]);
+
+  /** Saves a new order of the visible subjects, dropping keys of subjects that no longer exist. */
+  const saveOrder = useCallback(
+    (nextVisible: string[]) => {
+      const before = groupedCourses.map((g) => g.key);
+      if (nextVisible.join('\n') === before.join('\n')) return;
+      const existing = new Set(allClassrooms.map((c) => c.course_name || c.subject_code || GENERAL_KEY));
+      updatePrefs((p) => ({
+        ...p,
+        order: mergeVisibleOrder(p.order, before, nextVisible).filter((key) => !allClassrooms.length || existing.has(key)),
+      }));
+    },
+    [groupedCourses, allClassrooms, updatePrefs]
+  );
+
+  const collapsed = useMemo(() => new Set(prefs.collapsed), [prefs.collapsed]);
+  const toggleCollapsed = (key: string) =>
+    updatePrefs((p) => ({
+      ...p,
+      collapsed: p.collapsed.includes(key) ? p.collapsed.filter((k) => k !== key) : [...p.collapsed, key],
+    }));
+
+  const moveBy = (key: string, delta: number) => {
+    const keys = groupedCourses.map((g) => g.key);
+    const from = keys.indexOf(key);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= keys.length) return;
+    keys.splice(to, 0, keys.splice(from, 1)[0]);
+    saveOrder(keys);
+  };
+
+  // Pointer drag on the grip: works the same for mouse, pen and touch. The
+  // dragged subject swaps with a neighbour once the pointer passes that
+  // neighbour's middle, and the list scrolls near its edges.
+  const onGripPointerDown = (e: React.PointerEvent<HTMLButtonElement>, key: string) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDraggingKey(key);
+    setDragOrder(groupedCourses.map((g) => g.key));
+  };
+
+  const onGripPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!draggingKey || !dragOrder) return;
+    const y = e.clientY;
+    const scroller = scrollRef.current;
+    if (scroller) {
+      const box = scroller.getBoundingClientRect();
+      if (y < box.top + 48) scroller.scrollBy({ top: -10 });
+      else if (y > box.bottom - 48) scroller.scrollBy({ top: 10 });
+    }
+    const index = dragOrder.indexOf(draggingKey);
+    const middle = (key?: string) => {
+      const rect = key ? groupRefs.current.get(key)?.getBoundingClientRect() : undefined;
+      return rect ? rect.top + rect.height / 2 : null;
+    };
+    const above = middle(dragOrder[index - 1]);
+    const below = middle(dragOrder[index + 1]);
+    let target = index;
+    if (above !== null && y < above) target = index - 1;
+    else if (below !== null && y > below) target = index + 1;
+    if (target === index) return;
+    const next = [...dragOrder];
+    next.splice(target, 0, next.splice(index, 1)[0]);
+    setDragOrder(next);
+  };
+
+  const endDrag = (commit: boolean) => {
+    if (commit && dragOrder) saveOrder(dragOrder);
+    setDragOrder(null);
+    setDraggingKey(null);
+  };
+
+  const onGripKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, key: string) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      moveBy(key, e.key === 'ArrowUp' ? -1 : 1);
+      // Keep focus on the moved grip after the re-render.
+      requestAnimationFrame(() => groupRefs.current.get(key)?.querySelector<HTMLButtonElement>('[data-grip]')?.focus());
+    }
+  };
 
   const handleItemClick = () => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
@@ -272,82 +390,153 @@ export const GlobalClassroomSidebar: React.FC = () => {
           </Link>
         </div>
 
-        {/* Total Count Subtitle Banner */}
-        <div className="mx-3 mb-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
-          <span className="font-bold flex items-center gap-1">
-            <GraduationCap className="w-3.5 h-3.5 text-amber-500" />
-            <span>{tr(`ทั้งหมด ${sortedClassrooms.length} ห้องเรียน`, `${sortedClassrooms.length} classrooms`)}</span>
-          </span>
-          <span className="text-[10px] text-slate-400 font-mono">
-            {groupedCourses.length} {tr('รายวิชา', 'courses')}
-          </span>
+        {/* Term filter (same options and rule as the dashboard) and counts */}
+        <div className="mx-3 mb-1 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-1.5 shrink-0">
+          <SemesterSelect
+            compact
+            value={termKey}
+            onChange={(key) => updatePrefs((p) => ({ ...p, term: key }))}
+            options={termOptions}
+            currentPeriod={currentPeriod}
+          />
+          <div className="px-1 flex items-center justify-between text-[11px] text-slate-500">
+            <span className="font-bold flex items-center gap-1">
+              <GraduationCap className="w-3.5 h-3.5 text-amber-500" />
+              <span>{tr(`${filteredClassrooms.length} ห้องเรียน`, `${filteredClassrooms.length} classrooms`)}</span>
+            </span>
+            <span className="text-[10px] text-slate-400 font-mono">
+              {groupedCourses.length} {tr('รายวิชา', 'courses')}
+            </span>
+          </div>
         </div>
 
         {/* Classrooms List: Smooth Scroll with no horizontal overflow */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-4 overflow-x-hidden min-w-0">
-          {(!isLoaded || loading) && sortedClassrooms.length === 0 ? (
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 overflow-x-hidden min-w-0">
+          {(!isLoaded || loading) && allClassrooms.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-400 space-y-2">
               <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
               <p>{tr('กำลังโหลดห้องเรียน...', 'Loading classrooms...')}</p>
             </div>
-          ) : sortedClassrooms.length === 0 ? (
+          ) : filteredClassrooms.length === 0 ? (
             <div className="p-5 sm:p-8 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs text-slate-400 space-y-2">
               <GraduationCap className="w-8 h-8 text-slate-300 mx-auto" />
-              <p>{tr('ยังไม่มีห้องเรียนในระบบ', 'No classrooms yet')}</p>
+              <p>
+                {allClassrooms.length === 0
+                  ? tr('ยังไม่มีห้องเรียนในระบบ', 'No classrooms yet')
+                  : tr('ไม่มีห้องเรียนในภาคเรียนนี้', 'No classrooms in this term')}
+              </p>
+              {allClassrooms.length > 0 && termKey !== ALL_SEMESTERS && (
+                <button
+                  type="button"
+                  onClick={() => updatePrefs((p) => ({ ...p, term: ALL_SEMESTERS }))}
+                  className="min-h-11 px-3 rounded-xl text-xs font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 cursor-pointer"
+                >
+                  {tr('ดูทุกภาคเรียน', 'Show all terms')}
+                </button>
+              )}
             </div>
           ) : (
-            groupedCourses.map((group) => (
-              <div key={group.label} className="space-y-1.5 min-w-0">
-                <div className="px-2 py-1.5 flex items-center justify-between gap-2 min-w-0">
-                  <p className="text-sm font-black text-slate-900 dark:text-white truncate flex items-center gap-2 min-w-0" title={group.label}>
-                    <span className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-                      <BookOpen className="w-4 h-4" />
-                    </span>
-                    <span className="truncate">{group.label}</span>
-                  </p>
-                  <span className="px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 tabular-nums shrink-0">
-                    {group.items.length}
-                  </span>
-                </div>
-
-                <div className="space-y-1 pl-2 ml-3.5 border-l border-slate-200 dark:border-slate-800 min-w-0">
-                  {group.items.map((cls) => {
-                    const isActive = pathname.startsWith(`/classrooms/${cls.id}`);
-                    const studentCount = cls.student_count || cls.students?.length || 0;
-
-                    return (
-                      <Link
-                        key={cls.id}
-                        href={`/classrooms/${cls.id}`}
-                        onClick={handleItemClick}
-                        title={cls.name}
-                        className={`flex items-center justify-between min-h-11 px-3 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer min-w-0 ${
-                          isActive
-                            ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-300/80 dark:ring-amber-700/70'
-                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
-                          <span className="min-w-0">
-                            <span className="block truncate">{cls.name}</span>
-                            {periodLabel(cls, language === 'th') && (
-                              <span className={`block text-[11px] font-semibold leading-tight ${isActive ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400'}`}>
-                                {periodLabel(cls, language === 'th')}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                        <span className="text-xs text-slate-400 font-semibold shrink-0 ml-2 flex items-center gap-1 tabular-nums">
-                          <Users className="w-3.5 h-3.5" />
-                          <span>{studentCount}</span>
+            visibleGroups.map((group) => {
+              const isCollapsed = collapsed.has(group.key);
+              const isDragging = draggingKey === group.key;
+              const hasActive = group.items.some((cls) => pathname.startsWith(`/classrooms/${cls.id}`));
+              const listId = `sidebar-course-${group.key}`;
+              return (
+                <div
+                  key={group.key}
+                  ref={(el) => {
+                    if (el) groupRefs.current.set(group.key, el);
+                    else groupRefs.current.delete(group.key);
+                  }}
+                  className={`min-w-0 rounded-2xl transition-shadow ${
+                    isDragging ? 'relative z-10 bg-white dark:bg-slate-900 shadow-xl shadow-slate-900/15 ring-2 ring-amber-400/80' : ''
+                  }`}
+                >
+                  <div className="flex items-center gap-0.5 min-w-0">
+                    <button
+                      type="button"
+                      data-grip
+                      onPointerDown={(e) => onGripPointerDown(e, group.key)}
+                      onPointerMove={onGripPointerMove}
+                      onPointerUp={() => endDrag(true)}
+                      onPointerCancel={() => endDrag(false)}
+                      onKeyDown={(e) => onGripKeyDown(e, group.key)}
+                      aria-label={tr(`ลากเพื่อจัดลำดับ ${group.label} (หรือกดลูกศรขึ้น/ลง)`, `Drag to reorder ${group.label} (or press arrow up/down)`)}
+                      title={tr('ลากเพื่อจัดลำดับ', 'Drag to reorder')}
+                      className={`w-7 min-h-11 lg:min-h-9 flex items-center justify-center rounded-lg text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-amber-500 shrink-0 touch-none ${
+                        isDragging ? 'cursor-grabbing text-amber-500' : 'cursor-grab'
+                      }`}
+                    >
+                      <GripVertical className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleCollapsed(group.key)}
+                      aria-expanded={!isCollapsed}
+                      aria-controls={listId}
+                      title={group.label}
+                      className="flex-1 min-w-0 min-h-11 lg:min-h-9 pl-1 pr-2 py-1.5 rounded-xl flex items-center justify-between gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-left"
+                    >
+                      <span className="text-sm font-black text-slate-900 dark:text-white truncate flex items-center gap-2 min-w-0">
+                        <span className="relative w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                          <BookOpen className="w-4 h-4" />
+                          {isCollapsed && hasActive && (
+                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-white dark:ring-slate-900" />
+                          )}
                         </span>
-                      </Link>
-                    );
-                  })}
+                        <span className="truncate">{group.label}</span>
+                      </span>
+                      <span className="flex items-center gap-1 shrink-0">
+                        <span className="px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-500 dark:text-slate-400 tabular-nums">
+                          {group.items.length}
+                        </span>
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isCollapsed ? '-rotate-90' : ''}`} />
+                      </span>
+                    </button>
+                  </div>
+
+                  {!isCollapsed && (
+                    <div id={listId} className="mt-1 mb-2 space-y-1 pl-2 ml-[2.6rem] border-l border-slate-200 dark:border-slate-800 min-w-0">
+                      {group.items.map((cls) => {
+                        const isActive = pathname.startsWith(`/classrooms/${cls.id}`);
+                        const studentCount = cls.student_count || cls.students?.length || 0;
+                        const period = periodLabel(cls, language === 'th');
+
+                        return (
+                          <Link
+                            key={cls.id}
+                            href={`/classrooms/${cls.id}`}
+                            onClick={handleItemClick}
+                            title={cls.name}
+                            className={`flex items-center justify-between min-h-11 px-3 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer min-w-0 ${
+                              isActive
+                                ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-300/80 dark:ring-amber-700/70'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                              <span className="min-w-0">
+                                <span className="block truncate">{cls.name}</span>
+                                {period && (
+                                  <span className={`block text-[11px] font-semibold leading-tight ${isActive ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400'}`}>
+                                    {period}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            <span className="text-xs text-slate-400 font-semibold shrink-0 ml-2 flex items-center gap-1 tabular-nums">
+                              <Users className="w-3.5 h-3.5" />
+                              <span>{studentCount}</span>
+                            </span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
         </>

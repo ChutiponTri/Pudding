@@ -282,8 +282,26 @@ function teacherVisibleAssignments(supabase: Supabase, list: Assignment[]): Assi
     .sort(byCreatedDesc);
 }
 
-/** Classroom columns the sidebar list shows (no rosters, no LINE secrets). */
-const CLASSROOM_LIST_FIELDS = 'id, name, course_id, course_name, subject_code, semester, year_ce, academic_year, student_count, created_at';
+/**
+ * Classroom columns the sidebar list shows (no rosters, no LINE secrets), plus
+ * the parent course's term in the same request.
+ */
+const CLASSROOM_LIST_FIELDS =
+  'id, name, course_id, course_name, subject_code, semester, year_ce, academic_year, student_count, created_at, course:courses(semester, year_ce)';
+
+type ClassroomListRow = Classroom & { course?: { semester?: number | null; year_ce?: number | null } | null };
+
+/**
+ * A classroom without its own term takes its course's, as the dashboard's
+ * semester filter does, so the sidebar can filter without loading courses.
+ */
+function withEffectiveTerm({ course, ...cls }: ClassroomListRow): Classroom {
+  return {
+    ...cls,
+    semester: cls.semester ?? course?.semester ?? undefined,
+    year_ce: cls.year_ce ?? course?.year_ce ?? undefined,
+  } as Classroom;
+}
 
 /** Submission columns the dashboard counts from (no answers, no profiles). */
 const DASHBOARD_SUBMISSION_FIELDS =
@@ -694,7 +712,8 @@ export const dataActions = {
       supabase.from('classrooms').select(CLASSROOM_LIST_FIELDS).contains('teachers', jsonArray({ teacher_id: me.userId })),
     ]);
     if (own.error || shared.error) throw toDatabaseError((own.error || shared.error)!, 'classrooms');
-    return uniqueById([...(own.data || []), ...(shared.data || [])] as Classroom[]).sort(byCreatedDesc);
+    const rows = [...(own.data || []), ...(shared.data || [])] as unknown as ClassroomListRow[];
+    return uniqueById(rows.map(withEffectiveTerm)).sort(byCreatedDesc);
   },
 
   async getStudentClassrooms({ supabase, actor }: Ctx) {
