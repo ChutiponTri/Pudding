@@ -1,6 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
 import { canUseTeacherApp } from '@/lib/server/teacherProfileGuard';
-import { getAdmin } from '@/lib/server/admin';
 import { getLineTestQuota, releaseLineTestSend, reserveLineTestSend } from '@/lib/server/lineTestQuota';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
@@ -95,8 +94,8 @@ export async function POST(request: NextRequest) {
     if (!classroom.line_group_id) return NextResponse.json({ error: 'LINE Group is not connected' }, { status: 409 });
     // Each test is billed per group member, so it is rationed (see lineTestQuota).
     const reservation = await reserveLineTestSend(supabase, { teacherId: userId, classroomId, source: 'web' });
-    // The platform admin is never limited (checked only when the quota says no, to skip a Clerk call).
-    if (!reservation.ok && !(await getAdmin())) {
+    // Everyone is limited, the admin included (raise the LINE_TEST_LIMIT_* env vars instead).
+    if (!reservation.ok) {
       return NextResponse.json(
         { error: reservation.message, testQuota: reservation.quota },
         { status: 429, headers: reservation.retryAfterSeconds ? { 'Retry-After': String(reservation.retryAfterSeconds) } : undefined }
@@ -109,7 +108,7 @@ export async function POST(request: NextRequest) {
       );
     } catch (pushError) {
       // Nothing was delivered, so it does not count.
-      if (reservation.ok) await releaseLineTestSend(supabase, reservation.id);
+      await releaseLineTestSend(supabase, reservation.id);
       console.error('LINE test push failed:', pushError);
       return NextResponse.json({ error: 'ส่งข้อความทดสอบไม่สำเร็จ กรุณาตรวจว่าบอทยังอยู่ในกลุ่ม LINE' }, { status: 502 });
     }
@@ -117,7 +116,7 @@ export async function POST(request: NextRequest) {
       status: 'connected',
       groupName: classroom.line_group_name || undefined,
       connectedAt: classroom.line_connected_at,
-      testQuota: reservation.ok ? reservation.quota : undefined,
+      testQuota: reservation.quota,
     });
   }
 
