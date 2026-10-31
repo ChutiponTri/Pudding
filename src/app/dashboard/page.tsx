@@ -33,7 +33,6 @@ import {
   PlusCircle,
   ArrowRight,
   BookOpen,
-  Calendar,
   Sparkles,
   Clock,
   UserPlus,
@@ -68,6 +67,8 @@ import {
 import { notificationManager } from '@/lib/utils/notificationManager';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
+import { SemesterSelect } from '@/components/SemesterSelect';
+import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { EditStudentModal } from '@/components/EditStudentModal';
 
 /**
@@ -411,40 +412,16 @@ export default function DashboardPage() {
   }, [clerkUser?.id, language]);
 
   // Dynamically collect all available semester options across current period, courses, and classrooms
-  const availableSemesterOptions = useMemo(() => {
-    const map = new Map<string, { semester: number; yearCE: number }>();
-    [1, 2, 3].forEach((s) => {
-      map.set(`${s}_${defaultPeriod.yearCE}`, { semester: s, yearCE: defaultPeriod.yearCE });
-    });
-    courses.forEach((c) => {
-      if (c.semester && c.year_ce) {
-        map.set(`${c.semester}_${c.year_ce}`, { semester: c.semester, yearCE: c.year_ce });
-      }
-    });
-    classrooms.forEach((cls) => {
-      if (cls.semester && cls.year_ce) {
-        map.set(`${cls.semester}_${cls.year_ce}`, { semester: cls.semester, yearCE: cls.year_ce });
-      }
-    });
-    return Array.from(map.values()).sort((a, b) => {
-      if (b.yearCE !== a.yearCE) return b.yearCE - a.yearCE;
-      return a.semester - b.semester;
-    });
-  }, [defaultPeriod.yearCE, courses, classrooms]);
+  const availableSemesterOptions = useMemo(
+    () => semesterOptions(courses, classrooms, defaultPeriod.yearCE),
+    [defaultPeriod.yearCE, courses, classrooms]
+  );
 
   // Filter classrooms by selected semester
-  const filteredClassrooms = useMemo(() => {
-    if (selectedSemesterKey === 'all') return classrooms;
-    const [semStr, yrStr] = selectedSemesterKey.split('_');
-    const sem = Number(semStr);
-    const yr = Number(yrStr);
-    return classrooms.filter((cls) => {
-      const parentCourse = courses.find((c) => c.id === cls.course_id);
-      const clsSem = cls.semester ?? parentCourse?.semester ?? 1;
-      const clsYr = cls.year_ce ?? parentCourse?.year_ce ?? defaultPeriod.yearCE;
-      return clsSem === sem && clsYr === yr;
-    });
-  }, [classrooms, courses, selectedSemesterKey, defaultPeriod.yearCE]);
+  const filteredClassrooms = useMemo(
+    () => filterClassroomsBySemester(classrooms, courses, selectedSemesterKey, defaultPeriod.yearCE),
+    [classrooms, courses, selectedSemesterKey, defaultPeriod.yearCE]
+  );
 
   // Filter and group courses based on selected semester
   const groupedCourses = useMemo(() => {
@@ -1268,43 +1245,53 @@ export default function DashboardPage() {
       {/* Top Metric Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         
-        {/* Classrooms count */}
-        <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 transition-all">
+        {/* Classrooms count -> every classroom of the selected term */}
+        <Link
+          href={`/classrooms?term=${encodeURIComponent(selectedSemesterKey)}`}
+          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 transition-all block group"
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {t('dashboard.stats.active_classrooms')}
             </span>
-            <div className="w-9 h-9 rounded-xl shrink-0 bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl shrink-0 bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
               <School className="w-5 h-5" />
             </div>
           </div>
           <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
             {filteredClassrooms.length}
           </p>
-          <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-1 block">
-            {selectedSemesterKey === 'all'
-              ? (language === 'th' ? 'ทุกภาคเรียนและปีการศึกษา' : 'All Semesters')
-              : formatAcademicPeriod(Number(selectedSemesterKey.split('_')[0]), Number(selectedSemesterKey.split('_')[1]), language)}
+          <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-1 flex items-center gap-1">
+            <span className="truncate">
+              {selectedSemesterKey === 'all'
+                ? (language === 'th' ? 'ทุกภาคเรียนและปีการศึกษา' : 'All Semesters')
+                : formatAcademicPeriod(Number(selectedSemesterKey.split('_')[0]), Number(selectedSemesterKey.split('_')[1]), language)}
+            </span>
+            <ArrowRight className="w-3 h-3 shrink-0" />
           </span>
-        </div>
+        </Link>
 
-        {/* Total Students */}
-        <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-emerald-400 dark:hover:border-emerald-500 transition-all">
+        {/* Total Students -> every student of the selected term, editable */}
+        <Link
+          href={`/students?term=${encodeURIComponent(selectedSemesterKey)}`}
+          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-emerald-400 dark:hover:border-emerald-500 transition-all block group"
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {t('dashboard.stats.total_students')}
             </span>
-            <div className="w-9 h-9 rounded-xl shrink-0 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl shrink-0 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
               <Users className="w-5 h-5" />
             </div>
           </div>
           <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
             {totalStudents}
           </p>
-          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium mt-1 hidden sm:block">
-            {language === 'th' ? 'เชิญผ่าน LINE LIFF ได้ทันที' : 'Invitable via LINE LIFF'}
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1">
+            <span className="truncate">{language === 'th' ? 'ดูและแก้ไขข้อมูลนักเรียน' : 'View & edit students'}</span>
+            <ArrowRight className="w-3 h-3 shrink-0" />
           </span>
-        </div>
+        </Link>
 
         {/* Pending to Grade */}
         <Link
@@ -1367,27 +1354,12 @@ export default function DashboardPage() {
           </div>
 
           {/* Semester Selector */}
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold hidden sm:inline shrink-0">
-              <Calendar className="w-3.5 h-3.5 inline mr-1 text-amber-500" />
-              {t('classroom_mgmt.fields.filter_semester_label')}:
-            </span>
-            <select
-              value={selectedSemesterKey}
-              onChange={(e) => setSelectedSemesterKey(e.target.value)}
-              className="w-full sm:w-auto h-10 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-hidden focus:border-amber-500 cursor-pointer shadow-xs"
-            >
-              {availableSemesterOptions.map((opt) => (
-                <option key={`${opt.semester}_${opt.yearCE}`} value={`${opt.semester}_${opt.yearCE}`}>
-                  {formatAcademicPeriod(opt.semester, opt.yearCE, language)}{' '}
-                  {opt.semester === defaultPeriod.semester && opt.yearCE === defaultPeriod.yearCE
-                    ? `(${t('classroom_mgmt.fields.active_semester')})`
-                    : ''}
-                </option>
-              ))}
-              <option value="all">{t('classroom_mgmt.fields.all_semesters')}</option>
-            </select>
-          </div>
+          <SemesterSelect
+            value={selectedSemesterKey}
+            onChange={setSelectedSemesterKey}
+            options={availableSemesterOptions}
+            currentPeriod={defaultPeriod}
+          />
         </div>
 
         {/* Grouped Course Cards */}

@@ -26,6 +26,20 @@ const entries = new Map<string, Entry>();
 const inflight = new Map<string, { owner: string; version: number; promise: Promise<unknown> }>();
 const watchedClassroomIds = new Set<string>();
 const watchListeners = new Set<() => void>();
+const invalidationListeners = new Set<() => void>();
+
+/** Called whenever entries turn stale, so an open page can refetch what it shows. */
+export function onCacheInvalidated(listener: () => void) {
+  invalidationListeners.add(listener);
+  return () => {
+    invalidationListeners.delete(listener);
+  };
+}
+
+function bumpVersion() {
+  version++;
+  invalidationListeners.forEach((listener) => listener());
+}
 
 let tabChannel: BroadcastChannel | null = null;
 function getTabChannel() {
@@ -33,7 +47,7 @@ function getTabChannel() {
   try {
     tabChannel = new BroadcastChannel(TAB_CHANNEL);
     tabChannel.onmessage = (event) => {
-      if (event.data?.type === 'invalidate') version++;
+      if (event.data?.type === 'invalidate') bumpVersion();
     };
   } catch {}
   return tabChannel;
@@ -41,7 +55,7 @@ function getTabChannel() {
 
 /** Marks every entry stale (the next read refetches) and tells this browser's other tabs. */
 export function invalidateSessionCache(options: { broadcast?: boolean } = {}) {
-  version++;
+  bumpVersion();
   if (options.broadcast === false) return;
   try {
     getTabChannel()?.postMessage({ type: 'invalidate' });
