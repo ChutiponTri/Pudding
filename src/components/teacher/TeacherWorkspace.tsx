@@ -70,6 +70,8 @@ import {
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
 import { gradingCounts, isIntegrityFlagged, needsGrading } from '@/lib/utils/gradingStatus';
+import { ASSIGNMENT_STATUS_CLASSES, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
+import { formatDateTime } from '@/lib/utils/datetime';
 import { GradingBar } from '@/components/AssignmentProgressCard';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 import { SemesterSelect } from '@/components/SemesterSelect';
@@ -1769,15 +1771,21 @@ export function TeacherWorkspace({
                 </div>
               </div>
 
-              {/* Course work the teacher has not finished grading: every roster student
-                  needs a score, handed in or not. Finished work is not listed here. */}
+              {/* Course work the teacher still has to act on: published work not fully
+                  graded (every roster student needs a score, handed in or not), then
+                  drafts and scheduled work students cannot see yet. Finished work is not listed. */}
               {course.assignments.length > 0 && (() => {
                 const countsOf = (asg: Assignment) => gradingByAssignment.get(asg.id) || gradingCounts([], 0, asg.is_exam);
+                const unpublished = course.assignments
+                  .filter((asg) => !isAssignmentPublished(asg))
+                  // Scheduled first (soonest on top), then drafts.
+                  .sort((a, b) => new Date(a.publish_at || 0).getTime() - new Date(b.publish_at || 0).getTime());
                 const toGrade = course.assignments.filter((asg) => {
+                  if (!isAssignmentPublished(asg)) return false;
                   const c = countsOf(asg);
                   return c.pending > 0 || c.notSubmitted > 0;
                 });
-                if (toGrade.length === 0) return null;
+                if (toGrade.length === 0 && unpublished.length === 0) return null;
                 const pendingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).pending, 0);
                 const missingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).notSubmitted, 0);
                 const open = !foldedToGradeCourses[course.id];
@@ -1830,9 +1838,39 @@ export function TeacherWorkspace({
                     </Link>
                   );
                 };
+                const unpublishedRow = (asg: Assignment) => {
+                  const draft = isAssignmentDraft(asg);
+                  return (
+                    <Link
+                      key={asg.id}
+                      href={`/assignments/${asg.id}/grading?from=dashboard`}
+                      className="group p-3 rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600 flex flex-col gap-2 shadow-xs transition-colors"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border shrink-0 ${ASSIGNMENT_STATUS_CLASSES[draft ? 'draft' : 'scheduled']}`}>
+                          {draft ? (language === 'th' ? 'ฉบับร่าง' : 'Draft') : language === 'th' ? 'ตั้งเวลา' : 'Scheduled'}
+                        </span>
+                        <span className="text-[11px] text-slate-400 truncate">{asg.classroom_name}</span>
+                      </div>
+                      <h5 className="font-bold text-xs text-slate-900 dark:text-white truncate">{asg.title}</h5>
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="min-w-0 truncate text-slate-500 dark:text-slate-400">
+                          {draft
+                            ? language === 'th' ? 'นักเรียนยังไม่เห็น' : 'Hidden from students'
+                            : `${language === 'th' ? 'เผยแพร่' : 'Publishes'} ${formatDateTime(asg.publish_at, language)}`}
+                        </span>
+                        <span className="shrink-0 inline-flex items-center gap-0.5 font-bold text-slate-500 dark:text-slate-400 group-hover:text-slate-800 dark:group-hover:text-slate-200">
+                          {language === 'th' ? 'เปิดดู' : 'Open'}
+                          <ArrowRight className="w-3 h-3" />
+                        </span>
+                      </div>
+                    </Link>
+                  );
+                };
                 const summary = [
                   pendingTotal > 0 && (language === 'th' ? `รอตรวจ ${pendingTotal} ชิ้น` : `${pendingTotal} to grade`),
                   missingTotal > 0 && (language === 'th' ? `ยังไม่มีคะแนน ${missingTotal} คน` : `${missingTotal} without a score`),
+                  unpublished.length > 0 && (language === 'th' ? `ยังไม่เผยแพร่ ${unpublished.length} งาน` : `${unpublished.length} unpublished`),
                 ].filter(Boolean).join(' · ');
                 return (
                   <div className="pt-2">
@@ -1848,7 +1886,9 @@ export function TeacherWorkspace({
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-xs font-bold text-amber-800 dark:text-amber-300">
-                            {language === 'th' ? `ยังตรวจไม่ครบ ${toGrade.length} งาน` : `${toGrade.length} tasks not fully graded`}
+                            {toGrade.length > 0
+                              ? language === 'th' ? `ยังตรวจไม่ครบ ${toGrade.length} งาน` : `${toGrade.length} tasks not fully graded`
+                              : language === 'th' ? `ยังไม่เผยแพร่ ${unpublished.length} งาน` : `${unpublished.length} unpublished tasks`}
                           </span>
                           <span className="block text-[11px] text-amber-700/70 dark:text-amber-400/70 truncate">{summary}</span>
                         </span>
@@ -1857,7 +1897,19 @@ export function TeacherWorkspace({
                         </span>
                       </button>
                       <Collapse open={open}>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-3 pb-3">{toGrade.map(row)}</div>
+                        <div className="px-3 pb-3 space-y-3">
+                          {toGrade.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{toGrade.map(row)}</div>}
+                          {unpublished.length > 0 && (
+                            <div className="space-y-2">
+                              {toGrade.length > 0 && (
+                                <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                                  {language === 'th' ? `ยังไม่เผยแพร่ (${unpublished.length})` : `Not published yet (${unpublished.length})`}
+                                </p>
+                              )}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{unpublished.map(unpublishedRow)}</div>
+                            </div>
+                          )}
+                        </div>
                       </Collapse>
                     </div>
                   </div>
