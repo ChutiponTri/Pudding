@@ -23,7 +23,8 @@ export function AssignmentStatusDialog({
 }: {
   assignment: Assignment;
   onClose: () => void;
-  onSaved: (updated: Assignment) => void;
+  /** `action` says whether the work was published now or its submission status changed. */
+  onSaved: (updated: Assignment, action: 'published' | 'status') => void;
 }) {
   const { tr, language } = useLanguage();
   const current = assignment.status_override || 'auto';
@@ -92,7 +93,7 @@ export function AssignmentStatusDialog({
     setError('');
     try {
       const updated = await dataService.publishAssignmentNow(assignment.id);
-      onSaved(updated || { ...assignment, publish_at: new Date().toISOString() });
+      onSaved(updated || { ...assignment, publish_at: new Date().toISOString() }, 'published');
     } catch (err) {
       console.error(err);
       setError(err instanceof Error && err.message ? err.message : tr('เผยแพร่งานไม่สำเร็จ', 'Could not publish'));
@@ -113,7 +114,7 @@ export function AssignmentStatusDialog({
         status_override: mode,
         extended_until: mode === 'extended' ? extendedUntil : undefined,
       });
-      onSaved(updated || { ...assignment, status_override: mode, extended_until: mode === 'extended' ? extendedUntil : assignment.extended_until });
+      onSaved(updated || { ...assignment, status_override: mode, extended_until: mode === 'extended' ? extendedUntil : assignment.extended_until }, 'status');
     } catch (err) {
       console.error(err);
       setError(tr('บันทึกสถานะการรับงานไม่สำเร็จ', 'Could not save the submission status'));

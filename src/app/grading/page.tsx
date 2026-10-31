@@ -496,12 +496,14 @@ function GradingHubContent() {
         <AssignmentStatusDialog
           assignment={statusAssignment}
           onClose={() => setStatusAssignment(null)}
-          onSaved={(updated) => {
+          onSaved={(updated, action) => {
             patchAssignment(updated);
             setStatusAssignment(null);
             const kind = updated.is_exam ? (th ? 'ข้อสอบ' : 'quiz') : th ? 'งาน' : 'assignment';
             showToast(
-              updated.status_override === 'force_closed'
+              action === 'published'
+                ? th ? `🚀 เผยแพร่${kind} “${updated.title}” แล้ว` : `🚀 Published “${updated.title}”`
+                : updated.status_override === 'force_closed'
                 ? th ? `🔒 ปิดรับ${kind} “${updated.title}” แล้ว` : `🔒 Closed “${updated.title}”`
                 : updated.status_override === 'extended'
                 ? th ? `⏳ ขยายเวลาส่ง${kind} “${updated.title}” ถึง ${formatDateTime(updated.extended_until, language)} แล้ว` : `⏳ Extended “${updated.title}”`

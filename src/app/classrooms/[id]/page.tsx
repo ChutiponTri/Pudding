@@ -2582,12 +2582,14 @@ export default function ClassroomWorkspacePage() {
         <AssignmentStatusDialog
           assignment={statusAssignment}
           onClose={() => setStatusAssignment(null)}
-          onSaved={(updated) => {
+          onSaved={(updated, action) => {
             setAssignments((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)));
             setStatusAssignment(null);
             const kind = updated.is_exam ? tr('ข้อสอบ', 'exam') : tr('งาน', 'assignment');
             setNotice(
-              updated.status_override === 'force_closed'
+              action === 'published'
+                ? tr(`🚀 เผยแพร่${kind} “${updated.title}” แล้ว`, `🚀 Published the ${kind} “${updated.title}”`)
+                : updated.status_override === 'force_closed'
                 ? tr(`🔒 ปิดรับ${kind} “${updated.title}” แล้ว`, `🔒 Closed the ${kind} “${updated.title}”`)
                 : updated.status_override === 'extended'
                 ? tr(`⏳ ขยายเวลาส่ง${kind} “${updated.title}” ถึง ${formatDateTime(updated.extended_until, language)} แล้ว`, `⏳ Extended the ${kind} “${updated.title}” until ${formatDateTime(updated.extended_until, 'en')}`)

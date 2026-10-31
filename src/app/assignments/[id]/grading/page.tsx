@@ -25,6 +25,7 @@ import { AntiCheatingBadge } from '@/components/AntiCheatingBadge';
 import { IntegrityAuditModal } from '@/components/IntegrityAuditModal';
 import { GradingWorkspace } from '@/components/GradingWorkspace';
 import { ReferenceWorkLink } from '@/components/ReferenceWorkLink';
+import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import {
   Search,
   Filter,
@@ -148,6 +149,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const [extendedDateTime, setExtendedDateTime] = useState('');
   const [showExtendPicker, setShowExtendPicker] = useState(false);
   const [showControls, setShowControls] = useState(false);
+  const [showStatusDialog, setShowStatusDialog] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -751,8 +753,22 @@ They can edit it even if closed. Handing in again clears the current score and c
           {/* The two answers a teacher looks for: does it still take work, and is grading done? */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {assignmentStatus && (
-              <div className={`p-3.5 rounded-2xl border ${STATUS_CARD_CLASSES[assignmentStatus.tone]}`}>
-                <span className="text-[11px] font-bold opacity-80 block">{th ? 'การรับงาน' : 'Submissions'}</span>
+              <button
+                type="button"
+                onClick={() => setShowStatusDialog(true)}
+                disabled={!grader || grader.role === 'researcher'}
+                title={th ? 'กดเพื่อขยายเวลาหรือปิดรับงาน' : 'Tap to extend or close submissions'}
+                className={`p-3.5 rounded-2xl border text-left transition-shadow enabled:cursor-pointer enabled:hover:shadow-md disabled:cursor-default ${STATUS_CARD_CLASSES[assignmentStatus.tone]}`}
+              >
+                <span className="text-[11px] font-bold opacity-80 flex items-center justify-between gap-2">
+                  {th ? 'การรับงาน' : 'Submissions'}
+                  {grader && grader.role !== 'researcher' && (
+                    <span className="inline-flex items-center gap-0.5 font-bold underline underline-offset-2">
+                      {th ? 'ขยายเวลา / ปิดรับ' : 'Extend / close'}
+                      <ChevronRight className="w-3 h-3" />
+                    </span>
+                  )}
+                </span>
                 <p className="mt-0.5 text-base font-black flex items-center gap-1.5">
                   {assignmentStatus.tone === 'closed' ? <Lock className="w-4 h-4" /> : assignmentStatus.tone === 'late' ? <Unlock className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
                   {assignmentStatus.label}
@@ -762,7 +778,7 @@ They can edit it even if closed. Handing in again clears the current score and c
                   {assignment?.is_exam ? (th ? 'ปิดรับคำตอบ' : 'Closes') : t('grading.due_date')} {deadlineLabel}
                 </p>
                 {assignmentStatus.note && <p className="mt-1 text-[11px] leading-relaxed opacity-80">{assignmentStatus.note}</p>}
-              </div>
+              </button>
             )}
 
             <div
@@ -979,6 +995,31 @@ They can edit it even if closed. Handing in again clears the current score and c
           </div>
         </div>
       </div>
+
+      {showStatusDialog && assignment && (
+        <AssignmentStatusDialog
+          assignment={assignment}
+          onClose={() => setShowStatusDialog(false)}
+          onSaved={(updated, action) => {
+            setAssignment((prev) => (prev ? { ...prev, ...updated } : updated));
+            setOverrideStatus(updated.status_override || 'auto');
+            if (updated.extended_until) setExtendedDateTime(updated.extended_until);
+            setShowStatusDialog(false);
+            const kind = updated.is_exam ? (th ? 'ข้อสอบ' : 'quiz') : th ? 'งาน' : 'assignment';
+            showToast(
+              action === 'published'
+                ? th ? `🚀 เผยแพร่${kind} “${updated.title}” แล้ว` : `🚀 Published ${kind} “${updated.title}”`
+                : updated.status_override === 'force_closed'
+                ? th ? `🔒 ปิดรับ${kind} “${updated.title}” แล้ว` : `🔒 Closed ${kind} “${updated.title}”`
+                : updated.status_override === 'extended'
+                ? th
+                  ? `⏳ ขยายเวลาส่ง${kind} “${updated.title}” ถึง ${formatDateTime(updated.extended_until, language)} แล้ว`
+                  : `⏳ Extended ${kind} “${updated.title}” until ${formatDateTime(updated.extended_until, 'en')}`
+                : th ? `${kind} “${updated.title}” กลับไปรับงานตามกำหนดส่งแล้ว` : `${kind} “${updated.title}” is back on its deadline`
+            );
+          }}
+        />
+      )}
 
       {/* Submissions Table & Filter Controls */}
       <div id="grading-roster" className="scroll-mt-20 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
