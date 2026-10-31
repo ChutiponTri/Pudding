@@ -940,7 +940,12 @@ export default function LiffStudentPage() {
           }
         );
         const subMap: Record<string, Submission> = {};
+        const assignmentsById = new Map(relevantAssigns.map((a) => [a.id, a]));
         for (const submission of allSubmissions) {
+          // A row the teacher recorded for work never handed in (e.g. a zero) stays
+          // to-do while the work is still open; handing in replaces it.
+          const recordedAssignment = submission.status === 'pending' ? assignmentsById.get(submission.assignment_id) : undefined;
+          if (recordedAssignment && getAssignmentWindow(recordedAssignment).acceptsSubmissions) continue;
           const found =
             submission.student_id === currentStudent.id ||
             submission.student_id === currentStudent.line_uid ||
@@ -2253,7 +2258,9 @@ export default function LiffStudentPage() {
                               <span className="flex items-center gap-1.5 min-w-0 text-slate-500">
                                 <Clock className="w-3.5 h-3.5 shrink-0" />
                                 {isSubmitted ? (
-                                  isLateSubmitted ? (
+                                  submission.status === 'pending' ? (
+                                    <span className="font-semibold text-rose-600">ไม่ได้ส่งงาน</span>
+                                  ) : isLateSubmitted ? (
                                     <span className="font-semibold text-amber-600">ส่งช้า</span>
                                   ) : (
                                     <span className="font-semibold text-emerald-600">{assignment.is_exam ? 'ส่งแล้ว' : 'ส่งตรงเวลา'}</span>

@@ -101,6 +101,8 @@ type RosterRow = {
   key: string;
   student: Partial<User> | undefined;
   submission: Submission | null;
+  /** Roster entry id (classroom.students[].id); missing for students no longer on the roster. */
+  rosterId?: string;
 };
 
 export default function GradingPage({ params }: { params: Promise<{ id: string }> }) {
@@ -317,6 +319,85 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   };
 
 
+  // Students who never handed in: record a row so the teacher can grade them
+  // (zero = an official 0 on every question). Works after submissions close too.
+  const [recordingKeys, setRecordingKeys] = useState<Set<string>>(new Set());
+  const recordMissing = async (rows: RosterRow[], zero: boolean) => {
+    const targets = rows.filter((row) => row.rosterId && !recordingKeys.has(row.key));
+    if (!targets.length || !grader) return [];
+    setRecordingKeys((prev) => new Set([...prev, ...targets.map((row) => row.key)]));
+    try {
+      const created = await dataService.recordMissingSubmissions(
+        assignmentId,
+        targets.map((row) => row.rosterId as string),
+        zero,
+        grader.name
+      );
+      await refreshSubmissions();
+      return created;
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
+      return [];
+    } finally {
+      setRecordingKeys((prev) => {
+        const next = new Set(prev);
+        targets.forEach((row) => next.delete(row.key));
+        return next;
+      });
+    }
+  };
+
+  const handleGiveZero = async (row: RosterRow) => {
+    const created = await recordMissing([row], true);
+    if (created.length) showToast(th ? 'ให้ 0 คะแนนแล้ว (นักเรียนยังส่งงานได้หากงานยังเปิดรับ)' : 'Gave 0 (the student can still hand in while it is open)');
+  };
+
+  const handleGiveZeroToAll = async () => {
+    if (!unrecordedRows.length) return;
+    const stillOpen = assignmentWindow?.acceptsSubmissions;
+    const message = th
+      ? `ให้ 0 คะแนนนักเรียนที่ยังไม่ส่ง ${unrecordedRows.length} คน?${stillOpen ? '\nงานนี้ยังเปิดรับอยู่ หากนักเรียนส่งงานภายหลัง คะแนน 0 จะถูกแทนที่ด้วยงานที่ส่งมา' : ''}`
+      : `Give 0 to ${unrecordedRows.length} students who have not submitted?${stillOpen ? '\nThis is still open; work handed in later replaces the 0.' : ''}`;
+    if (!confirm(message)) return;
+    const created = await recordMissing(unrecordedRows, true);
+    if (created.length) showToast(th ? `ให้ 0 คะแนนแล้ว ${created.length} คน` : `Gave 0 to ${created.length} students`);
+  };
+
+  const handleGradeMissing = async (row: RosterRow) => {
+    const [created] = await recordMissing([row], false);
+    if (created) handleOpenGrading({ ...created, student: (created.student || row.student) as User });
+  };
+
+  // Actions on a student with nothing handed in: grade by hand, or a quick 0.
+  const missingActions = (row: RosterRow) => {
+    if (!row.rosterId || !grader || grader.role === 'researcher') {
+      return <span className="text-[11px] text-slate-400 italic">{th ? 'รอนักเรียนส่งงาน' : 'Awaiting student'}</span>;
+    }
+    const busy = recordingKeys.has(row.key);
+    return (
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => handleGiveZero(row)}
+          disabled={busy}
+          className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
+        >
+          {th ? 'ให้ 0' : 'Give 0'}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleGradeMissing(row)}
+          disabled={busy}
+          className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 cursor-pointer disabled:opacity-50 inline-flex items-center gap-0.5"
+        >
+          {th ? 'ให้คะแนน' : 'Grade'}
+          <ChevronRight className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  };
+
   // Every enrolled student, with their submission if any, then submissions from
   // students no longer on the roster. Roster entries may carry users.id, the
   // LINE id or the school number, so match on any of them.
@@ -331,7 +412,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
             (std.student_id && (s.student_id === std.student_id || s.student?.student_id === std.student_id)))
       );
       if (sub) used.add(sub.id);
-      return { key: `std-${std.id}`, student: sub?.student || std, submission: sub || null };
+      return { key: `std-${std.id}`, student: sub?.student || std, submission: sub || null, rosterId: std.id };
     });
     for (const sub of submissions) {
       if (!used.has(sub.id)) rows.push({ key: sub.id, student: sub.student, submission: sub });
@@ -371,7 +452,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
     if (!matchesSearch) return false;
 
-    if (statusFilter === 'missing') return !sub;
+    if (statusFilter === 'missing') return !sub || sub.status === 'pending';
     if (statusFilter === 'suspicious') return !!sub && isSuspicious(sub);
     if (statusFilter === 'pending') return !!sub && sub.total_score == null;
     if (statusFilter === 'graded') return !!sub && sub.total_score != null;
@@ -381,7 +462,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   const suspiciousTotal = submissions.filter(isSuspicious).length;
   const gradedTotal = submissions.filter((s) => s.total_score != null).length;
-  const missingTotal = rosterRows.filter((row) => !row.submission).length;
+  // Not handed in: no row, or a row the teacher recorded for grading (status pending).
+  const missingTotal = rosterRows.filter((row) => !row.submission || row.submission.status === 'pending').length;
+  // Students with nothing recorded yet, who "give 0 to everyone missing" applies to.
+  const unrecordedRows = rosterRows.filter((row) => !row.submission && row.rosterId);
 
   const assignmentWindow = assignment ? getAssignmentWindow(assignment) : null;
   const assignmentStatus = assignment && assignmentWindow ? getAssignmentStatus(assignmentWindow, assignment.is_exam, language) : null;
@@ -663,6 +747,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               {language === 'th' ? `ยังไม่ส่ง ${missingTotal} คน` : `${missingTotal} not submitted`}
             </span>
           )}
+          {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && (
+            <button
+              type="button"
+              onClick={handleGiveZeroToAll}
+              disabled={recordingKeys.size > 0}
+              className="mt-2 w-full px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
+            >
+              {language === 'th' ? `ให้ 0 คะแนนทุกคนที่ยังไม่ส่ง (${unrecordedRows.length})` : `Give 0 to all missing (${unrecordedRows.length})`}
+            </button>
+          )}
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
@@ -776,7 +870,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           {filteredRows.length === 0 ? (
             <li className="py-8 text-center text-xs text-slate-400">{t('common.no_data')}</li>
           ) : (
-            filteredRows.map(({ key, student, submission: sub }) => {
+            filteredRows.map((row) => {
+              const { key, student, submission: sub } = row;
               const isGraded = sub?.total_score != null;
               const isLate = sub?.status === 'late';
               const fullName = student?.first_name
@@ -817,7 +912,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                         {language === 'th' ? 'ยังไม่ส่ง' : 'Not submitted'}
                       </span>
-                      <span className="text-slate-400 italic">{language === 'th' ? 'รอนักเรียนส่งงาน' : 'Awaiting student'}</span>
+                      {missingActions(row)}
                     </div>
                   ) : (
                     <>
@@ -911,7 +1006,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   </td>
                 </tr>
               ) : (
-                filteredRows.map(({ key, student, submission: sub }) => {
+                filteredRows.map((row) => {
+                  const { key, student, submission: sub } = row;
                   const isGraded = sub?.total_score != null;
                   const fullName = student?.first_name
                     ? `${student.first_name} ${student.last_name || ''}`.trim()
@@ -951,8 +1047,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
                         <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
                         <td className="py-3.5 px-4 sm:px-6 text-center text-slate-400">-</td>
-                        <td className="py-3.5 px-4 sm:px-6 text-right text-[11px] text-slate-400 italic whitespace-nowrap">
-                          {language === 'th' ? 'รอนักเรียนส่งงาน' : 'Awaiting student'}
+                        <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
+                          <div className="inline-flex">{missingActions(row)}</div>
                         </td>
                       </tr>
                     );

@@ -380,6 +380,13 @@ export async function POST(request: NextRequest) {
       if (subErr) throw subErr;
       console.log('[POST /api/submissions] Supabase submissions upsert succeeded:', subId);
 
+      // Replacing a row the teacher recorded as not handed in (e.g. a zero):
+      // the real work is graded afresh, without that earlier score.
+      if (existingSubmission?.status === 'pending') {
+        const { error: clearError } = await supabase.from('submission_answers').delete().eq('submission_id', subId);
+        if (clearError) throw clearError;
+      }
+
       // Save every answer in one request. Only answers to this assignment's
       // questions are kept; anything else would break the question foreign key.
       if (scoredAnswers.length > 0) {

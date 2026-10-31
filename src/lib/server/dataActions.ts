@@ -1302,6 +1302,109 @@ export const dataActions = {
       if (sub?.assignment_id) await recomputeSubmissionTotals(supabase, sub.assignment_id, [submissionId]);
     }
   },
+
+  /**
+   * Records work a student never handed in so the teacher can grade it, e.g. a
+   * zero once submissions are closed. The row stays 'pending' (not handed in),
+   * so the student may still hand in over it while the assignment accepts work.
+   * With `zero`, every question gets an official 0. Roster entries may carry
+   * users.id or the LINE id; students who already have a row are left alone.
+   * Returns the rows created.
+   */
+  async recordMissingSubmissions(
+    { supabase, actor }: Ctx,
+    assignmentId: string,
+    rosterIds: string[],
+    zero: boolean,
+    teacherName: string
+  ) {
+    const me = requireTeacher(actor);
+    const { assignment, classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
+    const teacherRole: TeacherRole = classroom.teacher_id === me.userId
+      ? 'primary'
+      : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role || 'assistant';
+    if (teacherRole === 'researcher') throw new HttpError(403, 'ผู้วิจัยให้คะแนนจริงแทนคุณครูไม่ได้');
+
+    const wanted = new Set((Array.isArray(rosterIds) ? rosterIds : []).filter((id): id is string => typeof id === 'string' && !!id));
+    const roster = (classroom.students || []).filter((s) => s && wanted.has(s.id));
+    const keys = [...new Set(roster.flatMap((s) => [s.id, s.line_uid]).filter((k): k is string => !!k))];
+    if (!keys.length) return [];
+    const users: Array<{ id: string; line_uid?: string | null }> = [];
+    for (const part of chunk(keys)) {
+      const quoted = part.map(pgValue).join(',');
+      const { data, error } = await supabase.from('users').select('id, line_uid').or(`id.in.(${quoted}),line_uid.in.(${quoted})`);
+      if (error) throw toDatabaseError(error, 'users');
+      users.push(...((data || []) as typeof users));
+    }
+    // submissions.student_id is users.id: find each roster entry's account.
+    const userIds = [
+      ...new Set(
+        roster.flatMap((s) => {
+          const user = users.find((u) => u.id === s.id) || users.find((u) => !!s.line_uid && (u.id === s.line_uid || u.line_uid === s.line_uid));
+          return user ? [user.id] : [];
+        })
+      ),
+    ];
+    if (!userIds.length) return [];
+
+    const existing = new Set<string>();
+    for (const part of chunk(userIds)) {
+      const { data, error } = await supabase.from('submissions').select('student_id').eq('assignment_id', assignmentId).in('student_id', part);
+      if (error) throw toDatabaseError(error, 'submissions');
+      for (const row of data || []) existing.add(row.student_id as string);
+    }
+    const missing = userIds.filter((id) => !existing.has(id));
+    if (!missing.length) return [];
+
+    const { data: questions, error: qError } = await supabase.from('questions').select('id, max_score').eq('assignment_id', assignmentId);
+    if (qError) throw toDatabaseError(qError, 'questions');
+    const qs = (questions || []) as Pick<Question, 'id' | 'max_score'>[];
+    const maxTotal = qs.reduce((sum, q) => sum + Number(q.max_score || 0), 0) || assignment.total_points || 20;
+    const now = new Date().toISOString();
+    const rows = missing.map((studentId) => ({
+      id: `sub-${assignmentId}-${studentId}`,
+      assignment_id: assignmentId,
+      student_id: studentId,
+      status: 'pending',
+      started_at: now,
+      submitted_at: null,
+      time_spent_seconds: 0,
+      tab_switch_count: 0,
+      total_time_away_seconds: 0,
+      is_flagged_suspicious: false,
+      total_score: zero ? 0 : null,
+      max_total_score: maxTotal,
+    }));
+    // A student handing in at this very moment wins; their row is not replaced.
+    const { data: created, error: insertError } = await supabase
+      .from('submissions')
+      .upsert(rows, { onConflict: 'assignment_id,student_id', ignoreDuplicates: true })
+      .select('*');
+    if (insertError) throw toDatabaseError(insertError, 'submissions');
+    const createdRows = (created || []) as Array<{ id: string }>;
+
+    if (zero && qs.length && createdRows.length) {
+      const record: TeacherGradeRecord = { teacher_id: me.userId, teacher_name: teacherName, teacher_role: teacherRole, score: 0, comment: '', graded_at: now };
+      const answers = createdRows.flatMap((sub) =>
+        qs.map((q) => ({
+          id: `ans-${sub.id}-${q.id}`,
+          submission_id: sub.id,
+          question_id: q.id,
+          text_answer: '',
+          teacher_score: 0,
+          co_grades: { [me.userId]: record },
+          graded_at: now,
+          updated_at: now,
+        }))
+      );
+      for (const part of chunk(answers, 500)) {
+        const { error } = await supabase.from('submission_answers').upsert(part, { onConflict: 'submission_id,question_id' });
+        if (error) throw toDatabaseError(error, 'submission_answers');
+      }
+    }
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
+    return createdRows;
+  },
 };
 
 export type DataActionName = keyof typeof dataActions;

@@ -655,4 +655,12 @@ export const dataService = {
   ): Promise<void> {
     await call('saveTeacherGrade', submissionId, questionId, teacherScore, teacherComment, teacherId, teacherName);
   },
+
+  /**
+   * Records roster students who never handed in, so they can be graded (with
+   * zero: an official 0 on every question). Returns the created submissions.
+   */
+  async recordMissingSubmissions(assignmentId: string, rosterIds: string[], zero: boolean, teacherName: string): Promise<Submission[]> {
+    return call<Submission[]>('recordMissingSubmissions', assignmentId, rosterIds, zero, teacherName);
+  },
 };

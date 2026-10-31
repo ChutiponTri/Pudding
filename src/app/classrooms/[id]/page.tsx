@@ -1905,7 +1905,7 @@ export default function ClassroomWorkspacePage() {
                           dropTarget?.group === group &&
                           dropTarget.index === index &&
                           (draggedIndex === -1 || (index !== draggedIndex && index !== draggedIndex + 1));
-                        const submittedCount = submissions.filter((s) => s.assignment_id === item.id).length;
+                        const submittedCount = submissions.filter((s) => s.assignment_id === item.id && s.status !== 'pending').length;
                         const itemWindow = getAssignmentWindow(item);
                         const itemStatus = getAssignmentStatus(itemWindow, item.is_exam);
                         const isClosed = itemStatus.tone === 'closed';
