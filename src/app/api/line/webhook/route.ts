@@ -630,7 +630,9 @@ export async function POST(request: NextRequest) {
 
     // 1:1 chat: everyday questions get an answer from the FAQ.
     if (event.type === 'message' && !commandMatch) {
-      if (event.message?.type === 'text') await replyBotSafely(event.replyToken, answerTeacherQuestion(normalizedText));
+      // Unrecognized messages get no reply, so they can be answered manually.
+      const reply = event.message?.type === 'text' ? answerTeacherQuestion(normalizedText) : null;
+      if (reply) await replyBotSafely(event.replyToken, reply);
       continue;
     }
     if (!commandMatch) continue;

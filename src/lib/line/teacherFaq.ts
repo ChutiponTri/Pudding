@@ -342,8 +342,10 @@ export function teacherFollowUpWelcome(teacher: { first_name?: string | null } |
  * Reply to a teacher's message in the 1:1 chat, one step at a time: a tapped
  * group shows only that group's questions, a tapped (or typed) question gets
  * only its answer. Nothing ever lists every question at once.
+ * Returns null for a message the bot doesn't understand, so the teacher's
+ * message is left for a human to answer manually.
  */
-export function answerTeacherQuestion(text: string): BotReply {
+export function answerTeacherQuestion(text: string): BotReply | null {
   const query = compact(text);
   if (!query || query === compact(MAIN_MENU_LABEL)) return mainMenu();
 
@@ -366,5 +368,5 @@ export function answerTeacherQuestion(text: string): BotReply {
   }
   if (best) return answer(best.entry);
   if (MENU_WORDS.some((word) => query.includes(compact(word)))) return mainMenu('สวัสดีค่ะ 🍮 อยากรู้เรื่องไหนคะ? เลือกหมวดด้านล่าง หรือพิมพ์คำถามสั้น ๆ ได้เลย');
-  return mainMenu('ขออภัยค่ะ ยังไม่เข้าใจคำถามนี้ 🙏 ลองเลือกหมวดด้านล่าง หรือพิมพ์คำสั้น ๆ เช่น "เชื่อมกลุ่ม" "เช็คชื่อ" "ตรวจงาน"');
+  return null;
 }
