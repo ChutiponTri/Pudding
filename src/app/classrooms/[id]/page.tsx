@@ -19,6 +19,7 @@ import { roomLabel } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
 import { MobileText } from '@/components/MobileText';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
   ArrowLeft,
   AlertCircle,
@@ -142,12 +143,15 @@ type Post = {
   metadata?: { assignmentId?: string; groupName?: string; publishAt?: string; sessionId?: string };
 };
 
+/** A UI label in both languages, for module-level constants (pick with `[language]`). */
+type Bilingual = { th: string; en: string };
+
 type ClassworkFilter = 'all' | 'pending' | 'done';
 // `pill` paints the sliding highlight behind the selected filter, `text` its label.
-const CLASSWORK_FILTERS: Array<{ id: ClassworkFilter; label: string; pill: string; text: string }> = [
-  { id: 'all', label: 'ทั้งหมด', pill: 'bg-slate-900 dark:bg-white', text: 'text-white dark:text-slate-900' },
-  { id: 'pending', label: 'ต้องตรวจ', pill: 'bg-amber-500', text: 'text-slate-950' },
-  { id: 'done', label: 'ตรวจครบแล้ว', pill: 'bg-emerald-600', text: 'text-white' },
+const CLASSWORK_FILTERS: Array<{ id: ClassworkFilter; label: Bilingual; pill: string; text: string }> = [
+  { id: 'all', label: { th: 'ทั้งหมด', en: 'All' }, pill: 'bg-slate-900 dark:bg-white', text: 'text-white dark:text-slate-900' },
+  { id: 'pending', label: { th: 'ต้องตรวจ', en: 'To grade' }, pill: 'bg-amber-500', text: 'text-slate-950' },
+  { id: 'done', label: { th: 'ตรวจครบแล้ว', en: 'Fully graded' }, pill: 'bg-emerald-600', text: 'text-white' },
 ];
 // Same split as the grading hub and the dashboard course cards.
 const classworkFilterOf = (c: GradingCounts): Exclude<ClassworkFilter, 'all'> => (c.pending > 0 ? 'pending' : 'done');
@@ -165,22 +169,23 @@ type WorkspaceSnapshot = {
 };
 
 // shortLabel keeps all five tabs on one row of the mobile bottom bar.
-const tabs: Array<{ id: Tab; label: string; shortLabel: string; icon: typeof BookOpen }> = [
-  { id: 'overview', label: 'ภาพรวม', shortLabel: 'ภาพรวม', icon: ClipboardList },
-  { id: 'classwork', label: 'งานและเนื้อหา', shortLabel: 'งาน', icon: BookOpen },
-  { id: 'attendance', label: 'เช็คชื่อ', shortLabel: 'เช็คชื่อ', icon: CalendarCheck },
-  { id: 'people', label: 'ผู้สอนและผู้เรียน', shortLabel: 'สมาชิก', icon: Users },
-  { id: 'grades', label: 'คะแนน', shortLabel: 'คะแนน', icon: FileText },
+const tabs: Array<{ id: Tab; label: Bilingual; shortLabel: Bilingual; icon: typeof BookOpen }> = [
+  { id: 'overview', label: { th: 'ภาพรวม', en: 'Overview' }, shortLabel: { th: 'ภาพรวม', en: 'Overview' }, icon: ClipboardList },
+  { id: 'classwork', label: { th: 'งานและเนื้อหา', en: 'Classwork' }, shortLabel: { th: 'งาน', en: 'Work' }, icon: BookOpen },
+  { id: 'attendance', label: { th: 'เช็คชื่อ', en: 'Attendance' }, shortLabel: { th: 'เช็คชื่อ', en: 'Attend' }, icon: CalendarCheck },
+  { id: 'people', label: { th: 'ผู้สอนและผู้เรียน', en: 'People' }, shortLabel: { th: 'สมาชิก', en: 'People' }, icon: Users },
+  { id: 'grades', label: { th: 'คะแนน', en: 'Grades' }, shortLabel: { th: 'คะแนน', en: 'Grades' }, icon: FileText },
 ];
 
-const statusLabels: Record<AttendanceStatus, string> = {
-  on_time: 'มาตรงเวลา',
-  late: 'มาสาย',
-  absent: 'ขาด',
-  excused: 'ลา',
+const statusLabels: Record<AttendanceStatus, Bilingual> = {
+  on_time: { th: 'มาตรงเวลา', en: 'On time' },
+  late: { th: 'มาสาย', en: 'Late' },
+  absent: { th: 'ขาด', en: 'Absent' },
+  excused: { th: 'ลา', en: 'Excused' },
 };
 
 export default function ClassroomWorkspacePage() {
+  const { tr, language } = useLanguage();
   const { user } = useUser();
   const params = useParams<{ id: string }>();
   const search = useSearchParams();
@@ -253,7 +258,7 @@ export default function ClassroomWorkspacePage() {
   const [isUpdatingPost, setIsUpdatingPost] = useState(false);
 
   // Attendance form & edit session state
-  const [attendanceTitle, setAttendanceTitle] = useState('เช็คชื่อประจำคาบ');
+  const [attendanceTitle, setAttendanceTitle] = useState(tr('เช็คชื่อประจำคาบ', 'Period attendance'));
   const [attendanceStartsAt, setAttendanceStartsAt] = useState('');
   const [onTimeMinutes, setOnTimeMinutes] = useState(10);
   const [lateMinutes, setLateMinutes] = useState(30);
@@ -334,11 +339,11 @@ export default function ClassroomWorkspacePage() {
           line_group_name: result.groupName,
           line_group_id: result.status === 'connected' ? prev.line_group_id || 'linked' : undefined,
         } : null));
-        if (result.status === 'connected') setNotice(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`);
+        if (result.status === 'connected') setNotice(tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`));
       } catch {}
     }, 3000);
     return () => clearInterval(interval);
-  }, [lineConnection.status, classroomId]);
+  }, [lineConnection.status, classroomId, tr]);
 
   const getRealLiffUrl = (cls?: Classroom | null) => {
     if (!cls) return '';
@@ -371,13 +376,13 @@ export default function ClassroomWorkspacePage() {
       } : null));
       setNotice(
         action === 'disconnect'
-          ? 'ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว'
+          ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group')
           : action === 'test'
-          ? 'ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว'
-          : 'พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย'
+          ? tr('ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว', 'Test message sent to the LINE group')
+          : tr('พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย', 'Ready: add Pudding Bot to your LINE group')
       );
     } catch (error) {
-      setNotice((error as { message?: string } | null)?.message || 'ไม่สามารถเชื่อมต่อ LINE Group ได้');
+      setNotice((error as { message?: string } | null)?.message || tr('ไม่สามารถเชื่อมต่อ LINE Group ได้', 'Could not connect the LINE group'));
     } finally {
       setIsLineLoading(false);
     }
@@ -486,7 +491,7 @@ export default function ClassroomWorkspacePage() {
       }
     } catch (error) {
       console.error('Failed to load classroom workspace:', error);
-      setNotice('โหลดข้อมูลห้องเรียนไม่สำเร็จ');
+      setNotice(tr('โหลดข้อมูลห้องเรียนไม่สำเร็จ', 'Could not load the classroom'));
     } finally {
       setLoading(false);
     }
@@ -724,21 +729,21 @@ export default function ClassroomWorkspacePage() {
         seenSessionIds.add(sId);
       }
 
-      let title = 'ประกาศ';
-      let badgeLabel = 'ประกาศ';
+      let title = tr('ประกาศ', 'Announcement');
+      let badgeLabel = tr('ประกาศ', 'Announcement');
       let badgeColor = 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300';
 
       if (post.activity_type === 'assignment') {
-        title = 'มอบหมายงานใหม่';
-        badgeLabel = 'งาน';
+        title = tr('มอบหมายงานใหม่', 'New assignment');
+        badgeLabel = tr('งาน', 'Assignment');
         badgeColor = 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300';
       } else if (post.activity_type === 'exam') {
-        title = 'สร้างข้อสอบใหม่';
-        badgeLabel = 'ข้อสอบ';
+        title = tr('สร้างข้อสอบใหม่', 'New exam');
+        badgeLabel = tr('ข้อสอบ', 'Exam');
         badgeColor = 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300';
       } else if (post.activity_type === 'attendance') {
-        title = 'เปิดคาบเช็คชื่อ';
-        badgeLabel = 'เช็คชื่อ';
+        title = tr('เปิดคาบเช็คชื่อ', 'Attendance opened');
+        badgeLabel = tr('เช็คชื่อ', 'Attendance');
         badgeColor = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300';
       }
 
@@ -780,10 +785,10 @@ export default function ClassroomWorkspacePage() {
         isPost: false,
         assignmentId: item.id,
         scheduledAt: item.publish_at && new Date(item.publish_at).getTime() > nowMs ? item.publish_at : undefined,
-        title: item.is_exam ? 'ข้อสอบในระบบ' : 'งานที่มอบหมาย',
-        body: `${item.title} (${item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: ${formatDateTime(item.due_date, 'th')})`,
+        title: item.is_exam ? tr('ข้อสอบในระบบ', 'Exam') : tr('งานที่มอบหมาย', 'Assignment'),
+        body: `${item.title} (${item.is_exam ? tr('ปิดรับ', 'Closes') : tr('กำหนดส่ง', 'Due')}: ${formatDateTime(item.due_date, language)})`,
         type: item.is_exam ? ('exam' as const) : ('assignment' as const),
-        badgeLabel: item.is_exam ? 'ข้อสอบ' : 'งาน',
+        badgeLabel: item.is_exam ? tr('ข้อสอบ', 'Exam') : tr('งาน', 'Assignment'),
         badgeColor: item.is_exam
           ? 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300'
           : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
@@ -806,17 +811,17 @@ export default function ClassroomWorkspacePage() {
         id: `attendance-${item.id}`,
         rawId: item.id,
         isPost: false,
-        title: 'เปิดคาบเช็คชื่อ',
-        body: `${item.title} (สถานะ: ${item.status === 'open' ? 'เปิดรับอยู่' : 'ปิดแล้ว'})`,
+        title: tr('เปิดคาบเช็คชื่อ', 'Attendance opened'),
+        body: `${item.title} (${tr('สถานะ', 'Status')}: ${item.status === 'open' ? tr('เปิดรับอยู่', 'open') : tr('ปิดแล้ว', 'closed')})`,
         type: 'attendance' as const,
-        badgeLabel: 'เช็คชื่อ',
+        badgeLabel: tr('เช็คชื่อ', 'Attendance'),
         badgeColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
         created_at: item.starts_at,
       });
     }
 
     return list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [posts, assignments, sessions, nowMs]);
+  }, [posts, assignments, sessions, nowMs, tr, language]);
 
 
   // Existing group names across assignments
@@ -851,15 +856,15 @@ export default function ClassroomWorkspacePage() {
         body: JSON.stringify({ classroomId, body: postBody, activityType: postActivityType }),
       });
       if (!response.ok) {
-        setNotice('บันทึกโพสต์ไม่สำเร็จ ลองใหม่อีกครั้ง');
+        setNotice(tr('บันทึกโพสต์ไม่สำเร็จ ลองใหม่อีกครั้ง', 'Could not save the post, please try again'));
         return;
       }
       setPostBody('');
       setIsPostExpanded(false);
-      setNotice('โพสต์แล้ว และแจ้งเข้ากลุ่ม LINE แล้ว');
+      setNotice(tr('โพสต์แล้ว และแจ้งเข้ากลุ่ม LINE แล้ว', 'Posted and sent to the LINE group'));
       await loadWorkspace();
     } catch {
-      setNotice('เกิดข้อผิดพลาดในการโพสต์');
+      setNotice(tr('เกิดข้อผิดพลาดในการโพสต์', 'Something went wrong while posting'));
     } finally {
       setIsPosting(false);
     }
@@ -875,33 +880,33 @@ export default function ClassroomWorkspacePage() {
         body: JSON.stringify({ id: postId, body: newBody.trim() }),
       });
       if (res.ok) {
-        setNotice('แก้ไขโพสต์เรียบร้อยแล้ว');
+        setNotice(tr('แก้ไขโพสต์เรียบร้อยแล้ว', 'Post updated'));
         setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, body: newBody.trim() } : p)));
         setEditingPost(null);
       } else {
-        setNotice('แก้ไขโพสต์ไม่สำเร็จ');
+        setNotice(tr('แก้ไขโพสต์ไม่สำเร็จ', 'Could not update the post'));
       }
     } catch {
-      setNotice('เกิดข้อผิดพลาดในการแก้ไขโพสต์');
+      setNotice(tr('เกิดข้อผิดพลาดในการแก้ไขโพสต์', 'Something went wrong while updating the post'));
     } finally {
       setIsUpdatingPost(false);
     }
   };
 
   const handleDeletePost = async (postId: string) => {
-    if (!confirm('ลบโพสต์นี้?')) return;
+    if (!confirm(tr('ลบโพสต์นี้?', 'Delete this post?'))) return;
     try {
       const res = await fetch(`/api/classrooms/posts?id=${encodeURIComponent(postId)}`, {
         method: 'DELETE',
       });
       if (res.ok) {
-        setNotice('ลบโพสต์เรียบร้อยแล้ว');
+        setNotice(tr('ลบโพสต์เรียบร้อยแล้ว', 'Post deleted'));
         setPosts((prev) => prev.filter((p) => p.id !== postId));
       } else {
-        setNotice('ลบโพสต์ไม่สำเร็จ');
+        setNotice(tr('ลบโพสต์ไม่สำเร็จ', 'Could not delete the post'));
       }
     } catch {
-      setNotice('เกิดข้อผิดพลาดในการลบโพสต์');
+      setNotice(tr('เกิดข้อผิดพลาดในการลบโพสต์', 'Something went wrong while deleting the post'));
     }
   };
 
@@ -909,23 +914,23 @@ export default function ClassroomWorkspacePage() {
   // CRUD HANDLERS: ASSIGNMENTS / EXAMS
   // ----------------------------------------------------
   const handleDeleteAssignment = async (assignmentId: string) => {
-    if (!confirm('ลบงาน/ข้อสอบนี้? คำตอบและคะแนนทั้งหมดจะถูกลบด้วย')) return;
+    if (!confirm(tr('ลบงาน/ข้อสอบนี้? คำตอบและคะแนนทั้งหมดจะถูกลบด้วย', 'Delete this assignment/exam? All answers and scores will be deleted too.'))) return;
     try {
       await dataService.deleteAssignment(assignmentId);
       setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
       setSubmissions((prev) => prev.filter((s) => s.assignment_id !== assignmentId));
       // The server removed its timeline announcement(s) too.
       setPosts((prev) => prev.filter((p) => p.metadata?.assignmentId !== assignmentId));
-      setNotice('ลบงาน/ข้อสอบแล้ว');
+      setNotice(tr('ลบงาน/ข้อสอบแล้ว', 'Assignment/exam deleted'));
     } catch {
-      setNotice('เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ');
+      setNotice(tr('เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ', 'Something went wrong while deleting'));
     }
   };
 
   // The class reached the topic before the scheduled time: release it now.
   const handlePublishAssignmentNow = async (assignment: Assignment) => {
-    const kind = assignment.is_exam ? 'ข้อสอบ' : 'งาน';
-    if (!confirm(`เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`)) return;
+    const kind = assignment.is_exam ? tr('ข้อสอบ', 'exam') : tr('งาน', 'assignment');
+    if (!confirm(tr(`เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`, `Publish the ${kind} "${assignment.title}" now?\nStudents will see it, can start right away, and get a LINE notification.`))) return;
     try {
       const updated = await dataService.publishAssignmentNow(assignment.id);
       const nowIso = updated?.publish_at || new Date().toISOString();
@@ -937,9 +942,9 @@ export default function ClassroomWorkspacePage() {
             : p
         )
       );
-      setNotice(`เผยแพร่${kind} "${assignment.title}" แล้ว นักเรียนเริ่มทำได้ทันที`);
+      setNotice(tr(`เผยแพร่${kind} "${assignment.title}" แล้ว นักเรียนเริ่มทำได้ทันที`, `Published the ${kind} "${assignment.title}". Students can start now.`));
     } catch (err) {
-      setNotice(err instanceof Error && err.message ? err.message : 'เผยแพร่งานไม่สำเร็จ');
+      setNotice(err instanceof Error && err.message ? err.message : tr('เผยแพร่งานไม่สำเร็จ', 'Could not publish'));
     }
   };
 
@@ -949,7 +954,7 @@ export default function ClassroomWorkspacePage() {
     setCustomGroups((prev) => (prev.includes(name) ? prev : [...prev, name]));
     setShowAddGroupModal(false);
     setNewGroupName('');
-    setNotice(`เพิ่มหมวดหมู่ "${name}" แล้ว ลากงานมาวางในกลุ่มนี้เพื่อบันทึก`);
+    setNotice(tr(`เพิ่มหมวดหมู่ "${name}" แล้ว ลากงานมาวางในกลุ่มนี้เพื่อบันทึก`, `Added group "${name}". Drag work into it to save.`));
   };
 
   // Classwork progress per assignment (same counts as the grading hub).
@@ -989,7 +994,7 @@ export default function ClassroomWorkspacePage() {
     return !!c && classworkFilterOf(c) === classworkFilter;
   };
 
-  const groupKeyOf = (item: Assignment) => item.group_name || (item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป');
+  const groupKeyOf = (item: Assignment) => item.group_name || (item.is_exam ? tr('ข้อสอบ', 'Exam') : tr('งานทั่วไป', 'General'));
   // Dragged order first (new work without a position on top), then newest first.
   const byClassworkOrder = (a: Assignment, b: Assignment) =>
     (a.sort_order ?? -1) - (b.sort_order ?? -1) ||
@@ -1015,7 +1020,7 @@ export default function ClassroomWorkspacePage() {
     }
     list.splice(target, 0, item);
 
-    const fallback = item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป';
+    const fallback = item.is_exam ? tr('ข้อสอบ', 'Exam') : tr('งานทั่วไป', 'General');
     const newGroupName = fromGroup === group ? undefined : group === fallback ? null : group;
     const updates = list.map((a, position) => ({
       id: a.id,
@@ -1033,10 +1038,10 @@ export default function ClassroomWorkspacePage() {
     );
     try {
       await dataService.reorderAssignments(classroomId, updates);
-      if (newGroupName !== undefined) setNotice(`ย้าย “${item.title}” ไปยังหมวดหมู่ "${group}" เรียบร้อย`);
+      if (newGroupName !== undefined) setNotice(tr(`ย้าย “${item.title}” ไปยังหมวดหมู่ "${group}" เรียบร้อย`, `Moved “${item.title}” to "${group}"`));
     } catch (error) {
       setAssignments(previous);
-      setNotice(error instanceof Error && error.message ? error.message : 'บันทึกลำดับงานไม่สำเร็จ');
+      setNotice(error instanceof Error && error.message ? error.message : tr('บันทึกลำดับงานไม่สำเร็จ', 'Could not save the order'));
     }
   };
 
@@ -1049,9 +1054,9 @@ export default function ClassroomWorkspacePage() {
         prev.map((a) => (a.id === assignmentId ? { ...a, group_name: clean || undefined } : a))
       );
       setEditingAssignmentGroup(null);
-      setNotice(`ย้ายงานไปยังหมวดหมู่ "${clean || 'งานทั่วไป'}" เรียบร้อย`);
+      setNotice(tr(`ย้ายงานไปยังหมวดหมู่ "${clean || tr('งานทั่วไป', 'General')}" เรียบร้อย`, `Moved to "${clean || 'General'}"`));
     } catch {
-      setNotice('อัปเดตกลุ่มงานไม่สำเร็จ');
+      setNotice(tr('อัปเดตกลุ่มงานไม่สำเร็จ', 'Could not update the group'));
     }
   };
 
@@ -1083,7 +1088,12 @@ export default function ClassroomWorkspacePage() {
         }),
       });
       if (res.ok) {
-        setNotice('อัปเดตคาบเช็คชื่อแล้ว');
+        const { records = [] } = (await res.json().catch(() => ({}))) as { records?: AttendanceRecord[] };
+        if (records.length) {
+          attendanceVersionRef.current++;
+          setAllRecords((prev) => records.reduce(upsertRecord, prev));
+        }
+        setNotice(tr('อัปเดตคาบเช็คชื่อแล้ว', 'Attendance period updated'));
         patchSession(sessionId, {
           title: newTitle,
           ...(newStatus ? { status: newStatus, closed_at: newStatus === 'closed' ? new Date().toISOString() : null } : {}),
@@ -1093,34 +1103,34 @@ export default function ClassroomWorkspacePage() {
         });
         setEditingSession(null);
       } else {
-        setNotice('อัปเดตคาบเช็คชื่อไม่สำเร็จ');
+        setNotice(tr('อัปเดตคาบเช็คชื่อไม่สำเร็จ', 'Could not update the period'));
       }
     } catch {
-      setNotice('เกิดข้อผิดพลาดในการอัปเดตคาบเช็คชื่อ');
+      setNotice(tr('เกิดข้อผิดพลาดในการอัปเดตคาบเช็คชื่อ', 'Something went wrong while updating the period'));
     } finally {
       setIsUpdatingSession(false);
     }
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (!confirm('ลบคาบเช็คชื่อนี้และบันทึกทั้งหมด?')) return;
+    if (!confirm(tr('ลบคาบเช็คชื่อนี้และบันทึกทั้งหมด?', 'Delete this period and all its records?'))) return;
     try {
       const res = await fetch(
         `/api/attendance?sessionId=${encodeURIComponent(sessionId)}&classroomId=${encodeURIComponent(classroomId)}`,
         { method: 'DELETE' }
       );
       if (res.ok) {
-        setNotice('ลบคาบเช็คชื่อแล้ว');
+        setNotice(tr('ลบคาบเช็คชื่อแล้ว', 'Period deleted'));
         attendanceVersionRef.current++;
         const remaining = sessions.filter((s) => s.id !== sessionId);
         setSessions(remaining);
         setAllRecords((prev) => prev.filter((r) => r.session_id !== sessionId));
         if (selectedSessionId === sessionId) setSelectedSessionId(remaining[0]?.id || null);
       } else {
-        setNotice('ลบคาบเช็คชื่อไม่สำเร็จ');
+        setNotice(tr('ลบคาบเช็คชื่อไม่สำเร็จ', 'Could not delete the period'));
       }
     } catch {
-      setNotice('เกิดข้อผิดพลาดในการลบคาบเช็คชื่อ');
+      setNotice(tr('เกิดข้อผิดพลาดในการลบคาบเช็คชื่อ', 'Something went wrong while deleting the period'));
     }
   };
 
@@ -1139,11 +1149,11 @@ export default function ClassroomWorkspacePage() {
         }),
       });
       if (!response.ok) {
-        setNotice('สร้างคาบเช็คชื่อไม่สำเร็จ');
+        setNotice(tr('สร้างคาบเช็คชื่อไม่สำเร็จ', 'Could not create the period'));
         return;
       }
       const { session: created } = (await response.json()) as { session: AttendanceSession };
-      setNotice('เปิดคาบเช็คชื่อแล้ว และแจ้งเข้ากลุ่ม LINE แล้ว');
+      setNotice(tr('เปิดคาบเช็คชื่อแล้ว และแจ้งเข้ากลุ่ม LINE แล้ว', 'Attendance opened and sent to the LINE group'));
       // The response is the full session row, so show and select it without a refetch.
       attendanceVersionRef.current++;
       setSessions((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
@@ -1153,7 +1163,7 @@ export default function ClassroomWorkspacePage() {
         .then((json) => json && setPosts(json.posts || []))
         .catch(() => {});
     } catch {
-      setNotice('เกิดข้อผิดพลาดในการเปิดคาบเช็คชื่อ');
+      setNotice(tr('เกิดข้อผิดพลาดในการเปิดคาบเช็คชื่อ', 'Something went wrong while opening attendance'));
     }
   };
 
@@ -1180,7 +1190,7 @@ export default function ClassroomWorkspacePage() {
         const without = prev.filter((r) => !(r.session_id === sessionId && r.student_id === optimistic.student_id));
         return previous ? [...without, previous] : without;
       });
-      setNotice('บันทึกการเข้าเรียนไม่สำเร็จ ลองใหม่');
+      setNotice(tr('บันทึกการเข้าเรียนไม่สำเร็จ ลองใหม่', 'Could not save attendance, try again'));
     };
     try {
       const response = await fetch('/api/attendance', {
@@ -1211,6 +1221,16 @@ export default function ClassroomWorkspacePage() {
         ? { late_until_minutes: target.late_until_minutes + 10, status: 'open', closed_at: null }
         : { status: 'closed', closed_at: new Date().toISOString() };
     patchSession(sessionId, fields);
+    // Closing marks everyone who never checked in absent (the server does the same).
+    const sessionIndex = indexRecords(allRecords.filter((r) => r.session_id === sessionId));
+    const pendingAbsent: AttendanceRecord[] =
+      action === 'close'
+        ? (classroom?.students || [])
+            .filter((student) => !findStudentRecord(sessionIndex, student))
+            .map((student) => ({ id: `pending-${sessionId}-${student.id}`, session_id: sessionId, student_id: student.id, status: 'absent', checked_at: null }))
+        : [];
+    const withoutPending = (prev: AttendanceRecord[]) => prev.filter((r) => !pendingAbsent.includes(r));
+    if (pendingAbsent.length) setAllRecords((prev) => [...prev, ...pendingAbsent]);
     try {
       const response = await fetch('/api/attendance', {
         method: 'POST',
@@ -1223,9 +1243,16 @@ export default function ClassroomWorkspacePage() {
         }),
       });
       if (!response.ok) throw new Error();
+      if (pendingAbsent.length) {
+        const { records = [] } = (await response.json()) as { records?: AttendanceRecord[] };
+        attendanceVersionRef.current++;
+        // The server may store the canonical users.id instead of the roster id.
+        setAllRecords((prev) => records.reduce(upsertRecord, withoutPending(prev)));
+      }
     } catch {
       patchSession(sessionId, target);
-      setNotice(action === 'close' ? 'ปิดรับเช็คชื่อไม่สำเร็จ' : 'ขยายเวลาไม่สำเร็จ');
+      if (pendingAbsent.length) setAllRecords(withoutPending);
+      setNotice(action === 'close' ? tr('ปิดรับเช็คชื่อไม่สำเร็จ', 'Could not close attendance') : tr('ขยายเวลาไม่สำเร็จ', 'Could not extend the time'));
     }
   };
 
@@ -1235,14 +1262,14 @@ export default function ClassroomWorkspacePage() {
     const ordered = [...sessions].sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
     const indexes = ordered.map((s) => indexRecords(allRecords.filter((r) => r.session_id === s.id)));
     downloadCsv(`attendance-all-${classroom.name}-${csvDateStamp()}.csv`, [
-      ['ชื่อ-นามสกุล', 'รหัสนักเรียน', ...ordered.map((s) => `${s.title} (${formatDateTime(s.starts_at, 'th')})`), ...Object.values(statusLabels)],
+      [tr('ชื่อ-นามสกุล', 'Full name'), tr('รหัสนักเรียน', 'Student ID'), ...ordered.map((s) => `${s.title} (${formatDateTime(s.starts_at, language)})`), ...Object.values(statusLabels).map((label) => label[language])],
       ...(classroom.students || []).map((student) => {
         const statuses = indexes.map((index) => findStudentRecord(index, student)?.status || 'absent');
         const totals = (Object.keys(statusLabels) as AttendanceStatus[]).map((key) => statuses.filter((s) => s === key).length);
         return [
           `${student.first_name} ${student.last_name}`,
           student.student_id || '',
-          ...statuses.map((status) => statusLabels[status]),
+          ...statuses.map((status) => statusLabels[status][language]),
           ...totals,
         ];
       }),
@@ -1253,11 +1280,11 @@ export default function ClassroomWorkspacePage() {
   const exportGrades = () => {
     if (!classroom) return;
     downloadCsv(`grades-${classroom.name}-${csvDateStamp()}.csv`, [
-      ['ชื่อ-นามสกุล', 'รหัสนักเรียน', ...gradeColumns.map((item) => `${item.is_exam ? '[ข้อสอบ] ' : '[งาน] '}${item.title} (เต็ม ${item.total_points || 20})`), 'คะแนนรวม'],
+      [tr('ชื่อ-นามสกุล', 'Full name'), tr('รหัสนักเรียน', 'Student ID'), ...gradeColumns.map((item) => `${item.is_exam ? tr('[ข้อสอบ] ', '[Exam] ') : tr('[งาน] ', '[Work] ')}${item.title} (${tr('เต็ม', 'out of')} ${item.total_points || 20})`), tr('คะแนนรวม', 'Total')],
       ...(classroom.students || []).map((student) => {
         const scores = gradeColumns.map((item) => {
           const sub = findStudentSubmission(submissions, item.id, student);
-          return sub && isGraded(sub) ? sub.total_score ?? '-' : sub && needsGrading(sub) ? 'รอตรวจ' : '-';
+          return sub && isGraded(sub) ? sub.total_score ?? '-' : sub && needsGrading(sub) ? tr('รอตรวจ', 'To grade') : '-';
         });
         const total = scores.reduce<number>((sum, score) => sum + (typeof score === 'number' ? score : 0), 0);
         return [`${student.first_name} ${student.last_name}`, student.student_id || '', ...scores, total];
@@ -1283,22 +1310,26 @@ export default function ClassroomWorkspacePage() {
     if (!others.length) return true;
     const lines = others.map((student) => `• ${student.first_name} ${student.last_name} — ${student.institution}`).join('\n');
     return confirm(
-      `⚠️ นักเรียนต่อไปนี้ระบุโรงเรียนต่างจากโรงเรียนของคุณครู (${teacherInstitution})\n\n${lines}\n\n` +
-        'หากนักเรียนกรอกชื่อโรงเรียนผิด คุณครูสามารถแก้ไขได้ภายหลังที่แท็บ "ผู้สอนและผู้เรียน"\n\nยืนยันรับเข้าห้องเรียนหรือไม่?'
+      tr(
+        `⚠️ นักเรียนต่อไปนี้ระบุโรงเรียนต่างจากโรงเรียนของคุณครู (${teacherInstitution})\n\n${lines}\n\n` +
+          'หากนักเรียนกรอกชื่อโรงเรียนผิด คุณครูสามารถแก้ไขได้ภายหลังที่แท็บ "ผู้สอนและผู้เรียน"\n\nยืนยันรับเข้าห้องเรียนหรือไม่?',
+        `⚠️ These students listed a different school from yours (${teacherInstitution})\n\n${lines}\n\n` +
+          'If a student typed the school wrong, you can fix it later in the "People" tab.\n\nAdmit them to the classroom?'
+      )
     );
   };
 
   const handleRemoveTeacher = async (teacherId: string) => {
     if (!classroom) return;
     if (teachersList.length <= 1) {
-      alert('ลบไม่ได้ ห้องเรียนต้องมีครูผู้สอนอย่างน้อย 1 ท่าน');
+      alert(tr('ลบไม่ได้ ห้องเรียนต้องมีครูผู้สอนอย่างน้อย 1 ท่าน', 'Cannot remove: a classroom needs at least one teacher'));
       return;
     }
-    if (!confirm('ต้องการนำครูผู้สอนท่านนี้ออกจากห้องเรียนหรือไม่?')) return;
+    if (!confirm(tr('ต้องการนำครูผู้สอนท่านนี้ออกจากห้องเรียนหรือไม่?', 'Remove this teacher from the classroom?'))) return;
     const updated = teachersList.filter((t) => t.teacher_id !== teacherId);
     await dataService.updateClassroom(classroom.id, { teachers: updated });
     setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
-    setNotice('นำครูผู้สอนออกแล้ว');
+    setNotice(tr('นำครูผู้สอนออกแล้ว', 'Teacher removed'));
   };
 
   const handleSelectFoundStudent = async (std: User) => {
@@ -1306,7 +1337,7 @@ export default function ClassroomWorkspacePage() {
     const alreadyEnrolled = [...(classroom.students || []), ...(classroom.pending_students || [])]
       .some((student) => student.id === std.id || (student.student_id && std.student_id && student.student_id === std.student_id));
     if (alreadyEnrolled) {
-      setNotice('นักเรียนคนนี้อยู่ในห้องเรียนแล้ว');
+      setNotice(tr('นักเรียนคนนี้อยู่ในห้องเรียนแล้ว', 'This student is already in the classroom'));
       return;
     }
     if (!confirmOtherSchool([std])) return;
@@ -1323,7 +1354,7 @@ export default function ClassroomWorkspacePage() {
       },
       { autoAdmit: true }
     );
-    setNotice(`เพิ่ม ${std.first_name} ${std.last_name} สำเร็จ`);
+    setNotice(tr(`เพิ่ม ${std.first_name} ${std.last_name} สำเร็จ`, `Added ${std.first_name} ${std.last_name}`));
     setStudentSearchQuery('');
     setStudentSearchResults([]);
     await loadWorkspace();
@@ -1335,24 +1366,24 @@ export default function ClassroomWorkspacePage() {
     if (pending && !confirmOtherSchool([pending])) return;
     try {
       await dataService.admitStudentToClassroom(classroom.id, studentId);
-      setNotice('อนุมัตินักเรียนแล้ว');
+      setNotice(tr('อนุมัตินักเรียนแล้ว', 'Student admitted'));
       await loadWorkspace();
     } catch (e) {
       console.error(e);
-      setNotice('เกิดข้อผิดพลาดในการอนุมัติ');
+      setNotice(tr('เกิดข้อผิดพลาดในการอนุมัติ', 'Something went wrong while admitting'));
     }
   };
 
   const handleRejectStudent = async (studentId: string) => {
     if (!classroom) return;
-    if (!confirm('ต้องการปฏิเสธคำขอนี้หรือไม่?')) return;
+    if (!confirm(tr('ต้องการปฏิเสธคำขอนี้หรือไม่?', 'Decline this request?'))) return;
     try {
       await dataService.rejectStudentFromClassroom(classroom.id, studentId);
-      setNotice('ปฏิเสธคำขอแล้ว');
+      setNotice(tr('ปฏิเสธคำขอแล้ว', 'Request declined'));
       await loadWorkspace();
     } catch (e) {
       console.error(e);
-      setNotice('เกิดข้อผิดพลาดในการปฏิเสธ');
+      setNotice(tr('เกิดข้อผิดพลาดในการปฏิเสธ', 'Something went wrong while declining'));
     }
   };
 
@@ -1375,10 +1406,10 @@ export default function ClassroomWorkspacePage() {
     const done = pending.length - failed;
     setNotice(
       failed
-        ? `${admit ? 'อนุมัติ' : 'ปฏิเสธ'}แล้ว ${done} คน • ไม่สำเร็จ ${failed} คน กรุณาลองใหม่`
+        ? tr(`${admit ? tr('อนุมัติ', 'Admit') : tr('ปฏิเสธ', 'Decline')}แล้ว ${done} คน • ไม่สำเร็จ ${failed} คน กรุณาลองใหม่`, `${admit ? 'Admitted' : 'Declined'} ${done} • ${failed} failed, please try again`)
         : admit
-        ? `อนุมัติคำขอทั้งหมดแล้ว (${done} คน)`
-        : `ปฏิเสธคำขอทั้งหมดแล้ว (${done} คน)`
+        ? tr(`อนุมัติคำขอทั้งหมดแล้ว (${done} คน)`, `Admitted all requests (${done})`)
+        : tr(`ปฏิเสธคำขอทั้งหมดแล้ว (${done} คน)`, `Declined all requests (${done})`)
     );
     setBulkPendingBusy(false);
     setBulkPendingAction(null);
@@ -1389,7 +1420,7 @@ export default function ClassroomWorkspacePage() {
     if (!classroom) return;
     const currentTeachers = teachersList;
     if (currentTeachers.some((t) => t.teacher_id === foundTeacher.id)) {
-      setNotice('ครูท่านนี้อยู่ในห้องเรียนแล้ว');
+      setNotice(tr('ครูท่านนี้อยู่ในห้องเรียนแล้ว', 'This teacher is already in the classroom'));
       return;
     }
     const updated = [
@@ -1397,13 +1428,13 @@ export default function ClassroomWorkspacePage() {
       {
         teacher_id: foundTeacher.id,
         role,
-        name: `${foundTeacher.first_name || ''} ${foundTeacher.last_name || ''}`.trim() || foundTeacher.email || 'อาจารย์',
+        name: `${foundTeacher.first_name || ''} ${foundTeacher.last_name || ''}`.trim() || foundTeacher.email || tr('อาจารย์', 'Teacher'),
         email: foundTeacher.email || '',
       },
     ];
     await dataService.updateClassroom(classroom.id, { teachers: updated });
     setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
-    setNotice('เพิ่มผู้สอนแล้ว');
+    setNotice(tr('เพิ่มผู้สอนแล้ว', 'Teacher added'));
     setTeacherSearchQuery('');
     setTeacherSearchResults([]);
     setShowAddTeacherModal(false);
@@ -1426,11 +1457,11 @@ export default function ClassroomWorkspacePage() {
         { autoAdmit: true }
       );
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'เพิ่มผู้เรียนไม่สำเร็จ');
+      setNotice(error instanceof Error ? error.message : tr('เพิ่มผู้เรียนไม่สำเร็จ', 'Could not add the student'));
       return;
     }
     await loadWorkspace();
-    setNotice(`เพิ่มผู้เรียน "${first_name.trim()} ${last_name.trim()}" เรียบร้อยแล้ว`);
+    setNotice(tr(`เพิ่มผู้เรียน "${first_name.trim()} ${last_name.trim()}" เรียบร้อยแล้ว`, `Added student "${first_name.trim()} ${last_name.trim()}"`));
     setShowAddStudentModal(false);
     setNewStudentFirst('');
     setNewStudentLast('');
@@ -1451,20 +1482,20 @@ export default function ClassroomWorkspacePage() {
         : prev
     );
     setEditingStudent(null);
-    setNotice('แก้ไขข้อมูลนักเรียนแล้ว');
+    setNotice(tr('แก้ไขข้อมูลนักเรียนแล้ว', 'Student updated'));
   };
 
   const handleRemoveStudent = async (studentId: string) => {
     if (!classroom) return;
-    if (!confirm('นำนักเรียนคนนี้ออกจากห้องเรียน?')) return;
+    if (!confirm(tr('นำนักเรียนคนนี้ออกจากห้องเรียน?', 'Remove this student from the classroom?'))) return;
     try {
       await dataService.removeStudentFromClassroom(classroom.id, studentId);
       const currentStudents = classroom.students || [];
       const updated = currentStudents.filter((s) => s.id !== studentId);
       setClassroom((prev) => (prev ? { ...prev, students: updated, student_count: updated.length } : prev));
-      setNotice('นำนักเรียนออกแล้ว');
+      setNotice(tr('นำนักเรียนออกแล้ว', 'Student removed'));
     } catch {
-      setNotice('ลบนักเรียนไม่สำเร็จ');
+      setNotice(tr('ลบนักเรียนไม่สำเร็จ', 'Could not remove the student'));
     }
   };
 
@@ -1503,7 +1534,7 @@ export default function ClassroomWorkspacePage() {
       <div className="min-h-dvh flex items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
         <div className="text-center space-y-3">
           <div className="w-10 h-10 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-bold text-slate-500">กำลังเข้าสู่ห้องเรียน...</p>
+          <p className="text-xs font-bold text-slate-500">{tr('กำลังเข้าสู่ห้องเรียน...', 'Opening classroom...')}</p>
         </div>
       </div>
     );
@@ -1512,10 +1543,10 @@ export default function ClassroomWorkspacePage() {
   if (!classroom) {
     return (
       <div className="min-h-dvh flex flex-col items-center justify-center p-6 text-center bg-slate-50 dark:bg-slate-950">
-        <h2 className="text-lg font-black text-slate-800 dark:text-white">ไม่พบห้องเรียนที่ต้องการ</h2>
-        <p className="text-xs text-slate-500 mt-1 mb-4">ห้องเรียนอาจถูกลบ หรือคุณไม่มีสิทธิ์เข้าถึง</p>
+        <h2 className="text-lg font-black text-slate-800 dark:text-white">{tr('ไม่พบห้องเรียนที่ต้องการ', 'Classroom not found')}</h2>
+        <p className="text-xs text-slate-500 mt-1 mb-4">{tr('ห้องเรียนอาจถูกลบ หรือคุณไม่มีสิทธิ์เข้าถึง', 'It may have been deleted, or you do not have access')}</p>
         <Link href="/dashboard" className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs">
-          กลับสู่แดชบอร์ด
+          {tr('กลับสู่แดชบอร์ด', 'Back to dashboard')}
         </Link>
       </div>
     );
@@ -1524,7 +1555,7 @@ export default function ClassroomWorkspacePage() {
   const courseCode = course?.code || classroom.subject_code || 'CLASSROOM';
   const courseName = course?.name || classroom.course_name || '';
   const room = roomLabel(classroom) || classroom.name;
-  const semester = classroom.academic_year || 'ปัจจุบัน';
+  const semester = classroom.academic_year || tr('ปัจจุบัน', 'Current');
 
   const selectTab = (next: Tab) => {
     if (next === tab) return;
@@ -1557,11 +1588,11 @@ export default function ClassroomWorkspacePage() {
               <h1 className={`shrink-0 h-7 inline-flex items-center px-2 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black ${courseName ? '' : 'ml-auto'}`}>
                 {room}
               </h1>
-              <span className="shrink-0 h-7 inline-flex items-center gap-1 px-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300" title={`ภาคเรียน ${semester}`}>
+              <span className="shrink-0 h-7 inline-flex items-center gap-1 px-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300" title={`${tr('ภาคเรียน', 'Semester')} ${semester}`}>
                 <CalendarCheck className="w-3.5 h-3.5 text-slate-400" />
                 {semester}
               </span>
-              <button onClick={() => loadWorkspace()} aria-label="รีเฟรช" className="-mr-2 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
+              <button onClick={() => loadWorkspace()} aria-label={tr('รีเฟรช', 'Refresh')} className="-mr-2 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
@@ -1580,7 +1611,7 @@ export default function ClassroomWorkspacePage() {
                 <h1 className="shrink-0 text-2xl font-black text-slate-900 dark:text-white tracking-tight">{room}</h1>
                 <span className="shrink-0 h-7 inline-flex items-center gap-1 px-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-600 dark:text-slate-300">
                   <CalendarCheck className="w-3.5 h-3.5 text-slate-400" />
-                  ภาคเรียน {semester}
+                  {tr('ภาคเรียน', 'Semester')} {semester}
                 </span>
               </div>
               {course?.description && (
@@ -1600,7 +1631,7 @@ export default function ClassroomWorkspacePage() {
                 className="min-w-0 h-9 sm:h-auto px-2 sm:px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] sm:text-xs font-bold inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-xs transition-all cursor-pointer"
               >
                 <UserPlus className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                <span className="truncate">เชิญนักเรียน</span>
+                <span className="truncate">{tr('เชิญนักเรียน', 'Invite students')}</span>
                 {(classroom.pending_students?.length || 0) > 0 && (
                   <span className="w-2 h-2 shrink-0 rounded-full bg-rose-500 animate-ping" />
                 )}
@@ -1628,7 +1659,7 @@ export default function ClassroomWorkspacePage() {
                   }`}
                 />
                 <span className="truncate">
-                  <span className="hidden sm:inline">เชื่อม</span>บอท LINE
+                  {tr(<><span className="hidden sm:inline">เชื่อม</span>บอท LINE</>, <><span className="hidden sm:inline">Connect </span>LINE bot</>)}
                 </span>
               </button>
 
@@ -1639,7 +1670,7 @@ export default function ClassroomWorkspacePage() {
               >
                 <Plus className="w-4 h-4 shrink-0" />
                 <span className="truncate">
-                  สร้างงาน<span className="hidden sm:inline"> / ข้อสอบ</span>
+                  {tr(<>สร้างงาน<span className="hidden sm:inline"> / ข้อสอบ</span></>, <>New<span className="hidden sm:inline"> assignment / exam</span></>)}
                 </span>
               </Link>
             </div>
@@ -1669,7 +1700,7 @@ export default function ClassroomWorkspacePage() {
                   }`}
                 >
                   <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
+                  <span>{item.label[language]}</span>
                 </button>
               );
             })}
@@ -1680,7 +1711,7 @@ export default function ClassroomWorkspacePage() {
           {notice && (
             <div role="status" className="mb-5 sm:mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 animate-in fade-in">
               <span className="min-w-0 break-words">{notice}</span>
-              <button onClick={() => setNotice('')} aria-label="ปิด" className="text-amber-600 hover:text-amber-800 p-1 shrink-0">
+              <button onClick={() => setNotice('')} aria-label={tr('ปิด', 'Close')} className="text-amber-600 hover:text-amber-800 p-1 shrink-0">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1688,7 +1719,7 @@ export default function ClassroomWorkspacePage() {
 
           {/* Mobile bottom tab bar: all five tabs at once, icon above a short label. */}
           <nav
-            aria-label="เมนูห้องเรียน"
+            aria-label={tr('เมนูห้องเรียน', 'Classroom menu')}
             className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]"
           >
             <div className="relative grid grid-cols-5 px-1 py-1.5">
@@ -1708,7 +1739,7 @@ export default function ClassroomWorkspacePage() {
                     key={item.id}
                     onClick={() => selectTab(item.id)}
                     aria-current={isActive ? 'page' : undefined}
-                    aria-label={item.label}
+                    aria-label={item.label[language]}
                     className={`relative min-w-0 flex flex-col items-center gap-1 py-1 rounded-2xl text-[11px] transition-colors cursor-pointer ${
                       isActive
                         ? 'text-amber-600 dark:text-amber-400 font-black'
@@ -1718,7 +1749,7 @@ export default function ClassroomWorkspacePage() {
                     <span className="px-3.5 py-1 rounded-full">
                       <Icon className={`w-5 h-5 transition-transform duration-300 ${isActive ? 'scale-110' : ''}`} />
                     </span>
-                    <span className="max-w-full truncate">{item.shortLabel}</span>
+                    <span className="max-w-full truncate">{item.shortLabel[language]}</span>
                   </button>
                 );
               })}
@@ -1747,9 +1778,9 @@ export default function ClassroomWorkspacePage() {
                     </div>
                     <div className="flex-1">
                       <p className="text-xs font-bold text-slate-900 dark:text-white">
-                        {user?.fullName || user?.firstName || 'ครูผู้สอน'}
+                        {user?.fullName || user?.firstName || tr('ครูผู้สอน', 'Teacher')}
                       </p>
-                      <span className="text-[10px] text-slate-400"><MobileText short="ประกาศถึงนักเรียน" full="แชร์ประกาศ ข้อมูล หรือแจ้งเตือนเข้ากลุ่ม LINE" /></span>
+                      <span className="text-[10px] text-slate-400"><MobileText short={tr('ประกาศถึงนักเรียน', 'Announce to students')} full={tr('แชร์ประกาศ ข้อมูล หรือแจ้งเตือนเข้ากลุ่ม LINE', 'Share announcements, info or reminders to the LINE group')} /></span>
                     </div>
                   </div>
 
@@ -1758,20 +1789,20 @@ export default function ClassroomWorkspacePage() {
                     value={postBody}
                     onFocus={() => setIsPostExpanded(true)}
                     onChange={(e) => setPostBody(e.target.value)}
-                    placeholder="ประกาศถึงนักเรียน (ส่งเข้ากลุ่ม LINE อัตโนมัติ)..."
+                    placeholder={tr('ประกาศถึงนักเรียน (ส่งเข้ากลุ่ม LINE อัตโนมัติ)...', 'Announce to students (sent to the LINE group automatically)...')}
                     className="w-full p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-500 transition-all resize-none"
                   />
 
                   {isPostExpanded && (
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[11px] font-bold text-slate-400 mr-1">ประเภท:</span>
+                        <span className="text-[11px] font-bold text-slate-400 mr-1">{tr('ประเภท:', 'Type:')}</span>
                         {(
                           [
-                            ['announcement', '📢 ประกาศ'],
-                            ['assignment', '📋 งาน'],
-                            ['exam', '📝 ข้อสอบ'],
-                            ['attendance', '⏰ เช็คชื่อ'],
+                            ['announcement', tr('📢 ประกาศ', '📢 Announcement')],
+                            ['assignment', tr('📋 งาน', '📋 Assignment')],
+                            ['exam', tr('📝 ข้อสอบ', '📝 Exam')],
+                            ['attendance', tr('⏰ เช็คชื่อ', '⏰ Attendance')],
                           ] as const
                         ).map(([type, label]) => (
                           <button
@@ -1798,7 +1829,7 @@ export default function ClassroomWorkspacePage() {
                           }}
                           className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
                         >
-                          ยกเลิก
+                          {tr('ยกเลิก', 'Cancel')}
                         </button>
                         <button
                           type="button"
@@ -1807,7 +1838,7 @@ export default function ClassroomWorkspacePage() {
                           className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
                         >
                           {isPosting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                          <span>โพสต์ประกาศ</span>
+                          <span>{tr('โพสต์ประกาศ', 'Post')}</span>
                         </button>
                       </div>
                     </div>
@@ -1836,12 +1867,12 @@ export default function ClassroomWorkspacePage() {
                             </span>
                             {item.scheduledAt && (
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
-                                ⏰ เผยแพร่ {formatDateTime(item.scheduledAt, 'th')}
+                                ⏰ {tr('เผยแพร่', 'Publishes')} {formatDateTime(item.scheduledAt, language)}
                               </span>
                             )}
                           </div>
                           <time className="text-[10px] text-slate-400 block mt-0.5">
-                            {new Date(item.created_at).toLocaleString('th-TH', {
+                            {new Date(item.created_at).toLocaleString(tr('th-TH', 'en-US'), {
                               dateStyle: 'medium',
                               timeStyle: 'short',
                             })}
@@ -1862,7 +1893,7 @@ export default function ClassroomWorkspacePage() {
                               }
                             }}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                            title="แก้ไขโพสต์"
+                            title={tr('แก้ไขโพสต์', 'Edit post')}
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -1872,7 +1903,7 @@ export default function ClassroomWorkspacePage() {
                               item.assignmentId ? handleDeleteAssignment(item.assignmentId) : handleDeletePost(item.rawId!)
                             }
                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                            title={item.assignmentId ? 'ลบงาน/ข้อสอบนี้ (ลบออกจากแท็บงานด้วย)' : 'ลบโพสต์'}
+                            title={item.assignmentId ? tr('ลบงาน/ข้อสอบนี้ (ลบออกจากแท็บงานด้วย)', 'Delete this assignment/exam (also removes it from Classwork)') : tr('ลบโพสต์', 'Delete post')}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1898,7 +1929,7 @@ export default function ClassroomWorkspacePage() {
                           </span>
                         </div>
                         <span className="text-[11px] font-bold text-amber-600 inline-flex items-center gap-1 shrink-0">
-                          <span>เปิดตรวจคะแนน</span>
+                          <span>{tr('เปิดตรวจคะแนน', 'Open grading')}</span>
                           <ChevronRight className="w-3.5 h-3.5" />
                         </span>
                       </Link>
@@ -1906,7 +1937,7 @@ export default function ClassroomWorkspacePage() {
 
                     {/* Post Footer note */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
-                      <span>📢 ประกาศในกลุ่ม LINE แล้ว</span>
+                      <span>{tr('📢 ประกาศในกลุ่ม LINE แล้ว', '📢 Announced in the LINE group')}</span>
                       <span>{item.badgeLabel}</span>
                     </div>
                   </article>
@@ -1914,7 +1945,7 @@ export default function ClassroomWorkspacePage() {
 
                 {!timeline.length && (
                   <div className="p-5 sm:p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400">
-                    ยังไม่มีโพสต์ เริ่มประกาศข้อความแรกได้เลย
+                    {tr('ยังไม่มีโพสต์ เริ่มประกาศข้อความแรกได้เลย', 'No posts yet. Write your first announcement.')}
                   </div>
                 )}
             </div>
@@ -1928,9 +1959,9 @@ export default function ClassroomWorkspacePage() {
               {/* Header with Actions */}
               <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
                 <div>
-                  <h2 className="text-lg font-black text-slate-900 dark:text-white">งานและเนื้อหา</h2>
+                  <h2 className="text-lg font-black text-slate-900 dark:text-white">{tr('งานและเนื้อหา', 'Classwork')}</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    <MobileText short="จัดกลุ่มงานได้เอง นักเรียนเห็นกลุ่มเดียวกัน" full="จัดกลุ่มงานตามหมวดหมู่ได้เอง นักเรียนจะเห็นหมวดหมู่เดียวกันในหน้าของตนเอง" />
+                    <MobileText short={tr('จัดกลุ่มงานได้เอง นักเรียนเห็นกลุ่มเดียวกัน', 'Group work your way; students see the same groups')} full={tr('จัดกลุ่มงานตามหมวดหมู่ได้เอง นักเรียนจะเห็นหมวดหมู่เดียวกันในหน้าของตนเอง', 'Organize work into your own groups. Students see the same groups on their page.')} />
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1939,14 +1970,14 @@ export default function ClassroomWorkspacePage() {
                     className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer"
                   >
                     <FolderPlus className="w-3.5 h-3.5 text-amber-500" />
-                    <span>+ สร้างกลุ่มหมวดหมู่ใหม่</span>
+                    <span>{tr('+ สร้างกลุ่มหมวดหมู่ใหม่', '+ New group')}</span>
                   </button>
                   <Link
                     href={`/assignments/new?classroomId=${classroom.id}&from=classroom`}
                     className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>สร้างงาน / ข้อสอบ</span>
+                    <span>{tr('สร้างงาน / ข้อสอบ', 'New assignment / exam')}</span>
                   </Link>
                 </div>
               </div>
@@ -1956,21 +1987,21 @@ export default function ClassroomWorkspacePage() {
                 <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
                   <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     <div className={`p-3 rounded-2xl ${classworkSummary.pending > 0 ? 'bg-amber-50 dark:bg-amber-950/40' : 'bg-emerald-50 dark:bg-emerald-950/40'}`}>
-                      <span className={`text-[11px] font-bold block ${classworkSummary.pending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>รอตรวจ</span>
+                      <span className={`text-[11px] font-bold block ${classworkSummary.pending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>{tr('รอตรวจ', 'To grade')}</span>
                       <span className={`text-xl sm:text-2xl font-black ${classworkSummary.pending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
                         {classworkSummary.pending}
-                        <span className="text-[11px] font-semibold ml-1">ชิ้น</span>
+                        <span className="text-[11px] font-semibold ml-1">{tr('ชิ้น', 'items')}</span>
                       </span>
                     </div>
                     <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
-                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">ตรวจแล้ว</span>
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('ตรวจแล้ว', 'Graded')}</span>
                       <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
                         {classworkSummary.graded}
                         <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {classworkSummary.checkable}</span>
                       </span>
                     </div>
                     <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
-                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">งานที่ตรวจครบ</span>
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('งานที่ตรวจครบ', 'Fully graded')}</span>
                       <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
                         {classworkSummary.done}
                         <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {assignments.length}</span>
@@ -2003,7 +2034,7 @@ export default function ClassroomWorkspacePage() {
                               : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'
                           }`}
                         >
-                          <span>{label}</span>
+                          <span>{label[language]}</span>
                           <span className={`px-1.5 min-w-5 rounded-full text-[10px] font-black ${selected ? 'bg-black/10 dark:bg-white/20' : 'bg-white dark:bg-slate-900'}`}>
                             {classworkFilterCounts[id]}
                           </span>
@@ -2012,7 +2043,7 @@ export default function ClassroomWorkspacePage() {
                     })}
                   </div>
                   {classworkFilter !== 'all' && (
-                    <p className="text-[11px] text-slate-400 animate-in fade-in slide-in-from-top-1">กลับไปที่ “ทั้งหมด” เพื่อลากเรียงลำดับหรือย้ายกลุ่ม</p>
+                    <p className="text-[11px] text-slate-400 animate-in fade-in slide-in-from-top-1">{tr('กลับไปที่ “ทั้งหมด” เพื่อลากเรียงลำดับหรือย้ายกลุ่ม', 'Switch back to “All” to drag, reorder or move groups')}</p>
                   )}
                 </div>
               )}
@@ -2026,7 +2057,7 @@ export default function ClassroomWorkspacePage() {
                 {Object.entries(
                   assignments.reduce<Record<string, Assignment[]>>(
                     (groups, item) => {
-                      const key = item.group_name || (item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป');
+                      const key = item.group_name || (item.is_exam ? tr('ข้อสอบ', 'Exam') : tr('งานทั่วไป', 'General'));
                       (groups[key] ||= []).push(item);
                       return groups;
                     },
@@ -2080,7 +2111,7 @@ export default function ClassroomWorkspacePage() {
                         const left = items.reduce((sum, a) => sum + (classworkCounts.get(a.id)?.pending || 0), 0);
                         return left > 0 ? (
                           <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-bold">
-                            รอตรวจ {left}
+                            {tr('รอตรวจ', 'To grade')} {left}
                           </span>
                         ) : null;
                       })()}
@@ -2088,7 +2119,7 @@ export default function ClassroomWorkspacePage() {
 
                     {items.length === 0 && (
                       <div className="py-6 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-center text-[11px] text-slate-400">
-                        ลากงานมาวางที่นี่ หรือกด “ย้ายกลุ่ม” ที่งาน
+                        {tr('ลากงานมาวางที่นี่ หรือกด “ย้ายกลุ่ม” ที่งาน', 'Drag work here, or use “Move group” on an item')}
                       </div>
                     )}
 
@@ -2128,7 +2159,7 @@ export default function ClassroomWorkspacePage() {
                               if (dragOverGroup !== group) setDragOverGroup(group);
                               if (dropTarget?.group !== group || dropTarget.index !== index) setDropTarget({ group, index });
                             }}
-                            title={canDrag ? 'ลากเพื่อเรียงลำดับ หรือย้ายไปกลุ่มอื่น' : undefined}
+                            title={canDrag ? tr('ลากเพื่อเรียงลำดับ หรือย้ายไปกลุ่มอื่น', 'Drag to reorder or move to another group') : undefined}
                             className={`relative flex ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''} ${draggingAssignmentId === item.id ? 'opacity-40' : ''}`}
                           >
                             {/* Insertion line: where the dragged card will land */}
@@ -2152,7 +2183,7 @@ export default function ClassroomWorkspacePage() {
                                 <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
                                   <span className="text-slate-400 flex items-center gap-1 min-w-0">
                                     <Tag className="w-3 h-3 shrink-0" />
-                                    <span className="truncate">หมวดหมู่: {item.group_name || 'ไม่ได้จัดกลุ่ม'}</span>
+                                    <span className="truncate">{tr('หมวดหมู่', 'Group')}: {item.group_name || tr('ไม่ได้จัดกลุ่ม', 'Ungrouped')}</span>
                                   </span>
                                   <button
                                     type="button"
@@ -2163,7 +2194,7 @@ export default function ClassroomWorkspacePage() {
                                     }}
                                     className="text-amber-600 font-bold hover:underline cursor-pointer shrink-0"
                                   >
-                                    ย้ายกลุ่ม
+                                    {tr('ย้ายกลุ่ม', 'Move group')}
                                   </button>
                                 </div>
                               }
@@ -2218,14 +2249,14 @@ export default function ClassroomWorkspacePage() {
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
                   <h2 className="font-black text-slate-900 dark:text-white flex items-center gap-2">
                     <UserCheck className="w-4 h-4 text-amber-500" />
-                    <span>รายชื่อผู้สอน ({teachersList.length})</span>
+                    <span>{tr('รายชื่อผู้สอน', 'Teachers')} ({teachersList.length})</span>
                   </h2>
                   <button
                     onClick={() => setShowAddTeacherModal(true)}
                     className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black inline-flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
-                    <span>+ เพิ่มผู้สอน</span>
+                    <span>{tr('+ เพิ่มผู้สอน', '+ Add teacher')}</span>
                   </button>
                 </div>
 
@@ -2234,10 +2265,10 @@ export default function ClassroomWorkspacePage() {
                     const isPrimary = teacher.role === 'primary';
                     const isResearcher = teacher.role === 'researcher';
                     const roleLabel = isPrimary
-                      ? 'ครูประจำวิชา'
+                      ? tr('ครูประจำวิชา', 'Primary teacher')
                       : isResearcher
-                      ? 'ผู้ตรวจเพื่อวิจัย (IRR)'
-                      : 'TA (ผู้ช่วยสอน)';
+                      ? tr('ผู้ตรวจเพื่อวิจัย (IRR)', 'Research grader (IRR)')
+                      : tr('TA (ผู้ช่วยสอน)', 'TA (teaching assistant)');
                     const roleBadgeClass = isPrimary
                       ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300'
                       : isResearcher
@@ -2258,7 +2289,7 @@ export default function ClassroomWorkspacePage() {
                               {teacher.name || teacher.teacher_id}
                             </p>
                             <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                              {teacher.email || 'ไม่มีอีเมล'}
+                              {teacher.email || tr('ไม่มีอีเมล', 'No email')}
                             </p>
                           </div>
                         </div>
@@ -2270,7 +2301,7 @@ export default function ClassroomWorkspacePage() {
                           <button
                             onClick={() => handleRemoveTeacher(teacher.teacher_id)}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                            title="ลบผู้สอนออกจากห้องเรียน"
+                            title={tr('ลบผู้สอนออกจากห้องเรียน', 'Remove teacher from classroom')}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -2288,10 +2319,10 @@ export default function ClassroomWorkspacePage() {
                     <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
                     <div>
                       <p className="text-xs font-black text-amber-950 dark:text-amber-100">
-                        มีคำขอเข้าห้องเรียนรออนุมัติ ({classroom.pending_students?.length} คน)
+                        {tr(`มีคำขอเข้าห้องเรียนรออนุมัติ (${classroom.pending_students?.length} คน)`, `${classroom.pending_students?.length} join requests awaiting approval`)}
                       </p>
                       <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
-                        นักเรียนลงทะเบียนแล้ว รอคุณครูอนุมัติ
+                        {tr('นักเรียนลงทะเบียนแล้ว รอคุณครูอนุมัติ', 'Students registered and are waiting for your approval')}
                       </p>
                     </div>
                   </div>
@@ -2303,7 +2334,7 @@ export default function ClassroomWorkspacePage() {
                     }}
                     className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
                   >
-                    ตรวจสอบและอนุมัติ
+                    {tr('ตรวจสอบและอนุมัติ', 'Review and approve')}
                   </button>
                 </div>
               )}
@@ -2329,13 +2360,13 @@ export default function ClassroomWorkspacePage() {
             <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-4 min-w-0">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h2 className="font-black text-slate-900 dark:text-white">ตารางคะแนนรวมทั้งห้อง</h2>
+                  <h2 className="font-black text-slate-900 dark:text-white">{tr('ตารางคะแนนรวมทั้งห้อง', 'Class grade book')}</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    <MobileText short="คะแนนและงานรอตรวจของทุกคน" full="คะแนนงาน ข้อสอบ และสถานะรอตรวจของนักเรียนทุกคน" />
+                    <MobileText short={tr('คะแนนและงานรอตรวจของทุกคน', 'Everyone\'s scores and pending grading')} full={tr('คะแนนงาน ข้อสอบ และสถานะรอตรวจของนักเรียนทุกคน', 'Assignment and exam scores, plus grading status, for every student')} />
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400 font-bold">{assignments.length} งาน/ข้อสอบ</span>
+                  <span className="text-xs text-slate-400 font-bold">{assignments.length} {tr('งาน/ข้อสอบ', 'assignments/exams')}</span>
                   <button
                     type="button"
                     onClick={exportGrades}
@@ -2343,7 +2374,7 @@ export default function ClassroomWorkspacePage() {
                     className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Download className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>ส่งออก CSV</span>
+                    <span>{tr('ส่งออก CSV', 'Export CSV')}</span>
                   </button>
                 </div>
               </div>
@@ -2351,22 +2382,22 @@ export default function ClassroomWorkspacePage() {
               {gradesLoading ? (
                 <div className="py-12 text-center text-sm text-slate-400">
                   <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-amber-500" />
-                  กำลังโหลดคะแนน...
+                  {tr('กำลังโหลดคะแนน...', 'Loading grades...')}
                 </div>
               ) : (
                 <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
                 <table className="w-full min-w-160 text-xs">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 text-left">
-                      <th className="p-3 sticky left-0 z-10 bg-white dark:bg-slate-900">ชื่อ-นามสกุล</th>
-                      <th className="p-3">รหัสนักเรียน</th>
+                      <th className="p-3 sticky left-0 z-10 bg-white dark:bg-slate-900">{tr('ชื่อ-นามสกุล', 'Full name')}</th>
+                      <th className="p-3">{tr('รหัสนักเรียน', 'Student ID')}</th>
                       {gradeColumns.map((item) => (
                         <th key={item.id} className="p-3 text-center">
                           <span className="block truncate max-w-28 mx-auto font-bold text-slate-700 dark:text-slate-300">
                             {item.title}
                           </span>
                           <span className="text-[10px] text-slate-400 font-normal">
-                            (เต็ม {item.total_points || 20})
+                            ({tr('เต็ม', 'out of')} {item.total_points || 20})
                           </span>
                         </th>
                       ))}
@@ -2389,7 +2420,7 @@ export default function ClassroomWorkspacePage() {
                                 </span>
                               ) : sub && needsGrading(sub) ? (
                                 <span className="text-amber-500 text-[10px] bg-amber-50 dark:bg-amber-950 px-2 py-0.5 rounded-full font-bold">
-                                  รอตรวจ
+                                  {tr('รอตรวจ', 'To grade')}
                                 </span>
                               ) : (
                                 <span className="text-slate-300">-</span>
@@ -2420,15 +2451,15 @@ export default function ClassroomWorkspacePage() {
         >
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div>
-              <h3 className="font-black text-sm text-slate-900 dark:text-white">เพิ่มหมวดหมู่ใหม่</h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">สร้างแล้วลากงานมาวางในกลุ่มใหม่ได้ทันที</p>
+              <h3 className="font-black text-sm text-slate-900 dark:text-white">{tr('เพิ่มหมวดหมู่ใหม่', 'New group')}</h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">{tr('สร้างแล้วลากงานมาวางในกลุ่มใหม่ได้ทันที', 'Once created, drag work into it right away')}</p>
             </div>
             <input
               autoFocus
               value={newGroupName}
               onKeyDown={(e) => e.key === 'Enter' && handleAddGroup()}
               onChange={(e) => setNewGroupName(e.target.value)}
-              placeholder="เช่น บทที่ 1, สอบกลางภาค..."
+              placeholder={tr('เช่น บทที่ 1, สอบกลางภาค...', 'e.g. Chapter 1, Midterm...')}
               className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
             />
             <div className="flex gap-2">
@@ -2436,14 +2467,14 @@ export default function ClassroomWorkspacePage() {
                 onClick={() => setShowAddGroupModal(false)}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
               >
-                ยกเลิก
+                {tr('ยกเลิก', 'Cancel')}
               </button>
               <button
                 onClick={handleAddGroup}
                 disabled={!newGroupName.trim()}
                 className="flex-1 py-2.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-black cursor-pointer disabled:opacity-50"
               >
-                บันทึกกลุ่ม
+                {tr('บันทึกกลุ่ม', 'Save group')}
               </button>
             </div>
           </div>
@@ -2457,14 +2488,14 @@ export default function ClassroomWorkspacePage() {
           onClick={(e) => e.target === e.currentTarget && setEditingAssignmentGroup(null)}
         >
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
-            <h3 className="font-black text-sm text-slate-900 dark:text-white">ย้ายหมวดหมู่ของงาน</h3>
+            <h3 className="font-black text-sm text-slate-900 dark:text-white">{tr('ย้ายหมวดหมู่ของงาน', 'Move to group')}</h3>
             <p className="text-xs text-slate-500 font-bold truncate">{editingAssignmentGroup.title}</p>
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-400">เลือกกลุ่มที่มีอยู่ หรือพิมพ์กลุ่มใหม่</label>
+              <label className="text-[11px] font-bold text-slate-400">{tr('เลือกกลุ่มที่มีอยู่ หรือพิมพ์กลุ่มใหม่', 'Pick an existing group or type a new one')}</label>
               <input
                 value={targetGroupForAssignment}
                 onChange={(e) => setTargetGroupForAssignment(e.target.value)}
-                placeholder="ชื่อหมวดหมู่..."
+                placeholder={tr('ชื่อหมวดหมู่...', 'Group name...')}
                 className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none"
               />
               {existingGroupNames.length > 0 && (
@@ -2487,13 +2518,13 @@ export default function ClassroomWorkspacePage() {
                 onClick={() => setEditingAssignmentGroup(null)}
                 className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
               >
-                ยกเลิก
+                {tr('ยกเลิก', 'Cancel')}
               </button>
               <button
                 onClick={() => handleUpdateAssignmentGroup(editingAssignmentGroup.id, targetGroupForAssignment)}
                 className="flex-1 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-black cursor-pointer"
               >
-                บันทึกการย้าย
+                {tr('บันทึกการย้าย', 'Move')}
               </button>
             </div>
           </div>
@@ -2509,7 +2540,7 @@ export default function ClassroomWorkspacePage() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
                 <Edit2 className="w-4 h-4 text-amber-500" />
-                <span>แก้ไขข้อความโพสต์</span>
+                <span>{tr('แก้ไขข้อความโพสต์', 'Edit post')}</span>
               </h3>
               <button onClick={() => setEditingPost(null)} className="p-1 text-slate-400 hover:text-slate-600">
                 <X className="w-4 h-4" />
@@ -2527,7 +2558,7 @@ export default function ClassroomWorkspacePage() {
                 onClick={() => setEditingPost(null)}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300"
               >
-                ยกเลิก
+                {tr('ยกเลิก', 'Cancel')}
               </button>
               <button
                 type="button"
@@ -2535,7 +2566,7 @@ export default function ClassroomWorkspacePage() {
                 onClick={() => handleUpdatePost(editingPost.id, editPostBody)}
                 className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
               >
-                {isUpdatingPost ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}
+                {isUpdatingPost ? tr('กำลังบันทึก...', 'Saving...') : tr('บันทึกการแก้ไข', 'Save changes')}
               </button>
             </div>
           </div>
@@ -2552,13 +2583,13 @@ export default function ClassroomWorkspacePage() {
           onSaved={(updated) => {
             setAssignments((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)));
             setStatusAssignment(null);
-            const kind = updated.is_exam ? 'ข้อสอบ' : 'งาน';
+            const kind = updated.is_exam ? tr('ข้อสอบ', 'exam') : tr('งาน', 'assignment');
             setNotice(
               updated.status_override === 'force_closed'
-                ? `🔒 ปิดรับ${kind} “${updated.title}” แล้ว`
+                ? tr(`🔒 ปิดรับ${kind} “${updated.title}” แล้ว`, `🔒 Closed the ${kind} “${updated.title}”`)
                 : updated.status_override === 'extended'
-                ? `⏳ ขยายเวลาส่ง${kind} “${updated.title}” ถึง ${formatDateTime(updated.extended_until, 'th')} แล้ว`
-                : `${kind} “${updated.title}” กลับไปรับงานตามกำหนดส่งแล้ว`
+                ? tr(`⏳ ขยายเวลาส่ง${kind} “${updated.title}” ถึง ${formatDateTime(updated.extended_until, language)} แล้ว`, `⏳ Extended the ${kind} “${updated.title}” until ${formatDateTime(updated.extended_until, 'en')}`)
+                : tr(`${kind} “${updated.title}” กลับไปรับงานตามกำหนดส่งแล้ว`, `The ${kind} “${updated.title}” is back on its normal due date`)
             );
           }}
         />
@@ -2586,7 +2617,7 @@ export default function ClassroomWorkspacePage() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
                 <UserPlus className="w-4 h-4 text-amber-500" />
-                <span>เพิ่มผู้สอนในห้องเรียน</span>
+                <span>{tr('เพิ่มผู้สอนในห้องเรียน', 'Add a teacher')}</span>
               </h3>
               <button onClick={() => setShowAddTeacherModal(false)} className="p-1 text-slate-400 hover:text-slate-600">
                 <X className="w-4 h-4" />
@@ -2595,27 +2626,27 @@ export default function ClassroomWorkspacePage() {
 
             {/* Role first, then pick a teacher who has an account */}
             <div>
-              <label className="text-[10px] font-bold text-slate-400 block mb-1">หน้าที่ / บทบาท</label>
+              <label className="text-[10px] font-bold text-slate-400 block mb-1">{tr('หน้าที่ / บทบาท', 'Role')}</label>
               <select
                 value={newTeacherRole}
                 onChange={(e) => setNewTeacherRole(e.target.value as typeof newTeacherRole)}
                 className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
               >
-                <option value="primary">ครูประจำวิชา (Primary)</option>
-                <option value="assistant">TA (ผู้ช่วยสอน)</option>
-                <option value="researcher">ผู้ตรวจเพื่อวิจัย (IRR)</option>
+                <option value="primary">{tr('ครูประจำวิชา (Primary)', 'Primary teacher')}</option>
+                <option value="assistant">{tr('TA (ผู้ช่วยสอน)', 'TA (teaching assistant)')}</option>
+                <option value="researcher">{tr('ผู้ตรวจเพื่อวิจัย (IRR)', 'Research grader (IRR)')}</option>
               </select>
             </div>
 
             {/* Quick Search Teachers */}
             <div className="space-y-2">
-              <label className="text-[11px] font-bold text-slate-400 block">ค้นหาผู้สอนในระบบ</label>
+              <label className="text-[11px] font-bold text-slate-400 block">{tr('ค้นหาผู้สอนในระบบ', 'Search teachers')}</label>
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
                 <input
                   value={teacherSearchQuery}
                   onChange={(e) => handleSearchTeachers(e.target.value)}
-                  placeholder="ค้นหาชื่อหรืออีเมลผู้สอน..."
+                  placeholder={tr('ค้นหาชื่อหรืออีเมลผู้สอน...', 'Search by teacher name or email...')}
                   className="w-full pl-8 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
                 />
                 {isSearchingTeachers && (
@@ -2641,7 +2672,7 @@ export default function ClassroomWorkspacePage() {
                         onClick={() => handleSelectFoundTeacher(t, newTeacherRole)}
                         className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
                       >
-                        + เพิ่ม
+                        {tr('+ เพิ่ม', '+ Add')}
                       </button>
                     </div>
                   ))}
@@ -2650,7 +2681,7 @@ export default function ClassroomWorkspacePage() {
             </div>
 
             <p className="text-[11px] text-slate-400">
-              ผู้สอนต้องเคยเข้าสู่ระบบแล้ว จึงจะค้นหาเจอ
+              {tr('ผู้สอนต้องเคยเข้าสู่ระบบแล้ว จึงจะค้นหาเจอ', 'Teachers appear here once they have signed in at least once')}
             </p>
 
             <button
@@ -2658,7 +2689,7 @@ export default function ClassroomWorkspacePage() {
               onClick={() => setShowAddTeacherModal(false)}
               className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
             >
-              ปิด
+              {tr('ปิด', 'Close')}
             </button>
           </div>
         </div>
@@ -2680,7 +2711,7 @@ export default function ClassroomWorkspacePage() {
               <div>
                 <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                   <UserPlus className="w-5 h-5 text-amber-500" />
-                  <span>เชิญและเพิ่มนักเรียน</span>
+                  <span>{tr('เชิญและเพิ่มนักเรียน', 'Invite & add students')}</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {classroom.name} • {classroom.subject_code}
@@ -2706,7 +2737,7 @@ export default function ClassroomWorkspacePage() {
                 }`}
               >
                 <Search className="w-3.5 h-3.5" />
-                <span>ค้นหาและเพิ่มด่วน</span>
+                <span>{tr('ค้นหาและเพิ่มด่วน', 'Quick add')}</span>
               </button>
 
               <button
@@ -2719,7 +2750,7 @@ export default function ClassroomWorkspacePage() {
                 }`}
               >
                 <QrCode className="w-3.5 h-3.5" />
-                <span>ลิงก์เชิญ & QR Code</span>
+                <span>{tr('ลิงก์เชิญ & QR Code', 'Invite link & QR')}</span>
               </button>
 
               <button
@@ -2732,7 +2763,7 @@ export default function ClassroomWorkspacePage() {
                 }`}
               >
                 <UserCheck className="w-3.5 h-3.5" />
-                <span>คำขอรออนุมัติ</span>
+                <span>{tr('คำขอรออนุมัติ', 'Pending requests')}</span>
                 {(classroom.pending_students?.length || 0) > 0 && (
                   <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
                     {classroom.pending_students?.length}
@@ -2749,7 +2780,7 @@ export default function ClassroomWorkspacePage() {
                   <input
                     value={studentSearchQuery}
                     onChange={(e) => handleSearchStudents(e.target.value)}
-                    placeholder="🔍 ค้นหานักเรียนในโรงเรียน (ชื่อ หรือรหัส)..."
+                    placeholder={tr('🔍 ค้นหานักเรียนในโรงเรียน (ชื่อ หรือรหัส)...', '🔍 Search students at your school (name or ID)...')}
                     className="w-full pl-9 pr-8 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
                   />
                   {isSearchingStudents && (
@@ -2758,8 +2789,8 @@ export default function ClassroomWorkspacePage() {
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">
                   {teacherInstitution
-                    ? `ค้นหาได้เฉพาะนักเรียนของ ${teacherInstitution} — ถ้าชื่อโรงเรียนไม่ตรง ให้เข้าผ่านลิงก์เชิญแล้วแก้ภายหลัง`
-                    : 'ระบุโรงเรียนของคุณครูที่แดชบอร์ดก่อน จึงจะค้นหานักเรียนได้'}
+                    ? tr(`ค้นหาได้เฉพาะนักเรียนของ ${teacherInstitution} — ถ้าชื่อโรงเรียนไม่ตรง ให้เข้าผ่านลิงก์เชิญแล้วแก้ภายหลัง`, `Only students of ${teacherInstitution} can be found — if the school name differs, have them join by invite link and fix it later`)
+                    : tr('ระบุโรงเรียนของคุณครูที่แดชบอร์ดก่อน จึงจะค้นหานักเรียนได้', 'Set your school on the dashboard first to search students')}
                 </p>
 
                 {studentSearchResults.length > 0 && (
@@ -2774,7 +2805,7 @@ export default function ClassroomWorkspacePage() {
                             {found.first_name} {found.last_name}
                           </p>
                           <p className="text-[10px] text-slate-400 font-mono">
-                            รหัส: {found.student_id || '-'} • {found.email || 'ไม่มีอีเมล'}
+                            {tr('รหัส', 'ID')}: {found.student_id || '-'} • {found.email || tr('ไม่มีอีเมล', 'No email')}
                           </p>
                           <InstitutionTag institution={found.institution} otherSchool={isOtherSchool(found.institution)} />
                         </div>
@@ -2783,7 +2814,7 @@ export default function ClassroomWorkspacePage() {
                           onClick={() => handleSelectFoundStudent(found)}
                           className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs cursor-pointer shadow-xs whitespace-nowrap"
                         >
-                          + เพิ่มเข้าห้อง
+                          {tr('+ เพิ่มเข้าห้อง', '+ Add')}
                         </button>
                       </div>
                     ))}
@@ -2793,20 +2824,20 @@ export default function ClassroomWorkspacePage() {
                 {/* Collapsible Manual Addition Form */}
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
                   <p className="text-[11px] font-bold text-slate-400 mb-2.5">
-                    หรือกรอกเอง (นักเรียนที่ยังไม่เคยลงทะเบียน)
+                    {tr('หรือกรอกเอง (นักเรียนที่ยังไม่เคยลงทะเบียน)', 'Or enter manually (students who have not registered)')}
                   </p>
                   <div className="space-y-2.5 bg-slate-50 dark:bg-slate-850 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800">
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         value={newStudentFirst}
                         onChange={(e) => setNewStudentFirst(e.target.value)}
-                        placeholder="ชื่อ *"
+                        placeholder={tr('ชื่อ *', 'First name *')}
                         className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
                       />
                       <input
                         value={newStudentLast}
                         onChange={(e) => setNewStudentLast(e.target.value)}
-                        placeholder="นามสกุล *"
+                        placeholder={tr('นามสกุล *', 'Last name *')}
                         className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
                       />
                     </div>
@@ -2814,14 +2845,14 @@ export default function ClassroomWorkspacePage() {
                       <input
                         value={newStudentId}
                         onChange={(e) => setNewStudentId(e.target.value)}
-                        placeholder="รหัสนักเรียน (เช่น 65001)"
+                        placeholder={tr('รหัสนักเรียน (เช่น 65001)', 'Student ID (e.g. 65001)')}
                         className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-mono outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
                       />
                       <input
                         type="email"
                         value={newStudentEmail}
                         onChange={(e) => setNewStudentEmail(e.target.value)}
-                        placeholder="อีเมลผู้เรียน"
+                        placeholder={tr('อีเมลผู้เรียน', 'Student email')}
                         className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
                       />
                     </div>
@@ -2831,7 +2862,7 @@ export default function ClassroomWorkspacePage() {
                       onClick={() => handleAddStudent(newStudentFirst, newStudentLast, newStudentId, newStudentEmail)}
                       className="w-full py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black hover:opacity-90 transition-all cursor-pointer shadow-xs disabled:opacity-40"
                     >
-                      + เพิ่มเข้าห้องเรียน
+                      {tr('+ เพิ่มเข้าห้องเรียน', '+ Add to classroom')}
                     </button>
                   </div>
                 </div>
@@ -2846,7 +2877,7 @@ export default function ClassroomWorkspacePage() {
                   <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center justify-between">
                     <div>
                       <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 block">
-                        รหัสห้องเรียน
+                        {tr('รหัสห้องเรียน', 'Class code')}
                       </span>
                       <span className="text-xl font-black tracking-widest text-amber-950 dark:text-amber-100 font-mono">
                         {classroom.invite_code}
@@ -2862,7 +2893,7 @@ export default function ClassroomWorkspacePage() {
                       className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-700 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5 shadow-xs cursor-pointer"
                     >
                       {isCopiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{isCopiedCode ? 'คัดลอกแล้ว' : 'คัดลอกรหัส'}</span>
+                      <span>{isCopiedCode ? tr('คัดลอกแล้ว', 'Copied') : tr('คัดลอกรหัส', 'Copy code')}</span>
                     </button>
                   </div>
                 )}
@@ -2878,7 +2909,7 @@ export default function ClassroomWorkspacePage() {
                   />
                   <div className="space-y-2 text-center sm:text-left min-w-0 flex-1">
                     <p className="text-xs font-black text-slate-900 dark:text-white">
-                      สแกนด้วย LINE เพื่อเข้าห้อง
+                      {tr('สแกนด้วย LINE เพื่อเข้าห้อง', 'Scan with LINE to join')}
                     </p>
                     <p className="text-[11px] text-slate-400 break-all font-mono">
                       {getRealLiffUrl(classroom)}
@@ -2894,22 +2925,22 @@ export default function ClassroomWorkspacePage() {
                         className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
                       >
                         {isCopiedLiff ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{isCopiedLiff ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์ LINE LIFF'}</span>
+                        <span>{isCopiedLiff ? tr('คัดลอกลิงก์แล้ว', 'Link copied') : tr('คัดลอกลิงก์ LINE LIFF', 'Copy LINE LIFF link')}</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => {
-                          const message = `เข้าร่วมห้องเรียน Pudding: ${classroom.name}\n\nกดลิงก์นี้ใน LINE: ${getRealLiffUrl(
+                          const message = `${tr('เข้าร่วมห้องเรียน Pudding', 'Join the Pudding classroom')}: ${classroom.name}\n\n${tr('กดลิงก์นี้ใน LINE', 'Open this link in LINE')}: ${getRealLiffUrl(
                             classroom
-                          )}\nรหัสห้องเรียน: ${classroom.invite_code || ''}`;
+                          )}\n${tr('รหัสห้องเรียน', 'Class code')}: ${classroom.invite_code || ''}`;
                           navigator.clipboard.writeText(message);
-                          setNotice('คัดลอกข้อความแล้ว');
+                          setNotice(tr('คัดลอกข้อความแล้ว', 'Message copied'));
                         }}
                         className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-100 cursor-pointer shadow-xs"
                       >
                         <Share2 className="w-3.5 h-3.5 text-amber-500" />
-                        <span>คัดลอกข้อความเชิญ</span>
+                        <span>{tr('คัดลอกข้อความเชิญ', 'Copy invite message')}</span>
                       </button>
                     </div>
                   </div>
@@ -2918,7 +2949,7 @@ export default function ClassroomWorkspacePage() {
                 {/* Direct Web Invite URL */}
                 <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
                   <div className="min-w-0">
-                    <span className="text-[10px] text-slate-400 block">ลิงก์สำหรับเบราว์เซอร์:</span>
+                    <span className="text-[10px] text-slate-400 block">{tr('ลิงก์สำหรับเบราว์เซอร์:', 'Browser link:')}</span>
                     <span className="text-slate-700 dark:text-slate-300 font-mono text-[11px] truncate block">
                       {getWebInviteUrl(classroom)}
                     </span>
@@ -2927,10 +2958,10 @@ export default function ClassroomWorkspacePage() {
                     type="button"
                     onClick={() => {
                       navigator.clipboard.writeText(getWebInviteUrl(classroom));
-                      setNotice('คัดลอกลิงก์แล้ว');
+                      setNotice(tr('คัดลอกลิงก์แล้ว', 'Link copied'));
                     }}
                     className="p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 cursor-pointer"
-                    title="คัดลอกลิงก์เว็บ"
+                    title={tr('คัดลอกลิงก์เว็บ', 'Copy web link')}
                   >
                     <Copy className="w-3.5 h-3.5" />
                   </button>
@@ -2944,14 +2975,14 @@ export default function ClassroomWorkspacePage() {
                 {(!classroom.pending_students || classroom.pending_students.length === 0) ? (
                   <div className="py-10 text-center space-y-2">
                     <UserCheck className="w-8 h-8 text-slate-300 mx-auto" />
-                    <p className="text-xs font-bold text-slate-400">ไม่มีคำขอที่รออนุมัติ</p>
+                    <p className="text-xs font-bold text-slate-400">{tr('ไม่มีคำขอที่รออนุมัติ', 'No pending requests')}</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     {/* Bulk actions stay above the scrolling list; buttons go full-width on narrow screens */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
                       <span className="text-xs font-bold text-slate-500">
-                        รอการอนุมัติ {classroom.pending_students.length} คน
+                        {tr(`รอการอนุมัติ ${classroom.pending_students.length} คน`, `${classroom.pending_students.length} awaiting approval`)}
                       </span>
                       <div className="flex items-center gap-1.5 w-full sm:w-auto">
                         <button
@@ -2960,7 +2991,7 @@ export default function ClassroomWorkspacePage() {
                           className="flex-1 sm:flex-none justify-center px-2.5 py-2 sm:py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
                         >
                           <UserCheck className="w-3.5 h-3.5" />
-                          อนุมัติทั้งหมด
+                          {tr('อนุมัติทั้งหมด', 'Admit all')}
                         </button>
                         <button
                           type="button"
@@ -2968,7 +2999,7 @@ export default function ClassroomWorkspacePage() {
                           className="flex-1 sm:flex-none justify-center px-2.5 py-2 sm:py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:border-rose-900 dark:text-rose-300 font-bold text-[11px] inline-flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
                         >
                           <UserX className="w-3.5 h-3.5" />
-                          ปฏิเสธทั้งหมด
+                          {tr('ปฏิเสธทั้งหมด', 'Decline all')}
                         </button>
                       </div>
                     </div>
@@ -2984,7 +3015,7 @@ export default function ClassroomWorkspacePage() {
                             {p.first_name} {p.last_name}
                           </p>
                           <p className="text-[10px] text-slate-400 font-mono break-all">
-                            รหัส: {p.student_id || '-'} • {p.email || 'LINE Login'}
+                            {tr('รหัส', 'ID')}: {p.student_id || '-'} • {p.email || 'LINE Login'}
                           </p>
                           <InstitutionTag institution={p.institution} otherSchool={isOtherSchool(p.institution)} />
                         </div>
@@ -2994,14 +3025,14 @@ export default function ClassroomWorkspacePage() {
                             onClick={() => handleAdmitStudent(p.id)}
                             className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs cursor-pointer"
                           >
-                            อนุมัติ
+                            {tr('อนุมัติ', 'Admit')}
                           </button>
                           <button
                             type="button"
                             onClick={() => handleRejectStudent(p.id)}
                             className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs shadow-xs cursor-pointer"
                           >
-                            ปฏิเสธ
+                            {tr('ปฏิเสธ', 'Decline')}
                           </button>
                         </div>
                       </div>
@@ -3038,12 +3069,12 @@ export default function ClassroomWorkspacePage() {
                 </span>
                 <div className="min-w-0">
                   <h3 id="bulk-pending-title" className="text-sm font-black text-slate-900 dark:text-white">
-                    {admit ? `อนุมัตินักเรียนทั้งหมด ${pending.length} คน?` : `ปฏิเสธคำขอทั้งหมด ${pending.length} คน?`}
+                    {admit ? tr(`อนุมัตินักเรียนทั้งหมด ${pending.length} คน?`, `Admit all ${pending.length} students?`) : tr(`ปฏิเสธคำขอทั้งหมด ${pending.length} คน?`, `Decline all ${pending.length} requests?`)}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                     {admit
-                      ? 'นักเรียนทุกคนในรายการจะเข้าห้อง และส่งงานได้ทันที'
-                      : 'คำขอทั้งหมดจะถูกลบ นักเรียนต้องขอเข้าใหม่'}
+                      ? tr('นักเรียนทุกคนในรายการจะเข้าห้อง และส่งงานได้ทันที', 'Everyone in the list joins and can submit work right away')
+                      : tr('คำขอทั้งหมดจะถูกลบ นักเรียนต้องขอเข้าใหม่', 'All requests will be removed; students must request again')}
                   </p>
                 </div>
               </div>
@@ -3061,10 +3092,10 @@ export default function ClassroomWorkspacePage() {
                 <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed space-y-1">
                   <p className="font-black flex items-center gap-1">
                     <AlertCircle className="w-3.5 h-3.5" />
-                    {otherSchool.length} คนระบุโรงเรียนต่างจากของคุณครู ({teacherInstitution})
+                    {tr(`${otherSchool.length} คนระบุโรงเรียนต่างจากของคุณครู (${teacherInstitution})`, `${otherSchool.length} listed a different school from yours (${teacherInstitution})`)}
                   </p>
                   <p>{otherSchool.map((p) => `${p.first_name} ${p.last_name} — ${p.institution}`).join(', ')}</p>
-                  <p>หากนักเรียนกรอกชื่อโรงเรียนผิด แก้ไขได้ภายหลังที่แท็บ &quot;ผู้สอนและผู้เรียน&quot;</p>
+                  <p>{tr('หากนักเรียนกรอกชื่อโรงเรียนผิด แก้ไขได้ภายหลังที่แท็บ "ผู้สอนและผู้เรียน"', 'If a student typed the school wrong, you can fix it later in the "People" tab')}</p>
                 </div>
               )}
 
@@ -3075,7 +3106,7 @@ export default function ClassroomWorkspacePage() {
                   disabled={bulkPendingBusy}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer disabled:opacity-50"
                 >
-                  ยกเลิก
+                  {tr('ยกเลิก', 'Cancel')}
                 </button>
                 <button
                   type="button"
@@ -3085,7 +3116,7 @@ export default function ClassroomWorkspacePage() {
                   className={`px-4 py-2 rounded-xl text-xs font-black text-white inline-flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-60 ${admit ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-rose-600 hover:bg-rose-500'}`}
                 >
                   {bulkPendingBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  {admit ? `ยืนยันอนุมัติ ${pending.length} คน` : `ยืนยันปฏิเสธ ${pending.length} คน`}
+                  {admit ? tr(`ยืนยันอนุมัติ ${pending.length} คน`, `Admit ${pending.length}`) : tr(`ยืนยันปฏิเสธ ${pending.length} คน`, `Decline ${pending.length}`)}
                 </button>
               </div>
             </div>
@@ -3112,7 +3143,7 @@ export default function ClassroomWorkspacePage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                    เชื่อมบอท LINE เข้ากลุ่ม
+                    {tr('เชื่อมบอท LINE เข้ากลุ่ม', 'Connect the LINE bot to a group')}
                   </h3>
                   <p className="text-[11px] text-slate-400">
                     {classroom.name}
@@ -3129,7 +3160,7 @@ export default function ClassroomWorkspacePage() {
 
             {/* Connection Status Badge */}
             <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs">
-              <span className="text-slate-500 font-bold shrink-0">สถานะการเชื่อมต่อ:</span>
+              <span className="text-slate-500 font-bold shrink-0">{tr('สถานะการเชื่อมต่อ:', 'Connection:')}</span>
               <span
                 className={`font-black px-2.5 py-1 rounded-full text-[11px] text-right ${
                   lineConnection.status === 'connected'
@@ -3140,17 +3171,17 @@ export default function ClassroomWorkspacePage() {
                 }`}
               >
                 {lineConnection.status === 'connected'
-                  ? `🟢 เชื่อมแล้ว${lineConnection.groupName ? `: ${lineConnection.groupName}` : ''}`
+                  ? `🟢 ${tr('เชื่อมแล้ว', 'Connected')}${lineConnection.groupName ? `: ${lineConnection.groupName}` : ''}`
                   : lineConnection.status === 'waiting'
-                  ? '🟡 รอเพิ่มบอทเข้ากลุ่ม'
-                  : '⚪ ยังไม่ได้เชื่อมต่อ'}
+                  ? tr('🟡 รอเพิ่มบอทเข้ากลุ่ม', '🟡 Waiting for the bot to be added')
+                  : tr('⚪ ยังไม่ได้เชื่อมต่อ', '⚪ Not connected')}
               </span>
             </div>
 
             {lineConnection.status === 'connected' ? (
               <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-200 space-y-1">
-                <p className="font-bold">กลุ่มนี้พร้อมรับแจ้งเตือนงานของห้องเรียน</p>
-                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">หากนำบอทออกจากกลุ่ม การเชื่อมต่อจะยกเลิกเอง</p>
+                <p className="font-bold">{tr('กลุ่มนี้พร้อมรับแจ้งเตือนงานของห้องเรียน', 'This group will receive classroom notifications')}</p>
+                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">{tr('หากนำบอทออกจากกลุ่ม การเชื่อมต่อจะยกเลิกเอง', 'Removing the bot from the group disconnects it automatically')}</p>
               </div>
             ) : (
               <LineGroupConnectSteps status={lineConnection.status} botFriend={teacherBot.botFriend} addFriendUrl={teacherBot.addFriendUrl} />
@@ -3165,7 +3196,7 @@ export default function ClassroomWorkspacePage() {
                   onClick={() => handleLineConnection('create')}
                   className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  {isLineLoading ? 'กำลังเตรียม...' : lineConnection.status === 'waiting' ? 'เริ่มรอใหม่ (15 นาที)' : 'เชื่อม LINE Group'}
+                  {isLineLoading ? tr('กำลังเตรียม...', 'Preparing...') : lineConnection.status === 'waiting' ? tr('เริ่มรอใหม่ (15 นาที)', 'Restart wait (15 min)') : tr('เชื่อม LINE Group', 'Connect LINE group')}
                 </button>
               ) : (
                 <>
@@ -3175,7 +3206,7 @@ export default function ClassroomWorkspacePage() {
                     onClick={() => handleLineConnection('test')}
                     className="flex-1 px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-xs hover:bg-emerald-100 cursor-pointer"
                   >
-                    ทดสอบส่งข้อความ
+                    {tr('ทดสอบส่งข้อความ', 'Send test message')}
                   </button>
                   <button
                     type="button"
@@ -3183,7 +3214,7 @@ export default function ClassroomWorkspacePage() {
                     onClick={() => handleLineConnection('disconnect')}
                     className="px-3 py-2.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs hover:bg-rose-100 cursor-pointer"
                   >
-                    ยกเลิกเชื่อมต่อ
+                    {tr('ยกเลิกเชื่อมต่อ', 'Disconnect')}
                   </button>
                 </>
               )}
@@ -3196,16 +3227,17 @@ export default function ClassroomWorkspacePage() {
 }
 
 function InstitutionTag({ institution, otherSchool }: { institution?: string; otherSchool: boolean }) {
+  const { tr } = useLanguage();
   if (!institution?.trim()) {
-    return <p className="text-[10px] text-slate-400 mt-0.5 truncate">🏫 ไม่ระบุโรงเรียน</p>;
+    return <p className="text-[10px] text-slate-400 mt-0.5 truncate">{tr('🏫 ไม่ระบุโรงเรียน', '🏫 No school')}</p>;
   }
   return (
     <p
       className={`text-[10px] mt-0.5 truncate ${otherSchool ? 'font-bold text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}
-      title={otherSchool ? 'โรงเรียนไม่ตรงกับโรงเรียนของคุณครู' : institution}
+      title={otherSchool ? tr('โรงเรียนไม่ตรงกับโรงเรียนของคุณครู', 'School differs from yours') : institution}
     >
       {otherSchool ? '⚠️' : '🏫'} {institution}
-      {otherSchool && <span className="ml-1 px-1.5 py-px rounded-full bg-rose-100 dark:bg-rose-950 text-[9px]">ต่างโรงเรียน</span>}
+      {otherSchool && <span className="ml-1 px-1.5 py-px rounded-full bg-rose-100 dark:bg-rose-950 text-[9px]">{tr('ต่างโรงเรียน', 'Other school')}</span>}
     </p>
   );
 }
@@ -3223,6 +3255,7 @@ function StudentList({
   onEditStudent: (student: User) => void;
   isOtherSchool: (institution?: string) => boolean;
 }) {
+  const { tr } = useLanguage();
   const [query, setQuery] = useState('');
   const students = classroom.students || [];
   const otherSchoolCount = students.filter((s) => isOtherSchool(s.institution)).length;
@@ -3237,21 +3270,21 @@ function StudentList({
       <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
         <h2 className="font-black text-slate-900 dark:text-white flex items-center gap-2">
           <Users className="w-4 h-4 text-amber-500" />
-          <span>รายชื่อผู้เรียน ({students.length})</span>
+          <span>{tr('รายชื่อผู้เรียน', 'Students')} ({students.length})</span>
         </h2>
         <button
           onClick={onOpenAddStudent}
           className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black inline-flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
         >
           <UserPlus className="w-3.5 h-3.5" />
-          <span>+ เพิ่มผู้เรียน</span>
+          <span>{tr('+ เพิ่มผู้เรียน', '+ Add student')}</span>
         </button>
       </div>
 
       {otherSchoolCount > 0 && (
         <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-[11px] font-bold text-rose-800 dark:text-rose-200 flex items-start gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-px" />
-          <span>นักเรียน {otherSchoolCount} คนระบุโรงเรียนต่างจากคุณครู หากกรอกผิด กดไอคอนดินสอเพื่อแก้</span>
+          <span>{tr(`นักเรียน ${otherSchoolCount} คนระบุโรงเรียนต่างจากคุณครู หากกรอกผิด กดไอคอนดินสอเพื่อแก้`, `${otherSchoolCount} students listed a different school from yours. If it's a typo, tap the pencil to fix it`)}</span>
         </div>
       )}
 
@@ -3260,7 +3293,7 @@ function StudentList({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="ค้นหาชื่อหรือรหัสนักเรียน..."
+          placeholder={tr('ค้นหาชื่อหรือรหัสนักเรียน...', 'Search by name or student ID...')}
           className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-slate-50 dark:bg-slate-800"
         />
       </div>
@@ -3272,7 +3305,7 @@ function StudentList({
               <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                 {student.first_name} {student.last_name}
               </p>
-              <p className="text-[10px] text-slate-400 font-mono mt-0.5">{student.student_id || 'ไม่มีรหัส'}</p>
+              <p className="text-[10px] text-slate-400 font-mono mt-0.5">{student.student_id || tr('ไม่มีรหัส', 'No ID')}</p>
               <InstitutionTag institution={student.institution} otherSchool={isOtherSchool(student.institution)} />
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -3284,21 +3317,21 @@ function StudentList({
               <button
                 onClick={() => onEditStudent(student)}
                 className="p-1 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                title="แก้ไขชื่อ นามสกุล รหัสนักเรียน และโรงเรียน"
+                title={tr('แก้ไขชื่อ นามสกุล รหัสนักเรียน และโรงเรียน', 'Edit name, student ID and school')}
               >
                 <Edit2 className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => onRemoveStudent(student.id)}
                 className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                title="ลบผู้เรียนออกจากห้องเรียน"
+                title={tr('ลบผู้เรียนออกจากห้องเรียน', 'Remove student from classroom')}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
         ))}
-        {!filtered.length && <p className="col-span-full text-xs text-slate-400 text-center py-6">ไม่พบรายชื่อผู้เรียน</p>}
+        {!filtered.length && <p className="col-span-full text-xs text-slate-400 text-center py-6">{tr('ไม่พบรายชื่อผู้เรียน', 'No students found')}</p>}
       </div>
     </div>
   );
@@ -3357,6 +3390,7 @@ function AttendancePanel({
   onDeleteSession?: (id: string) => void;
   isUpdatingSession?: boolean;
 }) {
+  const { tr } = useLanguage();
   // Collapsible session state: which session is expanded
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(
     session?.id || sessions.find((s) => s.status === 'open')?.id || sessions[0]?.id || null
@@ -3415,7 +3449,7 @@ function AttendancePanel({
   /** Name of the classmate whose phone did a borrowed-phone check-in (they are on the same roster). */
   const senderName = (senderId: string) => {
     const sender = (classroom.students || []).find((s) => s.id === senderId || s.line_uid === senderId);
-    return sender ? `${sender.first_name} ${sender.last_name}`.trim() : 'เพื่อน';
+    return sender ? `${sender.first_name} ${sender.last_name}`.trim() : tr('เพื่อน', 'a classmate');
   };
 
   return (
@@ -3425,10 +3459,10 @@ function AttendancePanel({
         <div>
           <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
             <CalendarCheck className="w-5 h-5 text-amber-500" />
-            <span>เช็คชื่อรายคาบ</span>
+            <span>{tr('เช็คชื่อรายคาบ', 'Attendance by period')}</span>
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            <MobileText short="เปิดคาบและเช็คชื่อแบบเรียลไทม์" full="เปิดคาบเรียน เช็คชื่อแบบเรียลไทม์ และแก้สถานะรายคนได้ตลอด" />
+            <MobileText short={tr('เปิดคาบและเช็คชื่อแบบเรียลไทม์', 'Open periods and take attendance live')} full={tr('เปิดคาบเรียน เช็คชื่อแบบเรียลไทม์ และแก้สถานะรายคนได้ตลอด', 'Open a period, take attendance in real time, and adjust any student at any time')} />
           </p>
         </div>
 
@@ -3437,11 +3471,11 @@ function AttendancePanel({
             <button
               type="button"
               onClick={exportAllCsv}
-              title="ส่งออกการเช็คชื่อทุกคาบ (แถว = นักเรียน, คอลัมน์ = คาบเรียน)"
+              title={tr('ส่งออกการเช็คชื่อทุกคาบ (แถว = นักเรียน, คอลัมน์ = คาบเรียน)', 'Export every period (rows = students, columns = periods)')}
               className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Download className="w-3.5 h-3.5 text-slate-500" />
-              <span>ส่งออก CSV ทุกคาบ</span>
+              <span>{tr('ส่งออก CSV ทุกคาบ', 'Export all periods (CSV)')}</span>
             </button>
           )}
 
@@ -3451,7 +3485,7 @@ function AttendancePanel({
             className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>{showCreateForm ? 'ปิดแบบฟอร์ม' : 'เปิดคาบเช็คชื่อใหม่'}</span>
+            <span>{showCreateForm ? tr('ปิดแบบฟอร์ม', 'Close form') : tr('เปิดคาบเช็คชื่อใหม่', 'New attendance period')}</span>
           </button>
         </div>
       </div>
@@ -3462,7 +3496,7 @@ function AttendancePanel({
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
             <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
               <CalendarCheck className="w-4 h-4 text-amber-500" />
-              <span>คาบเช็คชื่อใหม่</span>
+              <span>{tr('คาบเช็คชื่อใหม่', 'New attendance period')}</span>
             </h3>
             <button
               type="button"
@@ -3475,27 +3509,27 @@ function AttendancePanel({
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="sm:col-span-2">
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">ชื่อคาบเรียน *</label>
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('ชื่อคาบเรียน *', 'Period name *')}</label>
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500"
-                placeholder="เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร"
+                placeholder={tr('เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร', 'e.g. Period 1, Thai for Communication')}
               />
             </div>
             <div className="sm:col-span-2">
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">เวลาเริ่ม (เว้นว่าง = ทันที)</label>
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('เวลาเริ่ม (เว้นว่าง = ทันที)', 'Start time (blank = now)')}</label>
               <DateTimeField
                 value={startsAt}
                 onChange={setStartsAt}
                 presets="start"
                 allowEmpty
-                emptyHint="เริ่มทันทีเมื่อกดสร้างคาบ"
+                emptyHint={tr('เริ่มทันทีเมื่อกดสร้างคาบ', 'Starts as soon as you create the period')}
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">ตรงเวลา (น.)</label>
+                <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('ตรงเวลา (น.)', 'On time (min)')}</label>
                 <input
                   type="number"
                   min="1"
@@ -3505,7 +3539,7 @@ function AttendancePanel({
                 />
               </div>
               <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">สายถึง (น.)</label>
+                <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('สายถึง (น.)', 'Late until (min)')}</label>
                 <input
                   type="number"
                   min={onTime}
@@ -3523,7 +3557,7 @@ function AttendancePanel({
               onClick={() => setShowCreateForm(false)}
               className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold"
             >
-              ยกเลิก
+              {tr('ยกเลิก', 'Cancel')}
             </button>
             <button
               type="button"
@@ -3534,7 +3568,7 @@ function AttendancePanel({
               className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20"
             >
               <Plus className="w-4 h-4" />
-              <span>เปิดเช็คชื่อและแจ้งเตือน LINE</span>
+              <span>{tr('เปิดเช็คชื่อและแจ้งเตือน LINE', 'Open attendance & notify LINE')}</span>
             </button>
           </div>
         </div>
@@ -3543,10 +3577,10 @@ function AttendancePanel({
       {/* 4. Statistics Summary Bento Cards */}
       <div className="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
         {[
-          ['on_time', 'ตรงเวลา', counts['on_time'] || 0, 'bg-emerald-500', 'text-emerald-600 dark:text-emerald-400'],
-          ['late', 'มาสาย', counts['late'] || 0, 'bg-amber-400', 'text-amber-600 dark:text-amber-400'],
-          ['absent', 'ขาด / ยังไม่เช็ค', counts['absent'] || 0, 'bg-rose-500', 'text-rose-600 dark:text-rose-400'],
-          ['excused', 'ลา', counts['excused'] || 0, 'bg-sky-500', 'text-sky-600 dark:text-sky-400'],
+          ['on_time', tr('ตรงเวลา', 'On time'), counts['on_time'] || 0, 'bg-emerald-500', 'text-emerald-600 dark:text-emerald-400'],
+          ['late', tr('มาสาย', 'Late'), counts['late'] || 0, 'bg-amber-400', 'text-amber-600 dark:text-amber-400'],
+          ['absent', tr('ขาด / ยังไม่เช็ค', 'Absent / unchecked'), counts['absent'] || 0, 'bg-rose-500', 'text-rose-600 dark:text-rose-400'],
+          ['excused', tr('ลา', 'Excused'), counts['excused'] || 0, 'bg-sky-500', 'text-sky-600 dark:text-sky-400'],
         ].map(([key, label, count, dotCls, numberCls]) => (
           <div key={key} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
             <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
@@ -3562,10 +3596,10 @@ function AttendancePanel({
       <div className="space-y-3">
         <div className="flex items-center justify-between px-1">
           <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
-            <span>คาบเรียนทั้งหมด</span>
-            <span className="text-slate-400 font-normal">({sessions.length} คาบ)</span>
+            <span>{tr('คาบเรียนทั้งหมด', 'All periods')}</span>
+            <span className="text-slate-400 font-normal">({sessions.length} {tr('คาบ', 'periods')})</span>
           </h3>
-          <span className="text-[11px] text-slate-400">แตะคาบเพื่อดูรายชื่อ</span>
+          <span className="text-[11px] text-slate-400">{tr('แตะคาบเพื่อดูรายชื่อ', 'Tap a period to see the roster')}</span>
         </div>
 
         {orderedSessions.map((item) => {
@@ -3601,14 +3635,14 @@ function AttendancePanel({
                     </span>
                   ) : (
                     <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full shrink-0 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                      ⚪ ปิดแล้ว
+                      {tr('⚪ ปิดแล้ว', '⚪ Closed')}
                     </span>
                   )}
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       {isOpen && (
                         <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px] shadow-xs">
-                          กำลังเปิดรับเช็คชื่อ
+                          {tr('กำลังเปิดรับเช็คชื่อ', 'Taking attendance')}
                         </span>
                       )}
                       <h4 className="text-sm font-black text-slate-900 dark:text-white">{item.title}</h4>
@@ -3620,8 +3654,8 @@ function AttendancePanel({
                             startRename(item);
                           }}
                           className="-ml-1 p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                          title="แก้ไขชื่อคาบ"
-                          aria-label="แก้ไขชื่อคาบ"
+                          title={tr('แก้ไขชื่อคาบ', 'Rename period')}
+                          aria-label={tr('แก้ไขชื่อคาบ', 'Rename period')}
                         >
                           <Pencil className="w-3 h-3" />
                         </button>
@@ -3629,8 +3663,11 @@ function AttendancePanel({
                     </div>
                     <p className={`text-[11px] mt-0.5 ${isOpen ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400'}`}>
                       {isOpen
-                        ? `เริ่มเมื่อ ${new Date(item.starts_at).toLocaleTimeString('th-TH')} • ตรงเวลาภายใน ${item.on_time_until_minutes} นาที • สายได้ถึง ${item.late_until_minutes} นาที`
-                        : `${new Date(item.starts_at).toLocaleString('th-TH')} • ตรงเวลา ${item.on_time_until_minutes}m / สาย ${item.late_until_minutes}m`}
+                        ? tr(
+                            `เริ่มเมื่อ ${new Date(item.starts_at).toLocaleTimeString(tr('th-TH', 'en-US'))} • ตรงเวลาภายใน ${item.on_time_until_minutes} นาที • สายได้ถึง ${item.late_until_minutes} นาที`,
+                            `Started ${new Date(item.starts_at).toLocaleTimeString('en-US')} • on time within ${item.on_time_until_minutes} min • late up to ${item.late_until_minutes} min`
+                          )
+                        : `${new Date(item.starts_at).toLocaleString(tr('th-TH', 'en-US'))} • ${tr('ตรงเวลา', 'on time')} ${item.on_time_until_minutes}m / ${tr('สาย', 'late')} ${item.late_until_minutes}m`}
                     </p>
                   </div>
                 </div>
@@ -3643,14 +3680,14 @@ function AttendancePanel({
                         onClick={() => action(item.id, 'extend')}
                         className="px-3 py-1.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 text-amber-800 dark:text-amber-300 text-xs font-bold hover:bg-amber-50 dark:hover:bg-amber-950/40 cursor-pointer shadow-xs"
                       >
-                        +10 นาที
+                        {tr('+10 นาที', '+10 min')}
                       </button>
                       <button
                         type="button"
                         onClick={() => action(item.id, 'close')}
                         className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 cursor-pointer shadow-xs"
                       >
-                        ปิดรับเช็คชื่อ
+                        {tr('ปิดรับเช็คชื่อ', 'Close attendance')}
                       </button>
                     </>
                   )}
@@ -3664,7 +3701,7 @@ function AttendancePanel({
                         : 'border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
                     }`}
                   >
-                    <span>{isExpanded ? 'ย่อกลับ' : 'ดูรายชื่อ'}</span>
+                    <span>{isExpanded ? tr('ย่อกลับ', 'Collapse') : tr('ดูรายชื่อ', 'View roster')}</span>
                     <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
                   </button>
 
@@ -3673,7 +3710,7 @@ function AttendancePanel({
                       type="button"
                       onClick={() => onDeleteSession(item.id)}
                       className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                      title="ลบคาบเช็คชื่อนี้"
+                      title={tr('ลบคาบเช็คชื่อนี้', 'Delete this period')}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -3700,8 +3737,8 @@ function AttendancePanel({
         {!sessions.length && (
           <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400 space-y-2">
             <CalendarCheck className="w-8 h-8 text-slate-300 mx-auto" />
-            <p className="font-bold">ยังไม่มีประวัติคาบเช็คชื่อ</p>
-            <p className="text-[11px]">กด &quot;เปิดคาบเช็คชื่อใหม่&quot; ด้านบนเพื่อเริ่ม</p>
+            <p className="font-bold">{tr('ยังไม่มีประวัติคาบเช็คชื่อ', 'No attendance periods yet')}</p>
+            <p className="text-[11px]">{tr('กด "เปิดคาบเช็คชื่อใหม่" ด้านบนเพื่อเริ่ม', 'Tap "New attendance period" above to start')}</p>
           </div>
         )}
       </div>
@@ -3718,9 +3755,9 @@ function AttendancePanel({
               <div>
                 <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
                   <Pencil className="w-4 h-4 text-amber-500" />
-                  <span>แก้ไขชื่อคาบ</span>
+                  <span>{tr('แก้ไขชื่อคาบ', 'Rename period')}</span>
                 </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">ชื่อใหม่จะแสดงในรายการคาบและไฟล์ CSV</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">{tr('ชื่อใหม่จะแสดงในรายการคาบและไฟล์ CSV', 'The new name shows in the period list and CSV files')}</p>
               </div>
               <input
                 autoFocus
@@ -3730,7 +3767,7 @@ function AttendancePanel({
                   if (e.key === 'Enter') saveRename();
                   if (e.key === 'Escape') setRenaming(null);
                 }}
-                placeholder="เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร"
+                placeholder={tr('เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร', 'e.g. Period 1, Thai for Communication')}
                 className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
               />
               <div className="flex gap-2">
@@ -3739,7 +3776,7 @@ function AttendancePanel({
                   onClick={() => setRenaming(null)}
                   className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
                 >
-                  ยกเลิก
+                  {tr('ยกเลิก', 'Cancel')}
                 </button>
                 <button
                   type="button"
@@ -3747,7 +3784,7 @@ function AttendancePanel({
                   disabled={!renameValue.trim() || isUpdatingSession}
                   className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black cursor-pointer disabled:opacity-50"
                 >
-                  บันทึกชื่อ
+                  {tr('บันทึกชื่อ', 'Save name')}
                 </button>
               </div>
             </div>
@@ -3785,20 +3822,20 @@ function Collapse({ open, children }: { open: boolean; children: ReactNode }) {
 type RosterStatus = AttendanceStatus | 'idle';
 type RosterFilter = 'all' | RosterStatus;
 
-const ROSTER_FILTERS: { id: RosterFilter; label: string; dot: string; pill: string; text: string }[] = [
-  { id: 'all', label: 'ทั้งหมด', dot: '', pill: 'bg-slate-900 dark:bg-white', text: 'text-white dark:text-slate-900' },
-  { id: 'on_time', label: 'ตรงเวลา', dot: 'bg-emerald-500', pill: 'bg-emerald-500', text: 'text-white' },
-  { id: 'late', label: 'มาสาย', dot: 'bg-amber-400', pill: 'bg-amber-400', text: 'text-slate-950' },
-  { id: 'excused', label: 'ลา', dot: 'bg-sky-500', pill: 'bg-sky-500', text: 'text-white' },
-  { id: 'absent', label: 'ขาด', dot: 'bg-rose-500', pill: 'bg-rose-500', text: 'text-white' },
-  { id: 'idle', label: 'ยังไม่เช็ค', dot: 'bg-slate-300 dark:bg-slate-600', pill: 'bg-slate-500', text: 'text-white' },
+const ROSTER_FILTERS: { id: RosterFilter; label: Bilingual; dot: string; pill: string; text: string }[] = [
+  { id: 'all', label: { th: 'ทั้งหมด', en: 'All' }, dot: '', pill: 'bg-slate-900 dark:bg-white', text: 'text-white dark:text-slate-900' },
+  { id: 'on_time', label: { th: 'ตรงเวลา', en: 'On time' }, dot: 'bg-emerald-500', pill: 'bg-emerald-500', text: 'text-white' },
+  { id: 'late', label: { th: 'มาสาย', en: 'Late' }, dot: 'bg-amber-400', pill: 'bg-amber-400', text: 'text-slate-950' },
+  { id: 'excused', label: { th: 'ลา', en: 'Excused' }, dot: 'bg-sky-500', pill: 'bg-sky-500', text: 'text-white' },
+  { id: 'absent', label: { th: 'ขาด', en: 'Absent' }, dot: 'bg-rose-500', pill: 'bg-rose-500', text: 'text-white' },
+  { id: 'idle', label: { th: 'ยังไม่เช็ค', en: 'Unchecked' }, dot: 'bg-slate-300 dark:bg-slate-600', pill: 'bg-slate-500', text: 'text-white' },
 ];
 
 const STATUS_CHOICES = [
-  ['on_time', 'ตรงเวลา', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
-  ['late', 'มาสาย', 'bg-amber-100 text-amber-800 border-amber-300'],
-  ['excused', 'ลา', 'bg-sky-100 text-sky-800 border-sky-300'],
-  ['absent', 'ขาด', 'bg-rose-100 text-rose-800 border-rose-300'],
+  ['on_time', { th: 'ตรงเวลา', en: 'On time' }, 'bg-emerald-100 text-emerald-800 border-emerald-300'],
+  ['late', { th: 'มาสาย', en: 'Late' }, 'bg-amber-100 text-amber-800 border-amber-300'],
+  ['excused', { th: 'ลา', en: 'Excused' }, 'bg-sky-100 text-sky-800 border-sky-300'],
+  ['absent', { th: 'ขาด', en: 'Absent' }, 'bg-rose-100 text-rose-800 border-rose-300'],
 ] as const;
 
 const statusSelectCls: Record<RosterStatus, string> = {
@@ -3823,6 +3860,7 @@ function SessionRoster({
   update: (sessionId: string, studentId: string, status: AttendanceStatus) => void;
   senderName: (senderId: string) => string;
 }) {
+  const { tr, language } = useLanguage();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<RosterFilter>('all');
   const [trackFilterBar, filterIndicator] = useSlidingIndicator(filter);
@@ -3854,14 +3892,14 @@ function SessionRoster({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
             <Filter className="w-3.5 h-3.5" />
-            <span>แสดงนักเรียนตามสถานะ</span>
+            <span>{tr('แสดงนักเรียนตามสถานะ', 'Show students by status')}</span>
           </span>
           <div className="relative w-full sm:w-64">
             <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="ค้นหาชื่อหรือรหัสนักเรียน..."
+              placeholder={tr('ค้นหาชื่อหรือรหัสนักเรียน...', 'Search by name or student ID...')}
               className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-white dark:bg-slate-900"
             />
           </div>
@@ -3894,7 +3932,7 @@ function SessionRoster({
                 }`}
               >
                 {dot && <span className={`w-2 h-2 rounded-full ${selected ? 'bg-current opacity-70' : dot}`} />}
-                <span>{label}</span>
+                <span>{label[language]}</span>
                 <span className={`px-1.5 min-w-5 rounded-full text-[10px] font-black ${selected ? 'bg-black/10 dark:bg-white/20' : 'bg-slate-100 dark:bg-slate-800'}`}>
                   {filterCounts[id]}
                 </span>
@@ -3923,16 +3961,16 @@ function SessionRoster({
                   {currentStatus === 'idle' && (
                     <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-600 shrink-0">
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-500" />
-                      {isSessionOpen ? 'รอเช็คชื่อ' : 'ไม่ได้เช็คชื่อ'}
+                      {isSessionOpen ? tr('รอเช็คชื่อ', 'Waiting') : tr('ไม่ได้เช็คชื่อ', 'Not checked')}
                     </span>
                   )}
                 </div>
                 <span className="text-[10px] text-slate-400 font-mono">
-                  รหัส: {student.student_id || '-'}
-                  {record?.checked_at && ` • เช็คเมื่อ ${new Date(record.checked_at).toLocaleTimeString('th-TH')}`}
+                  {tr('รหัส', 'ID')}: {student.student_id || '-'}
+                  {record?.checked_at && ` • ${tr('เช็คเมื่อ', 'checked at')} ${new Date(record.checked_at).toLocaleTimeString(tr('th-TH', 'en-US'))}`}
                   {record?.checked_in_by && (
-                    <span className="font-sans font-bold text-sky-600 dark:text-sky-400" title="นักเรียนเช็คชื่อด้วยโทรศัพท์ของเพื่อนร่วมห้อง">
-                      {` • 📱 เช็คชื่อจากเครื่องของ ${senderName(record.checked_in_by)}`}
+                    <span className="font-sans font-bold text-sky-600 dark:text-sky-400" title={tr('นักเรียนเช็คชื่อด้วยโทรศัพท์ของเพื่อนร่วมห้อง', 'Checked in using a classmate\'s phone')}>
+                      {tr(` • 📱 เช็คชื่อจากเครื่องของ ${senderName(record.checked_in_by)}`, ` • 📱 checked in on ${senderName(record.checked_in_by)}'s phone`)}
                     </span>
                   )}
                 </span>
@@ -3943,17 +3981,17 @@ function SessionRoster({
                 <select
                   value={currentStatus}
                   onChange={(e) => update(session.id, student.id, e.target.value as AttendanceStatus)}
-                  aria-label={`สถานะของ ${student.first_name} ${student.last_name}`}
-                  className={`appearance-none pl-3 pr-7 py-2 rounded-xl border text-[11px] font-black outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer ${statusSelectCls[currentStatus]}`}
+                  aria-label={`${tr('สถานะของ', 'Status of')} ${student.first_name} ${student.last_name}`}
+                  className={`w-28 appearance-none pl-3 pr-7 py-2 rounded-xl border text-[11px] font-black outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer ${statusSelectCls[currentStatus]}`}
                 >
                   {currentStatus === 'idle' && (
                     <option value="idle" disabled>
-                      {isSessionOpen ? 'รอเช็คชื่อ' : 'ไม่ได้เช็คชื่อ'}
+                      {isSessionOpen ? tr('รอเช็ค', 'Waiting') : tr('ไม่ได้เช็ค', 'Unchecked')}
                     </option>
                   )}
                   {STATUS_CHOICES.map(([stKey, stLabel]) => (
                     <option key={stKey} value={stKey}>
-                      {stLabel}
+                      {stLabel[language]}
                     </option>
                   ))}
                 </select>
@@ -3975,7 +4013,7 @@ function SessionRoster({
                           : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-700 hover:border-slate-400'
                       }`}
                     >
-                      {stLabel}
+                      {stLabel[language]}
                     </button>
                   );
                 })}
@@ -3986,7 +4024,7 @@ function SessionRoster({
 
         {!visible.length && (
           <p className="text-xs text-slate-400 text-center py-6">
-            {query ? 'ไม่พบนักเรียนที่ค้นหา' : `ไม่มีนักเรียนในสถานะ “${activeFilter.label}”`}
+            {query ? tr('ไม่พบนักเรียนที่ค้นหา', 'No matching students') : tr(`ไม่มีนักเรียนในสถานะ “${activeFilter.label.th}”`, `No students marked “${activeFilter.label.en}”`)}
           </p>
         )}
       </div>

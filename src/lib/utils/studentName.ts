@@ -7,11 +7,16 @@ export function isValidPersonName(value: string | undefined | null): boolean {
   return /[\p{L}]/u.test((value || '').trim());
 }
 
-/** Thai error for invalid name fields, or null when both are fine. */
-export function personNameError(firstName: string, lastName: string): string | null {
-  if (!firstName.trim() || !lastName.trim()) return 'กรุณากรอกชื่อและนามสกุล';
-  if (!isValidPersonName(firstName)) return 'ชื่อต้องเป็นตัวอักษร ห้ามใส่ตัวเลขหรือรหัสนักเรียน';
-  if (!isValidPersonName(lastName)) return 'นามสกุลต้องเป็นตัวอักษร ห้ามใส่ตัวเลขหรือรหัสนักเรียน (ใส่รหัสในช่องรหัสนักเรียน)';
+/** Error for invalid name fields (Thai by default), or null when both are fine. */
+export function personNameError(firstName: string, lastName: string, language: 'th' | 'en' = 'th'): string | null {
+  const th = language === 'th';
+  if (!firstName.trim() || !lastName.trim()) return th ? 'กรุณากรอกชื่อและนามสกุล' : 'Enter a first and last name';
+  if (!isValidPersonName(firstName)) return th ? 'ชื่อต้องเป็นตัวอักษร ห้ามใส่ตัวเลขหรือรหัสนักเรียน' : 'The first name must be letters, not numbers or a student ID';
+  if (!isValidPersonName(lastName)) {
+    return th
+      ? 'นามสกุลต้องเป็นตัวอักษร ห้ามใส่ตัวเลขหรือรหัสนักเรียน (ใส่รหัสในช่องรหัสนักเรียน)'
+      : 'The last name must be letters, not numbers or a student ID (put the ID in the Student ID field)';
+  }
   return null;
 }
 

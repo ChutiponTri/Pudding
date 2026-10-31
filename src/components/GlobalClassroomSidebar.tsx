@@ -22,8 +22,8 @@ import { Classroom } from '@/types/database';
 import { useSidebar } from '@/components/SidebarContext';
 
 /** Short "term/year" label, e.g. "เทอม 1/2568", so the same room in another year is told apart. */
-function periodLabel(cls: Classroom): string {
-  const term = cls.semester === 3 ? 'ซัมเมอร์' : cls.semester ? `เทอม ${cls.semester}` : '';
+function periodLabel(cls: Classroom, th: boolean): string {
+  const term = cls.semester === 3 ? (th ? 'ซัมเมอร์' : 'Summer') : cls.semester ? `${th ? 'เทอม' : 'Term'} ${cls.semester}` : '';
   const year = cls.year_ce ? String(cls.year_ce + 543) : cls.academic_year || '';
   return [term, year].filter(Boolean).join('/');
 }
@@ -118,6 +118,7 @@ function writeCachedList(teacherId: string, items: Classroom[]) {
 }
 
 export const GlobalClassroomSidebar: React.FC = () => {
+  const { tr, language } = useLanguage();
   const pathname = usePathname();
   const { isOpen, closeSidebar } = useSidebar();
   // Tagged with the teacher it was fetched for, so a different session never sees it.
@@ -193,14 +194,14 @@ export const GlobalClassroomSidebar: React.FC = () => {
   const groupedCourses = useMemo(() => {
     const map = new Map<string, { label: string; subjectCode?: string; items: Classroom[] }>();
     for (const cls of sortedClassrooms) {
-      const key = cls.course_name || cls.subject_code || 'รายวิชาทั่วไป';
+      const key = cls.course_name || cls.subject_code || tr('รายวิชาทั่วไป', 'General');
       if (!map.has(key)) {
         map.set(key, { label: key, subjectCode: cls.subject_code, items: [] });
       }
       map.get(key)!.items.push(cls);
     }
     return Array.from(map.values());
-  }, [sortedClassrooms]);
+  }, [sortedClassrooms, tr]);
 
   const handleItemClick = () => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
@@ -232,8 +233,8 @@ export const GlobalClassroomSidebar: React.FC = () => {
               🍮
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm font-black text-slate-900 dark:text-white truncate">{isGuest ? 'พุดดิ้ง' : 'ห้องเรียนและรายวิชา'}</h2>
-              <p className="text-[10px] text-slate-500 font-medium truncate">{isGuest ? 'สำหรับคุณครูผู้สอน' : 'รายวิชาทั้งหมด'}</p>
+              <h2 className="text-sm font-black text-slate-900 dark:text-white truncate">{isGuest ? tr('พุดดิ้ง', 'Pudding') : tr('ห้องเรียนและรายวิชา', 'Classrooms & courses')}</h2>
+              <p className="text-[10px] text-slate-500 font-medium truncate">{isGuest ? tr('สำหรับคุณครูผู้สอน', 'For teachers') : tr('รายวิชาทั้งหมด', 'All courses')}</p>
             </div>
           </Link>
           <button
@@ -257,7 +258,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
             className="px-3 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer truncate"
           >
             <LayoutDashboard className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span className="truncate">แดชบอร์ด</span>
+            <span className="truncate">{tr('แดชบอร์ด', 'Dashboard')}</span>
           </Link>
           <Link
             href="/assignments/new"
@@ -265,7 +266,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
             className="px-3 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-amber-500/30 active:scale-[0.98] truncate"
           >
             <Plus className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">สร้างงาน/สอบ</span>
+            <span className="truncate">{tr('สร้างงาน/สอบ', 'New assignment/exam')}</span>
           </Link>
         </div>
 
@@ -273,10 +274,10 @@ export const GlobalClassroomSidebar: React.FC = () => {
         <div className="mx-3 mb-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-[11px] text-slate-500 shrink-0">
           <span className="font-bold flex items-center gap-1">
             <GraduationCap className="w-3.5 h-3.5 text-amber-500" />
-            <span>ทั้งหมด {sortedClassrooms.length} ห้องเรียน</span>
+            <span>{tr(`ทั้งหมด ${sortedClassrooms.length} ห้องเรียน`, `${sortedClassrooms.length} classrooms`)}</span>
           </span>
           <span className="text-[10px] text-slate-400 font-mono">
-            {groupedCourses.length} รายวิชา
+            {groupedCourses.length} {tr('รายวิชา', 'courses')}
           </span>
         </div>
 
@@ -285,12 +286,12 @@ export const GlobalClassroomSidebar: React.FC = () => {
           {(!isLoaded || loading) && sortedClassrooms.length === 0 ? (
             <div className="p-8 text-center text-xs text-slate-400 space-y-2">
               <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p>กำลังโหลดห้องเรียน...</p>
+              <p>{tr('กำลังโหลดห้องเรียน...', 'Loading classrooms...')}</p>
             </div>
           ) : sortedClassrooms.length === 0 ? (
             <div className="p-5 sm:p-8 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/80 dark:border-slate-800 text-xs text-slate-400 space-y-2">
               <GraduationCap className="w-8 h-8 text-slate-300 mx-auto" />
-              <p>ยังไม่มีห้องเรียนในระบบ</p>
+              <p>{tr('ยังไม่มีห้องเรียนในระบบ', 'No classrooms yet')}</p>
             </div>
           ) : (
             groupedCourses.map((group) => (
@@ -328,9 +329,9 @@ export const GlobalClassroomSidebar: React.FC = () => {
                           <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
                           <span className="min-w-0">
                             <span className="block truncate">{cls.name}</span>
-                            {periodLabel(cls) && (
+                            {periodLabel(cls, language === 'th') && (
                               <span className={`block text-[11px] font-semibold leading-tight ${isActive ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400'}`}>
-                                {periodLabel(cls)}
+                                {periodLabel(cls, language === 'th')}
                               </span>
                             )}
                           </span>

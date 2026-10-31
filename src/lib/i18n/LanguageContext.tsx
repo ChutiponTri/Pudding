@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useState, useEffect } from 'react';
 import th from './th.json';
 import en from './en.json';
 
@@ -12,6 +12,8 @@ interface LanguageContextType {
   language: Language;
   setLanguage: (lang: Language) => void;
   t: (path: string, fallback?: string) => string;
+  /** Inline bilingual text: the Thai or the English value for the current language. */
+  tr: <T,>(thai: T, english: T) => T;
   isLoaded: boolean;
 }
 
@@ -24,6 +26,7 @@ const LanguageContext = createContext<LanguageContextType>({
   language: 'th',
   setLanguage: () => {},
   t: (path: string, fallback?: string) => fallback || path,
+  tr: (thai) => thai,
   isLoaded: false,
 });
 
@@ -83,8 +86,11 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return typeof current === 'string' ? current : fallback || path;
   };
 
+  // Stable per language, so effects can list it as a dependency.
+  const tr = useCallback(<T,>(thai: T, english: T): T => (language === 'en' ? english : thai), [language]);
+
   return (
-    <LanguageContext.Provider value={{ language, setLanguage, t, isLoaded }}>
+    <LanguageContext.Provider value={{ language, setLanguage, t, tr, isLoaded }}>
       {children}
     </LanguageContext.Provider>
   );

@@ -20,7 +20,7 @@ const noopSubscribe = () => () => {};
 
 export const Navbar: React.FC = () => {
   const pathname = usePathname();
-  const { t, language } = useLanguage();
+  const { t, tr, language } = useLanguage();
   const { user, isSignedIn, isLoaded } = useUser();
   const { toggleSidebar } = useSidebar();
 
@@ -89,7 +89,7 @@ export const Navbar: React.FC = () => {
             type="button"
             onClick={toggleSidebar}
             className="p-2 -ml-2 rounded-xl text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
-            title="เปิด/ปิดแถบเมนูห้องเรียนและวิชา"
+            title={tr('เปิด/ปิดแถบเมนูห้องเรียนและวิชา', 'Toggle the classroom & course sidebar')}
             aria-label="Toggle classroom sidebar"
           >
             <Menu className="w-5 h-5" />
@@ -155,7 +155,7 @@ export const Navbar: React.FC = () => {
                     </span>
                     {unreadCount > 0 && (
                       <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
-                        {unreadCount} ใหม่
+                        {unreadCount} {tr('ใหม่', 'new')}
                       </span>
                     )}
                   </div>
@@ -237,7 +237,7 @@ export const Navbar: React.FC = () => {
               />
               <div className="hidden lg:block text-left">
                 <span className="block text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
-                  {user?.fullName || user?.firstName || 'กำลังโหลด...'}
+                  {user?.fullName || user?.firstName || tr('กำลังโหลด...', 'Loading...')}
                 </span>
                 <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
                   {t("nav.teacher_role")}

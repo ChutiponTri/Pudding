@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Check, Clock, Loader2, Lock, Rocket, Unlock, X } from 'lucide-react';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 import { DateTimeField } from '@/components/DateTimeField';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
@@ -23,6 +24,7 @@ export function AssignmentStatusDialog({
   onClose: () => void;
   onSaved: (updated: Assignment) => void;
 }) {
+  const { tr, language } = useLanguage();
   const current = assignment.status_override || 'auto';
   const [mode, setMode] = useState<SubmissionOverrideStatus>(current);
   const [extendedUntil, setExtendedUntil] = useState(
@@ -34,30 +36,39 @@ export function AssignmentStatusDialog({
   const [publishing, setPublishing] = useState(false);
   const assignmentWindow = getAssignmentWindow(assignment);
   const status = getAssignmentStatus(assignmentWindow, assignment.is_exam);
-  const dueLabel = formatDateTime(assignment.due_date, 'th');
+  const dueLabel = formatDateTime(assignment.due_date, language);
 
   const options: Array<{ id: SubmissionOverrideStatus; icon: typeof Clock; title: string; detail: string; tone: string }> = [
     {
       id: 'auto',
       icon: Clock,
-      title: 'ตามกำหนดส่ง (อัตโนมัติ)',
+      title: tr('ตามกำหนดส่ง (อัตโนมัติ)', 'Follow the due date (automatic)'),
       detail: assignment.is_exam
-        ? `เปิดรับคำตอบถึง ${dueLabel} แล้วปิดรับ (คำตอบที่มาถึงภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีบันทึกว่าส่งช้า — นักเรียนไม่เห็นข้อนี้)`
-        : `เปิดรับงานถึง ${dueLabel} หลังจากนั้นรับงานส่งช้าอีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง`,
+        ? tr(
+            `เปิดรับคำตอบถึง ${dueLabel} แล้วปิดรับ (คำตอบที่มาถึงภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีบันทึกว่าส่งช้า — นักเรียนไม่เห็นข้อนี้)`,
+            `Open until ${dueLabel}, then closes (answers arriving within ${QUIZ_LATE_GRACE_MINUTES} min are marked late — students don't see this)`
+          )
+        : tr(
+            `เปิดรับงานถึง ${dueLabel} หลังจากนั้นรับงานส่งช้าอีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง`,
+            `Open until ${dueLabel}, then accepts late work for ${LATE_WINDOW_HOURS} more hours before closing`
+          ),
       tone: 'emerald',
     },
     {
       id: 'force_closed',
       icon: Lock,
-      title: 'ปิดรับงานทันที',
-      detail: 'นักเรียนส่งหรือแก้ไขงานไม่ได้จนกว่าจะเปิดอีกครั้ง',
+      title: tr('ปิดรับงานทันที', 'Close now'),
+      detail: tr('นักเรียนส่งหรือแก้ไขงานไม่ได้จนกว่าจะเปิดอีกครั้ง', 'Students cannot submit or edit until you reopen it'),
       tone: 'rose',
     },
     {
       id: 'extended',
       icon: Unlock,
-      title: 'ขยายเวลาส่ง',
-      detail: assignment.is_exam ? 'เปิดรับคำตอบถึงเวลาใหม่ที่เลือก' : `ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก (รับงานส่งช้าต่ออีก ${LATE_WINDOW_HOURS} ชม.) — ใช้เปิดรับงานที่ปิดไปแล้วอีกครั้งได้`,
+      title: tr('ขยายเวลาส่ง', 'Extend deadline'),
+      detail: assignment.is_exam ? tr('เปิดรับคำตอบถึงเวลาใหม่ที่เลือก', 'Accept answers until the new time you pick') : tr(
+            `ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก (รับงานส่งช้าต่ออีก ${LATE_WINDOW_HOURS} ชม.) — ใช้เปิดรับงานที่ปิดไปแล้วอีกครั้งได้`,
+            `Move the due date to the new time (late work accepted for ${LATE_WINDOW_HOURS} more hours) — also reopens closed work`
+          ),
       tone: 'amber',
     },
   ];
@@ -74,8 +85,8 @@ export function AssignmentStatusDialog({
   };
 
   const publishNow = async () => {
-    const kind = assignment.is_exam ? 'ข้อสอบ' : 'งาน';
-    if (!confirm(`เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`)) return;
+    const kind = assignment.is_exam ? tr('ข้อสอบ', 'exam') : tr('งาน', 'assignment');
+    if (!confirm(tr(`เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`, `Publish the ${kind} "${assignment.title}" now?\nStudents will see it, can start right away, and get a LINE notification.`))) return;
     setPublishing(true);
     setError('');
     try {
@@ -83,7 +94,7 @@ export function AssignmentStatusDialog({
       onSaved(updated || { ...assignment, publish_at: new Date().toISOString() });
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error && err.message ? err.message : 'เผยแพร่งานไม่สำเร็จ');
+      setError(err instanceof Error && err.message ? err.message : tr('เผยแพร่งานไม่สำเร็จ', 'Could not publish'));
     } finally {
       setPublishing(false);
     }
@@ -91,7 +102,7 @@ export function AssignmentStatusDialog({
 
   const save = async () => {
     if (mode === 'extended' && new Date(extendedUntil).getTime() <= Date.now()) {
-      setError('เลือกเวลาในอนาคต');
+      setError(tr('เลือกเวลาในอนาคต', 'Pick a time in the future'));
       return;
     }
     setSaving(true);
@@ -104,7 +115,7 @@ export function AssignmentStatusDialog({
       onSaved(updated || { ...assignment, status_override: mode, extended_until: mode === 'extended' ? extendedUntil : assignment.extended_until });
     } catch (err) {
       console.error(err);
-      setError('บันทึกสถานะการรับงานไม่สำเร็จ');
+      setError(tr('บันทึกสถานะการรับงานไม่สำเร็จ', 'Could not save the submission status'));
     } finally {
       setSaving(false);
     }
@@ -122,7 +133,7 @@ export function AssignmentStatusDialog({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 id="assignment-status-title" className="text-sm font-black text-slate-900 dark:text-white">
-              สถานะการรับงาน
+              {tr('สถานะการรับงาน', 'Submission status')}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">{assignment.title}</p>
           </div>
@@ -130,7 +141,7 @@ export function AssignmentStatusDialog({
             <span className={`text-[11px] font-black px-2.5 py-1 rounded-full border ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`}>
               {status.label}
             </span>
-            <button type="button" onClick={onClose} aria-label="ปิด" className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
+            <button type="button" onClick={onClose} aria-label={tr('ปิด', 'Close')} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -141,12 +152,17 @@ export function AssignmentStatusDialog({
             <p className="text-[11px] leading-relaxed text-sky-800 dark:text-sky-300">
               {assignmentWindow.isDraft ? (
                 <>
-                  <span className="font-black">ฉบับร่าง</span> — นักเรียนยังไม่เห็นงานนี้ กดเผยแพร่เมื่อพร้อม
-                  {draftExpiresAt(assignment) && <> (ลบอัตโนมัติ {formatDateTime(draftExpiresAt(assignment), 'th')} หากยังไม่เผยแพร่)</>}
+                  <span className="font-black">{tr('ฉบับร่าง', 'Draft')}</span> — {tr('นักเรียนยังไม่เห็นงานนี้ กดเผยแพร่เมื่อพร้อม', 'students cannot see this yet. Publish when ready.')}
+                  {draftExpiresAt(assignment) &&
+                    tr(
+                      <> (ลบอัตโนมัติ {formatDateTime(draftExpiresAt(assignment), 'th')} หากยังไม่เผยแพร่)</>,
+                      <> (deleted automatically on {formatDateTime(draftExpiresAt(assignment), 'en')} if still unpublished)</>
+                    )}
                 </>
               ) : (
                 <>
-                  ตั้งเวลาเผยแพร่ไว้ <span className="font-black">{formatDateTime(assignment.publish_at, 'th')}</span> — สอนถึงหัวข้อนี้เร็วกว่ากำหนด? เปิดให้นักเรียนทำได้ทันที
+                  {tr('ตั้งเวลาเผยแพร่ไว้', 'Scheduled to publish')} <span className="font-black">{formatDateTime(assignment.publish_at, language)}</span> —{' '}
+                  {tr('สอนถึงหัวข้อนี้เร็วกว่ากำหนด? เปิดให้นักเรียนทำได้ทันที', 'reached this topic early? Open it to students now.')}
                 </>
               )}
             </p>
@@ -157,7 +173,7 @@ export function AssignmentStatusDialog({
               className="w-full px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-black text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
             >
               {publishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rocket className="w-3.5 h-3.5" />}
-              <span>เผยแพร่ตอนนี้เลย</span>
+              <span>{tr('เผยแพร่ตอนนี้เลย', 'Publish now')}</span>
             </button>
           </div>
         )}
@@ -190,7 +206,7 @@ export function AssignmentStatusDialog({
 
         {mode === 'extended' && (
           <div className="space-y-1.5">
-            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">ขยายเวลาถึง</label>
+            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('ขยายเวลาถึง', 'Extend until')}</label>
             <DateTimeField value={extendedUntil} onChange={setExtendedUntil} presets="deadline" />
           </div>
         )}
@@ -203,7 +219,7 @@ export function AssignmentStatusDialog({
             onClick={onClose}
             className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold cursor-pointer"
           >
-            ยกเลิก
+            {tr('ยกเลิก', 'Cancel')}
           </button>
           <button
             type="button"
@@ -212,7 +228,7 @@ export function AssignmentStatusDialog({
             className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
           >
             {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            <span>บันทึก</span>
+            <span>{tr('บันทึก', 'Save')}</span>
           </button>
         </div>
       </div>

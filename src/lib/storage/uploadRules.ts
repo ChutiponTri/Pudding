@@ -22,11 +22,20 @@ export const maxBytesFor = (type: string) => (type === PDF_TYPE ? PDF_MAX_BYTES 
 
 export const formatMegabytes = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)}MB`;
 
-/** Why a file cannot be uploaded (Thai, shown to students and teachers), or null when it can. */
-export function uploadRejection(file: { type: string; size: number }): string | null {
+/** Why a file cannot be uploaded (Thai by default, shown to students and teachers), or null when it can. */
+export function uploadRejection(file: { type: string; size: number }, language: 'th' | 'en' = 'th'): string | null {
+  const th = language === 'th';
   const max = maxBytesFor(file.type);
-  if (!max) return 'รองรับเฉพาะไฟล์รูปภาพ (JPG, PNG, WEBP, GIF) และ PDF — ไฟล์ชนิดอื่นให้อัปโหลดไว้ที่ Google Drive แล้ววางลิงก์แทน';
+  if (!max) {
+    return th
+      ? 'รองรับเฉพาะไฟล์รูปภาพ (JPG, PNG, WEBP, GIF) และ PDF — ไฟล์ชนิดอื่นให้อัปโหลดไว้ที่ Google Drive แล้ววางลิงก์แทน'
+      : 'Only images (JPG, PNG, WEBP, GIF) and PDFs are supported — upload other files to Google Drive and paste the link instead';
+  }
   if (file.size > max) {
+    if (!th) {
+      const kind = file.type === PDF_TYPE ? 'PDF' : 'image';
+      return `This ${kind} is over ${formatMegabytes(max)} (it is ${formatMegabytes(file.size)}) — shrink it, or upload it to Google Drive and paste the link instead`;
+    }
     const kind = file.type === PDF_TYPE ? 'PDF' : 'รูปภาพ';
     return `ไฟล์${kind}ใหญ่เกิน ${formatMegabytes(max)} (ไฟล์นี้ ${formatMegabytes(file.size)}) — ลดขนาดไฟล์ หรืออัปโหลดไว้ที่ Google Drive แล้ววางลิงก์แทน`;
   }

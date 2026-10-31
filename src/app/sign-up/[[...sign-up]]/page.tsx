@@ -4,8 +4,10 @@ import React from "react";
 import { SignUp } from "@clerk/nextjs";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { useLanguage } from "@/lib/i18n/LanguageContext";
 
 export default function SignUpPage() {
+  const { tr } = useLanguage();
   return (
     <div className="min-h-[80dvh] flex flex-col items-center justify-center py-6 sm:py-10">
       <div className="w-full max-w-md mb-6 text-center space-y-2">
@@ -14,18 +16,18 @@ export default function SignUpPage() {
           className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 mb-2 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>กลับสู่หน้าหลัก</span>
+          <span>{tr('กลับสู่หน้าหลัก', 'Back to home')}</span>
         </Link>
         <div className="flex items-center justify-center gap-2">
           <div className="w-10 h-10 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/25">
             <span className="text-2xl select-none">🍮</span>
           </div>
           <span className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-            พุดดิ้ง (Pudding)
+            {tr('พุดดิ้ง (Pudding)', 'Pudding')}
           </span>
         </div>
         <p className="text-xs text-slate-600 dark:text-slate-400">
-          ลงทะเบียนบัญชีครูผู้สอนด้วยบัญชี LINE (เชื่อม Pudding Bot อัตโนมัติ)
+          {tr('ลงทะเบียนบัญชีครูผู้สอนด้วยบัญชี LINE (เชื่อม Pudding Bot อัตโนมัติ)', 'Create a teacher account with LINE (Pudding Bot links automatically)')}
         </p>
       </div>
 

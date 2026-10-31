@@ -5,6 +5,7 @@ import { AlertCircle, Edit2, Loader2, X } from 'lucide-react';
 import type { User } from '@/types/database';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 import { dataService } from '@/lib/supabase/dataService';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { personNameError } from '@/lib/utils/studentName';
 
 type StudentFields = { first_name: string; last_name: string; student_id?: string; institution?: string };
@@ -30,6 +31,7 @@ export function EditStudentModal({
   onClose: () => void;
   onSaved: (studentId: string, fields: StudentFields) => void;
 }) {
+  const { tr, language } = useLanguage();
   const [firstName, setFirstName] = useState(student.first_name || '');
   const [lastName, setLastName] = useState(student.last_name || '');
   const [studentNumber, setStudentNumber] = useState(student.student_id || '');
@@ -44,7 +46,7 @@ export function EditStudentModal({
   const [error, setError] = useState('');
 
   const save = async () => {
-    const nameError = personNameError(firstName, lastName);
+    const nameError = personNameError(firstName, lastName, language);
     if (nameError) {
       setError(nameError);
       return;
@@ -59,7 +61,7 @@ export function EditStudentModal({
       });
       const json = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(json.error || 'บันทึกข้อมูลนักเรียนไม่สำเร็จ');
+        setError(json.error || tr('บันทึกข้อมูลนักเรียนไม่สำเร็จ', 'Could not save the student'));
         return;
       }
       onSaved(student.id, {
@@ -69,7 +71,7 @@ export function EditStudentModal({
         institution: institution.trim() || undefined,
       });
     } catch {
-      setError('บันทึกข้อมูลนักเรียนไม่สำเร็จ');
+      setError(tr('บันทึกข้อมูลนักเรียนไม่สำเร็จ', 'Could not save the student'));
     } finally {
       setSaving(false);
     }
@@ -87,7 +89,7 @@ export function EditStudentModal({
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
             <Edit2 className="w-4 h-4 text-amber-500" />
-            <span>แก้ไขข้อมูลผู้เรียน</span>
+            <span>{tr('แก้ไขข้อมูลผู้เรียน', 'Edit student')}</span>
           </h3>
           <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
             <X className="w-4 h-4" />
@@ -103,34 +105,34 @@ export function EditStudentModal({
         >
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">ชื่อ *</label>
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('ชื่อ *', 'First name *')}</label>
               <input value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inputClass} autoFocus />
             </div>
             <div>
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">นามสกุล *</label>
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('นามสกุล *', 'Last name *')}</label>
               <input value={lastName} onChange={(e) => setLastName(e.target.value)} className={inputClass} />
             </div>
           </div>
           <div>
-            <label className="text-[11px] font-bold text-slate-400 block mb-1">รหัสนักเรียน</label>
+            <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('รหัสนักเรียน', 'Student ID')}</label>
             <input
               value={studentNumber}
               onChange={(e) => setStudentNumber(e.target.value)}
               className={`${inputClass} font-mono`}
-              placeholder="เช่น 12345"
+              placeholder={tr('เช่น 12345', 'e.g. 12345')}
             />
           </div>
 
           <div>
-            <label className="text-[11px] font-bold text-slate-400 block mb-1">โรงเรียน / สถานศึกษา</label>
+            <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('โรงเรียน / สถานศึกษา', 'School / institution')}</label>
             <InstitutionSearchSelect value={institution} onChange={setInstitution} extraInstitutions={registeredInstitutions} />
             {otherSchool && (
               <div className="mt-2 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-[11px] font-bold text-rose-700 dark:text-rose-300 flex items-start gap-1.5">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
                 <span>
-                  โรงเรียนนี้ต่างจากโรงเรียนของคุณครู ({teacherInstitution}){' '}
+                  {tr('โรงเรียนนี้ต่างจากโรงเรียนของคุณครู', 'This school differs from yours')} ({teacherInstitution}){' '}
                   <button type="button" onClick={() => setInstitution(teacherInstitution || '')} className="underline cursor-pointer">
-                    ใช้โรงเรียนของคุณครู
+                    {tr('ใช้โรงเรียนของคุณครู', 'Use your school')}
                   </button>
                 </span>
               </div>
@@ -145,7 +147,7 @@ export function EditStudentModal({
               onClick={onClose}
               className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold cursor-pointer"
             >
-              ยกเลิก
+              {tr('ยกเลิก', 'Cancel')}
             </button>
             <button
               type="submit"
@@ -153,7 +155,7 @@ export function EditStudentModal({
               className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
             >
               {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <span>บันทึก</span>
+              <span>{tr('บันทึก', 'Save')}</span>
             </button>
           </div>
         </form>

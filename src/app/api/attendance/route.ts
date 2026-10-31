@@ -326,9 +326,47 @@ export async function POST(request: NextRequest) {
     return null;
   };
 
+  /**
+   * Closing a session turns every roster student who never checked in into an
+   * explicit "absent" record. Existing records (incl. a check-in racing the
+   * close) are left untouched.
+   */
+  const markUncheckedAbsent = async () => {
+    const [{ data: roomRow }, { data: existing }] = await Promise.all([
+      supabase.from('classrooms').select('students').eq('id', classroomId).maybeSingle(),
+      supabase.from('attendance_records').select('student_id').eq('session_id', sessionId),
+    ]);
+    const roster = ((roomRow?.students || []) as RosterEntry[]).filter((st) => st && (st.id || st.line_uid));
+    const recorded = new Set((existing || []).map((r) => r.student_id));
+    const missing = roster.filter((st) => ![st.id, st.line_uid, st.student_id].some((key) => key && recorded.has(key)));
+    if (!missing.length) return [];
+
+    // Roster ids may be a LINE uid; attendance_records.student_id must be users.id.
+    const rosterKeys = missing.map((st) => (st.id || st.line_uid) as string);
+    const { data: users } = await supabase.from('users').select('id, line_uid').in('line_uid', rosterKeys);
+    const userIdByLineUid = new Map((users || []).map((u) => [u.line_uid, u.id]));
+    const rows = [...new Set(rosterKeys.map((key) => userIdByLineUid.get(key) || key))].map((userKey) => ({
+      id: `att-rec-${sessionId}-${userKey}`,
+      session_id: sessionId,
+      classroom_id: classroomId,
+      student_id: userKey,
+      status: 'absent' as AttendanceStatus,
+      checked_at: null,
+    }));
+    const { error } = await supabase
+      .from('attendance_records')
+      .upsert(rows, { onConflict: 'session_id,student_id', ignoreDuplicates: true });
+    if (error) {
+      console.error('Marking unchecked students absent failed:', error);
+      return [];
+    }
+    return rows;
+  };
+
   if (action === 'close') {
     const failed = await updateSession({ status: 'closed', closed_at: new Date().toISOString() });
-    return failed || NextResponse.json({ success: true, sessionId });
+    if (failed) return failed;
+    return NextResponse.json({ success: true, sessionId, records: await markUncheckedAbsent() });
   }
 
   if (action === 'update_session') {
@@ -344,7 +382,9 @@ export async function POST(request: NextRequest) {
     if (body.lateUntilMinutes !== undefined && !Number.isNaN(late)) fields.late_until_minutes = late;
     if (typeof body.startsAt === 'string') fields.starts_at = body.startsAt;
     const failed = await updateSession(fields);
-    return failed || NextResponse.json({ success: true, sessionId });
+    if (failed) return failed;
+    const records = fields.status === 'closed' ? await markUncheckedAbsent() : [];
+    return NextResponse.json({ success: true, sessionId, records });
   }
 
   if (action === 'delete_session') {

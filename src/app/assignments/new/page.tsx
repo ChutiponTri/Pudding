@@ -106,7 +106,7 @@ function NewAssignmentContent() {
   // ?edit=<assignmentId>: the same form, filled with a saved assignment or quiz.
   const editId = searchParams.get('edit');
   const { user: clerkUser } = useUser();
-  const { t, language } = useLanguage();
+  const { t, tr, language } = useLanguage();
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState('');
@@ -162,7 +162,7 @@ function NewAssignmentContent() {
     // Large photos are shrunk without visible loss; anything still over the limit should be a link.
     setIsUploadingSample(true);
     const file = await optimizeImage(picked).finally(() => setIsUploadingSample(false));
-    const rejection = uploadRejection(file);
+    const rejection = uploadRejection(file, language);
     if (rejection) {
       setSampleUploadError(rejection);
       return;
@@ -589,9 +589,9 @@ function NewAssignmentContent() {
           uploadedSampleUrl = uploaded.url;
         } catch (uploadError) {
           console.error("Sample work upload error:", uploadError);
-          const message = uploadError instanceof UploadError ? uploadError.message : "อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ";
+          const message = uploadError instanceof UploadError ? uploadError.message : tr('อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ', 'Could not upload the sample file');
           setSampleUploadError(message);
-          alert(`${message}\n\nยังไม่ได้บันทึกงาน กรุณาแก้ไฟล์แล้วกดบันทึกอีกครั้ง`);
+          alert(`${message}\n\n${tr('ยังไม่ได้บันทึกงาน กรุณาแก้ไฟล์แล้วกดบันทึกอีกครั้ง', 'The assignment was not saved. Fix the file and save again.')}`);
           return;
         } finally {
           setIsUploadingSample(false);
@@ -605,10 +605,16 @@ function NewAssignmentContent() {
         if (
           editSubmissionCount > 0 &&
           !confirm(
-            `มีนักเรียนส่งงานนี้แล้ว ${editSubmissionCount} คน\n` +
-              (removedCount ? `• ข้อที่ลบ (${removedCount} ข้อ) จะลบคำตอบของนักเรียนในข้อนั้นด้วย\n` : '') +
-              '• ข้อปรนัย / ถูก-ผิด ที่เปลี่ยนเฉลยหรือคะแนน จะตรวจคำตอบที่ส่งแล้วใหม่อัตโนมัติ (คะแนนที่คุณครูปรับเองรายคนยังคงไว้)\n' +
-              '• ข้อเขียน / แนบไฟล์ ที่ตรวจไปแล้ว คะแนนไม่เปลี่ยน\n\nต้องการบันทึกการแก้ไขหรือไม่?'
+            tr(
+              `มีนักเรียนส่งงานนี้แล้ว ${editSubmissionCount} คน\n` +
+                (removedCount ? `• ข้อที่ลบ (${removedCount} ข้อ) จะลบคำตอบของนักเรียนในข้อนั้นด้วย\n` : '') +
+                '• ข้อปรนัย / ถูก-ผิด ที่เปลี่ยนเฉลยหรือคะแนน จะตรวจคำตอบที่ส่งแล้วใหม่อัตโนมัติ (คะแนนที่คุณครูปรับเองรายคนยังคงไว้)\n' +
+                '• ข้อเขียน / แนบไฟล์ ที่ตรวจไปแล้ว คะแนนไม่เปลี่ยน\n\nต้องการบันทึกการแก้ไขหรือไม่?',
+              `${editSubmissionCount} students have already submitted\n` +
+                (removedCount ? `• Removing ${removedCount} questions also deletes students' answers to them\n` : '') +
+                '• Multiple-choice / true-false questions with a changed key or score are re-graded automatically (scores you adjusted by hand are kept)\n' +
+                '• Written / file questions that were already graded keep their scores\n\nSave the changes?'
+            )
           )
         ) {
           return;
@@ -731,8 +737,8 @@ function NewAssignmentContent() {
           <ArrowLeft className="w-4 h-4" />
           <span className="truncate">
             <MobileText
-              short={returnTo ? 'กลับไปตรวจงาน' : isFromDashboard ? 'กลับแดชบอร์ด' : 'กลับไปห้องเรียน'}
-              full={returnTo ? 'กลับไปหน้าตรวจงาน' : isFromDashboard ? 'กลับสู่แดชบอร์ด (Dashboard)' : 'กลับไปหน้าห้องเรียน (งานและเนื้อหา)'}
+              short={returnTo ? tr('กลับไปตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับแดชบอร์ด', 'Dashboard') : tr('กลับไปห้องเรียน', 'Back to class')}
+              full={returnTo ? tr('กลับไปหน้าตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับสู่แดชบอร์ด (Dashboard)', 'Back to dashboard') : tr('กลับไปหน้าห้องเรียน (งานและเนื้อหา)', 'Back to classroom (Classwork)')}
             />
           </span>
         </button>
@@ -894,18 +900,18 @@ function NewAssignmentContent() {
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="assignment-group" className="text-xs font-bold text-slate-700 dark:text-slate-300">หมวดหมู่การแสดงผล</label>
+              <label htmlFor="assignment-group" className="text-xs font-bold text-slate-700 dark:text-slate-300">{tr('หมวดหมู่การแสดงผล', 'Display group')}</label>
               <input
                 id="assignment-group"
                 type="text"
                 value={groupName}
                 onChange={(e) => setGroupName(e.target.value)}
-                placeholder={existingGroups.length ? 'เลือกด้านล่าง หรือพิมพ์ชื่อใหม่' : isExam ? 'เช่น สอบกลางภาค' : 'เช่น ใบงานบทที่ 1'}
+                placeholder={existingGroups.length ? tr('เลือกด้านล่าง หรือพิมพ์ชื่อใหม่', 'Pick below or type a new name') : isExam ? tr('เช่น สอบกลางภาค', 'e.g. Midterm') : tr('เช่น ใบงานบทที่ 1', 'e.g. Chapter 1 worksheet')}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500"
               />
               {existingGroups.length > 0 && (
                 <div className="space-y-1.5">
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">หมวดหมู่ที่มีอยู่แล้ว:</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">{tr('หมวดหมู่ที่มีอยู่แล้ว:', 'Existing groups:')}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {existingGroups.map((name) => {
                       const selected = groupName.trim() === name;
@@ -1142,20 +1148,20 @@ function NewAssignmentContent() {
                 </div>
               ) : (
                 <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
-                  <p><MobileText short="ห้องนี้ยังไม่ได้เชื่อม LINE Bot" full="ห้องเรียนที่เลือกยังไม่ได้เชื่อมต่อ LINE Bot จึงยังตั้งเวลาทวงงานไม่ได้" /></p>
+                  <p><MobileText short={tr('ห้องนี้ยังไม่ได้เชื่อม LINE Bot', 'This class has no LINE bot')} full={tr('ห้องเรียนที่เลือกยังไม่ได้เชื่อมต่อ LINE Bot จึงยังตั้งเวลาทวงงานไม่ได้', 'The selected classroom is not connected to the LINE bot, so reminders cannot be scheduled yet')} /></p>
                   <button type="button" onClick={() => router.push('/dashboard')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold">
-                    ไปเชื่อมต่อ LINE Bot <ArrowRight className="w-3.5 h-3.5" />
+                    {tr('ไปเชื่อมต่อ LINE Bot', 'Connect the LINE bot')} <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )}
               <p className="hidden sm:block text-[11px] text-slate-500 dark:text-slate-400">
                 {selectedClassroomsLineReady
                   ? effectiveReminderOffsets.length
-                    ? 'เตือน 1 ครั้งตามเวลาที่เลือก — ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน'
+                    ? tr('เตือน 1 ครั้งตามเวลาที่เลือก — ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน', 'One reminder at the chosen time — Pudding lists students who have not submitted and posts a summary to the class LINE group')
                     : reminderSelectValue === 'none'
-                    ? 'ไม่ส่งแจ้งเตือนเข้า LINE group สำหรับงานนี้'
-                    : 'แสดงเฉพาะเวลาที่ยังทันก่อนกำหนดส่ง — ถ้าเปลี่ยนกำหนดส่งแล้วเวลาที่เลือกไม่ทัน ต้องเลือกใหม่'
-                  : 'เมื่อเชื่อมต่อ LINE Bot แล้ว จึงจะสามารถตั้งเวลาและส่งสรุปเข้า LINE group ได้'}
+                    ? tr('ไม่ส่งแจ้งเตือนเข้า LINE group สำหรับงานนี้', 'No LINE group reminder for this assignment')
+                    : tr('แสดงเฉพาะเวลาที่ยังทันก่อนกำหนดส่ง — ถ้าเปลี่ยนกำหนดส่งแล้วเวลาที่เลือกไม่ทัน ต้องเลือกใหม่', 'Only times before the due date are shown — if a new due date makes the chosen time too late, pick again')
+                  : tr('เมื่อเชื่อมต่อ LINE Bot แล้ว จึงจะสามารถตั้งเวลาและส่งสรุปเข้า LINE group ได้', 'Connect the LINE bot to schedule reminders to the LINE group')}
               </p>
             </div>
             )}
@@ -1205,7 +1211,7 @@ function NewAssignmentContent() {
               <div className="space-y-1.5 md:col-span-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    <MobileText short={language === 'th' ? 'ลิงก์หรือไฟล์ตัวอย่าง' : 'Link or file'} full={<>{t('assignment_creator.sample_work.work_url_label')} (หรือแนบไฟล์ไว้ชั่วคราว)</>} />
+                    <MobileText short={language === 'th' ? 'ลิงก์หรือไฟล์ตัวอย่าง' : 'Link or file'} full={<>{t('assignment_creator.sample_work.work_url_label')} {tr('(หรือแนบไฟล์ไว้ชั่วคราว)', '(or attach a file for now)')}</>} />
                   </label>
                   {(sampleWorkPreviewUrl || sampleWorkUrl) && (
                     <a
@@ -1215,7 +1221,7 @@ function NewAssignmentContent() {
                       className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
                     >
                       <ExternalLink className="w-3 h-3" />
-                      <span><MobileText short="เปิดดู" full="เปิดดูไฟล์ตัวอย่าง" /></span>
+                      <span><MobileText short={tr('เปิดดู', 'Open')} full={tr('เปิดดูไฟล์ตัวอย่าง', 'Open the sample file')} /></span>
                     </a>
                   )}
                 </div>
@@ -1234,12 +1240,12 @@ function NewAssignmentContent() {
                     {isUploadingSample ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>กำลังเตรียมไฟล์...</span>
+                        <span>{tr('กำลังเตรียมไฟล์...', 'Preparing file...')}</span>
                       </>
                     ) : (
                       <>
                         <UploadCloud className="w-4 h-4" />
-                        <span>เลือกไฟล์ตัวอย่าง</span>
+                        <span>{tr('เลือกไฟล์ตัวอย่าง', 'Choose sample file')}</span>
                       </>
                     )}
                     <input
@@ -1264,7 +1270,7 @@ function NewAssignmentContent() {
                   <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 font-medium truncate">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span className="truncate"><MobileText short="แนบไฟล์แล้ว (อัปโหลดตอนบันทึก)" full="แนบไฟล์ไว้ชั่วคราว — จะอัปโหลดหลังกดบันทึกงาน" /></span>
+                      <span className="truncate"><MobileText short={tr('แนบไฟล์แล้ว (อัปโหลดตอนบันทึก)', 'Attached (uploads on save)')} full={tr('แนบไฟล์ไว้ชั่วคราว — จะอัปโหลดหลังกดบันทึกงาน', 'File attached for now — it uploads when you save the assignment')} /></span>
                     </span>
                     <button
                       type="button"
@@ -1275,7 +1281,7 @@ function NewAssignmentContent() {
                       }}
                       className="text-slate-400 hover:text-rose-500 text-xs px-1"
                     >
-                      ลบ
+                      {tr('ลบ', 'Remove')}
                     </button>
                   </div>
                 )}
@@ -1371,7 +1377,7 @@ function NewAssignmentContent() {
                         role="switch"
                         aria-checked={q.is_required}
                         onClick={() => handleQuestionChange(idx, 'is_required', !q.is_required)}
-                        title={q.is_required ? 'นักเรียนต้องตอบข้อนี้ก่อนส่งงาน' : 'นักเรียนเว้นข้อนี้ได้'}
+                        title={q.is_required ? tr('นักเรียนต้องตอบข้อนี้ก่อนส่งงาน', 'Students must answer this before submitting') : tr('นักเรียนเว้นข้อนี้ได้', 'Students may skip this')}
                         className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
                           q.is_required
                             ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300'
@@ -1381,7 +1387,7 @@ function NewAssignmentContent() {
                         <span className={`w-6 h-3.5 rounded-full relative transition-colors ${q.is_required ? 'bg-rose-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
                           <span className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all ${q.is_required ? 'left-3' : 'left-0.5'}`} />
                         </span>
-                        <span>{q.is_required ? 'จำเป็น' : 'ไม่บังคับ'}</span>
+                        <span>{q.is_required ? tr('จำเป็น', 'Required') : tr('ไม่บังคับ', 'Optional')}</span>
                       </button>
                     )}
 
@@ -1458,7 +1464,7 @@ function NewAssignmentContent() {
                         return (
                           <>
                             <label className="text-xs font-bold text-violet-700 dark:text-violet-300">
-                              แผนการสอน / สมรรถนะ
+                              {tr('แผนการสอน / สมรรถนะ', 'Lesson plan / competency')}
                             </label>
                             <select
                               value={q.indicator_id}
@@ -1470,13 +1476,13 @@ function NewAssignmentContent() {
                                   .map((mid) => {
                                     const ci = courseIndicators.find((c) => c.id === mid);
                                     const ciIdx = courseIndicators.findIndex((c) => c.id === mid);
-                                    return ci ? `สมรรถนะ ${ciIdx + 1}` : null;
+                                    return ci ? `${tr('สมรรถนะ', 'Competency')} ${ciIdx + 1}` : null;
                                   })
                                   .filter(Boolean)
                                   .join(', ');
                                 return (
                                   <option key={plan.id} value={plan.id}>
-                                    แผน {planIdx + 1}: {plan.title.substring(0, 35) || '(ไม่มีชื่อ)'}
+                                    {tr('แผน', 'Plan')} {planIdx + 1}: {plan.title.substring(0, 35) || tr('(ไม่มีชื่อ)', '(untitled)')}
                                     {mappedLabels ? ` → ${mappedLabels}` : ''}
                                   </option>
                                 );
@@ -1495,7 +1501,7 @@ function NewAssignmentContent() {
                           </label>
                           {indOptions.length === 0 ? (
                             <p className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
-                              ยังไม่มีตัวชี้วัดในวิชานี้ — ไปตั้งค่าใน Dashboard ก่อน
+                              {tr('ยังไม่มีตัวชี้วัดในวิชานี้ — ไปตั้งค่าใน Dashboard ก่อน', 'This course has no indicators yet — set them up on the Dashboard first')}
                             </p>
                           ) : (
                             <select
@@ -1505,7 +1511,7 @@ function NewAssignmentContent() {
                             >
                               {indOptions.map((ind, indIdx) => (
                                 <option key={ind.id} value={ind.id}>
-                                  ข้อ {indIdx + 1}: {ind.title.substring(0, 50)}{ind.title.length > 50 ? '…' : ''}
+                                  {tr('ข้อ', 'Item')} {indIdx + 1}: {ind.title.substring(0, 50)}{ind.title.length > 50 ? '…' : ''}
                                 </option>
                               ))}
                             </select>
@@ -1634,7 +1640,7 @@ function NewAssignmentContent() {
                                 : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
                             }`}
                           >
-                            {option === 'ถูก' ? '✓ ถูก' : '✗ ผิด'}
+                            {option === 'ถูก' ? tr('✓ ถูก', '✓ True') : tr('✗ ผิด', '✗ False')}
                           </button>
                         );
                       })}
@@ -1788,8 +1794,9 @@ function NewAssignmentContent() {
 }
 
 export default function NewAssignmentPage() {
+  const { tr } = useLanguage();
   return (
-    <React.Suspense fallback={<div className="p-8 text-center text-sm text-slate-400">กำลังโหลด...</div>}>
+    <React.Suspense fallback={<div className="p-8 text-center text-sm text-slate-400">{tr('กำลังโหลด...', 'Loading...')}</div>}>
       <NewAssignmentContent />
     </React.Suspense>
   );

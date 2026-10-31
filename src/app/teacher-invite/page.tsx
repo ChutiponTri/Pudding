@@ -7,6 +7,7 @@ import { useUser, SignInButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { dataService } from '@/lib/supabase/dataService';
 import { Course } from '@/types/database';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
   GraduationCap,
   FlaskConical,
@@ -19,13 +20,14 @@ import {
 } from 'lucide-react';
 
 function TeacherInviteContent() {
+  const { tr } = useLanguage();
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user: clerkUser, isLoaded, isSignedIn } = useUser();
 
   // Short signed code; the course, role and inviter come from the server, not the URL.
   const inviteCode = searchParams.get('code') || '';
-  const [inviterName, setInviterName] = useState('อาจารย์ประจำวิชา');
+  const [inviterName, setInviterName] = useState(tr('อาจารย์ประจำวิชา', 'The course teacher'));
   const [inviteRole, setInviteRole] = useState<'assistant' | 'researcher'>('assistant');
 
   const [course, setCourse] = useState<Course | null>(null);
@@ -39,7 +41,7 @@ function TeacherInviteContent() {
     if (!inviteCode) {
       // Waits for Clerk to load before deciding what to show.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setErrorMessage('ลิงก์คำเชิญไม่ครบ ขอลิงก์ใหม่จากครูประจำวิชา');
+      setErrorMessage(tr('ลิงก์คำเชิญไม่ครบ ขอลิงก์ใหม่จากครูประจำวิชา', 'This invite link is incomplete. Ask the course teacher for a new one.'));
       setLoading(false);
       return;
     }
@@ -55,7 +57,7 @@ function TeacherInviteContent() {
       .then((invite) => {
         if (cancelled) return;
         if (!invite) {
-          setErrorMessage('ลิงก์คำเชิญไม่ถูกต้อง หรือรายวิชาอาจถูกลบไปแล้ว');
+          setErrorMessage(tr('ลิงก์คำเชิญไม่ถูกต้อง หรือรายวิชาอาจถูกลบไปแล้ว', 'This invite link is invalid, or the course may have been deleted.'));
           return;
         }
         setCourse(invite.course);
@@ -64,7 +66,7 @@ function TeacherInviteContent() {
       })
       .catch((err) => {
         console.error(err);
-        if (!cancelled) setErrorMessage('เกิดข้อผิดพลาดในการโหลดคำเชิญ');
+        if (!cancelled) setErrorMessage(tr('เกิดข้อผิดพลาดในการโหลดคำเชิญ', 'Something went wrong while loading the invite'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -72,7 +74,7 @@ function TeacherInviteContent() {
     return () => {
       cancelled = true;
     };
-  }, [inviteCode, isLoaded, isSignedIn]);
+  }, [inviteCode, isLoaded, isSignedIn, tr]);
 
   const handleAcceptInvite = async () => {
     if (!course || !clerkUser) return;
@@ -81,7 +83,7 @@ function TeacherInviteContent() {
       const teacherName =
         `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() ||
         clerkUser.username ||
-        (inviteRole === 'researcher' ? 'ครูตรวจวิจัย' : 'ครูผู้ช่วย');
+        (inviteRole === 'researcher' ? tr('ครูตรวจวิจัย', 'research grader') : tr('ครูผู้ช่วย', 'teaching assistant'));
       const teacherEmail =
         clerkUser.primaryEmailAddress?.emailAddress || undefined;
 
@@ -98,7 +100,7 @@ function TeacherInviteContent() {
       }, 2000);
     } catch (err) {
       console.error(err);
-      setErrorMessage((err as { message?: string } | null)?.message || 'เข้าร่วมไม่สำเร็จ ลองใหม่อีกครั้ง');
+      setErrorMessage((err as { message?: string } | null)?.message || tr('เข้าร่วมไม่สำเร็จ ลองใหม่อีกครั้ง', 'Could not join, please try again'));
     } finally {
       setJoining(false);
     }
@@ -109,7 +111,7 @@ function TeacherInviteContent() {
       <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-semibold text-slate-500">กำลังตรวจสอบคำเชิญ...</p>
+          <p className="text-sm font-semibold text-slate-500">{tr('กำลังตรวจสอบคำเชิญ...', 'Checking invite...')}</p>
         </div>
       </div>
     );
@@ -122,11 +124,11 @@ function TeacherInviteContent() {
           <div className="w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 flex items-center justify-center mx-auto">
             <GraduationCap className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-black text-slate-900 dark:text-white">คำเชิญเข้าร่วมสอน</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">เข้าสู่ระบบด้วยบัญชีครูเพื่อดูและยืนยันคำเชิญ</p>
+          <h2 className="text-xl font-black text-slate-900 dark:text-white">{tr('คำเชิญเข้าร่วมสอน', 'Teaching invitation')}</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{tr('เข้าสู่ระบบด้วยบัญชีครูเพื่อดูและยืนยันคำเชิญ', 'Sign in with your teacher account to view and accept the invite')}</p>
           <SignInButton mode="modal">
             <button type="button" className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm cursor-pointer">
-              เข้าสู่ระบบเพื่อดูคำเชิญ
+              {tr('เข้าสู่ระบบเพื่อดูคำเชิญ', 'Sign in to view the invite')}
             </button>
           </SignInButton>
         </div>
@@ -141,15 +143,15 @@ function TeacherInviteContent() {
           <div className="w-14 h-14 rounded-2xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center mx-auto">
             <AlertCircle className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-black text-slate-900 dark:text-white">คำเชิญไม่ถูกต้อง</h2>
+          <h2 className="text-xl font-black text-slate-900 dark:text-white">{tr('คำเชิญไม่ถูกต้อง', 'Invalid invite')}</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            {errorMessage || 'ไม่พบวิชาที่ระบุ'}
+            {errorMessage || tr('ไม่พบวิชาที่ระบุ', 'Course not found')}
           </p>
           <Link
             href="/dashboard"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-950 font-bold text-xs hover:opacity-90"
           >
-            กลับสู่แดชบอร์ด
+            {tr('กลับสู่แดชบอร์ด', 'Back to dashboard')}
           </Link>
         </div>
       </div>
@@ -167,13 +169,13 @@ function TeacherInviteContent() {
           <div className="relative z-10 space-y-2">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-white text-xs font-black">
               {inviteRole === 'researcher' ? <FlaskConical className="w-3.5 h-3.5" /> : <GraduationCap className="w-3.5 h-3.5" />}
-              <span>{inviteRole === 'researcher' ? 'ครูตรวจเพื่อวิจัย • IRR' : 'ครูผู้ช่วยสอน (TA)'}</span>
+              <span>{inviteRole === 'researcher' ? tr('ครูตรวจเพื่อวิจัย • IRR', 'Research grader • IRR') : tr('ครูผู้ช่วยสอน (TA)', 'Teaching assistant (TA)')}</span>
             </div>
             <h1 className="text-2xl font-black tracking-tight">
-              {inviteRole === 'researcher' ? 'คำเชิญเป็นครูตรวจเพื่อวิจัย' : 'คำเชิญเป็นครูผู้ช่วยสอน'}
+              {inviteRole === 'researcher' ? tr('คำเชิญเป็นครูตรวจเพื่อวิจัย', 'Invitation to be a research grader') : tr('คำเชิญเป็นครูผู้ช่วยสอน', 'Invitation to be a teaching assistant')}
             </h1>
             <p className="text-xs text-white/90">
-              {inviterName} {inviteRole === 'researcher' ? 'ได้เชิญคุณเข้าร่วมประเมินและตรวจงานวิจัยในรายวิชา' : 'ได้เชิญคุณเข้าร่วมเป็นครูผู้ช่วยสอนในรายวิชา'}
+              {inviterName} {inviteRole === 'researcher' ? tr('ได้เชิญคุณเข้าร่วมประเมินและตรวจงานวิจัยในรายวิชา', 'invited you to assess and grade for research in') : tr('ได้เชิญคุณเข้าร่วมเป็นครูผู้ช่วยสอนในรายวิชา', 'invited you to be a teaching assistant in')}
             </p>
           </div>
         </div>
@@ -210,11 +212,11 @@ function TeacherInviteContent() {
                 <ShieldCheck className="w-4 h-4 text-emerald-500" />
                 <span>
                   {inviteRole === 'researcher'
-                    ? 'สิทธิ์: ครูตรวจเพื่อวิจัย (คะแนนเก็บแยก นักเรียนไม่เห็น)'
-                    : 'สิทธิ์: ครูผู้ช่วยสอน (ให้คะแนนจริงได้)'}
+                    ? tr('สิทธิ์: ครูตรวจเพื่อวิจัย (คะแนนเก็บแยก นักเรียนไม่เห็น)', 'Access: research grader (scores kept separately, hidden from students)')
+                    : tr('สิทธิ์: ครูผู้ช่วยสอน (ให้คะแนนจริงได้)', 'Access: teaching assistant (can give real scores)')}
                 </span>
               </span>
-              <span>ตัวชี้วัด {course.indicators?.length || 0} ข้อ</span>
+              <span>{tr(`ตัวชี้วัด ${course.indicators?.length || 0} ข้อ`, `${course.indicators?.length || 0} indicators`)}</span>
             </div>
           </div>
 
@@ -222,21 +224,21 @@ function TeacherInviteContent() {
           {inviteRole === 'researcher' ? (
             <div className="p-3.5 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-xs text-blue-800 dark:text-blue-300 space-y-1">
               <p className="font-bold flex items-center gap-1.5">
-                <span>🔬 วัตถุประสงค์เพื่อการวิจัยเท่านั้น</span>
+                <span>{tr('🔬 วัตถุประสงค์เพื่อการวิจัยเท่านั้น', '🔬 For research purposes only')}</span>
               </p>
               <p className="text-[11px] leading-relaxed text-blue-700 dark:text-blue-400">
-                คะแนนและความเห็นของคุณเก็บแยกไว้เพื่อวิเคราะห์ความสอดคล้องระหว่างผู้ตรวจ (IRR) เท่านั้น
-                นักเรียนไม่เห็น และไม่กระทบคะแนนจริง
+                {tr('คะแนนและความเห็นของคุณเก็บแยกไว้เพื่อวิเคราะห์ความสอดคล้องระหว่างผู้ตรวจ (IRR) เท่านั้น', 'Your scores and comments are kept separately, only to analyze inter-rater reliability (IRR).')}
+                {tr('นักเรียนไม่เห็น และไม่กระทบคะแนนจริง', 'Students never see them and real scores are unaffected.')}
               </p>
             </div>
           ) : (
             <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
               <p className="font-bold flex items-center gap-1.5">
-                <span>🎓 บทบาทครูผู้ช่วยสอน (TA)</span>
+                <span>{tr('🎓 บทบาทครูผู้ช่วยสอน (TA)', '🎓 Teaching assistant (TA) role')}</span>
               </p>
               <p className="text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-400">
-                คุณตรวจงานและให้คะแนนจริงได้ นักเรียนจะเห็นคำแนะนำของคุณ
-                ส่วนการแก้ไขรายวิชาสงวนไว้ให้ครูผู้สอนหลัก
+                {tr('คุณตรวจงานและให้คะแนนจริงได้ นักเรียนจะเห็นคำแนะนำของคุณ', 'You can grade and give real scores; students see your feedback.')}
+                {tr('ส่วนการแก้ไขรายวิชาสงวนไว้ให้ครูผู้สอนหลัก', 'Editing the course stays with the primary teacher.')}
               </p>
             </div>
           )}
@@ -246,26 +248,26 @@ function TeacherInviteContent() {
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-center space-y-2 animate-in fade-in">
               <CheckCircle2 className="w-8 h-8 mx-auto text-emerald-500" />
               <p className="font-black text-sm">
-                {inviteRole === 'researcher' ? 'เข้าร่วมเป็นครูตรวจงานวิจัยเรียบร้อยแล้ว!' : 'เข้าร่วมเป็นครูผู้ช่วยสอนเรียบร้อยแล้ว!'}
+                {inviteRole === 'researcher' ? tr('เข้าร่วมเป็นครูตรวจงานวิจัยเรียบร้อยแล้ว!', 'You joined as a research grader!') : tr('เข้าร่วมเป็นครูผู้ช่วยสอนเรียบร้อยแล้ว!', 'You joined as a teaching assistant!')}
               </p>
-              <p className="text-xs text-emerald-600 dark:text-emerald-400">กำลังนำทางไปยังแดชบอร์ด...</p>
+              <p className="text-xs text-emerald-600 dark:text-emerald-400">{tr('กำลังนำทางไปยังแดชบอร์ด...', 'Taking you to the dashboard...')}</p>
             </div>
           ) : !isLoaded ? (
-            <div className="text-center py-4 text-xs text-slate-400">กำลังตรวจสอบสถานะบัญชี...</div>
+            <div className="text-center py-4 text-xs text-slate-400">{tr('กำลังตรวจสอบสถานะบัญชี...', 'Checking your account...')}</div>
           ) : isSignedIn ? (
             <div className="space-y-3">
               <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs">
                 <Avatar src={clerkUser.imageUrl} name={clerkUser.fullName} className="w-8 h-8 text-[10px]" />
                 <div className="min-w-0 flex-1">
                   <p className="font-bold text-slate-900 dark:text-white truncate">
-                    {clerkUser.fullName || clerkUser.username || 'คุณครู'}
+                    {clerkUser.fullName || clerkUser.username || tr('คุณครู', 'Teacher')}
                   </p>
                   <p className="text-[10px] text-slate-400 truncate">
                     {clerkUser.primaryEmailAddress?.emailAddress}
                   </p>
                 </div>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300">
-                  เข้าสู่ระบบแล้ว
+                  {tr('เข้าสู่ระบบแล้ว', 'Signed in')}
                 </span>
               </div>
 
@@ -276,13 +278,13 @@ function TeacherInviteContent() {
                 className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {joining ? (
-                  <span>กำลังบันทึกข้อมูล...</span>
+                  <span>{tr('กำลังบันทึกข้อมูล...', 'Saving...')}</span>
                 ) : (
                   <>
                     <span>
                       {inviteRole === 'researcher'
-                        ? 'ยืนยันเข้าร่วมเป็นครูตรวจเพื่อวิจัย'
-                        : 'ยืนยันเข้าร่วมเป็นครูผู้ช่วยสอน (TA)'}
+                        ? tr('ยืนยันเข้าร่วมเป็นครูตรวจเพื่อวิจัย', 'Join as research grader')
+                        : tr('ยืนยันเข้าร่วมเป็นครูผู้ช่วยสอน (TA)', 'Join as teaching assistant (TA)')}
                     </span>
                     <ArrowRight className="w-4 h-4" />
                   </>
@@ -292,7 +294,7 @@ function TeacherInviteContent() {
           ) : (
             <div className="space-y-3">
               <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-                เข้าสู่ระบบด้วยบัญชีครูเพื่อยืนยันคำเชิญ
+                {tr('เข้าสู่ระบบด้วยบัญชีครูเพื่อยืนยันคำเชิญ', 'Sign in with your teacher account to accept the invite')}
               </p>
               <SignInButton mode="modal">
                 <button
@@ -300,7 +302,7 @@ function TeacherInviteContent() {
                   className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <GraduationCap className="w-4 h-4" />
-                  <span>เข้าสู่ระบบด้วยบัญชีครู</span>
+                  <span>{tr('เข้าสู่ระบบด้วยบัญชีครู', 'Sign in as a teacher')}</span>
                 </button>
               </SignInButton>
             </div>

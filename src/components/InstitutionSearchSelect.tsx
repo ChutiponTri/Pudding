@@ -4,6 +4,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, Building, Check, ChevronDown, School, GraduationCap } from 'lucide-react';
 import { searchInstitutions, EducationalInstitution } from '@/lib/data/thaiInstitutions';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 interface Props {
   value: string;
@@ -17,11 +18,12 @@ interface Props {
 export const InstitutionSearchSelect: React.FC<Props> = ({
   value,
   onChange,
-  placeholder = 'เลือกโรงเรียน / สถาบันการศึกษา...',
+  placeholder,
   extraInstitutions = [],
   disabled = false,
   required = false,
 }) => {
+  const { tr } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
@@ -101,7 +103,7 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
       >
         <div className="flex items-center gap-2 truncate">
           <School className="w-4 h-4 text-amber-500 shrink-0" />
-          <span className="truncate">{value || placeholder}</span>
+          <span className="truncate">{value || placeholder || tr('เลือกโรงเรียน / สถาบันการศึกษา...', 'Select a school / institution...')}</span>
         </div>
         <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
@@ -122,7 +124,7 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
               autoFocus
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="พิมพ์ชื่อโรงเรียน / วิทยาลัย / มหาวิทยาลัย..."
+              placeholder={tr('พิมพ์ชื่อโรงเรียน / วิทยาลัย / มหาวิทยาลัย...', 'Type a school / college / university name...')}
               className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-amber-500 font-medium"
             />
           </div>
@@ -131,7 +133,7 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
           <div className="overflow-y-auto overscroll-contain space-y-1 pr-1 flex-1 min-h-0">
             {results.length === 0 ? (
               <div className="py-6 text-center text-xs text-slate-400">
-                ไม่พบชื่อสถาบันที่ตรงกับคำค้นหา
+                {tr('ไม่พบชื่อสถาบันที่ตรงกับคำค้นหา', 'No matching institution')}
               </div>
             ) : (
               results.map((inst) => {

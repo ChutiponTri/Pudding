@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExternalLink, FileText, Image as ImageIcon, Paperclip, X } from 'lucide-react';
 import type { Assignment } from '@/types/database';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { isImageUrl, isPdfUrl, referenceWorkUrl } from '@/lib/utils/referenceWork';
 
 /**
@@ -20,6 +21,7 @@ export function ReferenceWorkLink({
   preview?: boolean;
   className?: string;
 }) {
+  const { tr } = useLanguage();
   const [open, setOpen] = useState(false);
   const url = referenceWorkUrl(assignment.sample_work_url);
   const title = assignment.sample_work_title?.trim();
@@ -36,8 +38,8 @@ export function ReferenceWorkLink({
 
   if (!url && !title) return null;
   const Icon = !url ? Paperclip : isPdf ? FileText : isImage ? ImageIcon : ExternalLink;
-  const kind = !url ? '' : isPdf ? 'PDF' : isImage ? 'รูปภาพ' : 'ลิงก์';
-  const label = title || assignment.sample_work_url || 'ไฟล์แนบ';
+  const kind = !url ? '' : isPdf ? 'PDF' : isImage ? tr('รูปภาพ', 'image') : tr('ลิงก์', 'link');
+  const label = title || assignment.sample_work_url || tr('ไฟล์แนบ', 'Attachment');
   // Cards around this may be draggable or clickable; a tap here is only about the attachment.
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
@@ -71,12 +73,12 @@ export function ReferenceWorkLink({
                   className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  <span>เปิดในแท็บใหม่</span>
+                  <span>{tr('เปิดในแท็บใหม่', 'Open in new tab')}</span>
                 </a>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  aria-label="ปิด"
+                  aria-label={tr('ปิด', 'Close')}
                   className="shrink-0 w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -107,7 +109,7 @@ export function ReferenceWorkLink({
             setOpen(true);
           }}
           onMouseDown={stop}
-          title={`ดูตัวอย่าง: ${label}`}
+          title={`${tr('ดูตัวอย่าง', 'Preview')}: ${label}`}
           className={`group flex items-center gap-3 w-full min-w-0 p-2 rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50/70 dark:bg-sky-950/30 hover:border-sky-400 text-left cursor-zoom-in transition-colors ${className}`}
         >
           <span className="relative w-16 h-12 shrink-0 rounded-xl overflow-hidden bg-white dark:bg-slate-800 ring-1 ring-sky-100 dark:ring-sky-900 flex items-center justify-center">
@@ -123,7 +125,7 @@ export function ReferenceWorkLink({
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-[11px] font-bold text-sky-800 dark:text-sky-300 truncate">📎 {label}</span>
-            <span className="block text-[10px] text-slate-500 dark:text-slate-400">แตะเพื่อดูตัวอย่าง ({kind})</span>
+            <span className="block text-[10px] text-slate-500 dark:text-slate-400">{tr('แตะเพื่อดูตัวอย่าง', 'Tap to preview')} ({kind})</span>
           </span>
         </button>
         {popup}
