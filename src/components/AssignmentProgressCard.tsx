@@ -166,7 +166,7 @@ export function AssignmentProgressCard({
               </span>
             ) : (
               assignment.publish_at && (
-                <span className="font-bold text-sky-700 dark:text-sky-400">
+                <span className="font-bold text-slate-600 dark:text-slate-300">
                   {th ? 'เผยแพร่' : 'Publishes'}: {formatDateTime(assignment.publish_at, language)}
                 </span>
               )
@@ -176,7 +176,7 @@ export function AssignmentProgressCard({
                 type="button"
                 draggable={false}
                 onClick={onPublishNow}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-black cursor-pointer transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-black cursor-pointer transition-colors"
                 title={th ? 'สอนถึงหัวข้อนี้แล้ว — เปิดให้นักเรียนทำได้ทันที' : 'Release it to students now'}
               >
                 <Rocket className="w-3 h-3" />

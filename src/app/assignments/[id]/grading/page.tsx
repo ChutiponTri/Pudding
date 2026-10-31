@@ -99,6 +99,15 @@ function GradingBackLink({ classroomId }: { classroomId?: string }) {
   );
 }
 
+/** The submission-status card, in the same soft tints as the grading card beside it. */
+const STATUS_CARD_CLASSES: Record<keyof typeof ASSIGNMENT_STATUS_CLASSES, string> = {
+  draft: 'bg-slate-50 dark:bg-slate-800/60 border-dashed border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300',
+  scheduled: 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200',
+  open: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200',
+  late: 'bg-orange-50 dark:bg-orange-950/30 border-orange-200 dark:border-orange-900/70 text-orange-800 dark:text-orange-200',
+  closed: 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/70 text-rose-800 dark:text-rose-200',
+};
+
 type RosterRow = {
   key: string;
   student: Partial<User> | undefined;
@@ -457,7 +466,7 @@ They can edit it even if closed. Handing in again clears the current score and c
     if (assignment?.is_exam || !isHandedIn(sub) || !grader || grader.role === 'researcher') return null;
     const busy = reopeningId === sub.id;
     return sub.reopened_at ? (
-      <span className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 ring-1 ring-violet-200 dark:ring-violet-900 text-[11px] font-bold whitespace-nowrap">
+      <span className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 ring-1 ring-amber-200 dark:ring-amber-900 text-[11px] font-bold whitespace-nowrap">
         <PencilLine className="w-3 h-3" />
         {th ? 'เปิดให้แก้ไขอยู่' : 'Editing allowed'}
         <button
@@ -475,7 +484,7 @@ They can edit it even if closed. Handing in again clears the current score and c
         onClick={() => handleToggleReopen(sub)}
         disabled={busy}
         title={th ? 'ให้นักเรียนแก้ไขงานที่ส่งแล้ว (เช่น แนบไฟล์ผิด)' : 'Let the student fix and hand in again'}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap text-slate-600 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-700 hover:text-violet-700 hover:ring-violet-300 dark:hover:text-violet-300 dark:hover:ring-violet-800 cursor-pointer disabled:opacity-50 transition-colors"
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap text-slate-600 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-700 hover:text-amber-700 hover:ring-amber-400 dark:hover:text-amber-300 dark:hover:ring-amber-700 cursor-pointer disabled:opacity-50 transition-colors"
       >
         <PencilLine className="w-3 h-3" />
         {th ? 'ให้แก้ไขงาน' : 'Allow edit'}
@@ -742,7 +751,7 @@ They can edit it even if closed. Handing in again clears the current score and c
           {/* The two answers a teacher looks for: does it still take work, and is grading done? */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {assignmentStatus && (
-              <div className={`p-3.5 rounded-2xl border ${ASSIGNMENT_STATUS_CLASSES[assignmentStatus.tone]} border-solid`}>
+              <div className={`p-3.5 rounded-2xl border ${STATUS_CARD_CLASSES[assignmentStatus.tone]}`}>
                 <span className="text-[11px] font-bold opacity-80 block">{th ? 'การรับงาน' : 'Submissions'}</span>
                 <p className="mt-0.5 text-base font-black flex items-center gap-1.5">
                   {assignmentStatus.tone === 'closed' ? <Lock className="w-4 h-4" /> : assignmentStatus.tone === 'late' ? <Unlock className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
@@ -948,7 +957,7 @@ They can edit it even if closed. Handing in again clears the current score and c
                 <button
                   type="button"
                   onClick={handlePublishNow}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-black cursor-pointer shrink-0 ml-6 sm:ml-0 shadow-xs"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-black cursor-pointer shrink-0 ml-6 sm:ml-0 shadow-xs"
                 >
                   <Rocket className="w-3.5 h-3.5" />
                   {th ? 'เผยแพร่ตอนนี้' : 'Publish now'}
@@ -1128,7 +1137,7 @@ They can edit it even if closed. Handing in again clears the current score and c
                             />
                           )}
                           {sub.submitted_by && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-900 text-[11px] font-bold">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px] font-bold">
                               📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
                             </span>
                           )}
@@ -1282,7 +1291,7 @@ They can edit it even if closed. Handing in again clears the current score and c
                           )}
                           {sub.submitted_by && (
                             <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-900 text-[11px] font-bold whitespace-nowrap"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px] font-bold whitespace-nowrap"
                               title={th ? 'นักเรียนส่งด้วยโทรศัพท์ของเพื่อนร่วมห้อง' : "Sent from a classmate's phone"}
                             >
                               📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
