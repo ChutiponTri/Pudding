@@ -1826,39 +1826,45 @@ export function TeacherWorkspace({
                 return (
                   <div className="pt-2 space-y-3">
                     {/* Still to grade */}
-                    <div className={`rounded-2xl p-3 space-y-2.5 ${toGrade.length ? 'bg-amber-50/70 dark:bg-amber-950/20 ring-1 ring-amber-200 dark:ring-amber-900/50' : 'bg-emerald-50/70 dark:bg-emerald-950/20 ring-1 ring-emerald-200 dark:ring-emerald-900/50'}`}>
-                      <div className="flex items-center gap-1.5 text-xs font-bold">
-                        {toGrade.length ? (
-                          <>
-                            <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                            <span className="text-amber-800 dark:text-amber-300">
-                              {language === 'th' ? `ต้องตรวจ ${toGrade.length} งาน · ${pendingTotal} ชิ้น` : `To grade: ${toGrade.length} tasks · ${pendingTotal} submissions`}
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                            <span className="text-emerald-700 dark:text-emerald-300">{language === 'th' ? 'ตรวจครบทุกงานแล้ว' : 'Everything is graded'}</span>
-                          </>
-                        )}
+                    {toGrade.length > 0 && (
+                      <div className="rounded-2xl p-3 space-y-2.5 bg-amber-50/70 dark:bg-amber-950/20 ring-1 ring-amber-200 dark:ring-amber-900/50">
+                        <div className="flex items-center gap-1.5 text-xs font-bold">
+                          <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                          <span className="text-amber-800 dark:text-amber-300">
+                            {language === 'th' ? `ต้องตรวจ ${toGrade.length} งาน · ${pendingTotal} ชิ้น` : `To grade: ${toGrade.length} tasks · ${pendingTotal} submissions`}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{toGrade.map(row)}</div>
                       </div>
-                      {toGrade.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{toGrade.map(row)}</div>}
-                    </div>
+                    )}
 
                     {/* Already graded (or nothing handed in yet) */}
                     {graded.length > 0 && (
-                      <div className="space-y-2.5">
+                      <div className="rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/15 ring-1 ring-emerald-200/80 dark:ring-emerald-900/50 overflow-hidden">
                         <button
                           type="button"
                           onClick={() => setOpenGradedCourses((prev) => ({ ...prev, [course.id]: !showGraded }))}
                           aria-expanded={showGraded}
-                          className="w-full flex items-center gap-1.5 px-1 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                          className="group/graded w-full flex items-center gap-2.5 p-3 text-left hover:bg-emerald-100/50 dark:hover:bg-emerald-900/20 transition-colors cursor-pointer"
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                          <span>{language === 'th' ? `ตรวจครบแล้ว (${graded.length})` : `Graded (${graded.length})`}</span>
-                          <ChevronDown className={`w-3.5 h-3.5 ml-auto transition-transform ${showGraded ? 'rotate-180' : ''}`} />
+                          <span className="w-7 h-7 rounded-lg shrink-0 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                              {toGrade.length === 0
+                                ? language === 'th' ? 'ตรวจครบทุกงานแล้ว' : 'Everything is graded'
+                                : language === 'th' ? 'ตรวจครบแล้ว' : 'Graded'}
+                            </span>
+                            <span className="block text-[11px] text-emerald-700/70 dark:text-emerald-400/70 truncate">
+                              {language === 'th' ? `${graded.length} งาน · ${showGraded ? 'แตะเพื่อซ่อน' : 'แตะเพื่อดูคะแนน'}` : `${graded.length} tasks · ${showGraded ? 'tap to hide' : 'tap to view scores'}`}
+                            </span>
+                          </span>
+                          <span className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-emerald-600 dark:text-emerald-400 bg-white/70 dark:bg-slate-900/60 ring-1 ring-emerald-200/80 dark:ring-emerald-900/60 group-hover/graded:ring-emerald-400 transition-colors">
+                            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${showGraded ? 'rotate-180' : ''}`} />
+                          </span>
                         </button>
-                        {showGraded && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{graded.map(row)}</div>}
+                        {showGraded && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-3 pb-3">{graded.map(row)}</div>}
                       </div>
                     )}
                   </div>
