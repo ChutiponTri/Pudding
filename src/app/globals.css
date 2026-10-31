@@ -111,6 +111,17 @@ video {
 @utility fade-in {
   --tw-enter-opacity: 0;
 }
+
+/* Opacity-only fade for wrappers around fixed bars/modals: animate-in leaves a
+   transform behind (fill-mode both), which would re-anchor fixed descendants. */
+@keyframes pudding-fade {
+  from {
+    opacity: 0;
+  }
+}
+@utility animate-fade {
+  animation: pudding-fade var(--tw-duration, 200ms) ease-out both;
+}
 @utility zoom-in-95 {
   --tw-enter-scale: 0.95;
 }
