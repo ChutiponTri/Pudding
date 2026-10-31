@@ -4,44 +4,93 @@ export interface AcademicPeriod {
   yearBE: number;
 }
 
+/** First day of a term (month 1–12). */
+export interface TermStart {
+  semester: number;
+  month: number;
+  day: number;
+}
+
 /**
- * Returns default academic semester and year based on Thai educational calendar:
- * - Semester 1: May - October (academic year = current CE year)
- * - Semester 2: Late October / November - March (if Jan-Mar, academic year is CE year - 1)
+ * Default Thai academic calendar (each teacher can change it; see useAcademicCalendar).
+ * The default term only picks the initial filter; teachers can still choose any term.
+ *
+ * An academic year starts on term 1's first day. With the defaults, ปีการศึกษา 2569 is
+ * 10 May 2569 – 9 May 2570 (calendar dates, B.E.):
+ *   - Semester 1: 10 May 2569 – 15 Oct 2569
+ *   - Semester 2: 16 Oct 2569 – 15 Mar 2570
+ *   - Semester 3 (summer): 16 Mar 2570 – 9 May 2570
+ * All three are labelled with academic year 2569 (e.g. "ซัมเมอร์ / 2569").
  */
-export function getDefaultAcademicPeriod(refDate: Date = new Date()): AcademicPeriod {
-  const month = refDate.getMonth(); // 0 = Jan ... 11 = Dec
-  const date = refDate.getDate();
-  const yearCE = refDate.getFullYear();
+export const DEFAULT_TERM_STARTS: ReadonlyArray<TermStart> = [
+  { semester: 1, month: 5, day: 10 },
+  { semester: 2, month: 10, day: 16 },
+  { semester: 3, month: 3, day: 16 },
+];
 
-  // วันแรกของ "ครึ่งหลังเดือน" ที่ถือว่าเริ่มเทอมใหม่
-  const MID_MONTH = 16;
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+export const daysInMonth = (month: number) => DAYS_IN_MONTH[month - 1] ?? 31;
 
-  // ค่าเทียบลำดับในปี เช่น 16 ต.ค. -> 916, 5 ก.พ. -> 105
-  const md = month * 100 + date;
-  const START_SEM1 = 4 * 100 + MID_MONTH; // กลาง พ.ค.
-  const START_SEM2 = 9 * 100 + MID_MONTH; // กลาง ต.ค.
-  const START_SEM3 = 1 * 100 + MID_MONTH; // กลาง ก.พ.
+/** Comparable position of a calendar day inside the academic year that starts at `yearStart`. */
+function academicOrdinal(month: number, day: number, yearStart: TermStart): number {
+  let monthsIn = (month - yearStart.month + 12) % 12;
+  // Same month as the start but earlier day: that is the very end of the year.
+  if (monthsIn === 0 && day < yearStart.day) monthsIn = 12;
+  return monthsIn * 100 + day;
+}
 
-  let semester: number;
-  let academicYearCE: number;
+/**
+ * Returns the reason a set of term starts is unusable, or null when it is valid:
+ * semesters 1, 2, 3 each once, real dates, and in calendar order starting from term 1.
+ */
+export function termStartsProblem(starts: ReadonlyArray<TermStart> | null | undefined, language: 'th' | 'en' = 'th'): string | null {
+  const th = language === 'th';
+  if (!starts || starts.length !== 3 || [1, 2, 3].some((sem) => starts[sem - 1]?.semester !== sem)) {
+    return th ? 'ต้องมีภาคเรียนที่ 1, 2 และ 3' : 'Terms 1, 2 and 3 are required';
+  }
+  for (const term of starts) {
+    if (!Number.isInteger(term.month) || term.month < 1 || term.month > 12 || !Number.isInteger(term.day) || term.day < 1 || term.day > daysInMonth(term.month)) {
+      return th ? `วันเริ่มภาคเรียนที่ ${term.semester} ไม่ถูกต้อง` : `Term ${term.semester} start date is invalid`;
+    }
+  }
+  const [t1, t2, t3] = starts.map((term) => academicOrdinal(term.month, term.day, starts[0]));
+  if (!(t1 < t2 && t2 < t3)) {
+    return th
+      ? 'วันเริ่มต้องเรียงตามลำดับ: ภาคเรียนที่ 1 → 2 → ซัมเมอร์ ภายในหนึ่งปีการศึกษา'
+      : 'Start dates must run in order within one academic year: term 1 → term 2 → summer';
+  }
+  return null;
+}
 
-  if (md >= START_SEM2) {
-    // กลาง ต.ค. - 31 ธ.ค. -> เทอม 2 ของปีการศึกษาปัจจุบัน
-    semester = 2;
-    academicYearCE = yearCE;
-  } else if (md >= START_SEM1) {
-    // กลาง พ.ค. - กลาง ต.ค. -> เทอม 1 ของปีการศึกษาปัจจุบัน
-    semester = 1;
-    academicYearCE = yearCE;
-  } else if (md >= START_SEM3) {
-    // กลาง ก.พ. - กลาง พ.ค. -> เทอม 3 (ซัมเมอร์) ของปีการศึกษาก่อนหน้า
-    semester = 3;
-    academicYearCE = yearCE - 1;
-  } else {
-    // 1 ม.ค. - กลาง ก.พ. -> เทอม 2 ของปีการศึกษาก่อนหน้า
-    semester = 2;
-    academicYearCE = yearCE - 1;
+/** The given term starts when valid, otherwise the defaults. */
+export function resolveTermStarts(starts: unknown): ReadonlyArray<TermStart> {
+  if (!Array.isArray(starts)) return DEFAULT_TERM_STARTS;
+  const parsed = starts.map((term) => ({
+    semester: Number((term as TermStart)?.semester),
+    month: Number((term as TermStart)?.month),
+    day: Number((term as TermStart)?.day),
+  }));
+  return termStartsProblem(parsed) ? DEFAULT_TERM_STARTS : parsed;
+}
+
+/** The academic term (and its academic year) that a date falls in. */
+export function getDefaultAcademicPeriod(
+  refDate: Date = new Date(),
+  termStarts: ReadonlyArray<TermStart> = DEFAULT_TERM_STARTS
+): AcademicPeriod {
+  const starts = termStartsProblem(termStarts) ? DEFAULT_TERM_STARTS : termStarts;
+  const month = refDate.getMonth() + 1;
+  const day = refDate.getDate();
+  const yearStart = starts[0];
+
+  // Before the year's first day (e.g. Jan–early May), the date belongs to the previous academic year.
+  const beforeYearStart = month < yearStart.month || (month === yearStart.month && day < yearStart.day);
+  const academicYearCE = refDate.getFullYear() - (beforeYearStart ? 1 : 0);
+
+  const position = academicOrdinal(month, day, yearStart);
+  let semester = yearStart.semester;
+  for (const term of starts) {
+    if (position >= academicOrdinal(term.month, term.day, yearStart)) semester = term.semester;
   }
 
   return {
@@ -49,6 +98,14 @@ export function getDefaultAcademicPeriod(refDate: Date = new Date()): AcademicPe
     yearCE: academicYearCE,
     yearBE: academicYearCE + 543,
   };
+}
+
+/** The day before the next term starts, as { month, day } (for showing each term's end). */
+export function termEnd(starts: ReadonlyArray<TermStart>, index: number): { month: number; day: number } {
+  const next = starts[(index + 1) % starts.length];
+  if (next.day > 1) return { month: next.month, day: next.day - 1 };
+  const month = next.month === 1 ? 12 : next.month - 1;
+  return { month, day: month === 2 ? 28 : daysInMonth(month) };
 }
 
 export function formatAcademicPeriod(

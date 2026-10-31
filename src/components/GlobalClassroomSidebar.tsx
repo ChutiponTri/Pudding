@@ -17,13 +17,15 @@ import {
   Home,
   ChevronDown,
   GripVertical,
+  CalendarCog,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService, CLASSROOMS_CHANGED_EVENT } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
 import { useSidebar } from '@/components/SidebarContext';
 import { SemesterSelect } from '@/components/SemesterSelect';
-import { getDefaultAcademicPeriod } from '@/lib/utils/academicYear';
+import { useAcademicCalendar } from '@/lib/hooks/useAcademicCalendar';
+import { TermDatesSettings } from '@/components/TermDatesSettings';
 import { ALL_SEMESTERS, filterClassroomsBySemester, semesterKeyFromParam, semesterKeyOf, semesterOptions } from '@/lib/utils/semesterFilter';
 import { applySavedOrder, mergeVisibleOrder, useSidebarPrefs } from '@/lib/hooks/useSidebarPrefs';
 
@@ -202,7 +204,8 @@ export const GlobalClassroomSidebar: React.FC = () => {
   // each classroom's effective term (its course's when it has none), so no
   // course data is needed here.
   const { prefs, update: updatePrefs } = useSidebarPrefs(teacherId);
-  const currentPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
+  const { currentPeriod } = useAcademicCalendar();
+  const [isTermDatesOpen, setIsTermDatesOpen] = useState(false);
   const termOptions = useMemo(() => semesterOptions([], allClassrooms, currentPeriod.yearCE), [allClassrooms, currentPeriod.yearCE]);
   const currentTermKey = semesterKeyOf(currentPeriod.semester, currentPeriod.yearCE);
   const storedTerm = semesterKeyFromParam(prefs.term ?? null, currentTermKey);
@@ -391,7 +394,37 @@ export const GlobalClassroomSidebar: React.FC = () => {
         </div>
 
         {/* Term filter (same options and rule as the dashboard) and counts */}
-        <div className="mx-3 mb-1 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 space-y-1.5 shrink-0">
+        <section className="mx-3 mb-2 p-2.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 space-y-2 shrink-0" aria-label={tr('ภาคเรียน', 'Term')}>
+          <div className="flex items-center justify-between gap-2 px-0.5 min-h-5">
+            <span className="flex items-center gap-1">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                {tr('ภาคเรียน', 'Term')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsTermDatesOpen(true)}
+                title={tr('ตั้งค่าวันเปิดภาคเรียน', 'Set term dates')}
+                aria-label={tr('ตั้งค่าวันเปิดภาคเรียน', 'Set term dates')}
+                className="p-1 -m-0.5 rounded-md text-slate-400 hover:text-amber-600 hover:bg-white dark:hover:bg-slate-900 cursor-pointer"
+              >
+                <CalendarCog className="w-3.5 h-3.5" />
+              </button>
+            </span>
+            {termKey === currentTermKey ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+                {tr('ปัจจุบัน', 'Current')}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => updatePrefs((p) => ({ ...p, term: currentTermKey }))}
+                className="text-[10px] font-bold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer"
+              >
+                {tr('กลับภาคเรียนปัจจุบัน', 'Back to current')}
+              </button>
+            )}
+          </div>
           <SemesterSelect
             compact
             value={termKey}
@@ -399,16 +432,20 @@ export const GlobalClassroomSidebar: React.FC = () => {
             options={termOptions}
             currentPeriod={currentPeriod}
           />
-          <div className="px-1 flex items-center justify-between text-[11px] text-slate-500">
-            <span className="font-bold flex items-center gap-1">
-              <GraduationCap className="w-3.5 h-3.5 text-amber-500" />
-              <span>{tr(`${filteredClassrooms.length} ห้องเรียน`, `${filteredClassrooms.length} classrooms`)}</span>
+          <div className="grid grid-cols-2 gap-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-300">
+            <span className="h-8 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-center gap-1.5 min-w-0">
+              <GraduationCap className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-hidden="true" />
+              <span className="tabular-nums text-slate-900 dark:text-white">{filteredClassrooms.length}</span>
+              <span className="truncate">{tr('ห้องเรียน', filteredClassrooms.length === 1 ? 'classroom' : 'classrooms')}</span>
             </span>
-            <span className="text-[10px] text-slate-400 font-mono">
-              {groupedCourses.length} {tr('รายวิชา', 'courses')}
+            <span className="h-8 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-center gap-1.5 min-w-0">
+              <BookOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-hidden="true" />
+              <span className="tabular-nums text-slate-900 dark:text-white">{groupedCourses.length}</span>
+              <span className="truncate">{tr('รายวิชา', groupedCourses.length === 1 ? 'course' : 'courses')}</span>
             </span>
           </div>
-        </div>
+        </section>
+        {isTermDatesOpen && <TermDatesSettings onClose={() => setIsTermDatesOpen(false)} />}
 
         {/* Classrooms List: Smooth Scroll with no horizontal overflow */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 overflow-x-hidden min-w-0">

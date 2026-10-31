@@ -114,7 +114,7 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
           ref={menuRef}
           style={menuStyle}
           role="listbox"
-          className="z-[80] p-2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl shadow-slate-900/15 border border-slate-200 dark:border-slate-800 space-y-2 flex flex-col animate-in fade-in zoom-in-95 duration-100"
+          className="z-[110] p-2 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl shadow-slate-900/15 border border-slate-200 dark:border-slate-800 space-y-2 flex flex-col animate-in fade-in zoom-in-95 duration-100"
         >
           {/* Search Box */}
           <div className="relative">

@@ -9,6 +9,8 @@ import { assignmentPostBody, createClassroomPost } from '@/lib/server/classroomP
 import { newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
 import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 import { THAI_INSTITUTIONS, canonicalInstitution, sameInstitution } from '@/lib/data/thaiInstitutions';
+import { pushTeacherProfileToClerk, readClerkTeacherProfile } from '@/lib/server/clerkTeacherProfile';
+import { TEACHER_NAME_PLACEHOLDER, isTeacherProfileComplete } from '@/lib/utils/teacherProfile';
 import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
 import {
   classroomForStudent,
@@ -426,33 +428,50 @@ export const dataActions = {
     const fn = profile.first_name.trim();
     const ln = profile.last_name.trim();
     const inst = canonicalInstitution(profile.institution);
-    if (!fn || !ln || !inst) return false;
+    if (!isTeacherProfileComplete({ first_name: fn, last_name: ln, institution: inst })) return false;
     const { error } = await supabase.from('users').update({ first_name: fn, last_name: ln, institution: inst, updated_at: new Date().toISOString() }).eq('id', me.userId);
     if (error) throw toDatabaseError(error, 'users');
     registeredInstitutionsCache = null;
+    // Mirror to Clerk so the Clerk dashboard shows the same name and institution.
+    await pushTeacherProfileToClerk(me.userId, { first_name: fn, last_name: ln, institution: inst! });
     return true;
   },
 
+  /**
+   * Creates/refreshes the teacher's users row on sign-in and returns it.
+   * Clerk sync: once a profile has been saved in Pudding, Clerk holds the
+   * source copy (firstName, lastName, publicMetadata.institution), so edits
+   * made in the Clerk dashboard flow back here. Older accounts whose profile
+   * predates that are pushed to Clerk once instead.
+   */
   async syncClerkUser({ supabase, actor }: Ctx, clerkUser: { firstName?: string | null; lastName?: string | null; imageUrl?: string | null; email?: string | null; institution?: string | null }) {
     const me = requireTeacher(actor);
-    const { data: existing } = await supabase.from('users').select('id, role, first_name, last_name, institution, line_uid, teacher_line_uid').eq('id', me.userId).maybeSingle();
+    const [{ data: existing }, clerkProfile] = await Promise.all([
+      supabase.from('users').select('id, role, first_name, last_name, institution, line_uid, teacher_line_uid').eq('id', me.userId).maybeSingle(),
+      readClerkTeacherProfile(me.userId),
+    ]);
     // Frees a student LINE id left on this teacher row from before teacher_line_uid existed.
     if (existing && needsTeacherRepair(existing)) await repairTeacherRow(supabase, existing);
+    const fromClerk = clerkProfile?.synced ? clerkProfile : null;
     const record: Record<string, unknown> = {
       id: me.userId,
-      // Names edited in the app win over Clerk's profile.
-      first_name: existing?.first_name || clerkUser.firstName || 'คุณครู',
-      last_name: existing?.last_name || clerkUser.lastName || '',
-      avatar_url: clerkUser.imageUrl || null,
-      email: clerkUser.email || '',
+      first_name: fromClerk?.first_name || existing?.first_name || clerkProfile?.first_name || clerkUser.firstName || TEACHER_NAME_PLACEHOLDER,
+      last_name: fromClerk?.last_name || existing?.last_name || clerkProfile?.last_name || clerkUser.lastName || '',
+      avatar_url: clerkProfile?.image_url || clerkUser.imageUrl || null,
+      email: clerkProfile?.email || clerkUser.email || '',
       role: 'teacher',
-      institution: canonicalInstitution(clerkUser.institution || existing?.institution) || null,
+      institution: canonicalInstitution(fromClerk?.institution || existing?.institution || clerkProfile?.institution) || null,
       updated_at: new Date().toISOString(),
     };
     let { data, error } = await supabase.from('users').upsert({ ...record, clerk_id: me.userId }).select().single();
     if (error && error.message.includes('clerk_id')) ({ data, error } = await supabase.from('users').upsert(record).select().single());
     if (error) throw toDatabaseError(error, 'users');
-    return data as User;
+    const saved = data as User;
+    // A complete profile Clerk does not have yet (saved before Clerk sync existed): copy it over.
+    if (clerkProfile && !clerkProfile.synced && isTeacherProfileComplete(saved)) {
+      after(() => pushTeacherProfileToClerk(me.userId, { first_name: saved.first_name, last_name: saved.last_name || '', institution: saved.institution || '' }));
+    }
+    return saved;
   },
 
   /** Students read themselves; teachers read themselves, people at their school, and their own students. */

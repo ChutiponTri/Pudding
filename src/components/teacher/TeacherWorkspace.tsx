@@ -7,6 +7,7 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dataService, type ClassroomChangeEvent } from '@/lib/supabase/dataService';
 import { fetchCached, readCache, TEACHER_DASHBOARD_CACHE_KEY, watchClassrooms } from '@/lib/cache/sessionCache';
+import { useAcademicCalendar } from '@/lib/hooks/useAcademicCalendar';
 
 type TeacherDashboardData = Awaited<ReturnType<typeof dataService.getTeacherDashboard>>;
 
@@ -24,7 +25,6 @@ import {
   User,
 } from '@/types/database';
 import {
-  getDefaultAcademicPeriod,
   formatAcademicPeriod,
   getAcademicYearOptions,
 } from '@/lib/utils/academicYear';
@@ -73,7 +73,8 @@ import { gradingCounts, isIntegrityFlagged, needsGrading } from '@/lib/utils/gra
 import { ASSIGNMENT_STATUS_CLASSES, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { GradingBar } from '@/components/AssignmentProgressCard';
-import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
+import { TeacherProfileFields, announceTeacherProfile, profileFormValues } from '@/components/TeacherProfileGate';
+import { TEACHER_PROFILE_UPDATED_EVENT, isTeacherProfileComplete } from '@/lib/utils/teacherProfile';
 import { canonicalInstitution, institutionLabel } from '@/lib/data/thaiInstitutions';
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
@@ -144,24 +145,29 @@ export function TeacherWorkspace({
 
   const [loading, setLoading] = useState(true);
 
-  // Compute default academic period (e.g., Oct 2026 -> Semester 1 / 2026)
-  const defaultPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
+  // Current term from the teacher's own term dates (Clerk), or the default calendar.
+  const { currentPeriod: defaultPeriod } = useAcademicCalendar();
+  const currentTermKey = `${defaultPeriod.semester}_${defaultPeriod.yearCE}`;
 
   // Selected semester filter state (format: `${semester}_${yearCE}` or 'all')
-  const [selectedSemesterKey, setSelectedSemesterKey] = useState<string>(
-    () => initialSemesterKey || `${defaultPeriod.semester}_${defaultPeriod.yearCE}`
-  );
+  const [selectedSemesterKey, setSelectedSemesterKey] = useState<string>(() => initialSemesterKey || currentTermKey);
+  const hasChosenSemesterRef = useRef(Boolean(initialSemesterKey));
   const changeSemester = (key: string) => {
+    hasChosenSemesterRef.current = true;
     setSelectedSemesterKey(key);
     onSemesterChange?.(key);
   };
+  // The teacher's term dates load with Clerk (or get edited): follow the new
+  // current term unless a term was picked by hand.
+  useEffect(() => {
+    if (!hasChosenSemesterRef.current) setSelectedSemesterKey(currentTermKey);
+  }, [currentTermKey]);
   // Classrooms page: filter courses and sections by name or code.
   const [classroomQuery, setClassroomQuery] = useState('');
 
   // Teacher Institution & Profile state
   const [teacherProfile, setTeacherProfile] = useState<User | null>(null);
   const [isInstitutionModalOpen, setIsInstitutionModalOpen] = useState(false);
-  const [isProfileRequired, setIsProfileRequired] = useState(false);
   const [teacherInstitutionInput, setTeacherInstitutionInput] = useState('');
   const [teacherFirstNameInput, setTeacherFirstNameInput] = useState('');
   const [teacherLastNameInput, setTeacherLastNameInput] = useState('');
@@ -251,7 +257,6 @@ export function TeacherWorkspace({
   // Each load gets a number; only the newest one may write state, so a slow
   // earlier response never overwrites fresher data.
   const loadSeqRef = useRef(0);
-  const profilePrefilledRef = useRef(false);
 
   const applyDashboard = (data: TeacherDashboardData) => {
     const myClassrooms = data.classrooms;
@@ -270,24 +275,8 @@ export function TeacherWorkspace({
     setIndicators(data.indicators);
     setAllSubmissions(data.submissions);
 
-    const profile = data.profile;
-    if (profile) {
-      setTeacherProfile(profile);
-      // Prefill once; later (realtime) reloads must not wipe what the teacher is typing.
-      if (!profilePrefilledRef.current) {
-        profilePrefilledRef.current = true;
-        // Pre-fill name from profile or fall back to Clerk data
-        setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
-        setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
-        // Do NOT pre-fill institution — teacher must actively choose/confirm it
-        setTeacherInstitutionInput('');
-        if (!profile.institution || !profile.first_name || !profile.last_name) {
-          // Prompt teacher to complete their profile on first visit
-          setIsProfileRequired(true);
-          setIsInstitutionModalOpen(true);
-        }
-      }
-    }
+    // A missing name/institution is handled app-wide by TeacherProfileGate.
+    if (data.profile) setTeacherProfile(data.profile);
 
     // The open roster dialog shows the freshly loaded (already hydrated) classroom.
     // Functional update: realtime reloads run an older closure of this function.
@@ -961,18 +950,41 @@ export function TeacherWorkspace({
   };
 
   // Teacher profile saving handler (name + institution)
+  const handleOpenTeacherProfile = () => {
+    const values = profileFormValues(teacherProfile, clerkUser);
+    setTeacherFirstNameInput(values.firstName);
+    setTeacherLastNameInput(values.lastName);
+    setTeacherInstitutionInput(values.institution);
+    setIsInstitutionModalOpen(true);
+  };
+
+  // The app-wide profile gate (or another tab of this page) saved the profile.
+  useEffect(() => {
+    const onUpdated = (event: Event) => {
+      const saved = (event as CustomEvent<User>).detail;
+      setTeacherProfile((prev) => ({ ...(prev || {}), ...saved }) as User);
+    };
+    window.addEventListener(TEACHER_PROFILE_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(TEACHER_PROFILE_UPDATED_EVENT, onUpdated);
+  }, []);
+
   const handleSaveTeacherProfile = async () => {
     if (!clerkUser?.id) return;
     const fn = teacherFirstNameInput.trim();
     const ln = teacherLastNameInput.trim();
     const inst = canonicalInstitution(teacherInstitutionInput);
-    if (!fn || !ln || !inst) return;
+    if (!isTeacherProfileComplete({ first_name: fn, last_name: ln, institution: inst })) {
+      alert(tr('กรุณากรอกชื่อ นามสกุล และสถานศึกษาให้ครบ', 'Please fill in first name, last name and institution'));
+      return;
+    }
     try {
-      // 1. Save to Supabase
-      await dataService.updateTeacherProfile(clerkUser.id, { first_name: fn, last_name: ln, institution: inst });
-      // 2. Also update Clerk so syncClerkUser never reverts these on reload
-      await clerkUser.update({ firstName: fn, lastName: ln });
-      setTeacherProfile((prev) => prev ? { ...prev, first_name: fn, last_name: ln, institution: inst } : null);
+      // The server saves the users row and mirrors it to Clerk (name + institution).
+      const ok = await dataService.updateTeacherProfile(clerkUser.id, { first_name: fn, last_name: ln, institution: inst! });
+      if (!ok) throw new Error('Profile incomplete');
+      await clerkUser.reload().catch(() => undefined);
+      const saved = { ...(teacherProfile || { id: clerkUser.id, role: 'teacher' }), first_name: fn, last_name: ln, institution: inst } as User;
+      setTeacherProfile(saved);
+      announceTeacherProfile(saved);
       showToast(language === 'th' ? 'บันทึกแล้ว' : 'Profile updated successfully');
       setIsInstitutionModalOpen(false);
     } catch (e) {
@@ -1261,7 +1273,7 @@ export function TeacherWorkspace({
           <div className="flex items-center gap-2 pt-1 min-w-0">
             <button
               type="button"
-              onClick={() => { setIsProfileRequired(false); setIsInstitutionModalOpen(true); }}
+              onClick={handleOpenTeacherProfile}
               className="inline-flex items-center gap-1.5 max-w-full px-3 py-1.5 rounded-xl bg-black/10 hover:bg-black/20 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors cursor-pointer border border-black/10"
               title={tr('คลิกเพื่อเลือกหรือแก้ไขสถานศึกษา', 'Click to choose or edit your institution')}
             >
@@ -3718,25 +3730,9 @@ export function TeacherWorkspace({
         </ModalSheet>
       )}
 
-      {/* TEACHER INSTITUTION MODAL */}
+      {/* TEACHER PROFILE MODAL (editing; first-time setup is TeacherProfileGate) */}
       {isInstitutionModalOpen && (
-        <ModalSheet onClose={() => { if (!isProfileRequired) setIsInstitutionModalOpen(false); }} size="sm:max-w-md">
-            {/* Header: a welcome for brand-new teachers, a plain title when editing */}
-            {isProfileRequired ? (
-              <div className="shrink-0 text-center space-y-2 px-4 sm:px-6 pt-3 sm:pt-6 pb-1">
-                <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-amber-300 to-amber-500 text-3xl flex items-center justify-center mx-auto shadow-lg shadow-amber-500/25">
-                  🍮
-                </div>
-                <h3 className="text-lg font-black text-slate-900 dark:text-white">
-                  {language === 'th' ? 'ยินดีต้อนรับสู่ Pudding!' : 'Welcome to Pudding!'}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
-                  {language === 'th'
-                    ? 'กรอกชื่อและสถานศึกษาครั้งเดียว ให้นักเรียนและเพื่อนครูค้นหาคุณเจอ'
-                    : 'Add your name and institution once so students and co-teachers can find you.'}
-                </p>
-              </div>
-            ) : (
+        <ModalSheet onClose={() => setIsInstitutionModalOpen(false)} size="sm:max-w-md">
             <ModalSheetHeader>
               <div className="flex items-center gap-2">
                 <School className="w-5 h-5 text-amber-500" />
@@ -3744,74 +3740,32 @@ export function TeacherWorkspace({
                   {language === 'th' ? 'ข้อมูลคุณครู' : 'Teacher Profile'}
                 </h3>
               </div>
-              {!isProfileRequired && (
-                <button
-                  type="button"
-                  onClick={() => setIsInstitutionModalOpen(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
-                  aria-label={t('common.cancel')}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setIsInstitutionModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+                aria-label={t('common.cancel')}
+              >
+                <X className="w-5 h-5" />
+              </button>
             </ModalSheetHeader>
-            )}
 
             <ModalSheetBody className="space-y-4">
-              {!isProfileRequired && (
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                  {language === 'th'
-                    ? 'กรอกชื่อ–นามสกุล และเลือกสถานศึกษา'
-                    : 'Please fill in your name and select your institution so students and co-teachers can find you.'}
-                </p>
-              )}
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                {tr(
+                  'ชื่อ นามสกุล และสถานศึกษาจะซิงก์กับบัญชีผู้ใช้ (Clerk) อัตโนมัติ',
+                  'Your name and institution are synced to your account (Clerk) automatically.'
+                )}
+              </p>
 
-              {/* Name row */}
-              <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {language === 'th' ? 'ชื่อ' : 'First Name'} <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={teacherFirstNameInput}
-                    onChange={(e) => setTeacherFirstNameInput(e.target.value)}
-                    placeholder={language === 'th' ? 'เช่น สมหญิง' : 'e.g. Jane'}
-                    className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm sm:text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {language === 'th' ? 'นามสกุล' : 'Last Name'} <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={teacherLastNameInput}
-                    onChange={(e) => setTeacherLastNameInput(e.target.value)}
-                    placeholder={language === 'th' ? 'เช่น ใจดี' : 'e.g. Smith'}
-                    className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm sm:text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
-                </div>
-              </div>
-
-              {/* Institution */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  {language === 'th' ? 'สถานศึกษา / สถาบัน' : 'Institution'} <span className="text-rose-500">*</span>
-                </label>
-                <InstitutionSearchSelect
-                  value={teacherInstitutionInput}
-                  onChange={setTeacherInstitutionInput}
-                  placeholder={language === 'th' ? 'ค้นหาชื่อสถานศึกษา...' : 'Search school name...'}
-                />
-              </div>
-
-              {teacherProfile?.institution && (
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-600 dark:text-slate-400">
-                  <span>{language === 'th' ? 'สถานศึกษาปัจจุบัน: ' : 'Current institution: '}</span>
-                  <b className="text-slate-900 dark:text-white">{institutionLabel(teacherProfile.institution, language)}</b>
-                </div>
-              )}
+              <TeacherProfileFields
+                firstName={teacherFirstNameInput}
+                lastName={teacherLastNameInput}
+                institution={teacherInstitutionInput}
+                onFirstName={setTeacherFirstNameInput}
+                onLastName={setTeacherLastNameInput}
+                onInstitution={setTeacherInstitutionInput}
+              />
 
               <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/20 p-4 space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
@@ -3880,22 +3834,20 @@ export function TeacherWorkspace({
 
             {/* Footer */}
             <ModalSheetFooter>
-              {!isProfileRequired && (
-                <button
-                  type="button"
-                  onClick={() => setIsInstitutionModalOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
-                >
-                  {t('common.cancel')}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setIsInstitutionModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+              >
+                {t('common.cancel')}
+              </button>
               <button
                 type="button"
                 disabled={!teacherFirstNameInput.trim() || !teacherLastNameInput.trim() || !teacherInstitutionInput.trim()}
                 onClick={handleSaveTeacherProfile}
-                className={`${isProfileRequired ? 'w-full h-12 text-sm' : 'px-4 py-2 text-xs'} rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors active:scale-[0.98]`}
+                className="px-4 py-2 text-xs rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors active:scale-[0.98]"
               >
-                {isProfileRequired ? (language === 'th' ? 'บันทึกและเริ่มใช้งาน' : 'Save & get started') : t('common.save')}
+                {t('common.save')}
               </button>
             </ModalSheetFooter>
         </ModalSheet>

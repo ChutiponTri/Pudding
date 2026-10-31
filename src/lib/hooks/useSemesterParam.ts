@@ -1,8 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { getDefaultAcademicPeriod } from '@/lib/utils/academicYear';
+import { useAcademicCalendar } from '@/lib/hooks/useAcademicCalendar';
 import { semesterKeyFromParam, semesterKeyOf, type SemesterKey } from '@/lib/utils/semesterFilter';
 
 /**
@@ -13,7 +12,7 @@ export function useSemesterParam() {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
-  const currentPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
+  const { currentPeriod } = useAcademicCalendar();
   const fallback = semesterKeyOf(currentPeriod.semester, currentPeriod.yearCE);
   const semesterKey = semesterKeyFromParam(search.get('term'), fallback);
 

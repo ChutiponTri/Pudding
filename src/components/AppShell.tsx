@@ -6,6 +6,7 @@ import { useSidebar } from '@/components/SidebarContext';
 import { GlobalClassroomSidebar } from '@/components/GlobalClassroomSidebar';
 import { Navbar } from '@/components/Navbar';
 import { SessionCacheSync } from '@/components/SessionCacheSync';
+import { TeacherProfileGate } from '@/components/TeacherProfileGate';
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
@@ -32,6 +33,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   return (
     <div className="min-h-dvh flex flex-col">
       <SessionCacheSync />
+      {/* Every teacher page waits until name, last name and institution are set. */}
+      <TeacherProfileGate />
       <GlobalClassroomSidebar />
       {/* The sidebar pushes content only on desktop; on phones and iPads it
           overlays the page so the workspace keeps its full width. */}

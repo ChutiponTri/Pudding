@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
 import { useUser, UserButton, Show } from '@clerk/nextjs';
-import { dataService } from '@/lib/supabase/dataService';
 import { notificationManager, AppNotification } from '@/lib/utils/notificationManager';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -62,19 +61,7 @@ export const Navbar: React.FC = () => {
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  useEffect(() => {
-    if (isSignedIn && user) {
-      dataService.syncClerkUser({
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        imageUrl: user.imageUrl,
-        email: user.primaryEmailAddress?.emailAddress,
-      }).catch((err: unknown) => console.error("Error syncing clerk user:", err));
-    }
-    // Once per signed-in user, not on every Clerk object refresh.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSignedIn, user?.id]);
+  // Signing in syncs the users row in TeacherProfileGate (AppShell).
 
   if (pathname.startsWith('/liff')) {
     return null;
