@@ -3,7 +3,8 @@
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { dataService } from '@/lib/supabase/dataService';
 import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
@@ -27,7 +28,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   ClipboardList,
   Clock,
   Copy,
@@ -1229,23 +1229,6 @@ export default function ClassroomWorkspacePage() {
     }
   };
 
-  // Export one session's attendance as CSV
-  const exportAttendance = () => {
-    if (!classroom || !session) return;
-    downloadCsv(`attendance-${classroom.name}-${session.title}-${csvDateStamp()}.csv`, [
-      ['นักเรียน', 'รหัสนักเรียน', 'สถานะ', 'เวลาที่เช็ค'],
-      ...(classroom.students || []).map((student) => {
-        const record = findStudentRecord(recordIndex, student);
-        return [
-          `${student.first_name} ${student.last_name}`,
-          student.student_id || '',
-          statusLabels[record?.status || 'absent'],
-          record?.checked_at ? new Date(record.checked_at).toLocaleTimeString('th-TH') : '-',
-        ];
-      }),
-    ]);
-  };
-
   // Export every session: one row per student, one column per session (oldest first)
   const exportAllAttendance = () => {
     if (!classroom || !sessions.length) return;
@@ -2204,7 +2187,7 @@ export default function ClassroomWorkspacePage() {
               classroom={classroom}
               sessions={sessions}
               session={session}
-              recordIndex={recordIndex}
+              records={allRecords}
               counts={attendanceCounts}
               title={attendanceTitle}
               setTitle={setAttendanceTitle}
@@ -2217,7 +2200,6 @@ export default function ClassroomWorkspacePage() {
               create={createAttendance}
               update={updateAttendanceRecord}
               action={sessionAction}
-              exportCsv={exportAttendance}
               exportAllCsv={exportAllAttendance}
               selectSession={setSelectedSessionId}
               onUpdateSession={handleUpdateSession}
@@ -3326,7 +3308,7 @@ function AttendancePanel({
   classroom,
   sessions,
   session,
-  recordIndex,
+  records,
   counts,
   title,
   setTitle,
@@ -3339,7 +3321,6 @@ function AttendancePanel({
   create,
   update,
   action,
-  exportCsv,
   exportAllCsv,
   selectSession,
   onUpdateSession,
@@ -3349,7 +3330,8 @@ function AttendancePanel({
   classroom: Classroom;
   sessions: AttendanceSession[];
   session: AttendanceSession | null;
-  recordIndex: Map<string, AttendanceRecord>;
+  /** Every session's records; each roster indexes its own session. */
+  records: AttendanceRecord[];
   counts: Record<string, number>;
   title: string;
   setTitle: (v: string) => void;
@@ -3362,7 +3344,6 @@ function AttendancePanel({
   create: () => void;
   update: (sessionId: string, studentId: string, status: AttendanceStatus) => void;
   action: (sessionId: string, a: 'close' | 'extend') => void;
-  exportCsv: () => void;
   exportAllCsv: () => void;
   selectSession: (id: string) => void;
   onUpdateSession?: (
@@ -3381,22 +3362,35 @@ function AttendancePanel({
     session?.id || sessions.find((s) => s.status === 'open')?.id || sessions[0]?.id || null
   );
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [editingTitle, setEditingTitle] = useState('');
-  const [isEditingTitleActive, setIsEditingTitleActive] = useState(false);
-  const [rosterSearch, setRosterSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'on_time' | 'late' | 'absent' | 'excused'>('all');
+  const [renaming, setRenaming] = useState<AttendanceSession | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   // Keep expanded session in sync with parent session (adjusted during render
   // when the parent's session changes, instead of in an effect).
   const [syncedSessionId, setSyncedSessionId] = useState<string | undefined>(undefined);
   if (session?.id !== syncedSessionId) {
     setSyncedSessionId(session?.id);
-    if (session?.id) {
-      setExpandedSessionId(session.id);
-      setEditingTitle(session.title);
-      setIsEditingTitleActive(false);
-    }
+    if (session?.id) setExpandedSessionId(session.id);
   }
+
+  // Per-session indexes, so a roster that is still animating closed keeps
+  // showing its own session's statuses after another session is selected.
+  const indexBySession = useMemo(() => {
+    const groups = new Map<string, AttendanceRecord[]>();
+    for (const record of records) groups.set(record.session_id, [...(groups.get(record.session_id) || []), record]);
+    return new Map([...groups].map(([id, list]) => [id, indexRecords(list)]));
+  }, [records]);
+
+  const startRename = (item: AttendanceSession) => {
+    setRenaming(item);
+    setRenameValue(item.title);
+  };
+
+  const saveRename = () => {
+    if (!renaming || !onUpdateSession || !renameValue.trim()) return;
+    if (renameValue.trim() !== renaming.title) onUpdateSession(renaming.id, renameValue.trim());
+    setRenaming(null);
+  };
 
   // Open sessions sit right under the controls/overview; finished ones follow
   // in class order (class 1, class 2, ...).
@@ -3417,23 +3411,6 @@ function AttendancePanel({
       selectSession(sessionId);
     }
   };
-
-  // Filter students for the currently selected session
-  const filteredStudents = useMemo(() => {
-    const list = classroom.students || [];
-    return list.filter((student) => {
-      const matchQuery =
-        !rosterSearch.trim() ||
-        `${student.first_name} ${student.last_name}`.toLowerCase().includes(rosterSearch.toLowerCase()) ||
-        (student.student_id && student.student_id.includes(rosterSearch));
-
-      if (!matchQuery) return false;
-      if (statusFilter === 'all') return true;
-
-      const studentStatus = findStudentRecord(recordIndex, student)?.status || 'absent';
-      return studentStatus === statusFilter;
-    });
-  }, [classroom.students, recordIndex, rosterSearch, statusFilter]);
 
   /** Name of the classmate whose phone did a borrowed-phone check-in (they are on the same roster). */
   const senderName = (senderId: string) => {
@@ -3635,6 +3612,20 @@ function AttendancePanel({
                         </span>
                       )}
                       <h4 className="text-sm font-black text-slate-900 dark:text-white">{item.title}</h4>
+                      {onUpdateSession && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startRename(item);
+                          }}
+                          className="-ml-1 p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                          title="แก้ไขชื่อคาบ"
+                          aria-label="แก้ไขชื่อคาบ"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                     <p className={`text-[11px] mt-0.5 ${isOpen ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400'}`}>
                       {isOpen
@@ -3674,7 +3665,7 @@ function AttendancePanel({
                     }`}
                   >
                     <span>{isExpanded ? 'ย่อกลับ' : 'ดูรายชื่อ'}</span>
-                    {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
                   </button>
 
                   {onDeleteSession && (
@@ -3691,160 +3682,17 @@ function AttendancePanel({
               </div>
 
               {/* Expanded Detail & Interactive Student Roster */}
-              {isExpanded && (
-                <div className="p-4 sm:p-5 bg-slate-50/50 dark:bg-slate-850/50 border-t border-slate-200 dark:border-slate-800 space-y-4">
-                  {/* Inline Edit Header & CSV Export */}
-                  <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-                    <div className="flex-1 min-w-56 flex items-center gap-2">
-                      <label className="text-xs font-bold text-slate-400 whitespace-nowrap">ชื่อคาบ:</label>
-                      <input
-                        value={editingTitle}
-                        onChange={(e) => {
-                          setEditingTitle(e.target.value);
-                          setIsEditingTitleActive(true);
-                        }}
-                        className="flex-1 p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
-                      />
-                      {isEditingTitleActive && (
-                        <button
-                          type="button"
-                          disabled={isUpdatingSession}
-                          onClick={() => {
-                            if (onUpdateSession && editingTitle.trim()) {
-                              onUpdateSession(item.id, editingTitle.trim());
-                              setIsEditingTitleActive(false);
-                            }
-                          }}
-                          className="px-3 py-1.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black cursor-pointer shadow-xs"
-                        >
-                          บันทึกชื่อ
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={exportCsv}
-                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>CSV คาบนี้</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Student Search & Status Filter Tabs */}
-                  <div className="flex flex-wrap items-center justify-between gap-2.5">
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {(
-                        [
-                          ['all', 'ทั้งหมด'],
-                          ['on_time', 'ตรงเวลา'],
-                          ['late', 'มาสาย'],
-                          ['absent', 'ขาด'],
-                          ['excused', 'ลา'],
-                        ] as const
-                      ).map(([key, label]) => (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => setStatusFilter(key)}
-                          className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                            statusFilter === key
-                              ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black shadow-xs'
-                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-100'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="relative min-w-44 flex-1 sm:max-w-xs">
-                      <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-                      <input
-                        value={rosterSearch}
-                        onChange={(e) => setRosterSearch(e.target.value)}
-                        placeholder="ค้นหาชื่อหรือรหัสนักเรียน..."
-                        className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Student Roster Table/Cards */}
-                  <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
-                    {filteredStudents.map((student) => {
-                      const record = findStudentRecord(recordIndex, student);
-                      const isSessionOpen = item.status === 'open';
-                      const currentStatus = record?.status || (isSessionOpen ? 'idle' : 'absent');
-
-                      return (
-                        <div
-                          key={student.id}
-                          className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs shadow-xs"
-                        >
-                          <div className="min-w-44">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900 dark:text-white block">
-                                {student.first_name} {student.last_name}
-                              </span>
-                              {currentStatus === 'idle' && (
-                                <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                                  รอเช็คชื่อ (IDLE) ⚪
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              รหัส: {student.student_id || '-'}
-                              {record?.checked_at && ` • เช็คเมื่อ ${new Date(record.checked_at).toLocaleTimeString('th-TH')}`}
-                              {record?.checked_in_by && (
-                                <span className="font-sans font-bold text-sky-600 dark:text-sky-400" title="นักเรียนเช็คชื่อด้วยโทรศัพท์ของเพื่อนร่วมห้อง">
-                                  {` • 📱 เช็คชื่อจากเครื่องของ ${senderName(record.checked_in_by)}`}
-                                </span>
-                              )}
-                            </span>
-                          </div>
-
-                          {/* 1-Click Status Switcher Buttons */}
-                          <div className="grid grid-cols-4 gap-1 w-full sm:w-auto">
-                            {(
-                              [
-                                ['on_time', 'ตรงเวลา', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
-                                ['late', 'มาสาย', 'bg-amber-100 text-amber-800 border-amber-300'],
-                                ['excused', 'ลา', 'bg-sky-100 text-sky-800 border-sky-300'],
-                                ['absent', 'ขาด', 'bg-rose-100 text-rose-800 border-rose-300'],
-                              ] as const
-                            ).map(([stKey, stLabel, activeCls]) => {
-                              const isActive = currentStatus === stKey;
-                              return (
-                                <button
-                                  key={stKey}
-                                  type="button"
-                                  onClick={() => update(item.id, student.id, stKey as AttendanceStatus)}
-                                  className={`px-2.5 py-2 sm:py-1 rounded-lg text-[11px] sm:text-[10px] font-bold border transition-all cursor-pointer ${
-                                    isActive
-                                      ? `${activeCls} font-black shadow-xs ring-1 ring-current`
-                                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-700 hover:border-slate-400'
-                                  }`}
-                                >
-                                  {stLabel}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {!filteredStudents.length && (
-                      <p className="text-xs text-slate-400 text-center py-6">
-                        ไม่พบนักเรียนที่ค้นหา
-                      </p>
-                    )}
-                  </div>
+              <Collapse open={isExpanded}>
+                <div className="p-4 sm:p-5 bg-slate-50/50 dark:bg-slate-850/50 border-t border-slate-200 dark:border-slate-800">
+                  <SessionRoster
+                    session={item}
+                    students={classroom.students || []}
+                    index={indexBySession.get(item.id) || EMPTY_RECORD_INDEX}
+                    update={update}
+                    senderName={senderName}
+                  />
                 </div>
-              )}
+              </Collapse>
             </div>
           );
         })}
@@ -3857,7 +3705,292 @@ function AttendancePanel({
           </div>
         )}
       </div>
+
+      {/* Rename dialog, portaled out of the animated tab panel: its transform
+          would otherwise confine this fixed overlay to the panel. */}
+      {renaming &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
+            onClick={(e) => e.target === e.currentTarget && setRenaming(null)}
+          >
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl">
+              <div>
+                <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                  <Pencil className="w-4 h-4 text-amber-500" />
+                  <span>แก้ไขชื่อคาบ</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">ชื่อใหม่จะแสดงในรายการคาบและไฟล์ CSV</p>
+              </div>
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveRename();
+                  if (e.key === 'Escape') setRenaming(null);
+                }}
+                placeholder="เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร"
+                className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRenaming(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={saveRename}
+                  disabled={!renameValue.trim() || isUpdatingSession}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black cursor-pointer disabled:opacity-50"
+                >
+                  บันทึกชื่อ
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </section>
+  );
+}
+
+const EMPTY_RECORD_INDEX = new Map<string, AttendanceRecord>();
+
+/**
+ * Height-animated disclosure. Children stay mounted while closing so the
+ * content slides shut instead of vanishing, then unmount once it has.
+ */
+function Collapse({ open, children }: { open: boolean; children: ReactNode }) {
+  const [mounted, setMounted] = useState(open);
+  if (open && !mounted) setMounted(true);
+
+  return (
+    <div
+      inert={!open}
+      onTransitionEnd={(e) => e.target === e.currentTarget && !open && setMounted(false)}
+      className={`grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
+        open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+      }`}
+    >
+      <div className="min-h-0 overflow-hidden">{mounted && children}</div>
+    </div>
+  );
+}
+
+/** A student without a record in the session has not checked in: shown apart from an explicit "absent". */
+type RosterStatus = AttendanceStatus | 'idle';
+type RosterFilter = 'all' | RosterStatus;
+
+const ROSTER_FILTERS: { id: RosterFilter; label: string; dot: string; pill: string; text: string }[] = [
+  { id: 'all', label: 'ทั้งหมด', dot: '', pill: 'bg-slate-900 dark:bg-white', text: 'text-white dark:text-slate-900' },
+  { id: 'on_time', label: 'ตรงเวลา', dot: 'bg-emerald-500', pill: 'bg-emerald-500', text: 'text-white' },
+  { id: 'late', label: 'มาสาย', dot: 'bg-amber-400', pill: 'bg-amber-400', text: 'text-slate-950' },
+  { id: 'excused', label: 'ลา', dot: 'bg-sky-500', pill: 'bg-sky-500', text: 'text-white' },
+  { id: 'absent', label: 'ขาด', dot: 'bg-rose-500', pill: 'bg-rose-500', text: 'text-white' },
+  { id: 'idle', label: 'ยังไม่เช็ค', dot: 'bg-slate-300 dark:bg-slate-600', pill: 'bg-slate-500', text: 'text-white' },
+];
+
+const STATUS_CHOICES = [
+  ['on_time', 'ตรงเวลา', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
+  ['late', 'มาสาย', 'bg-amber-100 text-amber-800 border-amber-300'],
+  ['excused', 'ลา', 'bg-sky-100 text-sky-800 border-sky-300'],
+  ['absent', 'ขาด', 'bg-rose-100 text-rose-800 border-rose-300'],
+] as const;
+
+const statusSelectCls: Record<RosterStatus, string> = {
+  on_time: 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
+  late: 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
+  excused: 'bg-sky-50 text-sky-800 border-sky-300 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800',
+  absent: 'bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800',
+  idle: 'bg-slate-50 text-slate-500 border-dashed border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-600',
+};
+
+/** One session's roster: status filter, search, and a status control per student. */
+function SessionRoster({
+  session,
+  students,
+  index,
+  update,
+  senderName,
+}: {
+  session: AttendanceSession;
+  students: User[];
+  index: Map<string, AttendanceRecord>;
+  update: (sessionId: string, studentId: string, status: AttendanceStatus) => void;
+  senderName: (senderId: string) => string;
+}) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<RosterFilter>('all');
+  const [trackFilterBar, filterIndicator] = useSlidingIndicator(filter);
+
+  const statusOf = (student: User): RosterStatus => findStudentRecord(index, student)?.status || 'idle';
+
+  const filterCounts = useMemo(() => {
+    const result: Record<RosterFilter, number> = { all: students.length, on_time: 0, late: 0, excused: 0, absent: 0, idle: 0 };
+    for (const student of students) result[findStudentRecord(index, student)?.status || 'idle']++;
+    return result;
+  }, [students, index]);
+
+  const query = search.trim().toLowerCase();
+  const visible = students.filter((student) => {
+    const matchQuery =
+      !query ||
+      `${student.first_name} ${student.last_name}`.toLowerCase().includes(query) ||
+      (student.student_id && student.student_id.includes(query));
+    return matchQuery && (filter === 'all' || statusOf(student) === filter);
+  });
+
+  const activeFilter = ROSTER_FILTERS.find((f) => f.id === filter)!;
+  const isSessionOpen = session.status === 'open';
+
+  return (
+    <div className="space-y-3">
+      {/* Status filter (sliding highlight) & search */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+            <Filter className="w-3.5 h-3.5" />
+            <span>แสดงนักเรียนตามสถานะ</span>
+          </span>
+          <div className="relative w-full sm:w-64">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ค้นหาชื่อหรือรหัสนักเรียน..."
+              className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-white dark:bg-slate-900"
+            />
+          </div>
+        </div>
+
+        <div
+          ref={trackFilterBar}
+          className="relative flex gap-1 p-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-x-auto"
+        >
+          {filterIndicator && (
+            <span
+              aria-hidden
+              className={`absolute top-0 left-0 rounded-xl shadow-xs transition-[transform,width,height,background-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${activeFilter.pill}`}
+              style={indicatorStyle(filterIndicator)}
+            />
+          )}
+          {ROSTER_FILTERS.map(({ id, label, dot, pill, text }) => {
+            const selected = filter === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                data-active={selected}
+                aria-pressed={selected}
+                onClick={() => setFilter(id)}
+                className={`relative flex-1 min-w-max px-3 py-1.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors duration-300 cursor-pointer ${
+                  selected
+                    ? `${text} ${filterIndicator ? '' : pill}`
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {dot && <span className={`w-2 h-2 rounded-full ${selected ? 'bg-current opacity-70' : dot}`} />}
+                <span>{label}</span>
+                <span className={`px-1.5 min-w-5 rounded-full text-[10px] font-black ${selected ? 'bg-black/10 dark:bg-white/20' : 'bg-slate-100 dark:bg-slate-800'}`}>
+                  {filterCounts[id]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Student Roster (re-keyed per filter so it fades in like a tab change) */}
+      <div key={filter} className="space-y-1.5 max-h-96 overflow-y-auto pr-1 animate-in fade-in slide-in-from-top-1 [--tw-duration:320ms]">
+        {visible.map((student) => {
+          const record = findStudentRecord(index, student);
+          const currentStatus = statusOf(student);
+
+          return (
+            <div
+              key={student.id}
+              className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex sm:flex-wrap items-center justify-between gap-2 text-xs shadow-xs"
+            >
+              <div className="min-w-0 flex-1 sm:min-w-44">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-slate-900 dark:text-white truncate">
+                    {student.first_name} {student.last_name}
+                  </span>
+                  {currentStatus === 'idle' && (
+                    <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-600 shrink-0">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-500" />
+                      {isSessionOpen ? 'รอเช็คชื่อ' : 'ไม่ได้เช็คชื่อ'}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  รหัส: {student.student_id || '-'}
+                  {record?.checked_at && ` • เช็คเมื่อ ${new Date(record.checked_at).toLocaleTimeString('th-TH')}`}
+                  {record?.checked_in_by && (
+                    <span className="font-sans font-bold text-sky-600 dark:text-sky-400" title="นักเรียนเช็คชื่อด้วยโทรศัพท์ของเพื่อนร่วมห้อง">
+                      {` • 📱 เช็คชื่อจากเครื่องของ ${senderName(record.checked_in_by)}`}
+                    </span>
+                  )}
+                </span>
+              </div>
+
+              {/* Mobile: compact status dropdown */}
+              <div className="relative shrink-0 sm:hidden">
+                <select
+                  value={currentStatus}
+                  onChange={(e) => update(session.id, student.id, e.target.value as AttendanceStatus)}
+                  aria-label={`สถานะของ ${student.first_name} ${student.last_name}`}
+                  className={`appearance-none pl-3 pr-7 py-2 rounded-xl border text-[11px] font-black outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer ${statusSelectCls[currentStatus]}`}
+                >
+                  {currentStatus === 'idle' && (
+                    <option value="idle" disabled>
+                      {isSessionOpen ? 'รอเช็คชื่อ' : 'ไม่ได้เช็คชื่อ'}
+                    </option>
+                  )}
+                  {STATUS_CHOICES.map(([stKey, stLabel]) => (
+                    <option key={stKey} value={stKey}>
+                      {stLabel}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-60" />
+              </div>
+
+              {/* Desktop: 1-click status switcher buttons */}
+              <div className="hidden sm:grid grid-cols-4 gap-1">
+                {STATUS_CHOICES.map(([stKey, stLabel, activeCls]) => {
+                  const isActive = currentStatus === stKey;
+                  return (
+                    <button
+                      key={stKey}
+                      type="button"
+                      onClick={() => update(session.id, student.id, stKey)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                        isActive
+                          ? `${activeCls} font-black shadow-xs ring-1 ring-current`
+                          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-400 hover:text-slate-700 hover:border-slate-400'
+                      }`}
+                    >
+                      {stLabel}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        {!visible.length && (
+          <p className="text-xs text-slate-400 text-center py-6">
+            {query ? 'ไม่พบนักเรียนที่ค้นหา' : `ไม่มีนักเรียนในสถานะ “${activeFilter.label}”`}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
