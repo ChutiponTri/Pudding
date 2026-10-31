@@ -22,6 +22,11 @@ export const metadata: Metadata = {
   title: 'Pudding - แพลตฟอร์มการจัดการการเรียนรู้และตรวจการบ้านอัจฉริยะผ่าน LINE สำหรับคุณครู',
   description:
     'Pudding - ระบบบริหารจัดการห้องเรียน สั่งการบ้าน และจัดทำควิซออนไลน์ผ่าน LINE สะดวก ง่ายดาย พร้อมยกระดับการเรียนรู้ด้วยเทคโนโลยีเพื่อการศึกษา',
+  icons: {
+    icon: '/logo.png',
+    shortcut: '/logo.png',
+    apple: '/logo.png',
+  },
 };
 
 export default function RootLayout({
