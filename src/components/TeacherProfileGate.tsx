@@ -121,37 +121,72 @@ export function TeacherProfileGate() {
     userRef.current = user;
   });
 
-  // Once per signed-in user (not on every Clerk object refresh).
+  const requiredRef = useRef(required);
   useEffect(() => {
-    const clerkUser = userRef.current;
-    if (!isSignedIn || !clerkUser) return;
+    requiredRef.current = required;
+  });
+
+  /*
+   * Checks the profile on sign-in, whenever Clerk's copy of the name or
+   * institution changes, and when the tab regains focus (at most every 15 s),
+   * so a name removed in the Clerk dashboard or the database brings the popup
+   * back without signing out.
+   */
+  const clerkInstitution = user?.publicMetadata?.institution;
+  const clerkProfileKey = `${user?.id}|${user?.firstName ?? ''}|${user?.lastName ?? ''}|${typeof clerkInstitution === 'string' ? clerkInstitution : ''}`;
+  useEffect(() => {
+    if (!isSignedIn || !userRef.current) return;
     let cancelled = false;
-    dataService
-      .syncClerkUser({
-        id: clerkUser.id,
-        firstName: clerkUser.firstName,
-        lastName: clerkUser.lastName,
-        imageUrl: clerkUser.imageUrl,
-        email: clerkUser.primaryEmailAddress?.emailAddress,
-      })
-      .then((profile) => {
-        if (cancelled || !profile) return;
-        announceTeacherProfile(profile);
-        if (isTeacherProfileComplete(profile)) {
-          setRequired(false);
-          return;
-        }
-        const values = profileFormValues(profile, clerkUser);
-        setFirstName(values.firstName);
-        setLastName(values.lastName);
-        setInstitution(values.institution);
-        setRequired(true);
-      })
-      .catch((err: unknown) => console.error('Error syncing clerk user:', err));
+    let inFlight = false;
+    let lastCheck = 0;
+
+    const check = () => {
+      const clerkUser = userRef.current;
+      if (!clerkUser || inFlight) return;
+      inFlight = true;
+      lastCheck = Date.now();
+      dataService
+        .syncClerkUser({
+          id: clerkUser.id,
+          firstName: clerkUser.firstName,
+          lastName: clerkUser.lastName,
+          imageUrl: clerkUser.imageUrl,
+          email: clerkUser.primaryEmailAddress?.emailAddress,
+        })
+        .then((profile) => {
+          if (cancelled || !profile) return;
+          announceTeacherProfile(profile);
+          if (isTeacherProfileComplete(profile)) {
+            setRequired(false);
+            return;
+          }
+          // Don't wipe what the teacher is already typing into an open popup.
+          if (!requiredRef.current) {
+            const values = profileFormValues(profile, clerkUser);
+            setFirstName(values.firstName);
+            setLastName(values.lastName);
+            setInstitution(values.institution);
+          }
+          setRequired(true);
+        })
+        .catch((err: unknown) => console.error('Error syncing clerk user:', err))
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+
+    const onFocus = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastCheck > 15_000) check();
+    };
+    check();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
     return () => {
       cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
     };
-  }, [isSignedIn, user?.id]);
+  }, [isSignedIn, clerkProfileKey]);
 
   // Saved from another place (e.g. the dashboard's profile editor).
   useEffect(() => {

@@ -453,14 +453,28 @@ export const dataActions = {
     // Frees a student LINE id left on this teacher row from before teacher_line_uid existed.
     if (existing && needsTeacherRepair(existing)) await repairTeacherRow(supabase, existing);
     const fromClerk = clerkProfile?.synced ? clerkProfile : null;
+    const stored = (value: string | null | undefined) => {
+      const text = value?.trim() || '';
+      return text === TEACHER_NAME_PLACEHOLDER ? '' : text;
+    };
+    /**
+     * Once synced, Clerk is the source copy, but a field removed in EITHER
+     * place (Clerk dashboard or the users row) counts as missing, so the
+     * profile popup comes back. Falling back to the other copy here used to
+     * silently restore a deleted name.
+     */
+    const pick = (field: 'first_name' | 'last_name' | 'institution', fallback: string | null | undefined) => {
+      if (fromClerk) return existing && !stored(existing[field]) ? '' : fromClerk[field];
+      return stored(existing?.[field]) || clerkProfile?.[field] || fallback?.trim() || '';
+    };
     const record: Record<string, unknown> = {
       id: me.userId,
-      first_name: fromClerk?.first_name || existing?.first_name || clerkProfile?.first_name || clerkUser.firstName || TEACHER_NAME_PLACEHOLDER,
-      last_name: fromClerk?.last_name || existing?.last_name || clerkProfile?.last_name || clerkUser.lastName || '',
+      first_name: pick('first_name', clerkUser.firstName) || TEACHER_NAME_PLACEHOLDER,
+      last_name: pick('last_name', clerkUser.lastName),
       avatar_url: clerkProfile?.image_url || clerkUser.imageUrl || null,
       email: clerkProfile?.email || clerkUser.email || '',
       role: 'teacher',
-      institution: canonicalInstitution(fromClerk?.institution || existing?.institution || clerkProfile?.institution) || null,
+      institution: canonicalInstitution(pick('institution', null)) || null,
       updated_at: new Date().toISOString(),
     };
     let { data, error } = await supabase.from('users').upsert({ ...record, clerk_id: me.userId }).select().single();
