@@ -259,7 +259,10 @@ export const dataService = {
   },
 
   async updateCourse(id: string, data: Partial<Course>): Promise<Course | null> {
-    return call<Course | null>('updateCourse', id, data);
+    const updated = await call<Course | null>('updateCourse', id, data);
+    // A renamed course relabels its sections, so classroom lists (e.g. the sidebar) must refresh.
+    if (data.code !== undefined || data.name !== undefined) notifyClassroomsChanged({ action: 'updated' });
+    return updated;
   },
 
   async deleteCourse(id: string): Promise<void> {

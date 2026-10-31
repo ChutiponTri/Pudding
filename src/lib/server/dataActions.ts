@@ -597,16 +597,24 @@ export const dataActions = {
 
   async updateCourse({ supabase, actor }: Ctx, id: string, data: Partial<Course>) {
     const me = requireTeacher(actor);
-    const { data: current } = await supabase.from('courses').select('id, primary_teacher_id, teachers').eq('id', id).maybeSingle();
+    const { data: current } = await supabase.from('courses').select('id, primary_teacher_id, teachers, code, name').eq('id', id).maybeSingle();
     if (!current) throw new HttpError(404, 'ไม่พบรายวิชา');
     if (!isTeacherOf(current, me.userId)) throw FORBIDDEN();
     const { id: _id, primary_teacher_id: _owner, ...patch } = data;
     const { data: updated, error } = await supabase.from('courses').update(patch).eq('id', id).select().maybeSingle();
     if (error) throw toDatabaseError(error, 'courses');
-    // Co-teachers apply to every section of the course.
-    if (patch.teachers) {
-      const { error: clsError } = await supabase.from('classrooms').update({ teachers: patch.teachers }).eq('course_id', id);
-      if (clsError) console.warn('Sync teachers to classrooms error:', clsError.message);
+    // Sections copy the course's teachers, name and code; keep them in step in one update.
+    const classroomSync: Partial<Classroom> = {};
+    if (patch.teachers) classroomSync.teachers = patch.teachers;
+    const nextCode = patch.code ?? current.code;
+    const nextName = patch.name ?? current.name;
+    if (nextCode !== current.code || nextName !== current.name) {
+      classroomSync.course_name = nextName;
+      classroomSync.subject_code = `${nextCode} ${nextName}`;
+    }
+    if (Object.keys(classroomSync).length > 0) {
+      const { error: clsError } = await supabase.from('classrooms').update(classroomSync).eq('course_id', id);
+      if (clsError) console.warn('Sync course to classrooms error:', clsError.message);
     }
     return (updated as Course) || null;
   },

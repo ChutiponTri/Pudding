@@ -78,6 +78,7 @@ import { canonicalInstitution, institutionLabel } from '@/lib/data/thaiInstituti
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { EditStudentModal } from '@/components/EditStudentModal';
+import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader, MODAL_SHEET_FORM } from '@/components/ModalSheet';
 import { Collapse } from '@/components/Collapse';
 import { MobileText } from '@/components/MobileText';
 
@@ -208,6 +209,9 @@ export function TeacherWorkspace({
   const [indicatorMode, setIndicatorMode] = useState<'indicator' | 'competency'>('indicator');
   // Lesson-plan entries for competency mode
   const [lessonPlanDraft, setLessonPlanDraft] = useState<CourseLessonPlan[]>([]);
+  // Course details (code / name / description) edited in the same popup
+  const [courseDetailsDraft, setCourseDetailsDraft] = useState({ code: '', name: '', description: '' });
+  const [isSavingIndicators, setIsSavingIndicators] = useState(false);
 
   // Co-Teaching Setup Modal (TA vs Research Evaluator)
   const [editingCourseCoTeachers, setEditingCourseCoTeachers] = useState<Course | null>(null);
@@ -1023,6 +1027,7 @@ export function TeacherWorkspace({
   // Open Learning Indicators Modal
   const handleOpenIndicatorsModal = async (course: Course) => {
     setEditingCourseIndicators(course);
+    setCourseDetailsDraft({ code: course.code || '', name: course.name || '', description: course.description || '' });
     setIndicatorListDraft(course.indicators || []);
     setIndicatorMode(course.indicator_mode || 'indicator');
     setLessonPlanDraft(course.lesson_plans || []);
@@ -1078,29 +1083,41 @@ export function TeacherWorkspace({
   };
 
   const handleSaveIndicators = async () => {
-    if (!editingCourseIndicators) return;
+    if (!editingCourseIndicators || isSavingIndicators) return;
+    const code = courseDetailsDraft.code.trim().toUpperCase();
+    const name = courseDetailsDraft.name.trim();
+    if (!code || !name) {
+      alert(language === 'th' ? 'กรุณากรอกรหัสและชื่อรายวิชา' : 'Please enter course code and name');
+      return;
+    }
     const frameworkProblem = getFrameworkProblem(indicatorMode, indicatorListDraft, lessonPlanDraft, language);
     if (frameworkProblem) {
       alert(frameworkProblem);
       return;
     }
+    setIsSavingIndicators(true);
     try {
-      // Mode, items and lesson plans are saved in one update so they cannot drift apart.
+      // Details, mode, items and lesson plans are saved in one update so they cannot drift apart.
       await dataService.updateCourse(editingCourseIndicators.id, {
+        // Only send a changed code/name: a rename relabels every section of the course.
+        ...(code !== editingCourseIndicators.code ? { code } : {}),
+        ...(name !== editingCourseIndicators.name ? { name } : {}),
+        description: courseDetailsDraft.description.trim(),
         indicator_mode: indicatorMode,
         indicators: indicatorListDraft,
         // A course uses exactly one assessment framework at a time.
         lesson_plans: indicatorMode === 'competency' ? lessonPlanDraft : [],
       });
-      await dataService.updateCourseIndicators(editingCourseIndicators.id, indicatorListDraft);
       showToast(
-        language === 'th' ? 'บันทึกกรอบการวัดผลแล้ว' : 'Course framework saved successfully'
+        language === 'th' ? 'บันทึกข้อมูลรายวิชาแล้ว' : 'Course saved successfully'
       );
       setIsIndicatorsModalOpen(false);
       await loadAllData();
     } catch (error) {
       console.error('Save course framework failed:', error);
       alert(error instanceof Error ? error.message : (language === 'th' ? 'บันทึกไม่สำเร็จ' : 'Could not save'));
+    } finally {
+      setIsSavingIndicators(false);
     }
   };
 
@@ -1924,50 +1941,89 @@ export function TeacherWorkspace({
 
       {/* COURSE INDICATORS & RUBRICS CONFIGURATION MODAL */}
       {isIndicatorsModalOpen && editingCourseIndicators && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setIsIndicatorsModalOpen(false)}
-        >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[90dvh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+        <ModalSheet onClose={() => setIsIndicatorsModalOpen(false)} size="sm:max-w-2xl">
+            <ModalSheetHeader>
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
                   <Sliders className="w-5 h-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    {t('indicators_config.title')}
+                    {tr('แก้ไขรายวิชา', 'Edit course')}
                   </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                     {editingCourseIndicators.code} - {editingCourseIndicators.name}
+                    {' · '}
+                    {formatAcademicPeriod(editingCourseIndicators.semester, editingCourseIndicators.year_ce, language)}
                   </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setIsIndicatorsModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer shrink-0"
+                aria-label={t('common.cancel')}
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
+            </ModalSheetHeader>
 
-            {/* Course Read-only Banner */}
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="font-mono font-bold text-xs px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-900">
-                  {editingCourseIndicators.code}
-                </span>
-                <span className="font-bold text-xs text-slate-800 dark:text-slate-200">
-                  {editingCourseIndicators.name}
-                </span>
+            <ModalSheetBody className="space-y-6">
+            {/* ─── COURSE DETAILS ─── */}
+            <section className="space-y-3">
+              <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                <BookOpen className="w-3.5 h-3.5 text-amber-500" />
+                {tr('ข้อมูลรายวิชา', 'Course details')}
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3">
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-course-code" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {t('courses.course_code')} *
+                  </label>
+                  <input
+                    id="edit-course-code"
+                    type="text"
+                    required
+                    value={courseDetailsDraft.code}
+                    onChange={(e) => setCourseDetailsDraft((d) => ({ ...d, code: e.target.value }))}
+                    placeholder={language === 'th' ? 'เช่น ท31103' : 'e.g. TH31103'}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500 font-mono text-slate-900 dark:text-white uppercase font-bold"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-course-name" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {t('courses.course_name')} *
+                  </label>
+                  <input
+                    id="edit-course-name"
+                    type="text"
+                    required
+                    value={courseDetailsDraft.name}
+                    onChange={(e) => setCourseDetailsDraft((d) => ({ ...d, name: e.target.value }))}
+                    placeholder={language === 'th' ? 'เช่น ภาษาไทยเพื่อการนำเสนอ' : 'e.g. Thai Presentation & Discourse'}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500 text-slate-900 dark:text-white"
+                  />
+                </div>
               </div>
-              <span className="text-[11px] font-semibold text-slate-400">
-                {formatAcademicPeriod(editingCourseIndicators.semester, editingCourseIndicators.year_ce, language)}
-              </span>
-            </div>
+              <div className="space-y-1.5">
+                <label htmlFor="edit-course-desc" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  {t('courses.course_desc')}
+                </label>
+                <textarea
+                  id="edit-course-desc"
+                  rows={3}
+                  value={courseDetailsDraft.description}
+                  onChange={(e) => setCourseDetailsDraft((d) => ({ ...d, description: e.target.value }))}
+                  placeholder={language === 'th' ? 'คำอธิบายรายวิชา...' : 'Curriculum overview and competencies...'}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500 text-slate-900 dark:text-white resize-y"
+                />
+              </div>
+            </section>
+
+            <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <Sliders className="w-3.5 h-3.5 text-amber-500" />
+              {t('indicators_config.title')}
+            </h4>
 
             {/* ─── MODE TOGGLE: ตัวชี้วัด vs สมรรถนะรายวิชา ─── */}
             <div className="p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 flex gap-1">
@@ -2156,7 +2212,7 @@ export function TeacherWorkspace({
                               setIndicatorListDraft(copy);
                             }}
                             placeholder={tr('เช่น ผู้เรียนสามารถวิเคราะห์และสังเคราะห์ข้อมูลได้', 'e.g. Students can analyze and synthesize information')}
-                            className="flex-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-violet-200 dark:border-violet-800 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-violet-500"
+                            className="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-violet-200 dark:border-violet-800 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-violet-500"
                           />
                           <button
                             type="button"
@@ -2290,7 +2346,9 @@ export function TeacherWorkspace({
               </>
             )}
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            </ModalSheetBody>
+
+            <ModalSheetFooter>
               <button
                 type="button"
                 onClick={() => setIsIndicatorsModalOpen(false)}
@@ -2301,13 +2359,13 @@ export function TeacherWorkspace({
               <button
                 type="button"
                 onClick={handleSaveIndicators}
-                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer"
+                disabled={isSavingIndicators}
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer disabled:opacity-60"
               >
-                {t('indicators_config.save_indicators')}
+                {isSavingIndicators ? tr('กำลังบันทึก...', 'Saving...') : t('common.save')}
               </button>
-            </div>
-          </div>
-        </div>
+            </ModalSheetFooter>
+        </ModalSheet>
       )}
 
 
@@ -2318,28 +2376,25 @@ export function TeacherWorkspace({
 
       {/* CO-TEACHING SETUP MODAL */}
       {isCoTeachersModalOpen && editingCourseCoTeachers && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setIsCoTeachersModalOpen(false)}
-        >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[92dvh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-amber-500" />
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+        <ModalSheet onClose={() => setIsCoTeachersModalOpen(false)} size="sm:max-w-2xl">
+            <ModalSheetHeader>
+              <div className="flex items-center gap-2 min-w-0">
+                <Users className="w-5 h-5 text-amber-500 shrink-0" />
+                <h3 className="text-base font-bold text-slate-900 dark:text-white line-clamp-2">
                   {t('courses.co_teachers')} — {editingCourseCoTeachers.code} {editingCourseCoTeachers.name}
                 </h3>
               </div>
               <button
+                type="button"
                 onClick={() => setIsCoTeachersModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer shrink-0"
+                aria-label={t('common.cancel')}
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
+            </ModalSheetHeader>
+
+            <ModalSheetBody className="space-y-6">
 
             {/* Role Definitions & Rules Banner */}
             <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 overflow-hidden">
@@ -2651,7 +2706,9 @@ export function TeacherWorkspace({
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            </ModalSheetBody>
+
+            <ModalSheetFooter>
               <button
                 type="button"
                 onClick={() => setIsCoTeachersModalOpen(false)}
@@ -2666,9 +2723,8 @@ export function TeacherWorkspace({
               >
                 {t('common.save')}
               </button>
-            </div>
-          </div>
-        </div>
+            </ModalSheetFooter>
+        </ModalSheet>
       )}
 
       {/* CREATE / EDIT CLASSROOM SECTION MODAL */}
@@ -2808,15 +2864,8 @@ export function TeacherWorkspace({
 
       {/* CREATE NEW COURSE MODAL */}
       {isCourseModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setIsCourseModalOpen(false)}
-        >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[calc(100dvh-2rem)] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+        <ModalSheet onClose={() => setIsCourseModalOpen(false)} size="sm:max-w-lg">
+            <ModalSheetHeader>
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-600 dark:text-amber-400 flex items-center justify-center">
                   <BookOpen className="w-4 h-4" />
@@ -2829,12 +2878,14 @@ export function TeacherWorkspace({
                 type="button"
                 onClick={() => setIsCourseModalOpen(false)}
                 className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+                aria-label={t('common.cancel')}
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
+            </ModalSheetHeader>
 
-            <form onSubmit={handleSaveCourse} className="space-y-4">
+            <form onSubmit={handleSaveCourse} className={MODAL_SHEET_FORM}>
+              <ModalSheetBody className="space-y-4">
               <div className="flex items-center gap-3 pb-1">
                 {[1, 2].map((step) => (
                   <React.Fragment key={step}>
@@ -3013,7 +3064,7 @@ export function TeacherWorkspace({
                             value={plan.title}
                             onChange={(event) => setCourseLessonPlanDraft((current) => current.map((item, index) => index === planIndex ? { ...item, title: event.target.value } : item))}
                             placeholder={tr('ชื่อแผนการสอน / กิจกรรม', 'Lesson plan / activity name')}
-                            className="flex-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                            className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
                           />
                           <button
                             type="button"
@@ -3091,7 +3142,9 @@ export function TeacherWorkspace({
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-4">
+              </ModalSheetBody>
+
+              <ModalSheetFooter>
                 <button
                   type="button"
                   onClick={() => setIsCourseModalOpen(false)}
@@ -3132,24 +3185,16 @@ export function TeacherWorkspace({
                     : (language === 'th' ? 'ยืนยันสร้างวิชาและกรอบการวัดผล' : 'Create course and framework')}
                 </button>
                 )}
-              </div>
+              </ModalSheetFooter>
             </form>
-          </div>
-        </div>
+        </ModalSheet>
       )}
 
       {/* LINE GROUP CONNECTION MODAL */}
       {lineConnectionClassroom && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setLineConnectionClassroom(null)}
-        >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-5 max-h-[calc(100dvh-2rem)] overflow-y-auto"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
+        <ModalSheet onClose={() => setLineConnectionClassroom(null)} size="sm:max-w-md">
+            <ModalSheetHeader>
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold">
                   <MessageCircle className="w-4 h-4" />
                 </div>
@@ -3161,12 +3206,14 @@ export function TeacherWorkspace({
               <button
                 type="button"
                 onClick={() => setLineConnectionClassroom(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer shrink-0"
+                aria-label={t('common.close')}
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
+            </ModalSheetHeader>
 
+            <ModalSheetBody>
             <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs">
               <span className="text-slate-500 font-bold">{tr('สถานะการเชื่อมต่อ:', 'Connection:')}</span>
               <span
@@ -3202,7 +3249,9 @@ export function TeacherWorkspace({
               />
             )}
 
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap justify-end gap-2">
+            </ModalSheetBody>
+
+            <ModalSheetFooter>
               {lineConnection.status !== 'connected' && (
                 <button
                   type="button"
@@ -3233,9 +3282,8 @@ export function TeacherWorkspace({
                   </button>
                 </>
               )}
-            </div>
-          </div>
-        </div>
+            </ModalSheetFooter>
+        </ModalSheet>
       )}
 
       {/* STUDENT ROSTER & LINE LIFF INVITE MODAL */}
@@ -3249,30 +3297,27 @@ export function TeacherWorkspace({
       )}
 
       {managingClassroom && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setManagingClassroom(null)}
-        >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-6 max-h-[90dvh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+        <ModalSheet onClose={() => setManagingClassroom(null)} size="sm:max-w-2xl">
+            <ModalSheetHeader>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white truncate">
                   {managingClassroom.name}
                 </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                   {managingClassroom.subject_code} • {managingClassroom.academic_year}
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setManagingClassroom(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg"
+                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg shrink-0"
+                aria-label={t('common.close')}
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
+            </ModalSheetHeader>
+
+            <ModalSheetBody className="space-y-6">
 
             {/* Tabs */}
             <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2 overflow-x-auto scrollbar-none -mx-1 px-1 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
@@ -3658,8 +3703,10 @@ export function TeacherWorkspace({
               </div>
             )}
 
+            </ModalSheetBody>
+
             {/* Footer Close */}
-            <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+            <ModalSheetFooter>
               <button
                 type="button"
                 onClick={() => setManagingClassroom(null)}
@@ -3667,24 +3714,16 @@ export function TeacherWorkspace({
               >
                 {t('common.close')}
               </button>
-            </div>
-          </div>
-        </div>
+            </ModalSheetFooter>
+        </ModalSheet>
       )}
 
       {/* TEACHER INSTITUTION MODAL */}
       {isInstitutionModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => { if (!isProfileRequired) setIsInstitutionModalOpen(false); }}
-        >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-5 sm:p-6 space-y-5 max-h-[calc(100dvh-2rem)] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <ModalSheet onClose={() => { if (!isProfileRequired) setIsInstitutionModalOpen(false); }} size="sm:max-w-md">
             {/* Header: a welcome for brand-new teachers, a plain title when editing */}
             {isProfileRequired ? (
-              <div className="text-center space-y-2 pb-1">
+              <div className="shrink-0 text-center space-y-2 px-4 sm:px-6 pt-3 sm:pt-6 pb-1">
                 <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-amber-300 to-amber-500 text-3xl flex items-center justify-center mx-auto shadow-lg shadow-amber-500/25">
                   🍮
                 </div>
@@ -3698,7 +3737,7 @@ export function TeacherWorkspace({
                 </p>
               </div>
             ) : (
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+            <ModalSheetHeader>
               <div className="flex items-center gap-2">
                 <School className="w-5 h-5 text-amber-500" />
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
@@ -3707,16 +3746,18 @@ export function TeacherWorkspace({
               </div>
               {!isProfileRequired && (
                 <button
+                  type="button"
                   onClick={() => setIsInstitutionModalOpen(false)}
                   className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer"
+                  aria-label={t('common.cancel')}
                 >
                   <X className="w-5 h-5" />
                 </button>
               )}
-            </div>
+            </ModalSheetHeader>
             )}
 
-            <div className="space-y-4">
+            <ModalSheetBody className="space-y-4">
               {!isProfileRequired && (
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                   {language === 'th'
@@ -3835,10 +3876,10 @@ export function TeacherWorkspace({
                   </div>
                 )}
               </div>
-            </div>
+            </ModalSheetBody>
 
             {/* Footer */}
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <ModalSheetFooter>
               {!isProfileRequired && (
                 <button
                   type="button"
@@ -3856,9 +3897,8 @@ export function TeacherWorkspace({
               >
                 {isProfileRequired ? (language === 'th' ? 'บันทึกและเริ่มใช้งาน' : 'Save & get started') : t('common.save')}
               </button>
-            </div>
-          </div>
-        </div>
+            </ModalSheetFooter>
+        </ModalSheet>
       )}
     </div>
   );

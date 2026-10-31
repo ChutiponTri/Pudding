@@ -3,6 +3,7 @@
 import React from 'react';
 import { Submission, SubmissionEvent } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
 import { isSuspiciousActivity, SUSPICIOUS_AWAY_SECONDS, SUSPICIOUS_TAB_SWITCHES } from '@/lib/utils/integrity';
 import {
   X,
@@ -63,28 +64,21 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white dark:bg-slate-900 rounded-2xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[88dvh]"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <ModalSheet onClose={onClose} size="sm:max-w-2xl">
         {/* Header */}
-        <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-900/80">
-          <div className="flex items-center gap-3">
+        <ModalSheetHeader>
+          <div className="flex items-center gap-3 min-w-0">
             <div
-              className={`p-2.5 rounded-xl ${
+              className={`p-2 sm:p-2.5 rounded-xl shrink-0 ${
                 isHighRisk
                   ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300'
                   : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300'
               }`}
             >
-              <ShieldAlert className="w-6 h-6" />
+              <ShieldAlert className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+            <div className="min-w-0">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
                 {t('grading.audit_modal.title')}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -94,24 +88,26 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            aria-label={t('common.close')}
+            className="shrink-0 p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
+        </ModalSheetHeader>
 
         {/* Content body */}
-        <div className="p-6 overflow-y-auto space-y-6">
+        <ModalSheetBody className="space-y-6">
           {/* Key metrics cards */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 text-center">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            <div className="p-2.5 sm:p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 text-center min-w-0">
               <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-center gap-1">
                 <Layers className="w-3.5 h-3.5" />
                 {t('grading.audit_modal.summary_switches')}
               </span>
               <p
-                className={`text-2xl font-black mt-1 ${
+                className={`text-xl sm:text-2xl font-black mt-1 ${
                   submission.tab_switch_count >= SUSPICIOUS_TAB_SWITCHES
                     ? 'text-rose-600 dark:text-rose-400'
                     : 'text-slate-800 dark:text-slate-100'
@@ -121,13 +117,13 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
               </p>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 text-center">
+            <div className="p-2.5 sm:p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 text-center min-w-0">
               <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-center gap-1">
                 <Clock className="w-3.5 h-3.5" />
                 {t('grading.audit_modal.summary_duration')}
               </span>
               <p
-                className={`text-2xl font-black mt-1 ${
+                className={`text-xl sm:text-2xl font-black mt-1 ${
                   submission.total_time_away_seconds >= SUSPICIOUS_AWAY_SECONDS
                     ? 'text-rose-600 dark:text-rose-400'
                     : 'text-slate-800 dark:text-slate-100'
@@ -137,7 +133,7 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
               </p>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 text-center">
+            <div className="p-2.5 sm:p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 text-center min-w-0">
               <span className="text-xs text-slate-500 dark:text-slate-400">
                 {t('grading.audit_modal.risk_level')}
               </span>
@@ -177,7 +173,7 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
                     <div className="z-10 flex items-center justify-center w-7 h-7 rounded-full bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 shadow-xs">
                       {getEventIcon(evt.event_type)}
                     </div>
-                    <div className="flex-1 bg-slate-50 dark:bg-slate-800/70 p-3 rounded-xl border border-slate-200/60 dark:border-slate-700/60 text-xs">
+                    <div className="flex-1 min-w-0 bg-slate-50 dark:bg-slate-800/70 p-3 rounded-xl border border-slate-200/60 dark:border-slate-700/60 text-xs">
                       <div className="flex items-center justify-between font-semibold text-slate-800 dark:text-slate-100">
                         <span>{getEventName(evt.event_type)}</span>
                         <span className="font-mono text-[11px] text-slate-400">
@@ -209,10 +205,10 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
               </div>
             )}
           </div>
-        </div>
+        </ModalSheetBody>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/60 flex justify-end">
+        <ModalSheetFooter>
           <button
             type="button"
             onClick={onClose}
@@ -220,8 +216,7 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
           >
             {t('common.close')}
           </button>
-        </div>
-      </div>
-    </div>
+        </ModalSheetFooter>
+    </ModalSheet>
   );
 };

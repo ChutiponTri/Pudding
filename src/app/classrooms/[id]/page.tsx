@@ -19,6 +19,7 @@ import { roomLabel } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
 import { MobileText } from '@/components/MobileText';
+import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
 import {
@@ -2700,34 +2701,30 @@ export default function ClassroomWorkspacePage() {
       {/* MODAL: INVITE & MANAGE STUDENTS (Liff Link, QR, Search, Pending) */}
       {/* ============================================================== */}
       {showInviteModal && (
-        <div
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in"
-          onClick={() => setShowInviteModal(false)}
-        >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-xl w-full space-y-5 shadow-2xl max-h-[90dvh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div>
+        <ModalSheet onClose={() => setShowInviteModal(false)} size="sm:max-w-xl">
+            <ModalSheetHeader>
+              <div className="min-w-0">
                 <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                   <UserPlus className="w-5 h-5 text-amber-500" />
                   <span>{tr('เชิญและเพิ่มนักเรียน', 'Invite & add students')}</span>
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-400 mt-0.5 truncate">
                   {classroom.name} • {classroom.subject_code}
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setShowInviteModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer shrink-0"
+                aria-label={tr('ปิด', 'Close')}
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
+            </ModalSheetHeader>
 
+            <ModalSheetBody>
             {/* Modal Navigation Tabs */}
-            <div className="flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-2">
+            <div className="flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-2 overflow-x-auto scrollbar-none -mx-1 px-1 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
               <button
                 type="button"
                 onClick={() => setInviteTab('search')}
@@ -3005,7 +3002,8 @@ export default function ClassroomWorkspacePage() {
                       </div>
                     </div>
 
-                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {/* Phones scroll the whole sheet; a nested scroller there is hard to swipe. */}
+                    <div className="space-y-2 sm:max-h-72 sm:overflow-y-auto">
                     {classroom.pending_students.map((p) => (
                       <div
                         key={p.id}
@@ -3043,8 +3041,8 @@ export default function ClassroomWorkspacePage() {
                 )}
               </div>
             )}
-          </div>
-        </div>
+            </ModalSheetBody>
+        </ModalSheet>
       )}
 
       {/* MODAL: CONFIRM ACCEPT ALL / REJECT ALL JOIN REQUESTS */}
@@ -3061,7 +3059,7 @@ export default function ClassroomWorkspacePage() {
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="bulk-pending-title"
-              className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4"
+              className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4 max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start gap-3">
@@ -3129,16 +3127,9 @@ export default function ClassroomWorkspacePage() {
       {/* MODAL: CONNECT LINE BOT (Dashboard Logic Mirrored) */}
       {/* ============================================================== */}
       {showLineConnectModal && (
-        <div
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in"
-          onClick={() => setShowLineConnectModal(false)}
-        >
-          <div
-            className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-md w-full space-y-5 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-2.5">
+        <ModalSheet onClose={() => setShowLineConnectModal(false)} size="sm:max-w-md">
+            <ModalSheetHeader>
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold">
                   <MessageCircle className="w-4 h-4" />
                 </div>
@@ -3152,13 +3143,16 @@ export default function ClassroomWorkspacePage() {
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setShowLineConnectModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer shrink-0"
+                aria-label={tr('ปิด', 'Close')}
               >
                 <X className="w-4 h-4" />
               </button>
-            </div>
+            </ModalSheetHeader>
 
+            <ModalSheetBody>
             {/* Connection Status Badge */}
             <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 text-xs">
               <span className="text-slate-500 font-bold shrink-0">{tr('สถานะการเชื่อมต่อ:', 'Connection:')}</span>
@@ -3188,8 +3182,10 @@ export default function ClassroomWorkspacePage() {
               <LineGroupConnectSteps status={lineConnection.status} botFriend={teacherBot.botFriend} addFriendUrl={teacherBot.addFriendUrl} />
             )}
 
+            </ModalSheetBody>
+
             {/* Actions */}
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-2">
+            <ModalSheetFooter className="justify-start">
               {lineConnection.status !== 'connected' ? (
                 <button
                   type="button"
@@ -3219,9 +3215,8 @@ export default function ClassroomWorkspacePage() {
                   </button>
                 </>
               )}
-            </div>
-          </div>
-        </div>
+            </ModalSheetFooter>
+        </ModalSheet>
       )}
     </div>
   );

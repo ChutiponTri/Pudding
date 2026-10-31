@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Check, Clock, Loader2, Lock, Rocket, Unlock, X } from 'lucide-react';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 import { DateTimeField } from '@/components/DateTimeField';
+import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
@@ -122,15 +123,8 @@ export function AssignmentStatusDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="assignment-status-title"
-        className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3">
+    <ModalSheet onClose={onClose} size="sm:max-w-md" zIndex="z-60" labelledBy="assignment-status-title">
+        <ModalSheetHeader className="items-start!">
           <div className="min-w-0">
             <h3 id="assignment-status-title" className="text-sm font-black text-slate-900 dark:text-white">
               {tr('สถานะการรับงาน', 'Submission status')}
@@ -145,7 +139,9 @@ export function AssignmentStatusDialog({
               <X className="w-4 h-4" />
             </button>
           </div>
-        </div>
+        </ModalSheetHeader>
+
+        <ModalSheetBody className="space-y-4">
 
         {(assignmentWindow.isScheduled || assignmentWindow.isDraft) && assignment.publish_at && (
           <div className="p-3.5 rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/40 space-y-2.5">
@@ -212,8 +208,9 @@ export function AssignmentStatusDialog({
         )}
 
         {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
+        </ModalSheetBody>
 
-        <div className="flex justify-end gap-2 pt-1">
+        <ModalSheetFooter>
           <button
             type="button"
             onClick={onClose}
@@ -230,8 +227,7 @@ export function AssignmentStatusDialog({
             {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             <span>{tr('บันทึก', 'Save')}</span>
           </button>
-        </div>
-      </div>
-    </div>
+        </ModalSheetFooter>
+    </ModalSheet>
   );
 }
