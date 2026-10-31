@@ -1726,46 +1726,60 @@ function NewAssignmentContent() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className={`flex-1 sm:flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl text-sm sm:text-xs font-black shadow-lg transition-all duration-300 active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50 border-2 ${
+            className={`flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl text-sm sm:text-xs font-black shadow-lg transition-all duration-300 active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50 border-2 ${
               saveAsDraft && !editIsPublished
                 ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border-dashed border-slate-400 dark:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700 shadow-black/5'
                 : 'bg-amber-500 hover:bg-amber-600 text-slate-950 border-transparent shadow-amber-500/25'
             }`}
           >
-            {/* Re-keyed per release mode so the icon and label swap in with a small rise. */}
-            <span
-              key={editIsPublished ? 'saved' : releaseMode}
-              className="inline-flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 [--tw-duration:260ms]"
-            >
-            {saveAsDraft && !editIsPublished
-              ? <FilePen className="w-4 h-4 text-slate-500" />
-              : schedulePublish && !editIsPublished
-              ? <Clock className="w-4 h-4" />
-              : <Send className="w-4 h-4" />}
-            {/* Phones get a short label so the bar stays balanced; from sm up the full one. */}
             {(() => {
               const th = language === 'th';
+              // [short, full] for every state the button can show.
+              const labels = {
+                uploading: [th ? 'กำลังอัปโหลด...' : 'Uploading...', th ? 'กำลังอัปโหลดไฟล์...' : 'Uploading file...'],
+                loading: [t('common.loading'), t('common.loading')],
+                draft: [th ? 'บันทึกร่าง' : 'Save draft', th ? 'บันทึกฉบับร่าง' : 'Save draft'],
+                savePublish: [th ? 'บันทึก+เผยแพร่' : 'Save & publish', th ? 'บันทึกและเผยแพร่' : 'Save & publish'],
+                save: [th ? 'บันทึก' : 'Save', th ? 'บันทึกการแก้ไข' : 'Save changes'],
+                schedule: [th ? 'ตั้งเวลา' : 'Schedule', th ? 'ตั้งเวลาเผยแพร่' : 'Schedule'],
+                publish: [th ? 'มอบหมายทันที' : 'Publish', t('assignment_creator.buttons.publish')],
+              };
               const [short, full] = isSubmitting
-                ? isUploadingSample
-                  ? [th ? 'กำลังอัปโหลด...' : 'Uploading...', th ? 'กำลังอัปโหลดไฟล์...' : 'Uploading file...']
-                  : [t('common.loading'), t('common.loading')]
+                ? isUploadingSample ? labels.uploading : labels.loading
                 : saveAsDraft && !editIsPublished
-                ? [th ? 'บันทึกร่าง' : 'Save draft', th ? 'บันทึกฉบับร่าง' : 'Save draft']
+                ? labels.draft
                 : editId
-                ? !editIsPublished && releaseMode === 'now'
-                  ? [th ? 'บันทึก+เผยแพร่' : 'Save & publish', th ? 'บันทึกและเผยแพร่' : 'Save & publish']
-                  : [th ? 'บันทึก' : 'Save', th ? 'บันทึกการแก้ไข' : 'Save changes']
+                ? !editIsPublished && releaseMode === 'now' ? labels.savePublish : labels.save
                 : schedulePublish
-                ? [th ? 'ตั้งเวลา' : 'Schedule', th ? 'ตั้งเวลาเผยแพร่' : 'Schedule']
-                : [th ? 'มอบหมายทันที' : 'Publish', t('assignment_creator.buttons.publish')];
+                ? labels.schedule
+                : labels.publish;
               return (
-                <>
-                  <span className="sm:hidden">{short}</span>
-                  <span className="hidden sm:inline">{full}</span>
-                </>
+                // On phones every short label sits invisibly in the same grid cell, so the
+                // button is as wide as the longest one and doesn't resize as the mode changes.
+                <span className="grid">
+                  {Object.values(labels).map(([s], i) => (
+                    <span key={i} aria-hidden className="sm:hidden invisible col-start-1 row-start-1 inline-flex items-center gap-2 whitespace-nowrap">
+                      <span className="w-4 h-4 shrink-0" />
+                      {s}
+                    </span>
+                  ))}
+                  {/* Re-keyed per release mode so the icon and label swap in with a small rise. */}
+                  <span
+                    key={editIsPublished ? 'saved' : releaseMode}
+                    className="col-start-1 row-start-1 justify-self-center inline-flex items-center gap-2 whitespace-nowrap animate-in fade-in slide-in-from-bottom-1 [--tw-duration:260ms]"
+                  >
+                    {saveAsDraft && !editIsPublished
+                      ? <FilePen className="w-4 h-4 text-slate-500" />
+                      : schedulePublish && !editIsPublished
+                      ? <Clock className="w-4 h-4" />
+                      : <Send className="w-4 h-4" />}
+                    {/* Phones get a short label so the bar stays balanced; from sm up the full one. */}
+                    <span className="sm:hidden">{short}</span>
+                    <span className="hidden sm:inline">{full}</span>
+                  </span>
+                </span>
               );
             })()}
-            </span>
           </button>
         </div>
       </form>
