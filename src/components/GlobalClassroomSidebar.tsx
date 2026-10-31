@@ -128,7 +128,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
   const teacherId = user?.id;
 
   // Bumped whenever the classroom list may have changed (create/edit/delete,
-  // roster changes) so the next open, or the open sidebar, refetches.
+  // roster changes) so the list refetches in the background.
   const [listVersion, setListVersion] = useState(0);
   // `${teacherId}:${listVersion}` of the last fetch; toggling the sidebar
   // reuses the cached list instead of refetching.
@@ -142,10 +142,12 @@ export const GlobalClassroomSidebar: React.FC = () => {
   }, []);
 
   // Load only the signed-in teacher's classrooms (owner or co-teacher), the
-  // same scope the dashboard uses. Fetch lazily on first open, then only when
-  // the session or the classroom list changes.
+  // same scope the dashboard uses. Fetch in the background as soon as the
+  // session is known, so the list is ready by the first open, then only when
+  // the session or the classroom list changes. The LIFF app has no sidebar.
+  const onLiff = pathname.startsWith('/liff');
   useEffect(() => {
-    if (!isOpen || !isLoaded || !teacherId) return;
+    if (onLiff || !isLoaded || !teacherId) return;
     const key = `${teacherId}:${listVersion}`;
     if (loadedKey.current === key) return;
     loadedKey.current = key;
@@ -161,7 +163,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
       })
       .catch((err) => {
         console.warn('Failed to load classrooms for sidebar:', err);
-        // Allow a retry on the next open.
+        // Allow a retry on the next session or list change.
         if (!cancelled) loadedKey.current = null;
       })
       .finally(() => {
@@ -172,10 +174,10 @@ export const GlobalClassroomSidebar: React.FC = () => {
       if (settled) return;
       cancelled = true;
       setLoading(false);
-      // Closed or superseded mid-request: let the next run fetch again.
+      // Superseded mid-request: let the next run fetch again.
       if (loadedKey.current === key) loadedKey.current = null;
     };
-  }, [isOpen, isLoaded, teacherId, listVersion]);
+  }, [onLiff, isLoaded, teacherId, listVersion]);
 
   // Sort classrooms from newest to oldest
   const sortedClassrooms = useMemo(() => {
