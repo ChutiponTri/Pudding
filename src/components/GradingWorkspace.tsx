@@ -87,6 +87,14 @@ const DEFAULT_PRESETS: Preset[] = [
   { id: 'p5', category: 'improvement', text: 'ควรตรวจทานความถูกต้องอีกครั้งก่อนส่ง' },
   { id: 'p6', category: 'integrity', text: 'ควรเรียบเรียงคำตอบด้วยความเข้าใจและสำนวนของตนเอง' },
 ];
+const DEFAULT_PRESETS_EN: Preset[] = [
+  { id: 'p1', category: 'praise', text: 'Great work, complete and on point' },
+  { id: 'p2', category: 'reasoning', text: 'Clear reasoning and working shown' },
+  { id: 'p3', category: 'missing', text: 'Explain your steps or reasoning in more detail' },
+  { id: 'p4', category: 'missing', text: 'Add an example to support your answer' },
+  { id: 'p5', category: 'improvement', text: 'Check your answer again before handing in' },
+  { id: 'p6', category: 'integrity', text: 'Write the answer in your own words' },
+];
 
 const roundHalf = (n: number) => Math.round(n * 2) / 2;
 /** What the student wrote with a file; older submissions filled the box with "ส่งไฟล์แนบ: <name>" automatically. */
@@ -184,9 +192,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   const [presets, setPresets] = useState<Preset[]>(() => {
     try {
       const stored = typeof window !== 'undefined' ? localStorage.getItem(presetsKey) : null;
-      return stored ? (JSON.parse(stored) as Preset[]) : DEFAULT_PRESETS;
+      return stored ? (JSON.parse(stored) as Preset[]) : th ? DEFAULT_PRESETS : DEFAULT_PRESETS_EN;
     } catch {
-      return DEFAULT_PRESETS;
+      return th ? DEFAULT_PRESETS : DEFAULT_PRESETS_EN;
     }
   });
   const updatePresets = (next: Preset[]) => {
@@ -222,10 +230,10 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
     const lower = text.toLowerCase();
     if (!lower.trim()) return presets;
     const hints: Record<string, string[]> = {
-      praise: ['ดี', 'ยอด', 'เก่ง', 'ชัด'],
-      missing: ['ขาด', 'ตก', 'หล่น', 'ยัง'],
-      improvement: ['ปรับ', 'ควร', 'ลายมือ', 'เขียน'],
-      integrity: ['วาง', 'ลอก', 'ก๊อป', 'ทุจริต', 'ai'],
+      praise: ['ดี', 'ยอด', 'เก่ง', 'ชัด', 'good', 'great', 'well', 'clear'],
+      missing: ['ขาด', 'ตก', 'หล่น', 'ยัง', 'missing', 'incomplete', 'more'],
+      improvement: ['ปรับ', 'ควร', 'ลายมือ', 'เขียน', 'improve', 'check', 'should', 'handwriting'],
+      integrity: ['วาง', 'ลอก', 'ก๊อป', 'ทุจริต', 'ai', 'copy', 'copied', 'own words'],
     };
     const weight = (p: Preset) => (hints[p.category]?.some((w) => lower.includes(w)) ? 1 : 0);
     return [...presets].sort((a, b) => weight(b) - weight(a));

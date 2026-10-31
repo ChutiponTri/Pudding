@@ -53,11 +53,16 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setLanguageState(newLang);
     try {
       localStorage.setItem('ag_platform_lang', newLang);
-      document.documentElement.lang = newLang;
     } catch {
       // ignore
     }
   };
+
+  // Keep <html lang> in step (also for a language restored from storage), so
+  // screen readers, hyphenation and line breaking follow the visible text.
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
 
   const t = (path: string, fallback?: string): string => {
     const dict = dictionaries[language] || dictionaries.th;
