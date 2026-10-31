@@ -9,6 +9,8 @@ import { cachedCall, readCache, TEACHER_DASHBOARD_CACHE_KEY } from '@/lib/cache/
 import { Assignment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
+import { Collapse } from '@/components/Collapse';
+import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
 import { DRAFT_PUBLISH_AT, DRAFT_RETENTION_DAYS, draftExpiresAt, isAssignmentDraft, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { optimizeImage, UploadError, uploadToStorage } from '@/lib/storage/uploadClient';
@@ -41,6 +43,8 @@ import {
 } from 'lucide-react';
 
 interface QuestionDraft {
+  /** Client-only React key, so cards keep their identity (and exit animation) when one is removed. */
+  uid: string;
   /** Set when editing a saved question, so students' answers stay attached to it. */
   id?: string;
   indicator_id: string;
@@ -53,6 +57,39 @@ interface QuestionDraft {
   is_required: boolean;
 }
 
+/** What the chosen mode means, shown next to (desktop) or under (mobile) the mode toggle. */
+function ModeHint({ isExam, language }: { isExam: boolean; language: string }) {
+  return isExam ? (
+    <span className="inline-flex items-start gap-1.5 text-xs leading-relaxed text-purple-700 dark:text-purple-300 font-semibold bg-purple-50 dark:bg-purple-950/60 px-3.5 py-1.5 rounded-full border border-purple-200 dark:border-purple-800">
+      <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+      <span>
+        {language === 'th'
+          ? 'โหมดข้อสอบ: บันทึกทุกครั้งที่ออกจากหน้าจอ'
+          : 'Exam Mode: every screen exit is logged • no photos or file uploads'}
+      </span>
+    </span>
+  ) : (
+    <span className="inline-flex items-start gap-1.5 text-xs leading-relaxed text-emerald-700 dark:text-emerald-300 font-semibold bg-emerald-50 dark:bg-emerald-950/60 px-3.5 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+      <Paperclip className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+      <span>
+        {language === 'th'
+          ? 'โหมดการบ้าน: สามารถแนบตัวอย่างและแนวทางการตอบให้นักเรียนได้'
+          : 'Assignment Mode: Sample work attachments allowed'}
+      </span>
+    </span>
+  );
+}
+
+let questionUidSeq = 0;
+const newQuestionUid = () => `q${++questionUidSeq}`;
+/** Matches the card's collapse transition (duration-300). */
+const QUESTION_EXIT_MS = 300;
+/** Sliding highlight colour per release option (draft reads as "not live yet", the others use the app accent). */
+const RELEASE_PILL = {
+  draft: 'bg-slate-800 dark:bg-slate-100',
+  schedule: 'bg-amber-500',
+  now: 'bg-amber-500',
+} as const;
 
 function NewAssignmentContent() {
   const router = useRouter();
@@ -82,6 +119,7 @@ function NewAssignmentContent() {
 
   // Form fields
   const [isExam, setIsExam] = useState(false);
+  const [trackModeToggle, modeIndicator] = useSlidingIndicator(isExam);
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
   const [existingGroups, setExistingGroups] = useState<string[]>([]);
@@ -89,10 +127,11 @@ function NewAssignmentContent() {
   const [dueDate, setDueDate] = useState(() => daysFromNowAt(7, 23, 59));
   // Release: now, at a scheduled time (prepare work ahead for class time), or
   // kept as a draft that only the teacher publishes, by hand.
-  const [releaseMode, setReleaseMode] = useState<'now' | 'schedule' | 'draft'>('now');
+  const [releaseMode, setReleaseMode] = useState<'now' | 'schedule' | 'draft'>('draft');
   const schedulePublish = releaseMode === 'schedule';
   const saveAsDraft = releaseMode === 'draft';
   const [publishAt, setPublishAt] = useState(() => daysFromNowAt(1, 8, 0));
+  const [trackReleaseToggle, releaseIndicator] = useSlidingIndicator(releaseMode);
   const reminderCron = 'relative_due_date';
   // One reminder per assignment (each one is a LINE message from the quota).
   // undefined = not chosen yet (the teacher must pick), null = no reminder.
@@ -131,8 +170,9 @@ function NewAssignmentContent() {
   };
 
   // Dynamic Questions
-  const [questions, setQuestions] = useState<QuestionDraft[]>([
+  const [questions, setQuestions] = useState<QuestionDraft[]>(() => [
     {
+      uid: newQuestionUid(),
       indicator_id: '',
       type: 'short_answer',
       question_text: '',
@@ -250,6 +290,7 @@ function NewAssignmentContent() {
           originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
           if (savedQuestions.length) {
             setQuestions(savedQuestions.map((q) => ({
+              uid: newQuestionUid(),
               id: q.id,
               indicator_id: q.indicator_id || '',
               type: q.type,
@@ -365,6 +406,7 @@ function NewAssignmentContent() {
     setQuestions((prev) => [
       ...prev,
       {
+        uid: newQuestionUid(),
         indicator_id: defaultIndId,
         type,
         question_text: '',
@@ -381,9 +423,16 @@ function NewAssignmentContent() {
     }, 100);
   };
 
-  const handleRemoveQuestion = (index: number) => {
-    if (questions.length <= 1) return;
-    setQuestions((prev) => prev.filter((_, i) => i !== index));
+  // A removed card first collapses and fades (see the questions stack), then leaves the list.
+  const [removingQuestionUids, setRemovingQuestionUids] = useState<string[]>([]);
+  const visibleQuestionCount = questions.length - removingQuestionUids.length;
+  const handleRemoveQuestion = (uid: string) => {
+    if (visibleQuestionCount <= 1 || removingQuestionUids.includes(uid)) return;
+    setRemovingQuestionUids((prev) => [...prev, uid]);
+    setTimeout(() => {
+      setQuestions((prev) => prev.filter((q) => q.uid !== uid));
+      setRemovingQuestionUids((prev) => prev.filter((id) => id !== uid));
+    }, QUESTION_EXIT_MS);
   };
 
   const handleQuestionChange = (
@@ -691,53 +740,57 @@ function NewAssignmentContent() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* Mode Selector Toggle: Assignment vs Exam */}
-        <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3 p-1 rounded-2xl bg-slate-100/70 dark:bg-slate-800/60 sm:bg-transparent sm:dark:bg-transparent sm:p-0">
-            <button
-              type="button"
-              onClick={() => setIsExam(false)}
-              className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
-                !isExam
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              📚 {t('assignment_creator.mode_assignment')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsExam(true)}
-              className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                isExam
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-              <span>{t('assignment_creator.mode_exam')}</span>
-            </button>
+        {/* Mode Selector Toggle: Assignment vs Exam. Sticky under the navbar so the mode can be
+            switched from anywhere on a long form; the highlight slides between the two buttons. */}
+        <div className="sticky top-[calc(4rem+env(safe-area-inset-top)+0.5rem)] z-20 p-2 sm:p-2.5 rounded-3xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-between gap-4">
+          <div
+            ref={trackModeToggle}
+            role="radiogroup"
+            aria-label={language === 'th' ? 'ประเภทงาน' : 'Work type'}
+            className="relative grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/80 w-full lg:w-auto"
+          >
+            {modeIndicator && (
+              <span
+                aria-hidden
+                className={`absolute top-0 left-0 rounded-xl shadow-md transition-[transform,width,height,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                  isExam ? 'bg-purple-600 shadow-purple-500/25' : 'bg-emerald-600 shadow-emerald-500/25'
+                }`}
+                style={indicatorStyle(modeIndicator)}
+              />
+            )}
+            {([
+              { exam: false, icon: BookOpen, label: t('assignment_creator.mode_assignment'), pill: 'bg-emerald-600' },
+              { exam: true, icon: ShieldAlert, label: t('assignment_creator.mode_exam'), pill: 'bg-purple-600' },
+            ] as const).map((option) => {
+              const Icon = option.icon;
+              const selected = isExam === option.exam;
+              return (
+                <button
+                  key={String(option.exam)}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  data-active={selected}
+                  onClick={() => setIsExam(option.exam)}
+                  className={`relative lg:min-w-40 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors duration-300 cursor-pointer ${
+                    selected
+                      ? `text-white ${modeIndicator ? '' : option.pill}`
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Icon className={`w-3.5 h-3.5 shrink-0 transition-transform duration-300 ${selected ? 'scale-110' : ''}`} />
+                  <span>{option.label}</span>
+                </button>
+              );
+            })}
           </div>
 
-          {isExam ? (
-            <span className="self-start lg:self-auto inline-flex items-start gap-1.5 text-xs leading-relaxed text-purple-700 dark:text-purple-300 font-semibold bg-purple-50 dark:bg-purple-950/60 px-3.5 py-1.5 rounded-full border border-purple-200 dark:border-purple-800">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>
-                {language === 'th'
-                  ? 'โหมดข้อสอบ: บันทึกทุกครั้งที่ออกจากหน้าจอ'
-                  : 'Exam Mode: every screen exit is logged • no photos or file uploads'}
-              </span>
-            </span>
-          ) : (
-            <span className="self-start lg:self-auto inline-flex items-start gap-1.5 text-xs leading-relaxed text-emerald-700 dark:text-emerald-300 font-semibold bg-emerald-50 dark:bg-emerald-950/60 px-3.5 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-              <Paperclip className="w-3.5 h-3.5" />
-              <span>
-                {language === 'th'
-                  ? 'โหมดการบ้าน: สามารถแนบตัวอย่างและแนวทางการตอบให้นักเรียนได้'
-                  : 'Assignment Mode: Sample work attachments allowed'}
-              </span>
-            </span>
-          )}
+          <span key={`hint-${isExam}`} className="hidden lg:inline-flex animate-in fade-in slide-in-from-top-1">
+            <ModeHint isExam={isExam} language={language} />
+          </span>
+        </div>
+        <div key={`hint-${isExam}`} className="lg:hidden -mt-5 animate-in fade-in slide-in-from-top-1">
+          <ModeHint isExam={isExam} language={language} />
         </div>
 
         {/* Basic Assignment Details */}
@@ -869,7 +922,7 @@ function NewAssignmentContent() {
             {/* Release: now, scheduled, or saved as a draft */}
             <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                <Send className="w-3.5 h-3.5 text-sky-500" />
+                <Send className="w-3.5 h-3.5 text-amber-500" />
                 <span>{language === 'th' ? 'เวลาเผยแพร่ให้นักเรียน' : 'Release to students'}</span>
               </label>
               {editIsPublished ? (
@@ -879,28 +932,38 @@ function NewAssignmentContent() {
                 </p>
               ) : (
               <>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup">
+              <div ref={trackReleaseToggle} className="relative grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup">
+                {/* Highlight slides to the chosen option (down the stack on phones, across on wider screens). */}
+                {releaseIndicator && (
+                  <span
+                    aria-hidden
+                    className={`absolute top-0 left-0 rounded-xl shadow-xs transition-[transform,width,height,background-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                      RELEASE_PILL[releaseMode]
+                    }`}
+                    style={indicatorStyle(releaseIndicator)}
+                  />
+                )}
                 {([
                   {
-                    value: 'now',
-                    icon: Send,
-                    label: language === 'th' ? 'เผยแพร่ทันที' : 'Publish now',
-                    hint: language === 'th' ? 'นักเรียนเห็นและแจ้งเข้า LINE ทันที' : 'Students see it now; LINE is notified',
-                    selected: 'bg-sky-600 border-sky-600 text-white shadow-xs',
+                    value: 'draft',
+                    icon: FilePen,
+                    label: language === 'th' ? 'บันทึกฉบับร่าง' : 'Save as draft',
+                    hint: language === 'th' ? 'ยังไม่เผยแพร่ คุณครูกดเผยแพร่เองภายหลัง' : 'Not released; you publish it later',
+                    text: 'text-white dark:text-slate-900',
                   },
                   {
                     value: 'schedule',
                     icon: Clock,
                     label: language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule',
                     hint: language === 'th' ? 'เผยแพร่เองเมื่อถึงเวลาที่เลือก' : 'Released automatically at a set time',
-                    selected: 'bg-sky-600 border-sky-600 text-white shadow-xs',
+                    text: 'text-slate-950',
                   },
                   {
-                    value: 'draft',
-                    icon: FilePen,
-                    label: language === 'th' ? 'บันทึกฉบับร่าง' : 'Save as draft',
-                    hint: language === 'th' ? 'ยังไม่เผยแพร่ คุณครูกดเผยแพร่เองภายหลัง' : 'Not released; you publish it later',
-                    selected: 'bg-slate-700 border-slate-700 text-white shadow-xs dark:bg-slate-200 dark:border-slate-200 dark:text-slate-900',
+                    value: 'now',
+                    icon: Send,
+                    label: language === 'th' ? 'เผยแพร่ทันที' : 'Publish now',
+                    hint: language === 'th' ? 'นักเรียนเห็นและแจ้งเข้า LINE ทันที' : 'Students see it now; LINE is notified',
+                    text: 'text-slate-950',
                   },
                 ] as const).map((option) => {
                   const Icon = option.icon;
@@ -911,33 +974,39 @@ function NewAssignmentContent() {
                       type="button"
                       role="radio"
                       aria-checked={isSelected}
+                      data-active={isSelected}
                       onClick={() => setReleaseMode(option.value)}
-                      className={`px-3 py-2.5 rounded-xl border transition-all cursor-pointer text-left flex items-start gap-2 ${
+                      className={`relative px-3 py-2.5 rounded-xl border transition-colors duration-300 cursor-pointer text-left flex items-start gap-2 ${
                         isSelected
-                          ? option.selected
-                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
+                          ? `border-transparent ${option.text} ${releaseIndicator ? '' : RELEASE_PILL[option.value]}`
+                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-amber-400'
                       } ${option.value === 'draft' && !isSelected ? 'border-dashed' : ''}`}
                     >
-                      <Icon className="w-4 h-4 mt-0.5 shrink-0" />
+                      <Icon className={`w-4 h-4 mt-0.5 shrink-0 transition-transform duration-300 ${isSelected ? 'scale-110' : ''}`} />
                       <span className="min-w-0">
                         <span className="block text-xs font-bold">{option.label}</span>
-                        <span className={`block text-[10px] leading-snug mt-0.5 ${isSelected ? 'opacity-85' : 'text-slate-400 dark:text-slate-500'}`}>{option.hint}</span>
+                        <span className={`block text-[10px] leading-snug mt-0.5 transition-colors duration-300 ${isSelected ? 'opacity-85' : 'text-slate-400 dark:text-slate-500'}`}>{option.hint}</span>
                       </span>
                     </button>
                   );
                 })}
               </div>
-              {schedulePublish && (
-                <div className="p-3 rounded-2xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 space-y-2">
+              {/* Each option's details open and close smoothly (inner pt-2 instead of space-y so a closed one leaves no gap). */}
+              <div className="-mt-2">
+              <Collapse open={schedulePublish}>
+                <div className="pt-2">
+                <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-2">
                   <DateTimeField value={publishAt} onChange={setPublishAt} presets="start" />
-                  <p className="text-[11px] text-sky-800 dark:text-sky-300 leading-relaxed">
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
                     {language === 'th'
                       ? 'ก่อนถึงเวลานี้ นักเรียนจะยังไม่เห็นงานและส่งไม่ได้ เมื่อถึงเวลา งานจะขึ้นในไทม์ไลน์และแจ้งเข้า LINE group อัตโนมัติ'
                       : 'Students cannot see or submit before this time. At this time it appears on the timeline and is announced in the LINE group.'}
                   </p>
                 </div>
-              )}
-              {saveAsDraft && (
+                </div>
+              </Collapse>
+              <Collapse open={saveAsDraft}>
+                <div className="pt-2">
                 <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-600 space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
                   <p className="flex items-start gap-1.5">
                     <FilePen className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-500" />
@@ -964,7 +1033,9 @@ function NewAssignmentContent() {
                     </span>
                   </p>
                 </div>
-              )}
+                </div>
+              </Collapse>
+              </div>
               </>
               )}
             </div>
@@ -989,7 +1060,7 @@ function NewAssignmentContent() {
 
             {/* LINE Reminder Setting (homework only — quizzes close at the deadline) */}
             {!isExam && (
-            <div className="space-y-2">
+            <div className="space-y-2 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-emerald-500" />
                 <span>{t('assignment_creator.fields.line_reminder_label')}</span>
@@ -1044,7 +1115,7 @@ function NewAssignmentContent() {
         {/* CONDITIONAL ATTACHMENT COMPONENT: Sample Work / Guidelines */}
         {!isExam ? (
           /* Assignment Mode: Active Sample Work Section */
-          <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-emerald-200 dark:border-emerald-900/60 shadow-xs space-y-4 animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400">
@@ -1106,7 +1177,7 @@ function NewAssignmentContent() {
                   />
 
                   {/* Keep the file in browser memory until the assignment is confirmed. */}
-                  <label className="shrink-0 cursor-pointer px-4 py-2.5 rounded-xl bg-linear-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 transition-transform active:scale-95">
+                  <label className="shrink-0 cursor-pointer px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95">
                     {isUploadingSample ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1173,7 +1244,7 @@ function NewAssignmentContent() {
           </div>
         ) : (
           /* Exam Mode: Strictly Disabled Notice */
-          <div className="bg-slate-50 dark:bg-slate-900/50 p-5 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 flex items-center gap-3.5 animate-in fade-in duration-300">
+          <div className="bg-slate-50 dark:bg-slate-900/50 p-5 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 flex items-center gap-3.5 animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]">
             <div className="p-2.5 rounded-2xl bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 shrink-0">
               <Lock className="w-5 h-5" />
             </div>
@@ -1202,17 +1273,28 @@ function NewAssignmentContent() {
               </p>
             </div>
             <span className="shrink-0 text-xs font-bold px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-              {questions.length} {language === 'th' ? 'ข้อ' : 'Questions'}
+              {visibleQuestionCount} {language === 'th' ? 'ข้อ' : 'Questions'}
             </span>
           </div>
 
           {/* Questions Stack */}
-          <div className="space-y-6">
-            {questions.map((q, idx) => (
+          {/* Each card sits in a grid row that collapses (with a fade and slight shrink) when it is
+              deleted; the gap lives inside the row (pb-6) so it closes together with the card. */}
+          <div className="flex flex-col">
+            {questions.map((q, idx) => {
+              const removing = removingQuestionUids.includes(q.uid);
+              return (
               <div
-                key={idx}
+                key={q.uid}
+                inert={removing}
+                className={`grid last:[&>div]:pb-0 transition-[grid-template-rows,opacity,scale] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                  removing ? 'grid-rows-[0fr] opacity-0 scale-[0.97]' : 'grid-rows-[1fr] opacity-100'
+                }`}
+              >
+              <div className={`min-h-0 pb-6 ${removing ? 'overflow-hidden' : ''}`}>
+              <div
                 ref={idx === questions.length - 1 ? lastQuestionRef : null}
-                className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-6 relative transition-all"
+                className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-6 relative transition-colors animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]"
               >
                 {/* Question Card Header */}
                 <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
@@ -1265,10 +1347,10 @@ function NewAssignmentContent() {
                     </div>
 
                     {/* Delete Question */}
-                    {questions.length > 1 && (
+                    {visibleQuestionCount > 1 && (
                       <button
                         type="button"
-                        onClick={() => handleRemoveQuestion(idx)}
+                        onClick={() => handleRemoveQuestion(q.uid)}
                         className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                         title={t('assignment_creator.questions_builder.delete_question')}
                       >
@@ -1395,7 +1477,7 @@ function NewAssignmentContent() {
 
                 {/* Multiple Choice Options Builder: tap the circle to mark the correct option */}
                 {q.type === 'multiple_choice' && (
-                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                         {t('assignment_creator.questions_builder.options_label')}
@@ -1456,7 +1538,7 @@ function NewAssignmentContent() {
 
                 {/* True/false: pick the correct answer (auto-scored, no rubric) */}
                 {q.type === 'true_false' && (
-                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                         {language === 'th' ? 'คำตอบที่ถูกต้อง' : 'Correct answer'}
@@ -1500,7 +1582,7 @@ function NewAssignmentContent() {
 
                 {/* Ideal Answer & Rubric: written / file questions (choices are scored from the key above) */}
                 {q.type !== 'multiple_choice' && q.type !== 'true_false' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                       {t('assignment_creator.questions_builder.ideal_answer')}
@@ -1529,7 +1611,10 @@ function NewAssignmentContent() {
                 </div>
                 )}
               </div>
-            ))}
+              </div>
+              </div>
+              );
+            })}
           </div>
 
           {/* QUESTION ADDER PLACEMENT: AT THE BOTTOM OF THE LAST QUESTION ITEM */}
@@ -1589,17 +1674,22 @@ function NewAssignmentContent() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className={`flex-1 sm:flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl text-sm sm:text-xs font-bold shadow-lg transition-all active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50 ${
+            className={`flex-1 sm:flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl text-sm sm:text-xs font-black shadow-lg transition-all duration-300 active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50 border-2 ${
               saveAsDraft && !editIsPublished
-                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border-2 border-dashed border-slate-400 dark:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700 shadow-black/5'
-                : 'bg-slate-950 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-900 dark:hover:bg-slate-100 shadow-black/15'
+                ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border-dashed border-slate-400 dark:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700 shadow-black/5'
+                : 'bg-amber-500 hover:bg-amber-600 text-slate-950 border-transparent shadow-amber-500/25'
             }`}
           >
+            {/* Re-keyed per release mode so the icon and label swap in with a small rise. */}
+            <span
+              key={editIsPublished ? 'saved' : releaseMode}
+              className="inline-flex items-center gap-2 animate-in fade-in slide-in-from-bottom-1 [--tw-duration:260ms]"
+            >
             {saveAsDraft && !editIsPublished
               ? <FilePen className="w-4 h-4 text-slate-500" />
               : schedulePublish && !editIsPublished
-              ? <Clock className="w-4 h-4 text-amber-500" />
-              : <Send className="w-4 h-4 text-amber-500" />}
+              ? <Clock className="w-4 h-4" />
+              : <Send className="w-4 h-4" />}
             <span>
               {isSubmitting
                 ? isUploadingSample ? (language === 'th' ? 'กำลังอัปโหลดไฟล์...' : 'Uploading file...') : t('common.loading')
@@ -1612,6 +1702,7 @@ function NewAssignmentContent() {
                 : schedulePublish
                 ? (language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule')
                 : t('assignment_creator.buttons.publish')}
+            </span>
             </span>
           </button>
         </div>

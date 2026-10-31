@@ -173,7 +173,7 @@ export function DateTimeField({
         </div>
         {/* Hour/minute selects instead of <input type="time">, which shows AM/PM in some locales. */}
         <div
-          className={`flex items-center gap-1 pl-3 pr-1 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 ${focusWithin}`}
+          className={`flex items-center gap-1 pl-3 pr-1 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 transition-colors duration-200 ${focusWithin}`}
         >
           <Clock className={`w-4 h-4 shrink-0 pointer-events-none ${icon}`} />
           <select
@@ -229,7 +229,13 @@ export function DateTimeField({
                       type="button"
                       onClick={chip.onClick}
                       aria-pressed={chip.target ? active : undefined}
-                      className={`min-w-0 h-8 px-2 rounded-lg border text-[11px] font-bold truncate transition-colors cursor-pointer ${
+                      className={`min-w-0 h-8 px-2 rounded-lg border text-[11px] font-bold truncate transition-[color,background-color,border-color,box-shadow] duration-300 cursor-pointer ${
+                        active
+                          ? accent === 'emerald'
+                            ? 'shadow-sm shadow-emerald-500/25 '
+                            : 'shadow-sm shadow-amber-500/25 '
+                          : ''
+                      }${
                         active
                           ? accent === 'emerald'
                             ? 'bg-emerald-600 border-emerald-600 text-white'
@@ -247,7 +253,11 @@ export function DateTimeField({
         </div>
       )}
 
-      <p className={`text-[11px] font-semibold break-words ${isPast ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+      {/* Re-keyed per value so a chip, the date box or the hour/minute dropdowns visibly update the summary. */}
+      <p
+        key={value}
+        className={`text-[11px] font-semibold break-words animate-in fade-in slide-in-from-top-1 [--tw-duration:260ms] ${isPast ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}
+      >
         {value ? (
           <>
             {formatDateTime(value, language)} <span className="opacity-80">({formatRelative(value, language, now)})</span>

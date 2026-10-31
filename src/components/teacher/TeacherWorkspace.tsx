@@ -75,6 +75,7 @@ import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { EditStudentModal } from '@/components/EditStudentModal';
+import { Collapse } from '@/components/Collapse';
 
 /**
  * Checks an assessment framework before saving. Returns a message naming the
@@ -1861,10 +1862,12 @@ export function TeacherWorkspace({
                             </span>
                           </span>
                           <span className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-emerald-600 dark:text-emerald-400 bg-white/70 dark:bg-slate-900/60 ring-1 ring-emerald-200/80 dark:ring-emerald-900/60 group-hover/graded:ring-emerald-400 transition-colors">
-                            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${showGraded ? 'rotate-180' : ''}`} />
+                            <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${showGraded ? 'rotate-180' : ''}`} />
                           </span>
                         </button>
-                        {showGraded && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-3 pb-3">{graded.map(row)}</div>}
+                        <Collapse open={showGraded}>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-3 pb-3">{graded.map(row)}</div>
+                        </Collapse>
                       </div>
                     )}
                   </div>

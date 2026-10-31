@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { dataService } from '@/lib/supabase/dataService';
 import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
+import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
@@ -141,10 +142,11 @@ type Post = {
 };
 
 type ClassworkFilter = 'all' | 'pending' | 'done';
-const CLASSWORK_FILTERS: Array<{ id: ClassworkFilter; label: string; active: string }> = [
-  { id: 'all', label: 'ทั้งหมด', active: 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' },
-  { id: 'pending', label: 'ต้องตรวจ', active: 'bg-amber-500 text-slate-950' },
-  { id: 'done', label: 'ตรวจครบแล้ว', active: 'bg-emerald-600 text-white' },
+// `pill` paints the sliding highlight behind the selected filter, `text` its label.
+const CLASSWORK_FILTERS: Array<{ id: ClassworkFilter; label: string; pill: string; text: string }> = [
+  { id: 'all', label: 'ทั้งหมด', pill: 'bg-slate-900 dark:bg-white', text: 'text-white dark:text-slate-900' },
+  { id: 'pending', label: 'ต้องตรวจ', pill: 'bg-amber-500', text: 'text-slate-950' },
+  { id: 'done', label: 'ตรวจครบแล้ว', pill: 'bg-emerald-600', text: 'text-white' },
 ];
 // Same split as the grading hub and the dashboard course cards.
 const classworkFilterOf = (c: GradingCounts): Exclude<ClassworkFilter, 'all'> => (c.pending > 0 ? 'pending' : 'done');
@@ -433,6 +435,7 @@ export default function ClassroomWorkspacePage() {
       if (hit.fresh) {
         // Opening the grades tab right away does not refetch these.
         submissionsFetchedAtRef.current = hit.value.submissionsFetchedAt;
+        submissionsVersionRef.current = cacheVersion();
         return;
       }
     } else {
@@ -528,11 +531,15 @@ export default function ClassroomWorkspacePage() {
   };
 
   // Submissions are shared by the classwork and grades tabs; skip a refetch
-  // when the last one is only a few seconds old.
+  // when the last one is only a few seconds old. The cache version at fetch
+  // time tells whether anything (a grade saved here or in another tab, a
+  // server signal) may have changed scores since.
   const submissionsFetchedAtRef = useRef(0);
+  const submissionsVersionRef = useRef(-1);
   const refreshSubmissions = (list: Assignment[], maxAgeMs = 0) => {
     if (!list.length || Date.now() - submissionsFetchedAtRef.current < maxAgeMs) return Promise.resolve(undefined);
     submissionsFetchedAtRef.current = Date.now();
+    submissionsVersionRef.current = cacheVersion();
     return dataService.getSubmissionsByAssignmentIds(list.map((item) => item.id))
       .then((subs) => {
         setSubmissions(subs);
@@ -562,13 +569,19 @@ export default function ClassroomWorkspacePage() {
     });
   }, [user?.id, classroomId, classroom, assignments, posts, sessions, allRecords, selectedSessionId, submissions]);
 
-  // Fetch Grades when switching to Grades tab (unless they were just loaded)
+  // Grades tab: the scores already held (from the session cache or the last
+  // fetch) show at once. They are refetched in the background only when a score
+  // may have changed since (any write or classroom signal bumps the cache
+  // version) or they are a few minutes old; the spinner is only for a first load.
+  const hasSubmissions = submissions.length > 0;
   useEffect(() => {
     if (tab !== 'grades' || !assignments.length) return;
-    if (Date.now() - submissionsFetchedAtRef.current < 10000) return;
-    setGradesLoading(true);
+    const unchanged = submissionsVersionRef.current === cacheVersion();
+    if (unchanged && Date.now() - submissionsFetchedAtRef.current < 5 * 60 * 1000) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- spinner only until the first scores arrive
+    if (!hasSubmissions) setGradesLoading(true);
     refreshSubmissions(assignments).finally(() => setGradesLoading(false));
-  }, [tab, assignments]);
+  }, [tab, assignments, hasSubmissions]);
 
   const sessionsRef = useRef(sessions);
   useEffect(() => {
@@ -940,6 +953,15 @@ export default function ClassroomWorkspacePage() {
 
   // Classwork progress per assignment (same counts as the grading hub).
   const [classworkFilter, setClassworkFilter] = useState<ClassworkFilter>('all');
+  // Same slide as switching tabs: the highlight glides and the list enters from that side.
+  const [classworkFilterDirection, setClassworkFilterDirection] = useState<1 | -1>(1);
+  const [trackClassworkFilterBar, classworkFilterIndicator] = useSlidingIndicator(classworkFilter);
+  const selectClassworkFilter = (next: ClassworkFilter) => {
+    if (next === classworkFilter) return;
+    const order = CLASSWORK_FILTERS.map((f) => f.id);
+    setClassworkFilterDirection(order.indexOf(next) > order.indexOf(classworkFilter) ? 1 : -1);
+    setClassworkFilter(next);
+  };
   const classworkCounts = useMemo(() => {
     const bySubmission = new Map<string, Submission[]>();
     for (const s of submissions) bySubmission.set(s.assignment_id, [...(bySubmission.get(s.assignment_id) || []), s]);
@@ -1972,16 +1994,29 @@ export default function ClassroomWorkspacePage() {
                     </div>
                   </div>
 
-                  <div className="flex gap-1.5 p-1 rounded-2xl bg-slate-50 dark:bg-slate-800/60 overflow-x-auto">
-                    {CLASSWORK_FILTERS.map(({ id, label, active }) => {
+                  <div ref={trackClassworkFilterBar} className="relative flex gap-1.5 p-1 rounded-2xl bg-slate-50 dark:bg-slate-800/60 overflow-x-auto">
+                    {classworkFilterIndicator && (
+                      <span
+                        aria-hidden
+                        className={`absolute top-0 left-0 rounded-xl shadow-xs transition-[transform,width,height,background-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                          CLASSWORK_FILTERS.find((f) => f.id === classworkFilter)?.pill
+                        }`}
+                        style={indicatorStyle(classworkFilterIndicator)}
+                      />
+                    )}
+                    {CLASSWORK_FILTERS.map(({ id, label, pill, text }) => {
                       const selected = classworkFilter === id;
                       return (
                         <button
                           key={id}
                           type="button"
-                          onClick={() => setClassworkFilter(id)}
-                          className={`flex-1 min-w-max px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                            selected ? active : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'
+                          data-active={selected}
+                          aria-pressed={selected}
+                          onClick={() => selectClassworkFilter(id)}
+                          className={`relative flex-1 min-w-max px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors duration-300 cursor-pointer ${
+                            selected
+                              ? `${text} ${classworkFilterIndicator ? '' : pill}`
+                              : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'
                           }`}
                         >
                           <span>{label}</span>
@@ -1993,13 +2028,17 @@ export default function ClassroomWorkspacePage() {
                     })}
                   </div>
                   {classworkFilter !== 'all' && (
-                    <p className="text-[11px] text-slate-400">กลับไปที่ “ทั้งหมด” เพื่อลากเรียงลำดับหรือย้ายกลุ่ม</p>
+                    <p className="text-[11px] text-slate-400 animate-in fade-in slide-in-from-top-1">กลับไปที่ “ทั้งหมด” เพื่อลากเรียงลำดับหรือย้ายกลุ่ม</p>
                   )}
                 </div>
               )}
 
-              {/* Grouped Assignments List */}
-              <div className="space-y-5">
+              {/* Grouped Assignments List (re-keyed per filter so it slides in like a tab change) */}
+              <div
+                key={classworkFilter}
+                className="space-y-5 animate-in fade-in [--tw-duration:320ms]"
+                style={{ '--tw-enter-translate-x': `${classworkFilterDirection * 2.5}rem` } as CSSProperties}
+              >
                 {Object.entries(
                   assignments.reduce<Record<string, Assignment[]>>(
                     (groups, item) => {

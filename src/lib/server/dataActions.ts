@@ -1190,7 +1190,7 @@ export const dataActions = {
     id: string,
     questionsData: Array<Omit<Question, 'assignment_id' | 'id'> & { id?: string }>
   ) {
-    await requireTeacherOfAssignment(supabase, actor, id);
+    const { assignment } = await requireTeacherOfAssignment(supabase, actor, id);
     const { data: existing, error: loadError } = await supabase.from('questions').select('*').eq('assignment_id', id);
     if (loadError) throw toDatabaseError(loadError, 'questions');
     const previousById = new Map(((existing || []) as Question[]).map((q) => [q.id, q]));
@@ -1235,6 +1235,7 @@ export const dataActions = {
     await regradeObjectiveQuestions(supabase, id, changed);
     // Added / removed questions and new points change every total.
     await recomputeSubmissionTotals(supabase, id);
+    after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: id }));
     return rows;
   },
 
@@ -1405,7 +1406,12 @@ export const dataActions = {
     if (isOfficial) {
       // Total = sum of official scores, set once every question has one.
       const { data: sub } = await supabase.from('submissions').select('assignment_id').eq('id', submissionId).maybeSingle();
-      if (sub?.assignment_id) await recomputeSubmissionTotals(supabase, sub.assignment_id, [submissionId]);
+      if (sub?.assignment_id) {
+        await recomputeSubmissionTotals(supabase, sub.assignment_id, [submissionId]);
+        // Open score tables (classroom grades tab, co-teachers, the student) refetch.
+        const assignmentId = sub.assignment_id;
+        after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
+      }
     }
   },
 
