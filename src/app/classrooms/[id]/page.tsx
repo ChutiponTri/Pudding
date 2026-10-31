@@ -1606,7 +1606,7 @@ export default function ClassroomWorkspacePage() {
             </div>
 
             {/* One compact row on mobile so the sticky header stays short. */}
-            <div className="lg:shrink-0 grid grid-cols-[1.2fr_1fr_1fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 [&>*]:shrink-0">
+            <div className="lg:shrink-0 grid grid-cols-[1fr_1fr_1.2fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 [&>*]:shrink-0">
               {/* Secondary: Invite Students Modal Trigger */}
               <button
                 type="button"
@@ -1652,7 +1652,7 @@ export default function ClassroomWorkspacePage() {
               {/* Primary: Create Assignment or Exam */}
               <Link
                 href={`/assignments/new?classroomId=${classroom.id}&from=classroom`}
-                className="min-w-0 order-first sm:order-none h-9 sm:h-auto px-2 sm:px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] sm:text-xs inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-sm transition-all"
+                className="min-w-0 h-9 sm:h-auto px-2 sm:px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] sm:text-xs inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-sm transition-all"
               >
                 <Plus className="w-4 h-4 shrink-0" />
                 <span className="truncate">

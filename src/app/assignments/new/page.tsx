@@ -1715,7 +1715,7 @@ function NewAssignmentContent() {
         </div>
 
         {/* Submit Actions Bar (sticky so publishing is always reachable on long forms) */}
-        <div className="sticky bottom-[max(env(safe-area-inset-bottom),0.75rem)] z-20 p-3 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-end gap-2 sm:gap-3">
+        <div className="sticky bottom-[max(env(safe-area-inset-bottom),0.75rem)] z-20 w-fit ml-auto sm:w-auto sm:ml-0 p-3 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-end gap-2 sm:gap-3">
           <button
             type="button"
             onClick={() => router.back()}
