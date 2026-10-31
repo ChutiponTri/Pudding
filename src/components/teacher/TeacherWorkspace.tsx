@@ -582,8 +582,8 @@ export function TeacherWorkspace({
       assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSize.get(a.classroom_id) || 0, a.is_exam)])
     );
   }, [filteredSubmissions, assignments, classrooms]);
-  // Course cards: the "graded" group is folded while work is left, unless opened.
-  const [openGradedCourses, setOpenGradedCourses] = useState<Record<string, boolean>>({});
+  // Course cards: the "still to grade" group starts open; the teacher can fold it per course.
+  const [foldedToGradeCourses, setFoldedToGradeCourses] = useState<Record<string, boolean>>({});
   const assignmentsToGradeCount = useMemo(
     () => [...gradingByAssignment.values()].filter((g) => g.pending > 0).length,
     [gradingByAssignment]
@@ -1769,13 +1769,18 @@ export function TeacherWorkspace({
                 </div>
               </div>
 
-              {/* Course work, split by whether the teacher still has grading to do */}
+              {/* Course work the teacher has not finished grading: every roster student
+                  needs a score, handed in or not. Finished work is not listed here. */}
               {course.assignments.length > 0 && (() => {
                 const countsOf = (asg: Assignment) => gradingByAssignment.get(asg.id) || gradingCounts([], 0, asg.is_exam);
-                const toGrade = course.assignments.filter((asg) => countsOf(asg).pending > 0);
-                const graded = course.assignments.filter((asg) => countsOf(asg).pending === 0);
+                const toGrade = course.assignments.filter((asg) => {
+                  const c = countsOf(asg);
+                  return c.pending > 0 || c.notSubmitted > 0;
+                });
+                if (toGrade.length === 0) return null;
                 const pendingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).pending, 0);
-                const showGraded = openGradedCourses[course.id] ?? toGrade.length === 0;
+                const missingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).notSubmitted, 0);
+                const open = !foldedToGradeCourses[course.id];
                 const row = (asg: Assignment) => {
                   const c = countsOf(asg);
                   const pending = c.pending > 0;
@@ -1818,59 +1823,43 @@ export function TeacherWorkspace({
                         >
                           {pending
                             ? language === 'th' ? `ตรวจ ${c.pending} คน` : `Grade ${c.pending}`
-                            : language === 'th' ? 'ดูคะแนน' : 'View'}
+                            : language === 'th' ? `ไม่ส่ง ${c.notSubmitted} คน` : `${c.notSubmitted} missing`}
                           <ArrowRight className="w-3 h-3" />
                         </span>
                       </div>
                     </Link>
                   );
                 };
+                const summary = [
+                  pendingTotal > 0 && (language === 'th' ? `รอตรวจ ${pendingTotal} ชิ้น` : `${pendingTotal} to grade`),
+                  missingTotal > 0 && (language === 'th' ? `ยังไม่มีคะแนน ${missingTotal} คน` : `${missingTotal} without a score`),
+                ].filter(Boolean).join(' · ');
                 return (
-                  <div className="pt-2 space-y-3">
-                    {/* Still to grade */}
-                    {toGrade.length > 0 && (
-                      <div className="rounded-2xl p-3 space-y-2.5 bg-amber-50/70 dark:bg-amber-950/20 ring-1 ring-amber-200 dark:ring-amber-900/50">
-                        <div className="flex items-center gap-1.5 text-xs font-bold">
-                          <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                          <span className="text-amber-800 dark:text-amber-300">
-                            {language === 'th' ? `ต้องตรวจ ${toGrade.length} งาน · ${pendingTotal} ชิ้น` : `To grade: ${toGrade.length} tasks · ${pendingTotal} submissions`}
+                  <div className="pt-2">
+                    <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 ring-1 ring-amber-200 dark:ring-amber-900/50 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setFoldedToGradeCourses((prev) => ({ ...prev, [course.id]: open }))}
+                        aria-expanded={open}
+                        className="group/tograde w-full flex items-center gap-2.5 p-3 text-left hover:bg-amber-100/50 dark:hover:bg-amber-900/20 transition-colors cursor-pointer"
+                      >
+                        <span className="w-7 h-7 rounded-lg shrink-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                          <Clock className="w-4 h-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-bold text-amber-800 dark:text-amber-300">
+                            {language === 'th' ? `ยังตรวจไม่ครบ ${toGrade.length} งาน` : `${toGrade.length} tasks not fully graded`}
                           </span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{toGrade.map(row)}</div>
-                      </div>
-                    )}
-
-                    {/* Already graded (or nothing handed in yet) */}
-                    {graded.length > 0 && (
-                      <div className="rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/15 ring-1 ring-emerald-200/80 dark:ring-emerald-900/50 overflow-hidden">
-                        <button
-                          type="button"
-                          onClick={() => setOpenGradedCourses((prev) => ({ ...prev, [course.id]: !showGraded }))}
-                          aria-expanded={showGraded}
-                          className="group/graded w-full flex items-center gap-2.5 p-3 text-left hover:bg-emerald-100/50 dark:hover:bg-emerald-900/20 transition-colors cursor-pointer"
-                        >
-                          <span className="w-7 h-7 rounded-lg shrink-0 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-                            <CheckCircle2 className="w-4 h-4" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                              {toGrade.length === 0
-                                ? language === 'th' ? 'ตรวจครบทุกงานแล้ว' : 'Everything is graded'
-                                : language === 'th' ? 'ตรวจครบแล้ว' : 'Graded'}
-                            </span>
-                            <span className="block text-[11px] text-emerald-700/70 dark:text-emerald-400/70 truncate">
-                              {language === 'th' ? `${graded.length} งาน · ${showGraded ? 'แตะเพื่อซ่อน' : 'แตะเพื่อดูคะแนน'}` : `${graded.length} tasks · ${showGraded ? 'tap to hide' : 'tap to view scores'}`}
-                            </span>
-                          </span>
-                          <span className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-emerald-600 dark:text-emerald-400 bg-white/70 dark:bg-slate-900/60 ring-1 ring-emerald-200/80 dark:ring-emerald-900/60 group-hover/graded:ring-emerald-400 transition-colors">
-                            <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${showGraded ? 'rotate-180' : ''}`} />
-                          </span>
-                        </button>
-                        <Collapse open={showGraded}>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-3 pb-3">{graded.map(row)}</div>
-                        </Collapse>
-                      </div>
-                    )}
+                          <span className="block text-[11px] text-amber-700/70 dark:text-amber-400/70 truncate">{summary}</span>
+                        </span>
+                        <span className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-amber-600 dark:text-amber-400 bg-white/70 dark:bg-slate-900/60 ring-1 ring-amber-200/80 dark:ring-amber-900/60 group-hover/tograde:ring-amber-400 transition-colors">
+                          <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
+                        </span>
+                      </button>
+                      <Collapse open={open}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-3 pb-3">{toGrade.map(row)}</div>
+                      </Collapse>
+                    </div>
                   </div>
                 );
               })()}
