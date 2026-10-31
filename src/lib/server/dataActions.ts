@@ -268,13 +268,21 @@ async function loadAssignments(supabase: Supabase, classroomIds: string[], forTe
   const results = await Promise.all(chunk(classroomIds).map((part) => supabase.from('assignments').select('*').in('classroom_id', part)));
   const failed = results.find((r) => r.error);
   if (failed?.error) throw toDatabaseError(failed.error, 'assignments');
-  const list = results.flatMap((r) => (r.data || []) as Assignment[]).sort(byCreatedDesc);
-  if (!forTeacher) return list.filter((a) => isAssignmentPublished(a));
-  // Drafts never published are deleted after DRAFT_RETENTION_DAYS; hide them until the sweep runs.
+  const list = results.flatMap((r) => (r.data || []) as Assignment[]);
+  return forTeacher ? teacherVisibleAssignments(supabase, list) : list.filter((a) => isAssignmentPublished(a)).sort(byCreatedDesc);
+}
+
+/** Newest first, without drafts past DRAFT_RETENTION_DAYS (hidden until the sweep deletes them). */
+function teacherVisibleAssignments(supabase: Supabase, list: Assignment[]): Assignment[] {
   after(() => deleteExpiredAssignmentDraftsOccasionally(supabase));
   const draftCutoff = Date.now() - DRAFT_RETENTION_MS;
-  return list.filter((a) => !isAssignmentDraft(a) || !a.created_at || new Date(a.created_at).getTime() >= draftCutoff);
+  return list
+    .filter((a) => !isAssignmentDraft(a) || !a.created_at || new Date(a.created_at).getTime() >= draftCutoff)
+    .sort(byCreatedDesc);
 }
+
+/** Classroom columns the sidebar list shows (no rosters, no LINE secrets). */
+const CLASSROOM_LIST_FIELDS = 'id, name, course_id, course_name, subject_code, semester, year_ce, academic_year, student_count, created_at';
 
 /** Submission columns the dashboard counts from (no answers, no profiles). */
 const DASHBOARD_SUBMISSION_FIELDS =
@@ -672,6 +680,17 @@ export const dataActions = {
     return options.withRoster === false ? rows : hydrateClassrooms(supabase, rows);
   },
 
+  /** The teacher's classrooms for navigation: a few columns, no roster hydration. */
+  async getClassroomList({ supabase, actor }: Ctx) {
+    const me = requireTeacher(actor);
+    const [own, shared] = await Promise.all([
+      supabase.from('classrooms').select(CLASSROOM_LIST_FIELDS).eq('teacher_id', me.userId),
+      supabase.from('classrooms').select(CLASSROOM_LIST_FIELDS).contains('teachers', jsonArray({ teacher_id: me.userId })),
+    ]);
+    if (own.error || shared.error) throw toDatabaseError((own.error || shared.error)!, 'classrooms');
+    return uniqueById([...(own.data || []), ...(shared.data || [])] as Classroom[]).sort(byCreatedDesc);
+  },
+
   async getStudentClassrooms({ supabase, actor }: Ctx) {
     const me = requireStudent(actor);
     const [fromRoster, links] = await Promise.all([
@@ -942,9 +961,45 @@ export const dataActions = {
   /** Teachers: their classrooms' assignments. Students: published work of classrooms they belong to. */
   async getAssignmentsByClassroomIds({ supabase, actor }: Ctx, classroomIds: string[]) {
     if (!actor) throw UNAUTHORIZED();
-    const allowed = actor.kind === 'teacher' ? await teacherClassroomIds(supabase, actor.userId) : await studentClassroomIds(supabase, actor);
-    const ids = [...new Set(classroomIds.filter(Boolean))].filter((id) => allowed.has(id));
-    return loadAssignments(supabase, ids, actor.kind === 'teacher');
+    const requested = [...new Set(classroomIds.filter(Boolean))];
+    if (requested.length === 0) return [];
+    if (actor.kind === 'teacher') {
+      // One round trip: each row carries its classroom's teachers, checked here.
+      const results = await Promise.all(
+        chunk(requested).map((part) =>
+          supabase.from('assignments').select('*, classroom:classrooms(teacher_id, teachers)').in('classroom_id', part)
+        )
+      );
+      const failed = results.find((r) => r.error);
+      if (failed?.error) throw toDatabaseError(failed.error, 'assignments');
+      const rows = results.flatMap((r) => (r.data || []) as Array<Assignment & { classroom?: Pick<Classroom, 'teacher_id' | 'teachers'> | null }>);
+      const mine = rows
+        .filter((row) => row.classroom && isTeacherOf(row.classroom, actor.userId))
+        .map(({ classroom: _classroom, ...assignment }) => assignment as Assignment);
+      return teacherVisibleAssignments(supabase, mine);
+    }
+    const allowed = await studentClassroomIds(supabase, actor);
+    return loadAssignments(supabase, requested.filter((id) => allowed.has(id)), false);
+  },
+
+  /**
+   * The LINE student's published work in the given classrooms plus their own
+   * submissions for it, in one request (the classroom check runs once).
+   */
+  async getStudentWork({ supabase, actor }: Ctx, classroomIds: string[]) {
+    const me = requireStudent(actor);
+    const requested = [...new Set(classroomIds.filter(Boolean))];
+    if (requested.length === 0) return { assignments: [] as Assignment[], submissions: [] };
+    const allowed = await studentClassroomIds(supabase, me);
+    const assignments = await loadAssignments(supabase, requested.filter((id) => allowed.has(id)), false);
+    const results = await Promise.all(
+      chunk(assignments.map((a) => a.id)).map((part) =>
+        supabase.from('submissions').select('*').in('assignment_id', part).in('student_id', me.keys)
+      )
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw toDatabaseError(failed.error, 'submissions');
+    return { assignments, submissions: results.flatMap((r) => r.data || []) };
   },
 
   async getAssignmentsByClassroomId(ctx: Ctx, classroomId: string) {
@@ -952,19 +1007,24 @@ export const dataActions = {
   },
 
   /** The assignment with its questions. Students get published work of their classroom, without answer keys. */
-  async getAssignmentById({ supabase, actor }: Ctx, id: string) {
+  /** withClassroom: teachers also get the classroom with its roster (saves the grading page a request). */
+  async getAssignmentById({ supabase, actor }: Ctx, id: string, options: { withClassroom?: boolean } = {}) {
     if (!actor) throw UNAUTHORIZED();
     const [assignmentResult, questionsResult] = await Promise.all([
-      supabase.from('assignments').select('*').eq('id', id).maybeSingle(),
+      supabase.from('assignments').select('*, classroom:classrooms(*)').eq('id', id).maybeSingle(),
       supabase.from('questions').select('*').eq('assignment_id', id),
     ]);
     if (assignmentResult.error) throw toDatabaseError(assignmentResult.error, 'assignments');
-    const assignment = assignmentResult.data as Assignment | null;
-    if (!assignment) return { assignment: null, questions: [] as Question[] };
-    const classroom = await loadClassroom(supabase, assignment.classroom_id);
+    if (!assignmentResult.data) return { assignment: null, questions: [] as Question[] };
+    const { classroom, ...row } = assignmentResult.data as Assignment & { classroom?: Classroom | null };
+    const assignment = row as Assignment;
     const role = classroom ? await classroomRole(supabase, actor, classroom) : null;
     const questions = (questionsResult.data || []) as Question[];
-    if (role === 'teacher') return { assignment, questions };
+    if (role === 'teacher') {
+      if (!options.withClassroom) return { assignment, questions };
+      const [hydrated] = await hydrateClassrooms(supabase, [classroom!]);
+      return { assignment, questions, classroom: hydrated };
+    }
     if (!role || !isAssignmentPublished(assignment)) throw FORBIDDEN();
     return { assignment, questions: questionsForStudent(questions) };
   },

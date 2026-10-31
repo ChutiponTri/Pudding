@@ -82,14 +82,12 @@ function GradingHubContent() {
   const loadInitialData = async (teacherId: string) => {
     setLoading(true);
     try {
-      // Only this teacher's courses, sections, work and submission counts.
-      const [crs, cls] = await Promise.all([dataService.getCourses(teacherId), dataService.getClassrooms(teacherId)]);
-      const asg = await dataService.getAssignmentsByClassroomIds(cls.map((c) => c.id));
-      const subs = await dataService.getSubmissionsByAssignmentIds(asg.map((a) => a.id), { includeStudents: false });
-      setCourses(crs);
-      setClassrooms(cls);
-      setAssignments(asg);
-      setAllSubmissions(subs);
+      // Only this teacher's courses, sections, work and submission counts, in one request.
+      const data = await dataService.getTeacherDashboard();
+      setCourses(data.courses);
+      setClassrooms(data.classrooms);
+      setAssignments(data.assignments);
+      setAllSubmissions(data.submissions);
     } catch (err) {
       console.error('Error loading grading hub data:', err);
     } finally {

@@ -145,10 +145,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   const loadAllData = async () => {
     try {
-      // Assignment and submissions load together; the classroom roster follows
-      // as soon as the assignment says which classroom it belongs to.
-      const [{ assignment: asg, questions: qs }, subs] = await Promise.all([
-        dataService.getAssignmentById(assignmentId),
+      // Assignment (with its classroom roster) and submissions load together.
+      const [{ assignment: asg, questions: qs, classroom: cls }, subs] = await Promise.all([
+        dataService.getAssignmentById(assignmentId, { withClassroom: true }),
         dataService.getSubmissions(assignmentId),
       ]);
       setAssignment(asg);
@@ -158,7 +157,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         setOverrideStatus(asg.status_override || 'auto');
         // Suggest the current extension, or two days from now at 23:59.
         setExtendedDateTime(asg.extended_until || daysFromNowAt(2, 23, 59));
-        if (asg.classroom_id) setClassroom(await dataService.getClassroomById(asg.classroom_id));
+        if (cls) setClassroom(cls);
       }
     } catch (err) {
       console.error(err);

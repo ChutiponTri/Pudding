@@ -927,18 +927,11 @@ export default function LiffStudentPage() {
 
         // Single-beat unified data loading: filter assignments and load student submissions together
         const enrolledClassIds = new Set(enrolled.map((c) => c.id));
+        // Published work and this student's own submissions, in one request.
         // Scheduled work stays hidden until its publish time.
-        const allAssigns = await dataService.getAssignmentsByClassroomIds([...enrolledClassIds]);
-        const relevantAssigns = allAssigns.filter((a) => isAssignmentPublished(a));
-
-        // This student's submissions only, in one request.
-        const allSubmissions = await dataService.getSubmissionsByAssignmentIds(
-          relevantAssigns.map((assignment) => assignment.id),
-          {
-            studentIds: [currentStudent.id, currentStudent.line_uid, currentStudent.student_id || ''],
-            includeStudents: false,
-          }
-        );
+        const work = await dataService.getStudentWork([...enrolledClassIds]);
+        const relevantAssigns = work.assignments.filter((a) => isAssignmentPublished(a));
+        const allSubmissions = work.submissions;
         const subMap: Record<string, Submission> = {};
         const assignmentsById = new Map(relevantAssigns.map((a) => [a.id, a]));
         for (const submission of allSubmissions) {
@@ -981,7 +974,7 @@ export default function LiffStudentPage() {
         enrolledClassroomIdsRef.current = new Set(enrolled.map((c) => c.id));
         latestEnrolled = enrolled;
         syncSignals(enrolled.map((c) => c.id));
-        schedulePublishReload(allAssigns);
+        schedulePublishReload(work.assignments);
         setClassrooms(enrolled);
         setSelectedClassroom(active);
         setAssignments(relevantAssigns);

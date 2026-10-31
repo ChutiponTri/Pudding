@@ -99,6 +99,24 @@ const GuestSidebarContent: React.FC<{ onNavigate: () => void }> = ({ onNavigate 
   );
 };
 
+/** Last list per browser tab, so a reload paints the sidebar at once while it refreshes. */
+const LIST_CACHE_KEY = 'pudding_sidebar_classrooms';
+
+function readCachedList(teacherId: string): Classroom[] | null {
+  try {
+    const cached = JSON.parse(window.sessionStorage.getItem(LIST_CACHE_KEY) || 'null');
+    return cached?.teacherId === teacherId && Array.isArray(cached.items) ? cached.items : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedList(teacherId: string, items: Classroom[]) {
+  try {
+    window.sessionStorage.setItem(LIST_CACHE_KEY, JSON.stringify({ teacherId, items }));
+  } catch {}
+}
+
 export const GlobalClassroomSidebar: React.FC = () => {
   const pathname = usePathname();
   const { isOpen, closeSidebar } = useSidebar();
@@ -135,8 +153,9 @@ export const GlobalClassroomSidebar: React.FC = () => {
     let settled = false;
     setLoading(true);
     dataService
-      .getClassrooms(teacherId, { withRoster: false })
+      .getClassroomList()
       .then((data) => {
+        writeCachedList(teacherId, data);
         if (!cancelled) setList({ teacherId, items: data });
       })
       .catch((err) => {
@@ -160,7 +179,9 @@ export const GlobalClassroomSidebar: React.FC = () => {
   // Sort classrooms from newest to oldest
   const sortedClassrooms = useMemo(() => {
     // Signed out or another teacher: show nothing rather than a previous teacher's list.
-    const classrooms = teacherId && list?.teacherId === teacherId ? list.items : [];
+    // Before the first fetch returns, this tab's cached list paints at once (the
+    // sidebar renders nothing until it opens after mount, so hydration is unaffected).
+    const classrooms = !teacherId ? [] : list?.teacherId === teacherId ? list.items : readCachedList(teacherId) || [];
     return [...classrooms].sort((a, b) => {
       const timeA = new Date(a.created_at || 0).getTime();
       const timeB = new Date(b.created_at || 0).getTime();

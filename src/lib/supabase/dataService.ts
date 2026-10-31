@@ -284,6 +284,11 @@ export const dataService = {
     return call<Classroom[]>('getClassrooms', options);
   },
 
+  /** The teacher's classrooms for navigation: names, terms and counts only (no rosters). */
+  async getClassroomList(): Promise<Classroom[]> {
+    return call<Classroom[]>('getClassroomList');
+  },
+
   /** Classrooms the signed-in (LINE) student belongs to or has asked to join. */
   async getStudentClassrooms(_student?: { id: string; line_uid?: string }): Promise<Classroom[]> {
     return call<Classroom[]>('getStudentClassrooms');
@@ -486,8 +491,19 @@ export const dataService = {
     return call<Question[]>('getQuestions', assignmentId);
   },
 
-  async getAssignmentById(id: string): Promise<{ assignment: Assignment | null; questions: Question[] }> {
-    return call('getAssignmentById', id);
+  /** withClassroom: teachers also get the assignment's classroom with its roster, in the same request. */
+  async getAssignmentById(
+    id: string,
+    options: { withClassroom?: boolean } = {}
+  ): Promise<{ assignment: Assignment | null; questions: Question[]; classroom?: Classroom }> {
+    return call('getAssignmentById', id, options);
+  },
+
+  /** The LINE student's published work in these classrooms and their own submissions, in one request. */
+  async getStudentWork(classroomIds: string[]): Promise<{ assignments: Assignment[]; submissions: Submission[] }> {
+    const ids = [...new Set(classroomIds.filter(Boolean))];
+    if (ids.length === 0) return { assignments: [], submissions: [] };
+    return call('getStudentWork', ids);
   },
 
   /** Creates the assignment, its questions, and its timeline post + LINE announcement (server side). */

@@ -48,13 +48,15 @@ export async function GET(request: NextRequest) {
   if (!actor) return NextResponse.json({ error: 'กรุณาเข้าสู่ระบบ' }, { status: 401 });
   let allowedIds = assignmentIds;
   if (actor.kind === 'teacher') {
-    const { data: rows } = await supabase.from('assignments').select('id, classroom_id').in('id', assignmentIds);
-    const classroomIds = [...new Set((rows || []).map((r) => r.classroom_id))];
-    const { data: classrooms } = classroomIds.length
-      ? await supabase.from('classrooms').select('id, teacher_id, teachers').in('id', classroomIds)
-      : { data: [] };
-    const mine = new Set((classrooms || []).filter((c) => isTeacherOf(c, actor.userId)).map((c) => c.id));
-    allowedIds = (rows || []).filter((r) => mine.has(r.classroom_id)).map((r) => r.id);
+    // Each assignment carries its classroom's teachers, so one round trip decides.
+    const { data: rows } = await supabase
+      .from('assignments')
+      .select('id, classroom:classrooms(teacher_id, teachers)')
+      .in('id', assignmentIds);
+    type Row = { id: string; classroom: Pick<Classroom, 'teacher_id' | 'teachers'> | null };
+    allowedIds = ((rows || []) as unknown as Row[])
+      .filter((r) => r.classroom && isTeacherOf(r.classroom, actor.userId))
+      .map((r) => r.id);
     if (!allowedIds.length) return NextResponse.json({ submissions: [] });
   }
   let query = supabase.from('submissions').select('*').in('assignment_id', allowedIds);
