@@ -153,7 +153,7 @@ export const notificationManager = {
       try {
         new Notification(title, {
           body,
-          icon: '/favicon.ico',
+          icon: '/logo.png',
         });
       } catch (err) {
         console.warn('Browser notification error:', err);
