@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
+import { fetchCached, readCache, watchClassrooms } from '@/lib/cache/sessionCache';
 import {
   Assignment,
   Classroom,
@@ -143,26 +144,51 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const loadAllData = async () => {
+  /** useCache: show this session's copy at once (first open only; reloads after a change always refetch). */
+  const loadAllData = async ({ useCache = false }: { useCache?: boolean } = {}) => {
+    const teacherId = clerkUser?.id;
+    const cacheKey = `assignmentGrading:${assignmentId}`;
     try {
       // Assignment (with its classroom roster) and submissions load together.
-      const [{ assignment: asg, questions: qs, classroom: cls }, subs] = await Promise.all([
-        dataService.getAssignmentById(assignmentId, { withClassroom: true }),
-        dataService.getSubmissions(assignmentId),
-      ]);
-      setAssignment(asg);
-      setQuestions(qs);
-      setSubmissions(subs);
-      if (asg) {
-        setOverrideStatus(asg.status_override || 'auto');
-        // Suggest the current extension, or two days from now at 23:59.
-        setExtendedDateTime(asg.extended_until || daysFromNowAt(2, 23, 59));
-        if (cls) setClassroom(cls);
+      const load = async () => {
+        const [detail, subs] = await Promise.all([
+          dataService.getAssignmentById(assignmentId, { withClassroom: true }),
+          dataService.getSubmissions(assignmentId),
+        ]);
+        return { ...detail, subs };
+      };
+      // Refetch only if something may have changed since.
+      const hit = useCache && teacherId ? readCache<Awaited<ReturnType<typeof load>>>(cacheKey, teacherId) : null;
+      if (hit) {
+        applyLoaded(hit.value);
+        setLoading(false);
+        if (hit.fresh) return;
       }
+      applyLoaded(teacherId ? await fetchCached(cacheKey, teacherId, load) : await load());
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const applyLoaded = ({
+    assignment: asg,
+    questions: qs,
+    classroom: cls,
+    subs,
+  }: Awaited<ReturnType<typeof dataService.getAssignmentById>> & { subs: Submission[] }) => {
+    setAssignment(asg);
+    setQuestions(qs);
+    setSubmissions(subs);
+    if (asg) {
+      setOverrideStatus(asg.status_override || 'auto');
+      // Suggest the current extension, or two days from now at 23:59.
+      setExtendedDateTime(asg.extended_until || daysFromNowAt(2, 23, 59));
+      if (cls) {
+        setClassroom(cls);
+        watchClassrooms([cls.id]);
+      }
     }
   };
 
@@ -173,7 +199,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       .catch((err) => console.warn('Refreshing submissions failed:', err));
 
   useEffect(() => {
-    loadAllData();
+    loadAllData({ useCache: true });
   }, [assignmentId]);
 
   // New submissions arrive as a server signal for this classroom; refetch then.

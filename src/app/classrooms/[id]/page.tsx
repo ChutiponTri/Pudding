@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { dataService } from '@/lib/supabase/dataService';
+import { cacheVersion, cachedCall, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
@@ -148,6 +149,18 @@ type Post = {
   metadata?: { assignmentId?: string; groupName?: string; publishAt?: string };
 };
 
+type AttendanceResult = { sessions?: AttendanceSession[]; session?: AttendanceSession | null; records?: AttendanceRecord[] };
+
+/** Everything the workspace shows on open, cached for the session (see loadWorkspace). */
+type WorkspaceSnapshot = {
+  classroom: Classroom;
+  assignments: Assignment[];
+  posts: Post[];
+  attendance: AttendanceResult;
+  submissions: Submission[];
+  submissionsFetchedAt: number;
+};
+
 // shortLabel keeps all five tabs on one row of the mobile bottom bar.
 const tabs: Array<{ id: Tab; label: string; shortLabel: string; icon: typeof BookOpen }> = [
   { id: 'overview', label: 'ภาพรวม', shortLabel: 'ภาพรวม', icon: ClipboardList },
@@ -211,12 +224,14 @@ export default function ClassroomWorkspacePage() {
   const courseId = classroom?.course_id;
   useEffect(() => {
     if (!courseId) return;
-    dataService.getCourseById(courseId).then(setCourse).catch(() => setCourse(null));
-  }, [courseId]);
+    const load = () => dataService.getCourseById(courseId);
+    (user?.id ? cachedCall(`course:${courseId}`, user.id, load) : load()).then(setCourse).catch(() => setCourse(null));
+  }, [courseId, user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
-    dataService.getUserById(user.id).then((profile) => setTeacherInstitution(profile?.institution?.trim() || ''));
+    cachedCall('myProfile', user.id, () => dataService.getUserById(user.id))
+      .then((profile) => setTeacherInstitution(profile?.institution?.trim() || ''));
   }, [user?.id]);
 
   // Bumped by every local attendance change; a refresh that started before
@@ -402,9 +417,28 @@ export default function ClassroomWorkspacePage() {
   // ----------------------------------------------------
   // HIGH-SPEED OPTIMIZED PARALLEL DATA LOADER
   // ----------------------------------------------------
-  const loadWorkspace = async () => {
+  /**
+   * useCache: show this session's copy of the workspace at once and refetch
+   * only if something may have changed (first open; reloads after a change
+   * always refetch).
+   */
+  const loadWorkspace = async ({ useCache = false }: { useCache?: boolean } = {}) => {
     if (!classroomId) return;
-    setLoading(true);
+    const teacherId = user?.id;
+    const cacheKey = `classroomWorkspace:${classroomId}`;
+    const hit = useCache && teacherId ? readCache<WorkspaceSnapshot>(cacheKey, teacherId) : null;
+    if (hit) {
+      applySnapshot(hit.value);
+      setLoading(false);
+      if (hit.fresh) {
+        // Opening the grades tab right away does not refetch these.
+        submissionsFetchedAtRef.current = hit.value.submissionsFetchedAt;
+        return;
+      }
+    } else {
+      setLoading(true);
+    }
+    const startedAt = cacheVersion();
     try {
       // Fire all requests concurrently in parallel
       const [current, classAssignments, postsRes, attRes] = await Promise.all([
@@ -416,16 +450,36 @@ export default function ClassroomWorkspacePage() {
 
       setClassroom(current);
       setAssignments(classAssignments);
+      if (current) watchClassrooms([current.id]);
 
+      let nextPosts: Post[] | null = null;
       if (postsRes.ok) {
         const postsJson = await postsRes.json();
-        setPosts(postsJson.posts || []);
+        nextPosts = postsJson.posts || [];
+        setPosts(nextPosts!);
       }
 
-      if (attRes.ok) applyAttendance(await attRes.json());
+      const attendance: AttendanceResult | null = attRes.ok ? await attRes.json() : null;
+      if (attendance) applyAttendance(attendance);
 
-      // Concurrently fetch submissions for all assignments to show submit counts
-      if (classAssignments.length > 0) refreshSubmissions(classAssignments);
+      // Concurrently fetch submissions for all assignments to show submit counts;
+      // the snapshot is cached once they are in (only when every part loaded).
+      const submissionsLoaded = classAssignments.length > 0 ? refreshSubmissions(classAssignments) : Promise.resolve([]);
+      if (teacherId && current && nextPosts && attendance) {
+        const posts = nextPosts;
+        submissionsLoaded.then((subs) => {
+          if (!subs) return;
+          const snapshot = {
+            classroom: current,
+            assignments: classAssignments,
+            posts,
+            attendance,
+            submissions: subs,
+            submissionsFetchedAt: submissionsFetchedAtRef.current,
+          };
+          writeCache<WorkspaceSnapshot>(cacheKey, teacherId, snapshot, startedAt);
+        });
+      }
     } catch (error) {
       console.error('Failed to load classroom workspace:', error);
       setNotice('โหลดข้อมูลห้องเรียนไม่สำเร็จ');
@@ -434,7 +488,16 @@ export default function ClassroomWorkspacePage() {
     }
   };
 
-  const applyAttendance = (result: { sessions?: AttendanceSession[]; session?: AttendanceSession | null; records?: AttendanceRecord[] }) => {
+  const applySnapshot = (snapshot: WorkspaceSnapshot) => {
+    setClassroom(snapshot.classroom);
+    setAssignments(snapshot.assignments);
+    setPosts(snapshot.posts);
+    applyAttendance(snapshot.attendance);
+    setSubmissions(snapshot.submissions);
+    watchClassrooms([snapshot.classroom.id]);
+  };
+
+  const applyAttendance = (result: AttendanceResult) => {
     const nextSessions = result.sessions || [];
     setSessions(nextSessions);
     setAllRecords(result.records || []);
@@ -468,15 +531,18 @@ export default function ClassroomWorkspacePage() {
   // when the last one is only a few seconds old.
   const submissionsFetchedAtRef = useRef(0);
   const refreshSubmissions = (list: Assignment[], maxAgeMs = 0) => {
-    if (!list.length || Date.now() - submissionsFetchedAtRef.current < maxAgeMs) return Promise.resolve();
+    if (!list.length || Date.now() - submissionsFetchedAtRef.current < maxAgeMs) return Promise.resolve(undefined);
     submissionsFetchedAtRef.current = Date.now();
     return dataService.getSubmissionsByAssignmentIds(list.map((item) => item.id))
-      .then(setSubmissions)
-      .catch(() => {});
+      .then((subs) => {
+        setSubmissions(subs);
+        return subs;
+      })
+      .catch(() => undefined);
   };
 
   useEffect(() => {
-    loadWorkspace();
+    loadWorkspace({ useCache: true });
   }, [user?.id, classroomId]);
 
   // Fetch Grades when switching to Grades tab (unless they were just loaded)
@@ -1444,7 +1510,7 @@ export default function ClassroomWorkspacePage() {
                 <CalendarCheck className="w-3.5 h-3.5 text-slate-400" />
                 {semester}
               </span>
-              <button onClick={loadWorkspace} aria-label="รีเฟรช" className="-mr-2 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
+              <button onClick={() => loadWorkspace()} aria-label="รีเฟรช" className="-mr-2 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-slate-500 shrink-0">
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>

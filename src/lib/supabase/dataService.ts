@@ -15,6 +15,7 @@ import {
 } from '@/types/database';
 import { createClient, isSupabaseConfigured } from './client';
 import { authFetch } from '@/lib/auth/lineSession';
+import { invalidateSessionCache } from '@/lib/cache/sessionCache';
 import { classroomSignalChannel, type ClassroomSignal } from '@/lib/realtime/signals';
 
 /**
@@ -42,17 +43,29 @@ function uniqueById<T extends { id: string }>(rows: T[]): T[] {
   return rows.filter((row) => (seen.has(row.id) ? false : (seen.add(row.id), true)));
 }
 
+/**
+ * Actions that only read. Everything else may change data, so it marks the
+ * session cache stale. syncClerkUser only mirrors Clerk's own profile on
+ * sign-in, so it does not count.
+ */
+const isReadAction = (action: string) => /^(get|search|find)/.test(action) || action === 'rosterFingerprint' || action === 'syncClerkUser';
+
 /** Runs one server data action as the current user; throws the server's message on failure. */
 async function call<T>(action: string, ...args: unknown[]): Promise<T> {
-  const res = await authFetch('/api/data', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, args }),
-    cache: 'no-store',
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
-  return json.result as T;
+  try {
+    const res = await authFetch('/api/data', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, args }),
+      cache: 'no-store',
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    return json.result as T;
+  } finally {
+    // Also after a failure: the write may have partly applied.
+    if (!isReadAction(action)) invalidateSessionCache();
+  }
 }
 
 async function fetchJson<T>(url: string): Promise<T> {

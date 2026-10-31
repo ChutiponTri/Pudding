@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useSidebar } from '@/components/SidebarContext';
 import { GlobalClassroomSidebar } from '@/components/GlobalClassroomSidebar';
 import { Navbar } from '@/components/Navbar';
+import { SessionCacheSync } from '@/components/SessionCacheSync';
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
@@ -16,12 +17,21 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   // steps (e.g. /sign-in/factor-one); remounting there would reset the sign-in flow.
   const routeKey = pathname.match(/^\/(sign-in|sign-up)(\/|$)/)?.[1] ?? pathname;
 
-  if (isLiff || isAdmin) {
+  if (isLiff) {
     return <>{children}</>;
+  }
+  if (isAdmin) {
+    return (
+      <>
+        <SessionCacheSync />
+        {children}
+      </>
+    );
   }
 
   return (
     <div className="min-h-dvh flex flex-col">
+      <SessionCacheSync />
       <GlobalClassroomSidebar />
       {/* The sidebar pushes content only on desktop; on phones and iPads it
           overlays the page so the workspace keeps its full width. */}

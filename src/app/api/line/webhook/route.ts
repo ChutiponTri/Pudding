@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
+import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getGroupSummary, isGroupMember, pushLineGroupText, replyLineConfirm, replyLineText, replyLineTextWithLinkButton, replyLineTextWithQuickReplies } from '@/lib/line/messaging';
 import { buildLiffUrl, withLiffLink } from '@/lib/line/liffLink';
@@ -215,6 +216,11 @@ async function findWaitingClassrooms(supabase: ServiceClient, requesterId?: stri
   );
 }
 
+/** Open teacher pages refresh the classroom's LINE status (no classroom signal is sent otherwise). */
+function signalLineStatus(...classroomIds: Array<string | null | undefined>) {
+  after(() => Promise.all(classroomIds.map((id) => signalClassroom(id, { type: 'roster', action: 'updated' }))));
+}
+
 /**
  * Links the group to `classroom`. When `replacing` is given (the teacher
  * confirmed moving an old group), that classroom is unlinked first; nothing is
@@ -267,6 +273,7 @@ async function linkGroup(
     await replySafely(replyToken, 'ระบบบันทึกการเชื่อมต่อไม่สำเร็จ กรุณากด “เชื่อม LINE Group” ในเว็บแล้วลองใหม่อีกครั้ง');
     return;
   }
+  signalLineStatus(classroom.id, replacing?.id);
   await replySafely(
     replyToken,
     `✅ เชื่อมกลุ่มนี้กับ “${classroomTitle(classroom)}” เรียบร้อยแล้ว${replacing ? ` (ยกเลิกการเชื่อมกับ “${classroomTitle(replacing)}”)` : ''} ระบบพร้อมส่งแจ้งเตือนการบ้าน\n\n${classroomJoinText(classroom, getLiffUrl())}\n\n💡 คุณครู/TA พิมพ์ "พุดดิ้ง" เพื่อดูคำสั่งทั้งหมด (บอทตอบเฉพาะคุณครูและ TA ของห้อง)`
@@ -381,6 +388,7 @@ async function handleLinkPostback(supabase: ServiceClient, groupId: string, line
       line_connection_token_hash: null,
       line_connection_token_expires_at: null,
     }).eq('id', classroom.id).eq('line_connection_status', 'waiting');
+    signalLineStatus(classroom.id);
     await replySafely(replyToken, `ยกเลิกการเชื่อม “${classroomTitle(classroom)}” แล้ว`);
     return;
   }
@@ -570,14 +578,15 @@ export async function POST(request: NextRequest) {
     }
     // Bot removed from (or left) a group: unlink that classroom in the UI.
     if (groupId && event.type === 'leave') {
-      const { error } = await supabase.from('classrooms').update({
+      const { data: unlinked, error } = await supabase.from('classrooms').update({
         line_group_id: null,
         line_group_name: null,
         line_connection_status: 'disconnected',
         line_connection_token_expires_at: null,
         line_connected_at: null,
-      }).eq('line_group_id', groupId);
+      }).eq('line_group_id', groupId).select('id');
       if (error) console.error('LINE classroom auto-unlink failed:', error);
+      signalLineStatus(...(unlinked || []).map((row) => row.id));
       continue;
     }
     // Teacher adds / blocks the bot in their 1:1 chat.

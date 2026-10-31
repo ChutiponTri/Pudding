@@ -6,6 +6,9 @@ import { Avatar } from '@/components/Avatar';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dataService } from '@/lib/supabase/dataService';
+import { fetchCached, readCache, TEACHER_DASHBOARD_CACHE_KEY, watchClassrooms } from '@/lib/cache/sessionCache';
+
+type TeacherDashboardData = Awaited<ReturnType<typeof dataService.getTeacherDashboard>>;
 import {
   Assignment,
   Submission,
@@ -214,52 +217,66 @@ export default function DashboardPage() {
   const loadSeqRef = useRef(0);
   const profilePrefilledRef = useRef(false);
 
-  const loadAllData = async () => {
+  const applyDashboard = (data: TeacherDashboardData) => {
+    const myClassrooms = data.classrooms;
+    myClassroomIdsRef.current = myClassrooms.map((c) => c.id);
+    watchClassrooms(myClassroomIdsRef.current);
+
+    setCourses(data.courses);
+    setClassrooms(myClassrooms);
+    setLineConnectionStatuses(Object.fromEntries(
+      myClassrooms.map((classroom) => [
+        classroom.id,
+        classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected'),
+      ])
+    ));
+    setAssignments(data.assignments);
+    setIndicators(data.indicators);
+    setAllSubmissions(data.submissions);
+
+    const profile = data.profile;
+    if (profile) {
+      setTeacherProfile(profile);
+      // Prefill once; later (realtime) reloads must not wipe what the teacher is typing.
+      if (!profilePrefilledRef.current) {
+        profilePrefilledRef.current = true;
+        // Pre-fill name from profile or fall back to Clerk data
+        setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
+        setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
+        // Do NOT pre-fill institution — teacher must actively choose/confirm it
+        setTeacherInstitutionInput('');
+        if (!profile.institution || !profile.first_name || !profile.last_name) {
+          // Prompt teacher to complete their profile on first visit
+          setIsProfileRequired(true);
+          setIsInstitutionModalOpen(true);
+        }
+      }
+    }
+
+    // The open roster dialog shows the freshly loaded (already hydrated) classroom.
+    // Functional update: realtime reloads run an older closure of this function.
+    setManagingClassroom((current) => (current ? myClassrooms.find((c) => c.id === current.id) || null : current));
+  };
+
+  /** useCache: show this session's copy at once and refetch only if something may have changed. */
+  const loadAllData = async ({ useCache = false }: { useCache?: boolean } = {}) => {
     const teacherId = clerkUser?.id;
     if (!teacherId) return;
     const seq = ++loadSeqRef.current;
     try {
-      // One request: the server reads everything in parallel, filtered to this
-      // teacher (submissions are scores only, no profiles).
-      const data = await dataService.getTeacherDashboard();
-      if (seq !== loadSeqRef.current) return;
-      const myClassrooms = data.classrooms;
-      myClassroomIdsRef.current = myClassrooms.map((c) => c.id);
-
-      setCourses(data.courses);
-      setClassrooms(myClassrooms);
-      setLineConnectionStatuses(Object.fromEntries(
-        myClassrooms.map((classroom) => [
-          classroom.id,
-          classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected'),
-        ])
-      ));
-      setAssignments(data.assignments);
-      setIndicators(data.indicators);
-      setAllSubmissions(data.submissions);
-
-      const profile = data.profile;
-      if (profile) {
-        setTeacherProfile(profile);
-        // Prefill once; later (realtime) reloads must not wipe what the teacher is typing.
-        if (!profilePrefilledRef.current) {
-          profilePrefilledRef.current = true;
-          // Pre-fill name from profile or fall back to Clerk data
-          setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
-          setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
-          // Do NOT pre-fill institution — teacher must actively choose/confirm it
-          setTeacherInstitutionInput('');
-          if (!profile.institution || !profile.first_name || !profile.last_name) {
-            // Prompt teacher to complete their profile on first visit
-            setIsProfileRequired(true);
-            setIsInstitutionModalOpen(true);
-          }
+      if (useCache) {
+        const hit = readCache<TeacherDashboardData>(TEACHER_DASHBOARD_CACHE_KEY, teacherId);
+        if (hit) {
+          applyDashboard(hit.value);
+          setLoading(false);
+          if (hit.fresh) return;
         }
       }
-
-      // The open roster dialog shows the freshly loaded (already hydrated) classroom.
-      // Functional update: realtime reloads run an older closure of this function.
-      setManagingClassroom((current) => (current ? myClassrooms.find((c) => c.id === current.id) || null : current));
+      // One request: the server reads everything in parallel, filtered to this
+      // teacher (submissions are scores only, no profiles).
+      const data = await fetchCached(TEACHER_DASHBOARD_CACHE_KEY, teacherId, () => dataService.getTeacherDashboard());
+      if (seq !== loadSeqRef.current) return;
+      applyDashboard(data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -320,7 +337,7 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    loadAllData();
+    loadAllData({ useCache: true });
   }, [clerkUser?.id]);
 
   // While a classroom waits for the bot to join a group, poll its status so the

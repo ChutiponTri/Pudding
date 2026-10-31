@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
+import { fetchCached, readCache, TEACHER_DASHBOARD_CACHE_KEY, watchClassrooms } from '@/lib/cache/sessionCache';
 import {
   Assignment,
   Classroom,
@@ -80,14 +81,26 @@ function GradingHubContent() {
 
   // Load Initial Data
   const loadInitialData = async (teacherId: string) => {
-    setLoading(true);
-    try {
-      // Only this teacher's courses, sections, work and submission counts, in one request.
-      const data = await dataService.getTeacherDashboard();
+    const apply = (data: Awaited<ReturnType<typeof dataService.getTeacherDashboard>>) => {
       setCourses(data.courses);
       setClassrooms(data.classrooms);
       setAssignments(data.assignments);
       setAllSubmissions(data.submissions);
+      watchClassrooms(data.classrooms.map((c) => c.id));
+    };
+    // Same data as the dashboard: this session's copy shows at once and is
+    // refetched only if something may have changed since.
+    const hit = readCache<Parameters<typeof apply>[0]>(TEACHER_DASHBOARD_CACHE_KEY, teacherId);
+    if (hit) {
+      apply(hit.value);
+      setLoading(false);
+      if (hit.fresh) return;
+    } else {
+      setLoading(true);
+    }
+    try {
+      // Only this teacher's courses, sections, work and submission counts, in one request.
+      apply(await fetchCached(TEACHER_DASHBOARD_CACHE_KEY, teacherId, () => dataService.getTeacherDashboard()));
     } catch (err) {
       console.error('Error loading grading hub data:', err);
     } finally {

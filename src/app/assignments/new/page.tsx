@@ -5,6 +5,7 @@ import { useUser } from '@clerk/nextjs';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
+import { cachedCall, readCache, TEACHER_DASHBOARD_CACHE_KEY } from '@/lib/cache/sessionCache';
 import { Assignment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
@@ -149,11 +150,19 @@ function NewAssignmentContent() {
     if (!teacherId) return;
     async function init(teacherId: string) {
       try {
-        const [crs, cls, ind] = await Promise.all([
-          dataService.getCourses(teacherId),
-          dataService.getClassrooms(teacherId, { withRoster: false }),
-          dataService.getLearningIndicators(),
-        ]);
+        // Course/classroom pickers: the dashboard's copy when still fresh (same
+        // data), else this session's own copy. The edited assignment below is
+        // always fetched.
+        const dashboard = readCache<Awaited<ReturnType<typeof dataService.getTeacherDashboard>>>(TEACHER_DASHBOARD_CACHE_KEY, teacherId);
+        const [crs, cls, ind] = dashboard?.fresh
+          ? [dashboard.value.courses, dashboard.value.classrooms, dashboard.value.indicators]
+          : await cachedCall('assignmentEditorLists', teacherId, () =>
+              Promise.all([
+                dataService.getCourses(teacherId),
+                dataService.getClassrooms(teacherId, { withRoster: false }),
+                dataService.getLearningIndicators(),
+              ])
+            );
         setCourses(crs);
         setClassrooms(cls);
         setLineConnectionStatuses(Object.fromEntries(
