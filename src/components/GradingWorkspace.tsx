@@ -453,7 +453,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             <FlaskConical className="w-4 h-4 shrink-0" />
             <span>
               {th
-                ? 'โหมดตรวจเพื่อการวิจัย: คะแนนของคุณเก็บแยกไว้ ไม่แสดงต่อนักเรียน และไม่เปลี่ยนคะแนนจริงของวิชา'
+                ? 'โหมดวิจัย: คะแนนเก็บแยก นักเรียนไม่เห็น และไม่เปลี่ยนคะแนนจริง'
                 : 'Research mode: your scores are stored separately and never shown to students or change official grades.'}
             </span>
           </div>
@@ -602,7 +602,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                         </div>
                         {missingFiles[ans.file_url] ? (
                           <p className="p-4 text-center text-xs text-slate-500">
-                            {th ? 'ไม่พบไฟล์นี้ในระบบแล้ว (อาจถูกเก็บสำรองและลบออกโดยผู้ดูแลระบบ)' : 'This file is no longer in storage (it may have been backed up and removed by an admin).'}
+                            {th ? 'ไม่พบไฟล์นี้แล้ว (ผู้ดูแลอาจย้ายไปเก็บสำรอง)' : 'This file is no longer in storage (it may have been backed up and removed by an admin).'}
                           </p>
                         ) : isPdf(ans.file_url) ? (
                           <iframe src={ans.file_url} title={`answer-${idx + 1}`} className="w-full h-[480px] bg-white" />
@@ -657,7 +657,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                         </div>
                         {editingKey && (
                           <p className="text-[11px] font-bold text-amber-700 dark:text-amber-400">
-                            {th ? 'เลือกคำตอบที่ถูกต้อง แล้วกด "บันทึกเฉลยใหม่" — คำตอบข้อนี้ของนักเรียนทุกคนจะถูกตรวจใหม่' : 'Pick the correct answer, then "Save new key"; every student\'s answer to this question is re-scored.'}
+                            {th ? 'เลือกคำตอบที่ถูก แล้วกด "บันทึกเฉลยใหม่" — ระบบจะตรวจข้อนี้ของทุกคนใหม่' : 'Pick the correct answer, then "Save new key"; every student\'s answer to this question is re-scored.'}
                           </p>
                         )}
                         <div className="grid gap-1.5" role={editingKey ? 'radiogroup' : undefined}>
@@ -809,7 +809,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
 
                     {isObjective && !isResearcher && (
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        {th ? 'คะแนนข้อนี้ตรวจอัตโนมัติจากเฉลย ปรับเองรายคนได้ เช่น ให้คะแนนบางส่วน' : 'Scored automatically from the key; you can still adjust it for this student.'}
+                        {th ? 'ตรวจอัตโนมัติจากเฉลย ปรับเองรายคนได้ (เช่น ให้บางส่วน)' : 'Scored automatically from the key; you can still adjust it for this student.'}
                       </p>
                     )}
                     <textarea

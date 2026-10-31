@@ -151,7 +151,7 @@ export const Navbar: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Bell className="w-4 h-4 text-amber-500" />
                     <span className="text-xs font-bold text-slate-900 dark:text-white">
-                      {language === 'th' ? 'การแจ้งเตือน Realtime' : 'Real-time Notifications'}
+                      {language === 'th' ? 'การแจ้งเตือน' : 'Notifications'}
                     </span>
                     {unreadCount > 0 && (
                       <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
@@ -174,7 +174,7 @@ export const Navbar: React.FC = () => {
                 {browserPerm !== 'granted' && (
                   <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200/60 dark:border-amber-900/60 flex items-center justify-between gap-2">
                     <span className="text-[11px] text-amber-900 dark:text-amber-200">
-                      {language === 'th' ? '🔔 เปิดแจ้งเตือนหน้าจอคอมฯ เมื่อเด็กสแกน' : '🔔 Enable desktop alerts'}
+                      {language === 'th' ? '🔔 เปิดแจ้งเตือนบนหน้าจอ' : '🔔 Enable desktop alerts'}
                     </span>
                     <button
                       type="button"
@@ -237,7 +237,7 @@ export const Navbar: React.FC = () => {
               />
               <div className="hidden lg:block text-left">
                 <span className="block text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
-                  {user?.fullName || user?.firstName || 'กำลังโหลดข้อมูล...'}
+                  {user?.fullName || user?.firstName || 'กำลังโหลด...'}
                 </span>
                 <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
                   {t("nav.teacher_role")}

@@ -76,6 +76,7 @@ import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { Collapse } from '@/components/Collapse';
+import { MobileText } from '@/components/MobileText';
 
 /**
  * Checks an assessment framework before saving. Returns a message naming the
@@ -356,7 +357,7 @@ export function TeacherWorkspace({
       if (!response.ok) throw new Error(result.error || 'LINE connection failed');
       setLineConnection(result);
       setLineConnectionStatuses((current) => ({ ...current, [activeClassroom.id]: result.status }));
-      showToast(action === 'disconnect' ? 'ยกเลิกการเชื่อมต่อแล้ว และบอทออกจากกลุ่ม LINE แล้ว' : action === 'test' ? 'ส่งข้อความทดสอบแล้ว' : 'พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย');
+      showToast(action === 'disconnect' ? 'ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว' : action === 'test' ? 'ส่งข้อความทดสอบแล้ว' : 'พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'ไม่สามารถเชื่อมต่อ LINE Group ได้');
     } finally {
@@ -422,7 +423,7 @@ export function TeacherWorkspace({
             message: `นักเรียน ${studentName} ได้สแกน QR ขอเข้าห้องเรียน (รอคุณครูอนุมัติ)`,
             type: 'admission_request',
           });
-          showToast(`🔔 มีคำขอใหม่: ${studentName} ขอเข้าห้องเรียน (รออนุมัติ)`);
+          showToast(`🔔 ${studentName} ขอเข้าห้องเรียน (รออนุมัติ)`);
         } else {
           notificationManager.add({
             title: 'นักเรียนเข้าห้องเรียนสำเร็จ',
@@ -880,7 +881,7 @@ export function TeacherWorkspace({
     if (!managingClassroom) return;
     try {
       await dataService.admitStudentToClassroom(managingClassroom.id, studentId);
-      showToast(language === 'th' ? 'อนุมัตินักเรียนเข้าห้องเรียนเรียบร้อย' : 'Student admitted successfully');
+      showToast(language === 'th' ? 'อนุมัตินักเรียนแล้ว' : 'Student admitted successfully');
       await loadAllData();
     } catch (err) {
       console.error(err);
@@ -965,7 +966,7 @@ export function TeacherWorkspace({
       // 2. Also update Clerk so syncClerkUser never reverts these on reload
       await clerkUser.update({ firstName: fn, lastName: ln });
       setTeacherProfile((prev) => prev ? { ...prev, first_name: fn, last_name: ln, institution: inst } : null);
-      showToast(language === 'th' ? 'บันทึกข้อมูลคุณครูเรียบร้อยแล้ว' : 'Profile updated successfully');
+      showToast(language === 'th' ? 'บันทึกแล้ว' : 'Profile updated successfully');
       setIsInstitutionModalOpen(false);
     } catch (e) {
       console.error(e);
@@ -1090,7 +1091,7 @@ export function TeacherWorkspace({
       });
       await dataService.updateCourseIndicators(editingCourseIndicators.id, indicatorListDraft);
       showToast(
-        language === 'th' ? 'บันทึกกรอบการวัดผลเรียบร้อยแล้ว' : 'Course framework saved successfully'
+        language === 'th' ? 'บันทึกกรอบการวัดผลแล้ว' : 'Course framework saved successfully'
       );
       setIsIndicatorsModalOpen(false);
       await loadAllData();
@@ -1232,10 +1233,10 @@ export function TeacherWorkspace({
             <span>Pudding Learning Intelligence</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-950 break-words">
-            {t('dashboard.welcome')}, <br className="md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || (loading ? 'กำลังโหลดข้อมูล...' : '')}
+            {t('dashboard.welcome')}, <br className="md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || (loading ? 'กำลังโหลด...' : '')}
           </h1>
           <p className="text-slate-900/90 text-sm max-w-xl font-medium">
-            {t('dashboard.overview_subtitle')}
+            <MobileText short={language === 'th' ? 'ภาพรวมห้องเรียนและงานที่ต้องตรวจ' : 'Your classes and grading at a glance'} full={t('dashboard.overview_subtitle')} />
           </p>
           <div className="flex items-center gap-2 pt-1 min-w-0">
             <button
@@ -1245,7 +1246,7 @@ export function TeacherWorkspace({
               title="คลิกเพื่อเลือกหรือแก้ไขสถานศึกษา"
             >
               <Building2 className="w-3.5 h-3.5" />
-              <span className="truncate">{teacherProfile?.institution || (language === 'th' ? '+ ระบุสถานศึกษา/โรงเรียนของคุณครู' : '+ Specify School')}</span>
+              <span className="truncate">{teacherProfile?.institution || (language === 'th' ? '+ ระบุสถานศึกษา' : '+ Specify School')}</span>
               <Edit2 className="w-3 h-3 opacity-70 ml-0.5" />
             </button>
           </div>
@@ -1325,7 +1326,7 @@ export function TeacherWorkspace({
           <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-1 flex items-center gap-1">
             <span className="truncate">
               {selectedSemesterKey === 'all'
-                ? (language === 'th' ? 'ทุกภาคเรียนและปีการศึกษา' : 'All Semesters')
+                ? (language === 'th' ? 'ทุกภาคเรียน' : 'All Semesters')
                 : formatAcademicPeriod(Number(selectedSemesterKey.split('_')[0]), Number(selectedSemesterKey.split('_')[1]), language)}
             </span>
             <ArrowRight className="w-3 h-3 shrink-0" />
@@ -1349,7 +1350,7 @@ export function TeacherWorkspace({
             {totalStudents}
           </p>
           <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1">
-            <span className="truncate">{language === 'th' ? 'ดูและแก้ไขข้อมูลนักเรียน' : 'View & edit students'}</span>
+            <span className="truncate"><MobileText short={language === 'th' ? 'ดู / แก้ไข' : 'View & edit'} full={language === 'th' ? 'ดูและแก้ไขข้อมูลนักเรียน' : 'View & edit students'} /></span>
             <ArrowRight className="w-3 h-3 shrink-0" />
           </span>
         </Link>
@@ -1402,7 +1403,7 @@ export function TeacherWorkspace({
             {suspiciousAlertCount}
           </p>
           <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold mt-1 flex items-center gap-1">
-            <span>{language === 'th' ? 'ตรวจดูรายงานความเสี่ยง' : 'View Risk Audit'}</span>
+            <span className="truncate"><MobileText short={language === 'th' ? 'ดูรายงาน' : 'View report'} full={language === 'th' ? 'ตรวจดูรายงานความเสี่ยง' : 'View Risk Audit'} /></span>
             <ArrowRight className="w-3 h-3" />
           </span>
         </Link>
@@ -1427,7 +1428,7 @@ export function TeacherWorkspace({
               </h1>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 {selectedSemesterKey === 'all'
-                  ? (language === 'th' ? 'ทุกภาคเรียนและปีการศึกษา' : 'All semesters')
+                  ? (language === 'th' ? 'ทุกภาคเรียน' : 'All semesters')
                   : formatAcademicPeriod(Number(selectedSemesterKey.split('_')[0]), Number(selectedSemesterKey.split('_')[1]), language)}
                 {' · '}{filteredClassrooms.length} {language === 'th' ? 'ห้อง' : 'classrooms'}
                 {' · '}{totalStudents} {language === 'th' ? 'นักเรียน' : 'students'}
@@ -1463,7 +1464,7 @@ export function TeacherWorkspace({
               type="search"
               value={classroomQuery}
               onChange={(e) => setClassroomQuery(e.target.value)}
-              placeholder={language === 'th' ? 'ค้นหาชื่อห้อง รหัสวิชา หรือชื่อวิชา' : 'Search room, subject code or course name'}
+              placeholder={language === 'th' ? 'ค้นหาห้อง รหัส หรือชื่อวิชา' : 'Search room, subject code or course name'}
               className="w-full h-11 pl-9 pr-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
             />
           </label>
@@ -1482,7 +1483,7 @@ export function TeacherWorkspace({
               </span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              {t('courses.subtitle')}
+              <MobileText short={language === 'th' ? 'ห้องเรียนและงานแยกตามรายวิชา' : 'Classrooms and work by course'} full={t('courses.subtitle')} />
             </p>
           </div>
 
@@ -1513,11 +1514,11 @@ export function TeacherWorkspace({
               </div>
               <div className="space-y-1 max-w-sm mx-auto">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  {language === "th" ? "ยังไม่มีรายวิชาในระบบสำหรับภาคเรียนนี้" : "No courses for this semester"}
+                  {language === "th" ? "ภาคเรียนนี้ยังไม่มีรายวิชา" : "No courses for this semester"}
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                   {language === "th"
-                    ? "สร้างรายวิชาใหม่ หรือคัดลอกวิชาจากภาคเรียนอื่นเข้ามาเพื่อเริ่มต้น"
+                    ? "สร้างรายวิชาใหม่ หรือคัดลอกจากภาคเรียนอื่น"
                     : "Create a new course or import from another semester to get started."}
                 </p>
               </div>
@@ -1644,7 +1645,7 @@ export function TeacherWorkspace({
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
                   {course.sections.length === 0 ? (
                     <div className="col-span-full p-4 sm:p-6 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
-                      {language === 'th' ? 'ยังไม่มีห้องเรียนในรายวิชานี้ กดปุ่ม "เพิ่มห้องเรียน" เพื่อสร้างห้องเรียน' : 'No classroom enrolled under this course yet.'}
+                      {language === 'th' ? 'ยังไม่มีห้องเรียน กด "เพิ่มห้องเรียน" เพื่อเริ่ม' : 'No classroom enrolled under this course yet.'}
                     </div>
                   ) : (
                     course.sections.map((cls) => {
@@ -1970,7 +1971,7 @@ export function TeacherWorkspace({
                         onClick={() => setIsSavedLibraryOpen(!isSavedLibraryOpen)}
                         className="text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer"
                       >
-                        {isSavedLibraryOpen ? 'ซ่อนคลังตัวชี้วัด' : 'แสดงคลังตัวชี้วัด (คลิกเพื่อเลือกใช้)'}
+                        {isSavedLibraryOpen ? 'ซ่อนคลังตัวชี้วัด' : 'แสดงคลังตัวชี้วัด'}
                       </button>
                     </div>
                     {isSavedLibraryOpen && (
@@ -2005,7 +2006,7 @@ export function TeacherWorkspace({
                 <div className="space-y-3">
                   {indicatorListDraft.length === 0 ? (
                     <div className="p-5 sm:p-8 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
-                      ยังไม่มีตัวชี้วัดในรายวิชานี้ กดปุ่มด้านล่างเพื่อเพิ่มข้อใหม่
+                      ยังไม่มีตัวชี้วัด กดปุ่มด้านล่างเพื่อเพิ่ม
                     </div>
                   ) : (
                     indicatorListDraft.map((ind, idx) => (
@@ -2083,11 +2084,11 @@ export function TeacherWorkspace({
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                       <Award className="w-3.5 h-3.5 text-violet-500" />
-                      ขั้นที่ 1 — กำหนดสมรรถนะรายวิชา ({indicatorListDraft.length} ข้อ)
+                      ขั้นที่ 1 — สมรรถนะรายวิชา ({indicatorListDraft.length} ข้อ)
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                    ระบุสมรรถนะหลักของรายวิชา เพื่อใช้เป็นเป้าหมายที่แผนการสอนจะ map เข้าหา
+                    สมรรถนะหลักที่แผนการสอนจะ map เข้าหา
                   </p>
 
                   <div className="space-y-2">
@@ -2143,11 +2144,11 @@ export function TeacherWorkspace({
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                         <BookOpen className="w-3.5 h-3.5 text-amber-500" />
-                        ขั้นที่ 2 — แผนการสอน / กิจกรรม ({lessonPlanDraft.length} แผน)
+                        ขั้นที่ 2 — แผนการสอน ({lessonPlanDraft.length} แผน)
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                      เขียนแผนการสอนแต่ละข้อ แล้วเลือกว่าแผนนั้น map ไปยังสมรรถนะข้อใดบ้าง (เลือกซ้ำได้)
+                      เขียนแต่ละแผน แล้วเลือกสมรรถนะที่ map (เลือกได้หลายข้อ)
                     </p>
 
                     <div className="space-y-3">
@@ -2184,7 +2185,7 @@ export function TeacherWorkspace({
                           {/* Competency mapping checkboxes */}
                           <div className="space-y-1">
                             <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                              map ไปยังสมรรถนะ (เลือกได้หลายข้อ / ซ้ำได้):
+                              map ไปยังสมรรถนะ:
                             </p>
                             <div className="flex flex-wrap gap-2">
                               {indicatorListDraft.map((ind, indIdx) => {
@@ -2240,7 +2241,7 @@ export function TeacherWorkspace({
                       className="w-full py-2.5 rounded-2xl border border-dashed border-amber-300 dark:border-amber-800 text-xs font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <PlusCircle className="w-4 h-4" />
-                      <span>+ เพิ่มแผนการสอน (แผนที่ {lessonPlanDraft.length + 1})</span>
+                      <span>+ เพิ่มแผนการสอน</span>
                     </button>
                   </div>
                 )}
@@ -2307,19 +2308,19 @@ export function TeacherWorkspace({
               >
                 <span className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-200">
                   <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>โครงสร้างบทบาทครูร่วมในรายวิชา (Co-Teaching Architecture)</span>
+                  <span>บทบาทครูร่วมสอน</span>
                 </span>
                 <ChevronDown className={`w-4 h-4 text-amber-600 transition-transform ${isCoTeachingArchitectureOpen ? 'rotate-180' : ''}`} />
               </button>
               {isCoTeachingArchitectureOpen && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-4 pb-4 text-[11px] leading-relaxed">
                   <div className="p-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-blue-950 dark:text-blue-200">
-                    <span className="font-bold block mb-1">👨‍🏫 ครูผู้ช่วยสอน (Teaching Assistant - TA):</span>
-                    <span>ตรวจงานและให้คะแนนได้ แต่<strong>ไม่สามารถแก้ไขรายวิชา</strong> และระบบจะค้นหาจากสถาบันเดียวกัน</span>
+                    <span className="font-bold block mb-1">👨‍🏫 ผู้ช่วยสอน (TA):</span>
+                    <span>ตรวจและให้คะแนนได้ แต่<strong>แก้ไขรายวิชาไม่ได้</strong> ค้นหาได้เฉพาะครูสถาบันเดียวกัน</span>
                   </div>
                   <div className="p-2.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/50 text-purple-950 dark:text-purple-200">
-                    <span className="font-bold block mb-1">🔬 ครูตรวจเพื่อวิจัย (Research Evaluator):</span>
-                    <span>ใช้ประเมิน IRR เท่านั้น ไม่แสดงในหน้า LIFF และคะแนนไม่ปนกับคะแนนทางการ</span>
+                    <span className="font-bold block mb-1">🔬 ครูตรวจเพื่อวิจัย:</span>
+                    <span>ใช้ประเมิน IRR เท่านั้น นักเรียนไม่เห็น และไม่นับเป็นคะแนนจริง</span>
                   </div>
                 </div>
               )}
@@ -2333,7 +2334,7 @@ export function TeacherWorkspace({
             {/* Existing Teachers in this Course */}
             <div className="space-y-2">
               <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
-                รายชื่อครูในรายวิชานี้ ({coTeachersDraft.length} ท่าน)
+                ครูในรายวิชา ({coTeachersDraft.length} ท่าน)
               </span>
               <div className="space-y-2">
                 {coTeachersDraft.map((tchr) => (
@@ -2358,10 +2359,10 @@ export function TeacherWorkspace({
                             }`}
                           >
                             {tchr.role === 'primary'
-                              ? '👑 เจ้าของวิชา (Primary Owner)'
+                              ? '👑 เจ้าของวิชา'
                               : tchr.role === 'researcher'
-                              ? '🔬 ตรวจเพื่อวิจัย (Research Evaluator)'
-                              : '👨‍🏫 ผู้ช่วยสอน (Teaching Assistant)'}
+                              ? '🔬 ตรวจเพื่อวิจัย'
+                              : '👨‍🏫 ผู้ช่วยสอน'}
                           </span>
                         </div>
                         <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5 flex-wrap">
@@ -2395,10 +2396,10 @@ export function TeacherWorkspace({
             <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 space-y-4">
               <div>
                 <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                  + เพิ่มครูร่วมสอนในรายวิชา
+                  + เพิ่มครูร่วมสอน
                 </span>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  เลือกบทบาทครั้งเดียว จากนั้นค้นหาครูในระบบ หรือคัดลอกลิงก์เชิญให้ครูยืนยันด้วยตนเอง
+                  เลือกบทบาท แล้วค้นหาครู หรือส่งลิงก์เชิญ
                 </p>
               </div>
 
@@ -2432,7 +2433,7 @@ export function TeacherWorkspace({
                   }`}
                 >
                   <FlaskConical className="w-4 h-4" />
-                  <span>ครูตรวจเพื่อวิจัย (Researcher)</span>
+                  <span>ครูตรวจเพื่อวิจัย</span>
                 </button>
               </div>
 
@@ -2441,12 +2442,12 @@ export function TeacherWorkspace({
                 {newCoTeacherRole === 'assistant' ? (
                   <>
                     <Search className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                    <span>ระบบจะค้นหาครูที่สังกัดสถาบันเดียวกัน: <b>{teacherProfile?.institution || 'สถาบันเดียวกับคุณ'}</b></span>
+                    <span>ค้นหาเฉพาะครูใน <b>{teacherProfile?.institution || 'สถาบันเดียวกับคุณ'}</b></span>
                   </>
                 ) : (
                   <>
                     <Search className="w-3.5 h-3.5 text-purple-500 shrink-0" />
-                    <span>ระบบค้นหาครูจากทุกสถาบัน (ผู้ประเมินภายนอกเพื่อการวิจัย / Inter-Rater Reliability)</span>
+                    <span>ค้นหาครูจากทุกสถาบัน (ผู้ประเมินภายนอก)</span>
                   </>
                 )}
               </div>
@@ -2461,8 +2462,8 @@ export function TeacherWorkspace({
                     onChange={(e) => handleSearchTeachers(e.target.value)}
                     placeholder={
                       newCoTeacherRole === 'assistant'
-                        ? 'ค้นหาครูผู้ช่วยสอนด้วยชื่อ หรืออีเมล (สถาบันเดียวกัน)...'
-                        : 'ค้นหาครูตรวจวิจัยด้วยชื่อ หรืออีเมล (จากทุกสถาบัน)...'
+                        ? 'ค้นหาชื่อหรืออีเมล (สถาบันเดียวกัน)...'
+                        : 'ค้นหาชื่อหรืออีเมล (ทุกสถาบัน)...'
                     }
                     className="w-full pl-9 pr-9 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
                   />
@@ -2515,7 +2516,7 @@ export function TeacherWorkspace({
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
                     <FlaskConical className="w-3.5 h-3.5 text-amber-600" />
-                    <span>เชิญครูร่วมสอนผ่านลิงก์ / LINE (แยกบทบาทชัดเจน)</span>
+                    <span>เชิญผ่านลิงก์ / LINE</span>
                   </span>
                 </div>
 
@@ -2537,17 +2538,17 @@ export function TeacherWorkspace({
                 </div>
 
                 <div className="inline-flex items-center gap-2 rounded-xl bg-white/70 dark:bg-slate-900/70 border border-amber-200 dark:border-amber-900/60 px-3 py-2 text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                  {newCoTeacherRole === 'assistant' ? '👨‍🏫 ลิงก์นี้ใช้สำหรับครูผู้ช่วยสอน (TA)' : '🔬 ลิงก์นี้ใช้สำหรับครูตรวจงานวิจัย (Researcher)'}
+                  {newCoTeacherRole === 'assistant' ? '👨‍🏫 ลิงก์สำหรับผู้ช่วยสอน (TA)' : '🔬 ลิงก์สำหรับครูตรวจเพื่อวิจัย'}
                 </div>
 
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
                   {newCoTeacherRole === 'assistant'
-                    ? 'ลิงก์นี้สำหรับเชิญครูผู้ช่วยสอน (TA) เพื่อเข้ามาตรวจให้คะแนนจริงในห้องเรียน'
-                    : 'ลิงก์นี้สำหรับเชิญครูตรวจงานวิจัย (Research Evaluator) เพื่อเข้ามาประเมินความเที่ยงตรง (IRR) โดยไม่แสดงคะแนนหรือชื่อต่อนักเรียน'}
+                    ? 'ผู้ช่วยสอนจะตรวจและให้คะแนนจริงได้'
+                    : 'ครูตรวจเพื่อวิจัยประเมินความสอดคล้อง (IRR) ได้ โดยนักเรียนไม่เห็นคะแนนหรือชื่อ'}
                 </p>
 
                 <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all select-all">
-                  {teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole) || 'กำลังสร้างลิงก์เชิญ...'}
+                  {teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole) || 'กำลังสร้างลิงก์...'}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -2864,7 +2865,7 @@ export function TeacherWorkspace({
                   required
                   value={courseNameInput}
                   onChange={(e) => setCourseNameInput(e.target.value)}
-                  placeholder={language === 'th' ? 'เช่น ภาษาไทยเพื่อการนำเสนอและการวิพากษ์' : 'e.g. Thai Presentation & Discourse'}
+                  placeholder={language === 'th' ? 'เช่น ภาษาไทยเพื่อการนำเสนอ' : 'e.g. Thai Presentation & Discourse'}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500 text-slate-900 dark:text-white"
                 />
               </div>
@@ -2878,7 +2879,7 @@ export function TeacherWorkspace({
                   rows={2}
                   value={courseDescInput}
                   onChange={(e) => setCourseDescInput(e.target.value)}
-                  placeholder={language === 'th' ? 'คำอธิบายรายวิชาและสาระสำคัญของหลักสูตร...' : 'Curriculum overview and competencies...'}
+                  placeholder={language === 'th' ? 'คำอธิบายรายวิชา...' : 'Curriculum overview and competencies...'}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500 text-slate-900 dark:text-white resize-none"
                 />
               </div>
@@ -2888,12 +2889,12 @@ export function TeacherWorkspace({
                 <div>
                   <div className="flex items-center justify-between gap-3">
                     <label className="text-xs font-black text-slate-900 dark:text-white">
-                      2. เลือกกรอบการวัดผลและกำหนดข้อมูลจริง <span className="text-rose-500">*</span>
+                      2. กรอบการวัดผล <span className="text-rose-500">*</span>
                     </label>
                     <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300">ยังไม่บันทึกฐานข้อมูล</span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    ต้องกรอกอย่างน้อย 1 รายการ และเลือกใช้เพียงกรอบเดียวต่อรายวิชา
+                    เลือก 1 กรอบต่อรายวิชา และกรอกอย่างน้อย 1 รายการ
                   </p>
                 </div>
 
@@ -3125,7 +3126,7 @@ export function TeacherWorkspace({
                 }`}
               >
                 {lineConnection.status === 'connected'
-                  ? '🟢 เชื่อมต่อแล้ว พร้อมแจ้งเตือน'
+                  ? '🟢 เชื่อมต่อแล้ว'
                   : lineConnection.status === 'waiting'
                   ? '🟡 รอการยืนยันจากกลุ่ม'
                   : '⚪ ยังไม่เชื่อมต่อ'}
@@ -3137,8 +3138,8 @@ export function TeacherWorkspace({
                 <p className="font-bold">
                   {lineConnection.groupName ? `เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว` : 'เชื่อมกับกลุ่ม LINE แล้ว'}
                 </p>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">กลุ่มนี้จะได้รับแจ้งเตือนงาน และคุณครู/TA พิมพ์ <b>พุดดิ้ง</b> เพื่อดูคำสั่ง (บอทไม่ตอบนักเรียน) เช่น <b>พุดดิ้ง เข้าห้อง</b> <b>พุดดิ้ง งาน</b> <b>พุดดิ้ง เช็คชื่อ</b></p>
-                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">หากนำบอทออกจากกลุ่ม ห้องเรียนนี้จะยกเลิกการเชื่อมต่อโดยอัตโนมัติ</p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">กลุ่มนี้จะได้รับแจ้งเตือนงาน ครู/TA พิมพ์ <b>พุดดิ้ง</b> เพื่อดูคำสั่ง (บอทไม่ตอบนักเรียน) เช่น <b>พุดดิ้ง เข้าห้อง</b> <b>พุดดิ้ง งาน</b> <b>พุดดิ้ง เช็คชื่อ</b></p>
+                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">หากนำบอทออกจากกลุ่ม การเชื่อมต่อจะยกเลิกเอง</p>
               </div>
             ) : (
               <LineGroupConnectSteps
@@ -3275,7 +3276,7 @@ export function TeacherWorkspace({
                       type="text"
                       value={studentSearchQuery}
                       onChange={(e) => handleSearchStudents(e.target.value)}
-                      placeholder={language === 'th' ? '🔍 ค้นหานักเรียนที่มีในระบบ (ชื่อ, นามสกุล หรือรหัส นร.) เพื่อเพิ่มอย่างรวดเร็ว...' : 'Search student by name or ID...'}
+                      placeholder={language === 'th' ? '🔍 ค้นหานักเรียน (ชื่อ หรือรหัส นร.)...' : 'Search student by name or ID...'}
                       className="w-full pl-8 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:border-amber-500 font-medium"
                     />
                     {isSearchingStudents && (
@@ -3380,7 +3381,7 @@ export function TeacherWorkspace({
                 <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
                   <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <p className="leading-relaxed">
-                    ระบบความปลอดภัยตรวจสอบการเข้าห้องเรียน: นักเรียนที่สแกน QR Code หรือเข้าผ่านรหัสจะอยู่ในสถานะรอการอนุมัติ (Admit) ก่อน เพื่อป้องกันผู้ไม่หวังดีเข้ามาปั่นในห้องเรียน
+                    นักเรียนที่สแกน QR หรือใช้รหัสห้อง ต้องรอคุณครูอนุมัติก่อน เพื่อกันคนนอกเข้าห้อง
                   </p>
                 </div>
 
@@ -3390,10 +3391,10 @@ export function TeacherWorkspace({
                       ✅
                     </div>
                     <p className="font-medium text-slate-600 dark:text-slate-300">
-                      ไม่มีคำขอเข้าห้องเรียนที่รอการอนุมัติในขณะนี้
+                      ไม่มีคำขอที่รออนุมัติ
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      เมื่อนักเรียนสแกน QR Code หน้าจอนี้จะอัปเดตแบบ Real-time ทันที
+                      คำขอใหม่จะแสดงที่นี่ทันที
                     </p>
                   </div>
                 ) : (
@@ -3475,7 +3476,7 @@ export function TeacherWorkspace({
 
                   {lineConnection.status === 'connected' ? (
                     <p className="text-[11px] text-emerald-800 dark:text-emerald-200 font-semibold">
-                      {lineConnection.groupName ? `เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว` : 'เชื่อมกับกลุ่ม LINE แล้ว'} • นำบอทออกจากกลุ่มเมื่อใด ห้องนี้จะยกเลิกการเชื่อมต่อเอง
+                      {lineConnection.groupName ? `เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว` : 'เชื่อมกับกลุ่ม LINE แล้ว'} • หากนำบอทออก การเชื่อมต่อจะยกเลิกเอง
                     </p>
                   ) : (
                     <LineGroupConnectSteps
@@ -3639,7 +3640,7 @@ export function TeacherWorkspace({
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
                   {language === 'th'
-                    ? 'กรอกชื่อและเลือกสถานศึกษาเพียงครั้งเดียว เพื่อให้นักเรียนและเพื่อนครูค้นหาคุณได้ถูกต้อง'
+                    ? 'กรอกชื่อและสถานศึกษาครั้งเดียว ให้นักเรียนและเพื่อนครูค้นหาคุณเจอ'
                     : 'Add your name and institution once so students and co-teachers can find you.'}
                 </p>
               </div>
@@ -3666,7 +3667,7 @@ export function TeacherWorkspace({
               {!isProfileRequired && (
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                   {language === 'th'
-                    ? 'กรุณากรอกชื่อ–นามสกุล และเลือกสถานศึกษาของคุณครู เพื่อเชื่อมโยงกับเพื่อนครูและนักเรียนได้อย่างถูกต้อง'
+                    ? 'กรอกชื่อ–นามสกุล และเลือกสถานศึกษา'
                     : 'Please fill in your name and select your institution so students and co-teachers can find you.'}
                 </p>
               )}
@@ -3707,7 +3708,7 @@ export function TeacherWorkspace({
                 <InstitutionSearchSelect
                   value={teacherInstitutionInput}
                   onChange={setTeacherInstitutionInput}
-                  placeholder={language === 'th' ? 'พิมพ์ค้นหาชื่อโรงเรียน / วิทยาลัย / มหาวิทยาลัย...' : 'Search school name...'}
+                  placeholder={language === 'th' ? 'ค้นหาชื่อสถานศึกษา...' : 'Search school name...'}
                 />
               </div>
 

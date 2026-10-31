@@ -82,7 +82,7 @@ function StudentsContent() {
 
   const periodText =
     semesterKey === 'all'
-      ? th ? 'ทุกภาคเรียนและปีการศึกษา' : 'All semesters'
+      ? th ? 'ทุกภาคเรียน' : 'All semesters'
       : formatAcademicPeriod(Number(semesterKey.split('_')[0]), Number(semesterKey.split('_')[1]), language);
 
   const handleSaved = (studentId: string, fields: StudentFields) => {
@@ -129,7 +129,7 @@ function StudentsContent() {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={th ? 'ค้นหาชื่อ รหัสนักเรียน โรงเรียน หรืออีเมล' : 'Search name, student number, school or email'}
+            placeholder={th ? 'ค้นหาชื่อ รหัส โรงเรียน หรืออีเมล' : 'Search name, student number, school or email'}
             className="w-full h-11 pl-9 pr-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
           />
         </label>
@@ -150,7 +150,7 @@ function StudentsContent() {
 
       {error && !data ? (
         <p className="text-sm text-rose-600 dark:text-rose-400 text-center py-12">
-          {th ? 'โหลดข้อมูลนักเรียนไม่สำเร็จ กรุณาลองใหม่' : 'Could not load students. Please try again.'}
+          {th ? 'โหลดข้อมูลไม่สำเร็จ ลองใหม่อีกครั้ง' : 'Could not load students. Please try again.'}
         </p>
       ) : loading ? (
         <div className="space-y-2">
@@ -164,7 +164,7 @@ function StudentsContent() {
             {query ? (th ? 'ไม่พบนักเรียนที่ค้นหา' : 'No matching students') : th ? 'ยังไม่มีนักเรียนในภาคเรียนนี้' : 'No students this semester'}
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            {th ? 'เชิญนักเรียนเข้าห้องเรียนผ่าน LINE ได้จากหน้าห้องเรียน' : 'Invite students through LINE from a classroom page.'}
+            {th ? 'เชิญนักเรียนผ่าน LINE ได้ที่หน้าห้องเรียน' : 'Invite students through LINE from a classroom page.'}
           </p>
         </div>
       ) : (

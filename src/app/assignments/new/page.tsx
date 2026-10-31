@@ -15,6 +15,7 @@ import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
 import { DRAFT_PUBLISH_AT, DRAFT_RETENTION_DAYS, draftExpiresAt, isAssignmentDraft, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { optimizeImage, UploadError, uploadToStorage } from '@/lib/storage/uploadClient';
 import { uploadRejection } from '@/lib/storage/uploadRules';
+import { MobileText } from '@/components/MobileText';
 import {
   PlusCircle,
   Trash2,
@@ -55,16 +56,6 @@ interface QuestionDraft {
   rubric_criteria: string;
   max_score: number;
   is_required: boolean;
-}
-
-/** Phones get the short text (small screens, little room); from sm up the full one, unchanged. */
-function MobileText({ short, full }: { short: React.ReactNode; full: React.ReactNode }) {
-  return (
-    <>
-      <span className="sm:hidden">{short}</span>
-      <span className="hidden sm:inline">{full}</span>
-    </>
-  );
 }
 
 /** What the chosen mode means, shown next to (desktop) or under (mobile) the mode toggle. */

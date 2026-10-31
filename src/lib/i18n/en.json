@@ -21,7 +21,7 @@
     "search": "Search...",
     "filter": "Filter",
     "all": "All",
-    "save": "Save Data",
+    "save": "Save",
     "cancel": "Cancel",
     "create": "Create New",
     "edit": "Edit",
@@ -44,7 +44,7 @@
     "close": "Close",
     "confirm": "Confirm",
     "success": "Success",
-    "loading": "Loading data...",
+    "loading": "Loading...",
     "no_data": "No records found"
   },
   "dashboard": {
@@ -83,8 +83,8 @@
     }
   },
   "courses": {
-    "title": "Course Structure & Standard Indicators",
-    "subtitle": "Group sections and assignments by parent course, with co-teaching and research support",
+    "title": "Courses & Indicators",
+    "subtitle": "Group classrooms and work by course, with co-teaching and research support",
     "create_course_modal_title": "New Course",
     "create_course_btn": "Create Course",
     "delete_course": "Delete Course",
@@ -94,7 +94,7 @@
     "course_desc": "Course Description",
     "sections_count": "Active Sections",
     "primary_teacher": "Primary Teacher",
-    "co_teachers": "Co-Teachers / IRR Evaluators",
+    "co_teachers": "Co-Teachers",
     "add_co_teacher": "Add Co-Teacher",
     "manage_indicators": "Configure Rubric & Indicator Weights",
     "co_teaching_rule_badge": "Publication Rule: Student-facing grade & feedback render ONLY from the Primary Teacher. Co-teacher evaluations are stored for research (IRR benchmarking)."
@@ -134,10 +134,10 @@
     "line_status": "LINE Connection",
     "line_connected": "LINE Connected",
     "line_pending": "Pending Link",
-    "remove_student_confirm": "Are you sure you want to remove this student from this classroom?",
-    "invite_line_title": "Invite via LINE Official / LINE LIFF",
-    "invite_line_desc": "Students can scan this QR code or tap the LIFF link to instantly join the class and receive homework reminders via LINE.",
-    "copy_liff_link": "Copy LINE LIFF Link",
+    "remove_student_confirm": "Remove this student from the classroom?",
+    "invite_line_title": "Invite via LINE",
+    "invite_line_desc": "Students scan the QR code or tap the link to join and get homework reminders in LINE.",
+    "copy_liff_link": "Copy LINE Link",
     "copy_invite_code": "Copy Class Code",
     "copied": "Copied!",
     "open_line_share": "Share to LINE",
@@ -163,9 +163,9 @@
   },
   "assignment_creator": {
     "title": "Create Assignment or Exam",
-    "subtitle": "Configure assessment criteria, attach sample guidelines, and set LINE reminder bot triggers",
+    "subtitle": "Set the topic, indicators, grading criteria, sample work and LINE reminders",
     "mode_assignment": "Standard Assignment",
-    "mode_exam": "Online Exam (Proctored Integrity Monitor)",
+    "mode_exam": "Online Exam (Proctored)",
     "fields": {
       "parent_course": "Select Parent Course",
       "title_label": "Title",
@@ -194,11 +194,11 @@
     "questions_builder": {
       "title": "Questions & Assessment Criteria",
       "add_question": "+ Add Next Question",
-      "add_question_hint": "Click at the bottom of the list to continuously append questions without scrolling to the top",
+      "add_question_hint": "Use the button below to add the next question without scrolling up",
       "question_number": "Question",
       "question_type": "Question Type",
       "type_multiple_choice": "Multiple Choice",
-      "type_short_answer": "Short Answer (AI ASAG Auto-graded)",
+      "type_short_answer": "Short Answer (AI-graded)",
       "type_file_upload": "File Upload (Worksheet PDF/Image)",
       "type_true_false": "True / False",
       "question_text": "Question Text / Prompt",
@@ -206,7 +206,7 @@
       "indicator_hint": "Mapped to educational standards",
       "max_score": "Max Score",
       "ideal_answer": "Ideal Answer (Reference Benchmark)",
-      "ideal_answer_hint": "Used as ground truth for ASAG AI model",
+      "ideal_answer_hint": "Used as the reference for AI grading",
       "rubric": "Rubric Criteria",
       "rubric_hint": "e.g. 3 points for definition, 2 points for valid example",
       "options_label": "Multiple Choice Options",
@@ -234,7 +234,7 @@
     "btn_reset_auto": "Reset to Automatic"
   },
   "grading": {
-    "title": "Grading & Performance Analytics",
+    "title": "Grading & Analytics",
     "assignment_info": "Assignment Info",
     "due_date": "Due Date",
     "total_submissions": "Submissions",
@@ -261,7 +261,7 @@
       "pending": "Pending"
     },
     "actions": {
-      "grade_btn": "Grade (Continuous View)",
+      "grade_btn": "Grade",
       "view_audit": "Integrity Audit",
       "view_file": "View Files"
     },
@@ -333,7 +333,7 @@
   "upload": {
     "drag_drop": "Drag & drop file here, or click to browse",
     "supported_formats": "Supports JPG, PNG, WEBP images (up to 5MB) and PDF (up to 10MB) — paste a link for larger files",
-    "uploading_to_r2": "Uploading to Cloudflare R2 Storage...",
+    "uploading_to_r2": "Uploading...",
     "upload_success": "File uploaded successfully!",
     "upload_failed": "Upload error. Please try again."
   }

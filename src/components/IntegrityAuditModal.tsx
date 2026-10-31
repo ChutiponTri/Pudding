@@ -167,7 +167,7 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
             {events.length === 0 ? (
               <div className="p-6 text-center border border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-slate-400 text-sm">
                 {language === 'th'
-                  ? 'ไม่พบประวัติพฤติกรรมผิดปกติระหว่างทำข้อสอบ ผู้เรียนทำข้อสอบอย่างซื่อสัตย์'
+                  ? 'ไม่พบพฤติกรรมผิดปกติระหว่างทำข้อสอบ'
                   : 'No suspicious events detected during this exam session.'}
               </div>
             ) : (

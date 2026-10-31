@@ -39,7 +39,7 @@ function TeacherInviteContent() {
     if (!inviteCode) {
       // Waits for Clerk to load before deciding what to show.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setErrorMessage('ลิงก์คำเชิญไม่ครบถ้วน กรุณาขอลิงก์ใหม่จากคุณครูประจำวิชา');
+      setErrorMessage('ลิงก์คำเชิญไม่ครบ ขอลิงก์ใหม่จากครูประจำวิชา');
       setLoading(false);
       return;
     }
@@ -98,7 +98,7 @@ function TeacherInviteContent() {
       }, 2000);
     } catch (err) {
       console.error(err);
-      setErrorMessage((err as { message?: string } | null)?.message || 'ไม่สามารถบันทึกการเข้าร่วมได้ กรุณาลองใหม่อีกครั้ง');
+      setErrorMessage((err as { message?: string } | null)?.message || 'เข้าร่วมไม่สำเร็จ ลองใหม่อีกครั้ง');
     } finally {
       setJoining(false);
     }
@@ -123,7 +123,7 @@ function TeacherInviteContent() {
             <GraduationCap className="w-8 h-8" />
           </div>
           <h2 className="text-xl font-black text-slate-900 dark:text-white">คำเชิญเข้าร่วมสอน</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">กรุณาเข้าสู่ระบบด้วยบัญชีครูเพื่อดูรายละเอียดและยืนยันคำเชิญ</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">เข้าสู่ระบบด้วยบัญชีครูเพื่อดูและยืนยันคำเชิญ</p>
           <SignInButton mode="modal">
             <button type="button" className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm cursor-pointer">
               เข้าสู่ระบบเพื่อดูคำเชิญ
@@ -167,10 +167,10 @@ function TeacherInviteContent() {
           <div className="relative z-10 space-y-2">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-white text-xs font-black">
               {inviteRole === 'researcher' ? <FlaskConical className="w-3.5 h-3.5" /> : <GraduationCap className="w-3.5 h-3.5" />}
-              <span>{inviteRole === 'researcher' ? 'การตรวจงานวิจัย • IRR Benchmark' : 'ครูผู้ช่วยสอน • Teaching Assistant (TA)'}</span>
+              <span>{inviteRole === 'researcher' ? 'ครูตรวจเพื่อวิจัย • IRR' : 'ครูผู้ช่วยสอน (TA)'}</span>
             </div>
             <h1 className="text-2xl font-black tracking-tight">
-              {inviteRole === 'researcher' ? 'คำเชิญเป็นครูตรวจงานวิจัย (Research Evaluator)' : 'คำเชิญเป็นครูผู้ช่วยสอน (Teaching Assistant)'}
+              {inviteRole === 'researcher' ? 'คำเชิญเป็นครูตรวจเพื่อวิจัย' : 'คำเชิญเป็นครูผู้ช่วยสอน'}
             </h1>
             <p className="text-xs text-white/90">
               {inviterName} {inviteRole === 'researcher' ? 'ได้เชิญคุณเข้าร่วมประเมินและตรวจงานวิจัยในรายวิชา' : 'ได้เชิญคุณเข้าร่วมเป็นครูผู้ช่วยสอนในรายวิชา'}
@@ -210,8 +210,8 @@ function TeacherInviteContent() {
                 <ShieldCheck className="w-4 h-4 text-emerald-500" />
                 <span>
                   {inviteRole === 'researcher'
-                    ? 'สิทธิ์: ครูตรวจงานวิจัย (คะแนนจัดเก็บแยกส่วน ไม่โชว์นักเรียน)'
-                    : 'สิทธิ์: ครูผู้ช่วยสอน (ตรวจและให้คะแนนทางการแก่นักเรียนได้)'}
+                    ? 'สิทธิ์: ครูตรวจเพื่อวิจัย (คะแนนเก็บแยก นักเรียนไม่เห็น)'
+                    : 'สิทธิ์: ครูผู้ช่วยสอน (ให้คะแนนจริงได้)'}
                 </span>
               </span>
               <span>ตัวชี้วัด {course.indicators?.length || 0} ข้อ</span>
@@ -225,8 +225,8 @@ function TeacherInviteContent() {
                 <span>🔬 วัตถุประสงค์เพื่อการวิจัยเท่านั้น</span>
               </p>
               <p className="text-[11px] leading-relaxed text-blue-700 dark:text-blue-400">
-                คะแนนและความเห็นที่คุณตรวจจะถูกบันทึกในช่องงานวิจัย เพื่อวิเคราะห์ความเที่ยงตรงระหว่างผู้ตรวจ
-                (Inter-Rater Reliability: IRR) เท่านั้น โดยจะไม่แสดงให้นักเรียนเห็น และไม่กระทบคะแนนทางการของผู้สอนหลักหรือ TA
+                คะแนนและความเห็นของคุณเก็บแยกไว้เพื่อวิเคราะห์ความสอดคล้องระหว่างผู้ตรวจ (IRR) เท่านั้น
+                นักเรียนไม่เห็น และไม่กระทบคะแนนจริง
               </p>
             </div>
           ) : (
@@ -235,8 +235,8 @@ function TeacherInviteContent() {
                 <span>🎓 บทบาทครูผู้ช่วยสอน (TA)</span>
               </p>
               <p className="text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-400">
-                คุณสามารถตรวจงาน ให้คะแนนจริงแก่นักเรียน และนักเรียนจะสามารถเห็นคำแนะนำของคุณได้ อย่างไรก็ตาม
-                การแก้ไขรายวิชาและตั้งค่าหลักสูตรจะสงวนไว้ให้ครูผู้สอนหลักเท่านั้น
+                คุณตรวจงานและให้คะแนนจริงได้ นักเรียนจะเห็นคำแนะนำของคุณ
+                ส่วนการแก้ไขรายวิชาสงวนไว้ให้ครูผู้สอนหลัก
               </p>
             </div>
           )}
@@ -281,7 +281,7 @@ function TeacherInviteContent() {
                   <>
                     <span>
                       {inviteRole === 'researcher'
-                        ? 'ยืนยันเข้าร่วมเป็นครูตรวจงานวิจัย (Research Evaluator)'
+                        ? 'ยืนยันเข้าร่วมเป็นครูตรวจเพื่อวิจัย'
                         : 'ยืนยันเข้าร่วมเป็นครูผู้ช่วยสอน (TA)'}
                     </span>
                     <ArrowRight className="w-4 h-4" />
@@ -292,7 +292,7 @@ function TeacherInviteContent() {
           ) : (
             <div className="space-y-3">
               <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-                กรุณาลงชื่อเข้าใช้ด้วยบัญชีครูของท่าน เพื่อยืนยันสิทธิ์ครูผู้ช่วยตรวจ
+                เข้าสู่ระบบด้วยบัญชีครูเพื่อยืนยันคำเชิญ
               </p>
               <SignInButton mode="modal">
                 <button

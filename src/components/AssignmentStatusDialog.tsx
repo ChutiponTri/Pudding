@@ -91,7 +91,7 @@ export function AssignmentStatusDialog({
 
   const save = async () => {
     if (mode === 'extended' && new Date(extendedUntil).getTime() <= Date.now()) {
-      setError('กรุณาเลือกเวลาขยายที่อยู่ในอนาคต');
+      setError('เลือกเวลาในอนาคต');
       return;
     }
     setSaving(true);

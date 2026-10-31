@@ -17,6 +17,7 @@ import { formatDateTime } from '@/lib/utils/datetime';
 import { roomLabel } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
+import { MobileText } from '@/components/MobileText';
 import {
   ArrowLeft,
   AlertCircle,
@@ -370,7 +371,7 @@ export default function ClassroomWorkspacePage() {
       } : null));
       setNotice(
         action === 'disconnect'
-          ? 'ยกเลิกการเชื่อมต่อแล้ว และบอทออกจากกลุ่ม LINE แล้ว'
+          ? 'ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว'
           : action === 'test'
           ? 'ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว'
           : 'พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย'
@@ -850,12 +851,12 @@ export default function ClassroomWorkspacePage() {
         body: JSON.stringify({ classroomId, body: postBody, activityType: postActivityType }),
       });
       if (!response.ok) {
-        setNotice('บันทึกโพสต์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+        setNotice('บันทึกโพสต์ไม่สำเร็จ ลองใหม่อีกครั้ง');
         return;
       }
       setPostBody('');
       setIsPostExpanded(false);
-      setNotice('โพสต์เรียบร้อย และส่งแจ้งเตือนเข้า LINE Group แล้ว');
+      setNotice('โพสต์แล้ว และแจ้งเข้ากลุ่ม LINE แล้ว');
       await loadWorkspace();
     } catch {
       setNotice('เกิดข้อผิดพลาดในการโพสต์');
@@ -888,7 +889,7 @@ export default function ClassroomWorkspacePage() {
   };
 
   const handleDeletePost = async (postId: string) => {
-    if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบโพสต์นี้?')) return;
+    if (!confirm('ลบโพสต์นี้?')) return;
     try {
       const res = await fetch(`/api/classrooms/posts?id=${encodeURIComponent(postId)}`, {
         method: 'DELETE',
@@ -908,14 +909,14 @@ export default function ClassroomWorkspacePage() {
   // CRUD HANDLERS: ASSIGNMENTS / EXAMS
   // ----------------------------------------------------
   const handleDeleteAssignment = async (assignmentId: string) => {
-    if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบงาน/ข้อสอบนี้? (คะแนนและข้อสอบทั้งหมดจะถูกลบออก)')) return;
+    if (!confirm('ลบงาน/ข้อสอบนี้? คำตอบและคะแนนทั้งหมดจะถูกลบด้วย')) return;
     try {
       await dataService.deleteAssignment(assignmentId);
       setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
       setSubmissions((prev) => prev.filter((s) => s.assignment_id !== assignmentId));
       // The server removed its timeline announcement(s) too.
       setPosts((prev) => prev.filter((p) => p.metadata?.assignmentId !== assignmentId));
-      setNotice('ลบงาน/ข้อสอบเรียบร้อยแล้ว');
+      setNotice('ลบงาน/ข้อสอบแล้ว');
     } catch {
       setNotice('เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ');
     }
@@ -1082,7 +1083,7 @@ export default function ClassroomWorkspacePage() {
         }),
       });
       if (res.ok) {
-        setNotice('อัปเดตข้อมูลคาบเช็คชื่อเรียบร้อย');
+        setNotice('อัปเดตคาบเช็คชื่อแล้ว');
         patchSession(sessionId, {
           title: newTitle,
           ...(newStatus ? { status: newStatus, closed_at: newStatus === 'closed' ? new Date().toISOString() : null } : {}),
@@ -1102,14 +1103,14 @@ export default function ClassroomWorkspacePage() {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบคาบเช็คชื่อนี้พร้อมบันทึกทั้งหมด?')) return;
+    if (!confirm('ลบคาบเช็คชื่อนี้และบันทึกทั้งหมด?')) return;
     try {
       const res = await fetch(
         `/api/attendance?sessionId=${encodeURIComponent(sessionId)}&classroomId=${encodeURIComponent(classroomId)}`,
         { method: 'DELETE' }
       );
       if (res.ok) {
-        setNotice('ลบคาบเช็คชื่อเรียบร้อยแล้ว');
+        setNotice('ลบคาบเช็คชื่อแล้ว');
         attendanceVersionRef.current++;
         const remaining = sessions.filter((s) => s.id !== sessionId);
         setSessions(remaining);
@@ -1142,7 +1143,7 @@ export default function ClassroomWorkspacePage() {
         return;
       }
       const { session: created } = (await response.json()) as { session: AttendanceSession };
-      setNotice('เปิดคาบเช็คชื่อแล้ว และส่งแจ้งเตือนเข้า LINE Group');
+      setNotice('เปิดคาบเช็คชื่อแล้ว และแจ้งเข้ากลุ่ม LINE แล้ว');
       // The response is the full session row, so show and select it without a refetch.
       attendanceVersionRef.current++;
       setSessions((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
@@ -1179,7 +1180,7 @@ export default function ClassroomWorkspacePage() {
         const without = prev.filter((r) => !(r.session_id === sessionId && r.student_id === optimistic.student_id));
         return previous ? [...without, previous] : without;
       });
-      setNotice('บันทึกสถานะการเข้าเรียนไม่สำเร็จ กรุณาลองใหม่');
+      setNotice('บันทึกการเข้าเรียนไม่สำเร็จ ลองใหม่');
     };
     try {
       const response = await fetch('/api/attendance', {
@@ -1307,14 +1308,14 @@ export default function ClassroomWorkspacePage() {
   const handleRemoveTeacher = async (teacherId: string) => {
     if (!classroom) return;
     if (teachersList.length <= 1) {
-      alert('ไม่สามารถลบครูผู้สอนได้ ต้องมีครูผู้สอนในห้องเรียนอย่างน้อย 1 ท่าน');
+      alert('ลบไม่ได้ ห้องเรียนต้องมีครูผู้สอนอย่างน้อย 1 ท่าน');
       return;
     }
     if (!confirm('ต้องการนำครูผู้สอนท่านนี้ออกจากห้องเรียนหรือไม่?')) return;
     const updated = teachersList.filter((t) => t.teacher_id !== teacherId);
     await dataService.updateClassroom(classroom.id, { teachers: updated });
     setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
-    setNotice('นำครูผู้สอนออกจากห้องเรียนเรียบร้อย');
+    setNotice('นำครูผู้สอนออกแล้ว');
   };
 
   const handleSelectFoundStudent = async (std: User) => {
@@ -1351,7 +1352,7 @@ export default function ClassroomWorkspacePage() {
     if (pending && !confirmOtherSchool([pending])) return;
     try {
       await dataService.admitStudentToClassroom(classroom.id, studentId);
-      setNotice('อนุมัตินักเรียนเข้าห้องเรียนสำเร็จ');
+      setNotice('อนุมัตินักเรียนแล้ว');
       await loadWorkspace();
     } catch (e) {
       console.error(e);
@@ -1364,7 +1365,7 @@ export default function ClassroomWorkspacePage() {
     if (!confirm('ต้องการปฏิเสธคำขอนี้หรือไม่?')) return;
     try {
       await dataService.rejectStudentFromClassroom(classroom.id, studentId);
-      setNotice('ปฏิเสธคำขอเข้าห้องเรียนแล้ว');
+      setNotice('ปฏิเสธคำขอแล้ว');
       await loadWorkspace();
     } catch (e) {
       console.error(e);
@@ -1419,7 +1420,7 @@ export default function ClassroomWorkspacePage() {
     ];
     await dataService.updateClassroom(classroom.id, { teachers: updated });
     setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
-    setNotice('เพิ่มผู้สอนเรียบร้อยแล้ว');
+    setNotice('เพิ่มผู้สอนแล้ว');
     setTeacherSearchQuery('');
     setTeacherSearchResults([]);
     setShowAddTeacherModal(false);
@@ -1467,20 +1468,20 @@ export default function ClassroomWorkspacePage() {
         : prev
     );
     setEditingStudent(null);
-    setNotice('แก้ไขข้อมูลผู้เรียนเรียบร้อย');
+    setNotice('แก้ไขข้อมูลนักเรียนแล้ว');
   };
 
   const handleRemoveStudent = async (studentId: string) => {
     if (!classroom) return;
-    if (!confirm('ต้องการนำผู้เรียนคนนี้ออกจากห้องเรียนหรือไม่?')) return;
+    if (!confirm('นำนักเรียนคนนี้ออกจากห้องเรียน?')) return;
     try {
       await dataService.removeStudentFromClassroom(classroom.id, studentId);
       const currentStudents = classroom.students || [];
       const updated = currentStudents.filter((s) => s.id !== studentId);
       setClassroom((prev) => (prev ? { ...prev, students: updated, student_count: updated.length } : prev));
-      setNotice('นำผู้เรียนออกจากห้องเรียนเรียบร้อย');
+      setNotice('นำนักเรียนออกแล้ว');
     } catch {
-      setNotice('เกิดข้อผิดพลาดในการลบผู้เรียน');
+      setNotice('ลบนักเรียนไม่สำเร็จ');
     }
   };
 
@@ -1529,7 +1530,7 @@ export default function ClassroomWorkspacePage() {
     return (
       <div className="min-h-dvh flex flex-col items-center justify-center p-6 text-center bg-slate-50 dark:bg-slate-950">
         <h2 className="text-lg font-black text-slate-800 dark:text-white">ไม่พบห้องเรียนที่ต้องการ</h2>
-        <p className="text-xs text-slate-500 mt-1 mb-4">ห้องเรียนอาจถูกลบหรือคุณไม่มีสิทธิ์ในการเข้าถึง</p>
+        <p className="text-xs text-slate-500 mt-1 mb-4">ห้องเรียนอาจถูกลบ หรือคุณไม่มีสิทธิ์เข้าถึง</p>
         <Link href="/dashboard" className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs">
           กลับสู่แดชบอร์ด
         </Link>
@@ -1765,7 +1766,7 @@ export default function ClassroomWorkspacePage() {
                       <p className="text-xs font-bold text-slate-900 dark:text-white">
                         {user?.fullName || user?.firstName || 'ครูผู้สอน'}
                       </p>
-                      <span className="text-[10px] text-slate-400">แชร์ประกาศ ข้อมูล หรือแจ้งเตือนเข้า LINE Group</span>
+                      <span className="text-[10px] text-slate-400"><MobileText short="ประกาศถึงนักเรียน" full="แชร์ประกาศ ข้อมูล หรือแจ้งเตือนเข้ากลุ่ม LINE" /></span>
                     </div>
                   </div>
 
@@ -1774,7 +1775,7 @@ export default function ClassroomWorkspacePage() {
                     value={postBody}
                     onFocus={() => setIsPostExpanded(true)}
                     onChange={(e) => setPostBody(e.target.value)}
-                    placeholder="ประกาศข้อความถึงนักเรียนในห้องนี้ (จะถูกส่งเข้า LINE Group อัตโนมัติ)..."
+                    placeholder="ประกาศถึงนักเรียน (ส่งเข้ากลุ่ม LINE อัตโนมัติ)..."
                     className="w-full p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-500 transition-all resize-none"
                   />
 
@@ -1922,7 +1923,7 @@ export default function ClassroomWorkspacePage() {
 
                     {/* Post Footer note */}
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
-                      <span>📢 ประกาศใน LINE Group แล้ว</span>
+                      <span>📢 ประกาศในกลุ่ม LINE แล้ว</span>
                       <span>{item.badgeLabel}</span>
                     </div>
                   </article>
@@ -1930,7 +1931,7 @@ export default function ClassroomWorkspacePage() {
 
                 {!timeline.length && (
                   <div className="p-5 sm:p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400">
-                    ยังไม่มีโพสต์หรือประกาศในห้องนี้ เริ่มต้นแชร์ข้อความแรกของคุณได้เลย
+                    ยังไม่มีโพสต์ เริ่มประกาศข้อความแรกได้เลย
                   </div>
                 )}
             </div>
@@ -1946,7 +1947,7 @@ export default function ClassroomWorkspacePage() {
                 <div>
                   <h2 className="text-lg font-black text-slate-900 dark:text-white">งานและเนื้อหา</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    จัดกลุ่มตามหมวดหมู่ที่คุณครูบริหารจัดการได้เอง นักเรียนจะเห็นการจัดหมวดหมู่นี้ในหน้าของตนเอง
+                    <MobileText short="จัดกลุ่มงานได้เอง นักเรียนเห็นกลุ่มเดียวกัน" full="จัดกลุ่มงานตามหมวดหมู่ได้เอง นักเรียนจะเห็นหมวดหมู่เดียวกันในหน้าของตนเอง" />
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -2253,7 +2254,7 @@ export default function ClassroomWorkspacePage() {
                     const roleLabel = isPrimary
                       ? 'ครูประจำวิชา'
                       : isResearcher
-                      ? 'วิจัย (ผู้ตรวจวิจัย/IRR)'
+                      ? 'ผู้ตรวจเพื่อวิจัย (IRR)'
                       : 'TA (ผู้ช่วยสอน)';
                     const roleBadgeClass = isPrimary
                       ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300'
@@ -2305,10 +2306,10 @@ export default function ClassroomWorkspacePage() {
                     <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
                     <div>
                       <p className="text-xs font-black text-amber-950 dark:text-amber-100">
-                        มีคำขอเข้าร่วมห้องเรียนรอการอนุมัติ ({classroom.pending_students?.length} คน)
+                        มีคำขอเข้าห้องเรียนรออนุมัติ ({classroom.pending_students?.length} คน)
                       </p>
                       <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
-                        นักเรียนลงทะเบียนผ่านลิงก์ LINE หรือระบบแล้ว รอคุณครูอนุมัติเข้าห้องเรียน
+                        นักเรียนลงทะเบียนแล้ว รอคุณครูอนุมัติ
                       </p>
                     </div>
                   </div>
@@ -2320,7 +2321,7 @@ export default function ClassroomWorkspacePage() {
                     }}
                     className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer"
                   >
-                    ตรวจสอบและอนุมัติ (Admit)
+                    ตรวจสอบและอนุมัติ
                   </button>
                 </div>
               )}
@@ -2348,7 +2349,7 @@ export default function ClassroomWorkspacePage() {
                 <div>
                   <h2 className="font-black text-slate-900 dark:text-white">ตารางคะแนนรวมทั้งห้อง</h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    แสดงคะแนนผลงาน ข้อสอบ และสถานะรอตรวจของนักเรียนทุกคน
+                    <MobileText short="คะแนนและงานรอตรวจของทุกคน" full="คะแนนงาน ข้อสอบ และสถานะรอตรวจของนักเรียนทุกคน" />
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2368,7 +2369,7 @@ export default function ClassroomWorkspacePage() {
               {gradesLoading ? (
                 <div className="py-12 text-center text-sm text-slate-400">
                   <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-amber-500" />
-                  กำลังโหลดผลคะแนนนักเรียน...
+                  กำลังโหลดคะแนน...
                 </div>
               ) : (
                 <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
@@ -2445,7 +2446,7 @@ export default function ClassroomWorkspacePage() {
               value={newGroupName}
               onKeyDown={(e) => e.key === 'Enter' && handleAddGroup()}
               onChange={(e) => setNewGroupName(e.target.value)}
-              placeholder="เช่น บทที่ 1 การเคลื่อนที่, ข้อสอบกลางภาค..."
+              placeholder="เช่น บทที่ 1, สอบกลางภาค..."
               className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
             />
             <div className="flex gap-2">
@@ -2620,13 +2621,13 @@ export default function ClassroomWorkspacePage() {
               >
                 <option value="primary">ครูประจำวิชา (Primary)</option>
                 <option value="assistant">TA (ผู้ช่วยสอน)</option>
-                <option value="researcher">วิจัย (ผู้ตรวจวิจัย / IRR Evaluator)</option>
+                <option value="researcher">ผู้ตรวจเพื่อวิจัย (IRR)</option>
               </select>
             </div>
 
             {/* Quick Search Teachers */}
             <div className="space-y-2">
-              <label className="text-[11px] font-bold text-slate-400 block">ค้นหาอาจารย์/ผู้สอนที่มีในระบบ</label>
+              <label className="text-[11px] font-bold text-slate-400 block">ค้นหาผู้สอนในระบบ</label>
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
                 <input
@@ -2667,7 +2668,7 @@ export default function ClassroomWorkspacePage() {
             </div>
 
             <p className="text-[11px] text-slate-400">
-              ผู้สอนต้องมีบัญชีในระบบก่อน (เข้าสู่ระบบครั้งแรกแล้ว) จึงจะค้นหาและตรวจงานได้
+              ผู้สอนต้องเคยเข้าสู่ระบบแล้ว จึงจะค้นหาเจอ
             </p>
 
             <button
@@ -2697,7 +2698,7 @@ export default function ClassroomWorkspacePage() {
               <div>
                 <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                   <UserPlus className="w-5 h-5 text-amber-500" />
-                  <span>เชิญและเพิ่มนักเรียนเข้าห้องเรียน</span>
+                  <span>เชิญและเพิ่มนักเรียน</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {classroom.name} • {classroom.subject_code}
@@ -2766,7 +2767,7 @@ export default function ClassroomWorkspacePage() {
                   <input
                     value={studentSearchQuery}
                     onChange={(e) => handleSearchStudents(e.target.value)}
-                    placeholder="🔍 ค้นหานักเรียนในโรงเรียนของคุณ (ชื่อ, นามสกุล หรือรหัสนักเรียน)..."
+                    placeholder="🔍 ค้นหานักเรียนในโรงเรียน (ชื่อ หรือรหัส)..."
                     className="w-full pl-9 pr-8 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
                   />
                   {isSearchingStudents && (
@@ -2775,8 +2776,8 @@ export default function ClassroomWorkspacePage() {
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">
                   {teacherInstitution
-                    ? `ค้นหาได้เฉพาะนักเรียนของ ${teacherInstitution} — นักเรียนที่ลงทะเบียนชื่อโรงเรียนไม่ตรง ให้เข้าร่วมผ่านลิงก์เชิญ แล้วแก้ชื่อโรงเรียนภายหลัง`
-                    : 'กรุณาระบุโรงเรียนของคุณครูที่แดชบอร์ดก่อน จึงจะค้นหานักเรียนได้'}
+                    ? `ค้นหาได้เฉพาะนักเรียนของ ${teacherInstitution} — ถ้าชื่อโรงเรียนไม่ตรง ให้เข้าผ่านลิงก์เชิญแล้วแก้ภายหลัง`
+                    : 'ระบุโรงเรียนของคุณครูที่แดชบอร์ดก่อน จึงจะค้นหานักเรียนได้'}
                 </p>
 
                 {studentSearchResults.length > 0 && (
@@ -2810,7 +2811,7 @@ export default function ClassroomWorkspacePage() {
                 {/* Collapsible Manual Addition Form */}
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
                   <p className="text-[11px] font-bold text-slate-400 mb-2.5">
-                    หรือ กรอกข้อมูลนักเรียนด้วยตนเอง (สำหรับนักเรียนที่ยังไม่เคยลงทะเบียน)
+                    หรือกรอกเอง (นักเรียนที่ยังไม่เคยลงทะเบียน)
                   </p>
                   <div className="space-y-2.5 bg-slate-50 dark:bg-slate-850 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800">
                     <div className="grid grid-cols-2 gap-2">
@@ -2848,7 +2849,7 @@ export default function ClassroomWorkspacePage() {
                       onClick={() => handleAddStudent(newStudentFirst, newStudentLast, newStudentId, newStudentEmail)}
                       className="w-full py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black hover:opacity-90 transition-all cursor-pointer shadow-xs disabled:opacity-40"
                     >
-                      + บันทึกและเพิ่มเข้าห้องเรียน
+                      + เพิ่มเข้าห้องเรียน
                     </button>
                   </div>
                 </div>
@@ -2863,7 +2864,7 @@ export default function ClassroomWorkspacePage() {
                   <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center justify-between">
                     <div>
                       <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 block">
-                        รหัสห้องเรียน (Invite Code)
+                        รหัสห้องเรียน
                       </span>
                       <span className="text-xl font-black tracking-widest text-amber-950 dark:text-amber-100 font-mono">
                         {classroom.invite_code}
@@ -2895,7 +2896,7 @@ export default function ClassroomWorkspacePage() {
                   />
                   <div className="space-y-2 text-center sm:text-left min-w-0 flex-1">
                     <p className="text-xs font-black text-slate-900 dark:text-white">
-                      สแกนด้วย LINE เพื่อเข้าร่วมห้องเรียน
+                      สแกนด้วย LINE เพื่อเข้าห้อง
                     </p>
                     <p className="text-[11px] text-slate-400 break-all font-mono">
                       {getRealLiffUrl(classroom)}
@@ -2921,7 +2922,7 @@ export default function ClassroomWorkspacePage() {
                             classroom
                           )}\nรหัสห้องเรียน: ${classroom.invite_code || ''}`;
                           navigator.clipboard.writeText(message);
-                          setNotice('คัดลอกข้อความสำหรับส่งเข้า LINE เรียบร้อยแล้ว');
+                          setNotice('คัดลอกข้อความแล้ว');
                         }}
                         className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-100 cursor-pointer shadow-xs"
                       >
@@ -2935,7 +2936,7 @@ export default function ClassroomWorkspacePage() {
                 {/* Direct Web Invite URL */}
                 <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
                   <div className="min-w-0">
-                    <span className="text-[10px] text-slate-400 block">ลิงก์เว็บตรง (สำหรับเบราว์เซอร์ทั่วไป):</span>
+                    <span className="text-[10px] text-slate-400 block">ลิงก์สำหรับเบราว์เซอร์:</span>
                     <span className="text-slate-700 dark:text-slate-300 font-mono text-[11px] truncate block">
                       {getWebInviteUrl(classroom)}
                     </span>
@@ -2944,7 +2945,7 @@ export default function ClassroomWorkspacePage() {
                     type="button"
                     onClick={() => {
                       navigator.clipboard.writeText(getWebInviteUrl(classroom));
-                      setNotice('คัดลอกลิงก์เว็บตรงเรียบร้อย');
+                      setNotice('คัดลอกลิงก์แล้ว');
                     }}
                     className="p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 cursor-pointer"
                     title="คัดลอกลิงก์เว็บ"
@@ -2961,7 +2962,7 @@ export default function ClassroomWorkspacePage() {
                 {(!classroom.pending_students || classroom.pending_students.length === 0) ? (
                   <div className="py-10 text-center space-y-2">
                     <UserCheck className="w-8 h-8 text-slate-300 mx-auto" />
-                    <p className="text-xs font-bold text-slate-400">ไม่มีคำขอเข้าร่วมห้องเรียนที่รอการอนุมัติ</p>
+                    <p className="text-xs font-bold text-slate-400">ไม่มีคำขอที่รออนุมัติ</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -3059,8 +3060,8 @@ export default function ClassroomWorkspacePage() {
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                     {admit
-                      ? 'นักเรียนทุกคนในรายการจะเข้าห้องเรียนนี้ เห็นงาน และส่งงานได้ทันที'
-                      : 'คำขอทั้งหมดจะถูกลบออก นักเรียนต้องส่งคำขอเข้าร่วมใหม่หากต้องการเข้าห้องเรียน'}
+                      ? 'นักเรียนทุกคนในรายการจะเข้าห้อง และส่งงานได้ทันที'
+                      : 'คำขอทั้งหมดจะถูกลบ นักเรียนต้องขอเข้าใหม่'}
                   </p>
                 </div>
               </div>
@@ -3129,7 +3130,7 @@ export default function ClassroomWorkspacePage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                    เชื่อมต่อ LINE Official Bot เข้ากลุ่ม
+                    เชื่อมบอท LINE เข้ากลุ่ม
                   </h3>
                   <p className="text-[11px] text-slate-400">
                     {classroom.name}
@@ -3167,7 +3168,7 @@ export default function ClassroomWorkspacePage() {
             {lineConnection.status === 'connected' ? (
               <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-200 space-y-1">
                 <p className="font-bold">กลุ่มนี้พร้อมรับแจ้งเตือนงานของห้องเรียน</p>
-                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">หากนำบอทออกจากกลุ่ม ห้องเรียนนี้จะยกเลิกการเชื่อมต่อโดยอัตโนมัติ</p>
+                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">หากนำบอทออกจากกลุ่ม การเชื่อมต่อจะยกเลิกเอง</p>
               </div>
             ) : (
               <LineGroupConnectSteps status={lineConnection.status} botFriend={teacherBot.botFriend} addFriendUrl={teacherBot.addFriendUrl} />
@@ -3268,7 +3269,7 @@ function StudentList({
       {otherSchoolCount > 0 && (
         <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-[11px] font-bold text-rose-800 dark:text-rose-200 flex items-start gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-px" />
-          <span>มีนักเรียน {otherSchoolCount} คนที่ระบุโรงเรียนต่างจากโรงเรียนของคุณครู หากกรอกผิด กดปุ่มแก้ไข (ดินสอ) เพื่อปรับชื่อโรงเรียนให้ถูกต้อง</span>
+          <span>นักเรียน {otherSchoolCount} คนระบุโรงเรียนต่างจากคุณครู หากกรอกผิด กดไอคอนดินสอเพื่อแก้</span>
         </div>
       )}
 
@@ -3450,7 +3451,7 @@ function AttendancePanel({
             <span>เช็คชื่อรายคาบ</span>
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            จัดการคาบเรียน เช็คชื่อแบบเรียลไทม์ และสลับสถานะรายคนได้ตลอดเวลา
+            <MobileText short="เปิดคาบและเช็คชื่อแบบเรียลไทม์" full="เปิดคาบเรียน เช็คชื่อแบบเรียลไทม์ และแก้สถานะรายคนได้ตลอด" />
           </p>
         </div>
 
@@ -3484,7 +3485,7 @@ function AttendancePanel({
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
             <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
               <CalendarCheck className="w-4 h-4 text-amber-500" />
-              <span>กำหนดรายละเอียดคาบเช็คชื่อใหม่</span>
+              <span>คาบเช็คชื่อใหม่</span>
             </h3>
             <button
               type="button"
@@ -3556,7 +3557,7 @@ function AttendancePanel({
               className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20"
             >
               <Plus className="w-4 h-4" />
-              <span>เริ่มเปิดเช็คชื่อและส่งแจ้งเตือน LINE</span>
+              <span>เปิดเช็คชื่อและแจ้งเตือน LINE</span>
             </button>
           </div>
         </div>
@@ -3584,10 +3585,10 @@ function AttendancePanel({
       <div className="space-y-3">
         <div className="flex items-center justify-between px-1">
           <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
-            <span>ประวัติและคาบเรียนทั้งหมด</span>
+            <span>คาบเรียนทั้งหมด</span>
             <span className="text-slate-400 font-normal">({sessions.length} คาบ)</span>
           </h3>
-          <span className="text-[11px] text-slate-400">คลิกที่คาบเพื่อ ย่อ/ขยาย ดูรายชื่อ</span>
+          <span className="text-[11px] text-slate-400">แตะคาบเพื่อดูรายชื่อ</span>
         </div>
 
         {orderedSessions.map((item) => {
@@ -3838,7 +3839,7 @@ function AttendancePanel({
 
                     {!filteredStudents.length && (
                       <p className="text-xs text-slate-400 text-center py-6">
-                        ไม่พบรายชื่อนักเรียนที่ตรงกับเงื่อนไข
+                        ไม่พบนักเรียนที่ค้นหา
                       </p>
                     )}
                   </div>
@@ -3852,7 +3853,7 @@ function AttendancePanel({
           <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400 space-y-2">
             <CalendarCheck className="w-8 h-8 text-slate-300 mx-auto" />
             <p className="font-bold">ยังไม่มีประวัติคาบเช็คชื่อ</p>
-            <p className="text-[11px]">กดปุ่ม &quot;เปิดคาบเช็คชื่อใหม่&quot; ด้านบนเพื่อเริ่มต้นคาบแรก</p>
+            <p className="text-[11px]">กด &quot;เปิดคาบเช็คชื่อใหม่&quot; ด้านบนเพื่อเริ่ม</p>
           </div>
         )}
       </div>

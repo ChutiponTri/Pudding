@@ -46,7 +46,7 @@ import type { Liff } from "@line/liff";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
-import { getAssignmentWindow, isAssignmentPublished, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindow";
+import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
 import { formatDateTime } from "@/lib/utils/datetime";
 import { canEditSubmission, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
@@ -247,7 +247,7 @@ function ReferenceWork({ assignment }: { assignment: Assignment }) {
           <Paperclip className="w-4 h-4" />
         </span>
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold text-slate-400">ตัวอย่าง / เอกสารอ้างอิงจากคุณครู</p>
+          <p className="text-[11px] font-semibold text-slate-400">ตัวอย่างจากคุณครู</p>
           <h2 className="text-sm font-bold text-slate-900 dark:text-white break-words">{title || "ตัวอย่างงาน"}</h2>
         </div>
       </div>
@@ -562,7 +562,7 @@ export default function LiffStudentPage() {
         checkedSessionIds: json.checkedSessionIds || [],
       });
     } catch {
-      setProxyLookupError("ค้นหาเพื่อนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      setProxyLookupError("ค้นหาเพื่อนไม่สำเร็จ ลองใหม่อีกครั้ง");
     } finally {
       setIsProxyLookingUp(false);
     }
@@ -733,7 +733,7 @@ export default function LiffStudentPage() {
       } catch (err) {
         console.error("LIFF initialization error:", err);
         if (isMounted) {
-          setAuthErrorMessage((err as { message?: string } | null)?.message || "ไม่สามารถเชื่อมต่อ LINE LIFF ได้");
+          setAuthErrorMessage((err as { message?: string } | null)?.message || "เชื่อมต่อ LINE ไม่สำเร็จ");
           setAuthStatus("error");
         }
       }
@@ -760,7 +760,7 @@ export default function LiffStudentPage() {
 
   // Logout from LINE LIFF
   const handleLineLogout = () => {
-    if (confirm("ต้องการออกจากระบบ LINE LIFF หรือไม่?")) {
+    if (confirm("ออกจากระบบ?")) {
       if (typeof window !== "undefined") {
         sessionStorage.setItem("pudding_liff_logged_out", "true");
       }
@@ -791,7 +791,7 @@ export default function LiffStudentPage() {
       return;
     }
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      alert("กรุณาระบุอีเมลให้ถูกต้อง หรือเว้นว่างไว้ได้");
+      alert("อีเมลไม่ถูกต้อง (เว้นว่างได้)");
       return;
     }
 
@@ -820,14 +820,14 @@ export default function LiffStudentPage() {
         );
         setIsStudentIdModalOpen(false);
         setIsFirstTimeStudentId(false);
-        setJoinMessage("✅ บันทึกข้อมูลนักเรียนเรียบร้อยแล้ว");
+        setJoinMessage("✅ บันทึกข้อมูลแล้ว");
         setTimeout(() => setJoinMessage(null), 3000);
       } else {
-        alert("ไม่สามารถบันทึกข้อมูลได้ กรุณาลองใหม่อีกครั้ง");
+        alert("บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง");
       }
     } catch (err) {
       console.error("Failed to save student profile:", err);
-      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูลนักเรียน");
+      alert("บันทึกข้อมูลไม่สำเร็จ");
     } finally {
       setIsSavingStudentId(false);
     }
@@ -901,7 +901,7 @@ export default function LiffStudentPage() {
               if (isAlreadyActive) {
                 // nothing to do
               } else if (isAlreadyPending) {
-                setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+                setJoinMessage(`🎉 ส่งคำขอเข้าห้อง "${classroomTitle(matched)}" แล้ว (รอคุณครูอนุมัติ)`);
                 setTimeout(() => setJoinMessage(null), 3500);
               } else {
                 await dataService.addStudentToClassroom(
@@ -918,7 +918,7 @@ export default function LiffStudentPage() {
                   },
                   { autoAdmit: false, inviteCode: codeParam || undefined }
                 );
-                setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+                setJoinMessage(`🎉 ส่งคำขอเข้าห้อง "${classroomTitle(matched)}" แล้ว (รอคุณครูอนุมัติ)`);
                 setTimeout(() => setJoinMessage(null), 3500);
               }
 
@@ -1117,7 +1117,7 @@ export default function LiffStudentPage() {
       !assignmentClassroom.students?.some((s) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid)
     );
     if (isPendingHere || isSelectedClassroomPending) {
-      alert("กรุณารอคุณครูอนุมัติเข้าห้องเรียน (Admit) ก่อนเริ่มต้นทำข้อสอบหรือการบ้าน");
+      alert("รอคุณครูอนุมัติเข้าห้องก่อน จึงจะทำงานได้");
       return;
     }
     const openWindow = getAssignmentWindow(a);
@@ -1126,8 +1126,8 @@ export default function LiffStudentPage() {
       alert(openWindow.isQuizClosed
         ? `หมดเวลาทำข้อสอบ “${a.title}” แล้ว`
         : openWindow.isLateClosed
-        ? `หมดเวลาส่งงาน “${a.title}” แล้ว (รับงานส่งช้าได้ถึง ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง) — ติดต่อคุณครูหากต้องการขอขยายเวลา`
-        : `คุณครูปิดรับ${a.is_exam ? "ข้อสอบ" : "งาน"} “${a.title}” แล้ว ไม่สามารถส่งได้`);
+        ? `หมดเวลาส่ง “${a.title}” แล้ว — ติดต่อคุณครูหากต้องการขยายเวลา`
+        : `คุณครูปิดรับ${a.is_exam ? "ข้อสอบ" : "งาน"} “${a.title}” แล้ว`);
       return;
     }
     setStudentAnswers(edit ? answersToForm(edit.answers) : {});
@@ -1145,7 +1145,7 @@ export default function LiffStudentPage() {
     } catch (error) {
       console.error("Failed to load assignment questions:", error);
       setActiveAssignment(null);
-      alert("ไม่สามารถโหลดข้อสอบได้ กรุณาลองใหม่อีกครั้ง");
+      alert("โหลดข้อสอบไม่สำเร็จ ลองใหม่อีกครั้ง");
     } finally {
       setIsLoadingQuestions(false);
     }
@@ -1187,7 +1187,7 @@ export default function LiffStudentPage() {
       });
       setTotalAwaySeconds((prev) => prev + durationSec);
       setAwayWarningToast(
-        `⚠️ ตรวจพบการออกจากหน้าจอเป็นเวลา ${durationSec} วินาที (ครั้งที่ ${tabSwitchCountRef.current}) — ระบบจะแนบรายงานให้อาจารย์เมื่อส่งคำตอบ`
+        `⚠️ ออกจากหน้าจอ ${durationSec} วินาที (ครั้งที่ ${tabSwitchCountRef.current}) — จะรายงานให้คุณครูเมื่อส่ง`
       );
       setTimeout(() => setAwayWarningToast(null), 5000);
     };
@@ -1267,7 +1267,7 @@ export default function LiffStudentPage() {
       }));
     } catch (err) {
       console.error("Upload failed:", err);
-      const message = err instanceof UploadError ? err.message : "เกิดข้อผิดพลาดในการอัปโหลดไฟล์ กรุณาลองใหม่อีกครั้ง";
+      const message = err instanceof UploadError ? err.message : "อัปโหลดไม่สำเร็จ ลองใหม่อีกครั้ง";
       showUploadToast(err instanceof UploadError && err.tooLarge ? `${message}\n(วางลิงก์ได้ในช่อง "หรือวางลิงก์ไฟล์" ด้านล่าง)` : message);
     }
   };
@@ -1305,7 +1305,7 @@ export default function LiffStudentPage() {
 
     const badLink = activeQuestions.findIndex((q) => !studentAnswers[q.id]?.file_url && studentAnswers[q.id]?.link?.trim() && !normalizeLink(studentAnswers[q.id]?.link));
     if (badLink >= 0) {
-      alert(`ข้อ ${badLink + 1}: ลิงก์ไม่ถูกต้อง กรุณาวางลิงก์ที่ขึ้นต้นด้วย https:// (เช่น ลิงก์แชร์จาก Google Drive)`);
+      alert(`ข้อ ${badLink + 1}: ลิงก์ต้องขึ้นต้นด้วย https:// (เช่น ลิงก์แชร์ Google Drive)`);
       document.getElementById(`question-${activeQuestions[badLink].id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
@@ -1378,7 +1378,7 @@ export default function LiffStudentPage() {
       setSubmissionSuccess(true);
     } catch (err) {
       console.error("Submission failed:", err);
-      alert(err instanceof Error ? err.message : "เกิดข้อผิดพลาดในการส่งข้อสอบ กรุณาลองใหม่อีกครั้ง");
+      alert(err instanceof Error ? err.message : "ส่งไม่สำเร็จ ลองใหม่อีกครั้ง");
     } finally {
       setIsSubmitting(false);
     }
@@ -1413,7 +1413,7 @@ export default function LiffStudentPage() {
       if (isAlreadyPending) {
         setIsJoinModalOpen(false);
         setJoinInviteCode("");
-        setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+        setJoinMessage(`🎉 ส่งคำขอเข้าห้อง "${classroomTitle(matched)}" แล้ว (รอคุณครูอนุมัติ)`);
         setTimeout(() => setJoinMessage(null), 3500);
         return;
       }
@@ -1440,7 +1440,7 @@ export default function LiffStudentPage() {
       if (isAlreadyActive) {
         setJoinMessage(`🎉 คุณอยู่ในห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว!`);
       } else {
-        setJoinMessage(`🎉 ส่งคำขอเข้าร่วมห้องเรียน "${classroomTitle(matched)}" เรียบร้อยแล้ว (รอคุณครูอนุมัติ Admit)`);
+        setJoinMessage(`🎉 ส่งคำขอเข้าห้อง "${classroomTitle(matched)}" แล้ว (รอคุณครูอนุมัติ)`);
       }
       setTimeout(() => setJoinMessage(null), 3500);
 
@@ -1448,7 +1448,7 @@ export default function LiffStudentPage() {
       const relevant = (await dataService.getAssignmentsByClassroomId(matched.id)).filter((a) => isAssignmentPublished(a));
       setAssignments((prev) => [...prev.filter((a) => a.classroom_id !== matched.id), ...relevant]);
     } else {
-      setJoinMessage("ไม่พบห้องเรียนจากรหัสที่ระบุ กรุณาตรวจสอบรหัสอีกครั้ง");
+      setJoinMessage("ไม่พบห้องเรียนจากรหัสนี้ ตรวจสอบรหัสอีกครั้ง");
     }
   };
 
@@ -1516,7 +1516,7 @@ export default function LiffStudentPage() {
         </div>
         <div className="space-y-1">
           <h2 className="text-base font-bold text-slate-900 dark:text-white">กำลังเชื่อมต่อ LINE...</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">ระบบกำลังตรวจสอบบัญชี LINE ของคุณ</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">กำลังตรวจสอบบัญชี LINE</p>
         </div>
       </div>
     );
@@ -1572,7 +1572,7 @@ export default function LiffStudentPage() {
             <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">พุดดิ้ง</h1>
             <p className="text-sm font-semibold text-line">ห้องเรียนออนไลน์สำหรับนักเรียน</p>
             <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
-              เข้าสู่ระบบด้วยบัญชี LINE เพื่อเข้าห้องเรียน ส่งงาน และทำข้อสอบออนไลน์
+              เข้าสู่ระบบด้วย LINE เพื่อเข้าห้อง ส่งงาน และทำข้อสอบ
             </p>
           </div>
         </div>
@@ -1600,7 +1600,7 @@ export default function LiffStudentPage() {
             <span>เข้าสู่ระบบด้วย LINE</span>
           </button>
           <p className="text-xs text-center text-slate-400 leading-relaxed">
-            🔒 ต้องเข้าสู่ระบบเพื่อยืนยันตัวตนนักเรียนและบันทึกประวัติความซื่อสัตย์
+            🔒 เข้าสู่ระบบเพื่อยืนยันตัวตนนักเรียน
           </p>
         </div>
       </div>
@@ -2205,7 +2205,7 @@ export default function LiffStudentPage() {
             {isSelectedClassroomPending && (
               <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-sm text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
                 <Clock className="w-4 h-4 mt-0.5 shrink-0" />
-                <span>รอคุณครูอนุมัติเข้าห้องเรียน เมื่ออนุมัติแล้วจะทำงานและข้อสอบได้ทันที</span>
+                <span>รอคุณครูอนุมัติ แล้วจะทำงานได้ทันที</span>
               </div>
             )}
 
@@ -2415,7 +2415,7 @@ export default function LiffStudentPage() {
                             ))}
                           </div>
                         ) : (
-                          <EmptyState icon="🕒" text="ขณะนี้ไม่มีคาบเช็คชื่อที่รอให้เช็ค" />
+                          <EmptyState icon="🕒" text="ไม่มีคาบเช็คชื่อตอนนี้" />
                         )}
                       </div>
 
@@ -2486,7 +2486,7 @@ export default function LiffStudentPage() {
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={() => {
-                if (submissionSuccess || confirm(editingSubmission ? "ต้องการออกโดยไม่บันทึกการแก้ไขหรือไม่? (งานที่ส่งไว้เดิมยังอยู่)" : "ต้องการออกจากหน้าข้อสอบหรือไม่? (ข้อมูลที่ตอบไว้จะยังไม่ถูกส่ง)")) {
+                if (submissionSuccess || confirm(editingSubmission ? "ออกโดยไม่บันทึกการแก้ไข? (งานเดิมยังอยู่)" : "ออกจากหน้านี้? (คำตอบจะยังไม่ถูกส่ง)")) {
                   if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
                   setActiveAssignment(null);
                 }
@@ -2536,7 +2536,7 @@ export default function LiffStudentPage() {
               <div className="space-y-1.5">
                 <h2 className="text-xl font-bold text-slate-900 dark:text-white">{editingSubmission ? "ส่งงานที่แก้ไขแล้ว!" : "ส่งงานเรียบร้อยแล้ว!"}</h2>
                 <p className="text-sm text-slate-500 max-w-xs mx-auto">
-                  {isTrackingAway ? "ระบบบันทึกคำตอบและรายงานความซื่อสัตย์ส่งถึงคุณครูแล้ว" : "ระบบบันทึกงานของคุณและส่งถึงคุณครูแล้ว"}
+                  {isTrackingAway ? "ส่งคำตอบและรายงานถึงคุณครูแล้ว" : "ส่งงานถึงคุณครูแล้ว"}
                 </p>
               </div>
               {submittedResult && submittedResult.total !== null ? (
@@ -2551,7 +2551,7 @@ export default function LiffStudentPage() {
                 <div className="p-4 rounded-2xl bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-200 dark:ring-sky-900 text-sm text-sky-800 dark:text-sky-200 space-y-1">
                   <p className="font-bold">ข้อปรนัยตรวจแล้ว {submittedResult.autoScored} ข้อ</p>
                   <p className="text-xs text-sky-700/80 dark:text-sky-300/80">
-                    อีก {submittedResult.pending} ข้อรอคุณครูตรวจ • คะแนนรวมจะแสดงเมื่อคุณครูตรวจครบทุกข้อ
+                    อีก {submittedResult.pending} ข้อรอคุณครูตรวจ • คะแนนรวมจะแสดงเมื่อตรวจครบ
                   </p>
                 </div>
               ) : null}
@@ -2603,7 +2603,7 @@ export default function LiffStudentPage() {
                     <span aria-hidden>🔒</span>
                     <span>
                       {activeAssignment.is_exam
-                        ? "หมดเวลาทำข้อสอบแล้ว กรุณากดส่งคำตอบทันที"
+                        ? "หมดเวลาแล้ว กดส่งคำตอบทันที"
                         : `เลยกำหนดส่งแล้ว — ส่งได้ถึง ${formatLateUntil(getAssignmentWindow(activeAssignment).lateUntil)} แต่จะถูกบันทึกว่าส่งช้า`}
                     </span>
                   </div>
@@ -2634,7 +2634,7 @@ export default function LiffStudentPage() {
                   </span>
                   <div className="min-w-0 text-xs leading-relaxed">
                     <p className="text-sm font-bold">กำลังแก้ไขงานที่ส่งแล้ว</p>
-                    <p className="opacity-80">เปลี่ยนไฟล์หรือคำตอบที่ต้องการ แล้วกดส่งอีกครั้ง งานใหม่จะแทนที่งานเดิม{editingSubmission.reopened_at ? "" : " • แก้ไขได้จนกว่าคุณครูจะตรวจหรือปิดรับงาน"}</p>
+                    <p className="opacity-80">แก้แล้วกดส่งอีกครั้ง งานใหม่จะแทนที่งานเดิม{editingSubmission.reopened_at ? "" : " • แก้ได้จนกว่าคุณครูจะตรวจหรือปิดรับ"}</p>
                   </div>
                 </div>
               )}
@@ -2644,13 +2644,13 @@ export default function LiffStudentPage() {
               {isTrackingAway && (
                 <div role="note" className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-amber-900 dark:text-amber-200 text-xs leading-relaxed">
                   <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-                  <p>แบบทดสอบนี้ไม่อนุญาตให้ถ่ายรูปหรือแนบไฟล์ และระบบจะบันทึกทุกครั้งที่ออกจากหน้าจอ แม้เพียงไม่กี่วินาที แล้วรายงานให้คุณครูทราบ</p>
+                  <p>ข้อสอบนี้แนบไฟล์ไม่ได้ และทุกครั้งที่ออกจากหน้าจอจะถูกรายงานให้คุณครูทราบ</p>
                 </div>
               )}
 
               {activeQuestions.length === 0 && (
                 <div className={CARD}>
-                  <EmptyState icon="📄" text="งานนี้ไม่มีคำถาม กดส่งเพื่อยืนยันการส่งงานได้เลย" />
+                  <EmptyState icon="📄" text="งานนี้ไม่มีคำถาม กดส่งได้เลย" />
                 </div>
               )}
 
@@ -2741,7 +2741,7 @@ export default function LiffStudentPage() {
                                 [q.id]: { ...prev[q.id], text: e.target.value },
                               }))
                             }
-                            placeholder={isFileUpload ? "พิมพ์คำอธิบายประกอบการแนบไฟล์..." : "พิมพ์คำตอบที่นี่..."}
+                            placeholder={isFileUpload ? "คำอธิบายไฟล์ (ถ้ามี)..." : "พิมพ์คำตอบที่นี่..."}
                             className="w-full p-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm leading-relaxed focus:ring-2 focus:ring-line focus:bg-white dark:focus:bg-slate-900 outline-none transition-all resize-none overflow-y-auto"
                           />
                         </div>
@@ -2815,7 +2815,7 @@ export default function LiffStudentPage() {
                                   />
                                 </div>
                                 <p className="text-[11px] text-slate-400 px-1">
-                                  รูปภาพไม่เกิน {formatMegabytes(IMAGE_MAX_BYTES)} • PDF ไม่เกิน {formatMegabytes(PDF_MAX_BYTES)} — ไฟล์ใหญ่กว่านี้ให้วางลิงก์ที่เปิดดูได้แทน
+                                  รูปภาพไม่เกิน {formatMegabytes(IMAGE_MAX_BYTES)} • PDF ไม่เกิน {formatMegabytes(PDF_MAX_BYTES)} — ใหญ่กว่านี้ให้วางลิงก์แทน
                                 </p>
                               </div>
                             )}
@@ -2853,7 +2853,7 @@ export default function LiffStudentPage() {
             <div className="min-w-0 flex-1">
               <h3 className="text-base font-bold text-slate-900 dark:text-white">ส่งแทนเพื่อน (ยืมเครื่อง)</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5">
-                สำหรับเพื่อนที่โทรศัพท์มีปัญหา ให้เพื่อนใช้เครื่องนี้ส่งงานของตัวเอง เพื่อนต้องเรียนวิชา {subjectName(selectedClassroom)} ห้องเดียวกันในภาคเรียนนี้ ({classAndTerm(selectedClassroom)}) และอยู่โรงเรียนเดียวกับคุณ — คุณครูจะเห็นว่าส่งจากเครื่องของคุณ
+                ให้เพื่อนที่โทรศัพท์มีปัญหาใช้เครื่องนี้ส่งงานของตัวเอง เพื่อนต้องเรียน {subjectName(selectedClassroom)} ห้องเดียวกัน ({classAndTerm(selectedClassroom)}) — คุณครูจะเห็นว่าส่งจากเครื่องของคุณ
               </p>
             </div>
             <button type="button" onClick={closeProxySheet} aria-label="ปิด" className="w-9 h-9 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 cursor-pointer shrink-0">
@@ -2923,7 +2923,7 @@ export default function LiffStudentPage() {
                 const openSessions = courseAttendance.filter((session) => session.status === "open");
                 const openWork = assignments.filter((a) => a.classroom_id === proxyFriend.classroomId && getAssignmentWindow(a).acceptsSubmissions);
                 if (!openSessions.length && !openWork.length) {
-                  return <EmptyState icon="🎉" text="ตอนนี้ไม่มีงานหรือคาบเช็คชื่อที่เปิดรับในวิชานี้" />;
+                  return <EmptyState icon="🎉" text="ตอนนี้ไม่มีงานหรือคาบเช็คชื่อที่เปิดอยู่" />;
                 }
                 return (
                   <>
@@ -3012,7 +3012,7 @@ export default function LiffStudentPage() {
             </h3>
             <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
               {isFirstTimeStudentId
-                ? "กรอกชื่อ-นามสกุลจริง รหัสนักเรียน และสถานศึกษา เพื่อยืนยันตัวตนก่อนเข้าห้องเรียน"
+                ? "กรอกชื่อ-นามสกุลจริง รหัสนักเรียน และสถานศึกษา"
                 : "แก้ไขข้อมูลให้ตรงกับทะเบียนโรงเรียน"}
             </p>
           </div>
@@ -3055,12 +3055,12 @@ export default function LiffStudentPage() {
               />
             </Field>
 
-            <Field label="สถานศึกษา / โรงเรียน" required hint="เลือกจากรายชื่อในระบบเพื่อป้องกันชื่อสะกดไม่ตรงกัน">
+            <Field label="สถานศึกษา / โรงเรียน" required hint="เลือกจากรายชื่อ เพื่อให้ชื่อตรงกัน">
               <InstitutionSearchSelect
                 value={inputInstitution}
                 onChange={setInputInstitution}
                 extraInstitutions={registeredInstitutions}
-                placeholder="ค้นหาและเลือกโรงเรียนของคุณ..."
+                placeholder="ค้นหาโรงเรียน..."
               />
             </Field>
 
@@ -3240,12 +3240,12 @@ export default function LiffStudentPage() {
               <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
                 {viewingGradedSub.submission.reopened_at
                   ? "คุณครูเปิดให้แก้ไขงานนี้ • ส่งใหม่แล้วคุณครูจะตรวจอีกครั้ง"
-                  : "แนบไฟล์ผิดหรือต้องการแก้คำตอบ? แก้ไขได้จนกว่าคุณครูจะตรวจหรือปิดรับงาน"}
+                  : "แนบไฟล์ผิด? แก้ได้จนกว่าคุณครูจะตรวจหรือปิดรับ"}
               </p>
             </div>
           ) : !viewingGradedSub.assignment.is_exam && viewingGradedSub.submission.status !== 'pending' ? (
             <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
-              {teacherGradedIds.has(viewingGradedSub.submission.id) ? "คุณครูตรวจงานนี้แล้ว" : "ปิดรับงานแล้ว"} จึงแก้ไขไม่ได้ — หากต้องการแก้ไข ให้ติดต่อคุณครู
+              {teacherGradedIds.has(viewingGradedSub.submission.id) ? "คุณครูตรวจงานนี้แล้ว" : "ปิดรับงานแล้ว"} จึงแก้ไขไม่ได้ — ติดต่อคุณครูหากต้องการแก้
             </p>
           ) : null}
 

@@ -68,7 +68,7 @@ function GradingBackLink({ classroomId }: { classroomId?: string }) {
 
   let target: { href: string; label: string } | null = null;
   if (from === 'classroom' && fromClassroomId) {
-    target = { href: `/classrooms/${fromClassroomId}?tab=classwork`, label: th ? 'กลับไปหน้างานของห้องเรียน' : 'Back to classwork' };
+    target = { href: `/classrooms/${fromClassroomId}?tab=classwork`, label: th ? 'กลับไปหน้างานของห้อง' : 'Back to classwork' };
   } else if (from === 'dashboard') {
     target = { href: '/dashboard', label: th ? 'กลับไปแดชบอร์ด' : 'Back to dashboard' };
   } else if (from === 'grading') {
@@ -310,7 +310,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // Handle Manual Override
   const handleSetOverride = async (newStatus: SubmissionOverrideStatus, newExtendedUntil?: string) => {
     if (newStatus === 'extended' && new Date(newExtendedUntil || extendedDateTime).getTime() <= Date.now()) {
-      alert(language === 'th' ? 'กรุณาเลือกเวลาขยายที่อยู่ในอนาคต' : 'Please pick a time in the future');
+      alert(language === 'th' ? 'เลือกเวลาในอนาคต' : 'Please pick a time in the future');
       return;
     }
     try {
@@ -415,7 +415,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   const handleGiveZero = async (row: RosterRow) => {
     const created = await recordMissing([row], true);
-    if (created.length) showToast(th ? 'ให้ 0 คะแนนแล้ว (นักเรียนยังส่งงานได้หากงานยังเปิดรับ)' : 'Gave 0 (the student can still hand in while it is open)');
+    if (created.length) showToast(th ? 'ให้ 0 คะแนนแล้ว (ยังส่งงานได้ถ้างานเปิดรับอยู่)' : 'Gave 0 (the student can still hand in while it is open)');
   };
 
   const handleGiveZeroToAll = async () => {
@@ -483,7 +483,7 @@ They can edit it even if closed. Handing in again clears the current score and c
         type="button"
         onClick={() => handleToggleReopen(sub)}
         disabled={busy}
-        title={th ? 'ให้นักเรียนแก้ไขงานที่ส่งแล้ว (เช่น แนบไฟล์ผิด)' : 'Let the student fix and hand in again'}
+        title={th ? 'ให้นักเรียนแก้งานที่ส่งแล้ว (เช่น แนบไฟล์ผิด)' : 'Let the student fix and hand in again'}
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap text-slate-600 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-700 hover:text-amber-700 hover:ring-amber-400 dark:hover:text-amber-300 dark:hover:ring-amber-700 cursor-pointer disabled:opacity-50 transition-colors"
       >
         <PencilLine className="w-3 h-3" />
@@ -603,28 +603,28 @@ They can edit it even if closed. Handing in again clears the current score and c
     ? ''
     : assignmentWindow?.isDraft
     ? th
-      ? `ฉบับร่าง — นักเรียนยังไม่เห็นงาน จนกว่าคุณครูจะกดเผยแพร่${draftExpiresAt(assignment) ? ` (ลบอัตโนมัติ ${formatDateTime(draftExpiresAt(assignment), language)} หากยังไม่เผยแพร่)` : ''}`
+      ? `ฉบับร่าง — นักเรียนยังไม่เห็นจนกว่าจะเผยแพร่${draftExpiresAt(assignment) ? ` (ลบเอง ${formatDateTime(draftExpiresAt(assignment), language)} หากยังไม่เผยแพร่)` : ''}`
       : `Draft; hidden from students until you publish it${draftExpiresAt(assignment) ? ` (deleted automatically on ${formatDateTime(draftExpiresAt(assignment), language)} unless published)` : ''}`
     : assignmentWindow?.isScheduled && assignment.publish_at
     ? th
-      ? `ตั้งเวลาเผยแพร่ ${formatDateTime(assignment.publish_at, language)} — ก่อนถึงเวลานี้นักเรียนยังไม่เห็นงาน`
+      ? `เผยแพร่ ${formatDateTime(assignment.publish_at, language)} — ก่อนหน้านั้นนักเรียนยังไม่เห็น`
       : `Scheduled for ${formatDateTime(assignment.publish_at, language)}; hidden from students until then`
     : assignment.is_exam
     ? assignmentWindow?.isPastDeadline
       ? th ? 'อัตโนมัติ: หมดเวลาแล้ว ปิดรับคำตอบ' : 'Automatic: time is up, answers are closed'
       : th
-        ? `อัตโนมัติ: เปิดรับคำตอบถึง ${deadlineLabel} แล้วปิดรับ (คำตอบที่ส่งเข้ามาภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีหลังหมดเวลาจะบันทึกว่าส่งช้า นักเรียนไม่เห็นข้อนี้)`
+        ? `อัตโนมัติ: เปิดรับถึง ${deadlineLabel} แล้วปิด (ส่งเข้ามาภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีหลังหมดเวลา บันทึกว่าส่งช้า)`
         : `Automatic: open until ${deadlineLabel}, then closes (sheets arriving within ${QUIZ_LATE_GRACE_MINUTES} min after are saved as late; students are not told)`
     : assignmentWindow?.isLateClosed
     ? th
-      ? `อัตโนมัติ: ปิดรับแล้ว (เลยกำหนดส่ง ${LATE_WINDOW_HOURS} ชม.) — ใช้ "ขยายเวลา" หากต้องการเปิดรับอีกครั้ง`
+      ? `อัตโนมัติ: ปิดรับแล้ว (เลยกำหนด ${LATE_WINDOW_HOURS} ชม.) — กด "ขยายเวลา" เพื่อเปิดอีกครั้ง`
       : `Automatic: closed ${LATE_WINDOW_HOURS}h after the deadline. Extend the deadline to reopen.`
     : assignmentWindow?.isPastDeadline
     ? th
-      ? `อัตโนมัติ: เลยกำหนดส่งแล้ว รับงานส่งช้าถึง ${lateUntilLabel} แล้วปิดรับเอง — กด "ล็อกปิดรับงานทันที" หากต้องการหยุดรับก่อน`
-      : `Automatic: past due, accepting late work until ${lateUntilLabel}, then closes. Use "Close now" to stop earlier.`
+      ? `อัตโนมัติ: เลยกำหนดแล้ว รับงานส่งช้าถึง ${lateUntilLabel} แล้วปิดเอง`
+      : `Automatic: past due, accepting late work until ${lateUntilLabel}, then closes.`
     : th
-    ? `อัตโนมัติ: เปิดรับงานถึง ${deadlineLabel} หลังจากนั้นรับงานส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง`
+    ? `อัตโนมัติ: เปิดรับถึง ${deadlineLabel} แล้วรับงานส่งช้าอีก ${LATE_WINDOW_HOURS} ชม.`
     : `Automatic: open until ${deadlineLabel}; late work accepted for ${LATE_WINDOW_HOURS}h more, then closes`;
 
   const summaryTiles: Array<{
@@ -699,7 +699,7 @@ They can edit it even if closed. Handing in again clears the current score and c
       {classroom && clerkUser && !grader && (
         <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-xs font-semibold text-rose-700 dark:text-rose-300">
           {language === 'th'
-            ? 'บัญชีนี้ไม่ได้อยู่ในรายชื่อผู้สอนของห้องเรียนนี้ จึงดูได้แต่ตรวจให้คะแนนไม่ได้'
+            ? 'บัญชีนี้ไม่ใช่ผู้สอนของห้องนี้ ดูได้แต่ให้คะแนนไม่ได้'
             : 'Your account is not a teacher of this classroom, so you can view but not grade.'}
         </div>
       )}
@@ -1080,7 +1080,7 @@ They can edit it even if closed. Handing in again clears the current score and c
                     <div className="min-w-0 flex-1">
                       <p className="font-bold text-sm text-slate-900 dark:text-white truncate">{fullName}</p>
                       <p className="text-[11px] text-slate-400 font-mono truncate">
-                        {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ยังไม่ระบุรหัสนักเรียน' : 'No student ID')}
+                        {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ไม่มีรหัสนักเรียน' : 'No student ID')}
                       </p>
                     </div>
                     {sub && (isGraded ? (
@@ -1217,7 +1217,7 @@ They can edit it even if closed. Handing in again clears the current score and c
                           <div className="min-w-0">
                             <p className="font-bold text-sm text-slate-900 dark:text-white truncate">{fullName}</p>
                             <p className="text-[11px] text-slate-400 font-mono">
-                              {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ยังไม่ระบุรหัสนักเรียน' : 'No student ID')}
+                              {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ไม่มีรหัสนักเรียน' : 'No student ID')}
                             </p>
                           </div>
                         </div>

@@ -73,13 +73,13 @@ function GradingHubContent() {
     });
 
   const handleDeleteAssignment = async (assignment: Assignment) => {
-    if (!confirm(th ? 'คุณแน่ใจหรือไม่ว่าต้องการลบงาน/ข้อสอบนี้? (คะแนนและข้อสอบทั้งหมดจะถูกลบออก)' : 'Delete this task? All its answers and scores are removed.')) return;
+    if (!confirm(th ? 'ลบงาน/ข้อสอบนี้? คำตอบและคะแนนทั้งหมดจะถูกลบด้วย' : 'Delete this task? All its answers and scores are removed.')) return;
     try {
       await dataService.deleteAssignment(assignment.id);
       patchAssignment(null, assignment.id);
-      showToast(th ? 'ลบงาน/ข้อสอบเรียบร้อยแล้ว' : 'Deleted');
+      showToast(th ? 'ลบงาน/ข้อสอบแล้ว' : 'Deleted');
     } catch {
-      showToast(th ? 'เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ' : 'Could not delete');
+      showToast(th ? 'ลบงาน/ข้อสอบไม่สำเร็จ' : 'Could not delete');
     }
   };
 
@@ -220,7 +220,7 @@ function GradingHubContent() {
           }`}
         >
           <FileCheck className="w-4 h-4" />
-          <span>{th ? 'ตรวจข้อสอบ & วิเคราะห์' : 'Grading & Integrity'}</span>
+          <span>{th ? 'ตรวจงาน' : 'Grading'}</span>
         </button>
         {selectedCourse && (
           <>
@@ -241,15 +241,15 @@ function GradingHubContent() {
             <div className="space-y-2">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
                 <span>📝</span>
-                <span>{th ? 'ขั้นตอนที่ 1 : เลือกรหัสวิชาที่ต้องการตรวจ' : 'Step 1 : Select Course'}</span>
+                <span>{th ? 'ขั้นที่ 1: เลือกรายวิชา' : 'Step 1: Select course'}</span>
               </div>
               <h1 className="text-2xl md:text-3xl font-black tracking-tight">
-                {th ? 'ระบบตรวจข้อสอบและการบ้านอัจฉริยะ' : 'Grading & Integrity Assessment Hub'}
+                {th ? 'ตรวจงานและข้อสอบ' : 'Grading Hub'}
               </h1>
               <p className="text-slate-900/90 text-xs md:text-sm font-medium max-w-2xl">
                 {th
-                  ? 'เลือกรายวิชาด้านล่าง วิชาที่ยังตรวจไม่ครบจะแสดงก่อน พร้อมจำนวนงานที่เหลือ'
-                  : 'Pick a course below. Courses with work left to grade come first, with what is left.'}
+                  ? 'วิชาที่ยังตรวจไม่ครบจะแสดงก่อน พร้อมจำนวนงานที่เหลือ'
+                  : 'Courses with work left to grade come first.'}
               </p>
             </div>
 
@@ -344,7 +344,7 @@ function GradingHubContent() {
                     {flagged > 0 && (
                       <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-[11px] font-bold flex items-center gap-2">
                         <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
-                        <span>{th ? `พบพฤติกรรมสลับหน้าจอ ${flagged} รายการ` : `${flagged} integrity flags`}</span>
+                        <span>{th ? `สลับหน้าจอ ${flagged} รายการ` : `${flagged} integrity flags`}</span>
                       </div>
                     )}
 
@@ -448,7 +448,7 @@ function GradingHubContent() {
             <div className="bg-white dark:bg-slate-900 p-12 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 text-center space-y-3">
               <BookOpen className="w-10 h-10 text-slate-400 mx-auto" />
               <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
-                {th ? 'ยังไม่มีชิ้นงานหรือข้อสอบในรายวิชานี้' : 'No tasks assigned in this course yet.'}
+                {th ? 'ยังไม่มีงานในรายวิชานี้' : 'No tasks assigned in this course yet.'}
               </p>
               <Link
                 href="/creation"

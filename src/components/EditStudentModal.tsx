@@ -59,7 +59,7 @@ export function EditStudentModal({
       });
       const json = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(json.error || 'บันทึกข้อมูลผู้เรียนไม่สำเร็จ');
+        setError(json.error || 'บันทึกข้อมูลนักเรียนไม่สำเร็จ');
         return;
       }
       onSaved(student.id, {
@@ -69,7 +69,7 @@ export function EditStudentModal({
         institution: institution.trim() || undefined,
       });
     } catch {
-      setError('เกิดข้อผิดพลาดในการบันทึกข้อมูลผู้เรียน');
+      setError('บันทึกข้อมูลนักเรียนไม่สำเร็จ');
     } finally {
       setSaving(false);
     }
