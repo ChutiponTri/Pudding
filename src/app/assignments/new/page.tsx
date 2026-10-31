@@ -80,6 +80,9 @@ function ModeHint({ isExam, language }: { isExam: boolean; language: string }) {
   );
 }
 
+/** Starting points for a new question: file work is worth more than a single short item. */
+const defaultMaxScore = (type: QuestionType) => (type === 'file_upload' ? 10 : 1);
+
 let questionUidSeq = 0;
 const newQuestionUid = () => `q${++questionUidSeq}`;
 /** Matches the card's collapse transition (duration-300). */
@@ -179,7 +182,7 @@ function NewAssignmentContent() {
       options: ['', '', '', ''],
       ideal_answer: '',
       rubric_criteria: '',
-      max_score: 5,
+      max_score: defaultMaxScore('short_answer'),
       is_required: true,
     },
   ]);
@@ -413,7 +416,7 @@ function NewAssignmentContent() {
         options: ['', '', '', ''],
         ideal_answer: '',
         rubric_criteria: '',
-        max_score: 5,
+        max_score: defaultMaxScore(type),
         is_required: true,
       },
     ]);
@@ -1116,7 +1119,7 @@ function NewAssignmentContent() {
         {!isExam ? (
           /* Assignment Mode: Active Sample Work Section */
           <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex flex-col items-start gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-0 pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400">
                   <Paperclip className="w-4 h-4" />
@@ -1130,8 +1133,11 @@ function NewAssignmentContent() {
                   </p>
                 </div>
               </div>
-              <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                {language === 'th' ? 'เปิดใช้งานสำหรับโหมดการบ้าน' : 'Active for Assignment'}
+              <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl sm:rounded-full leading-relaxed bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                <span className="sm:hidden">
+                  {language === 'th' ? 'โหมดการบ้าน: สามารถแนบตัวอย่างและแนวทางการตอบ' : 'Assignment mode: sample work and guidelines can be attached'}
+                </span>
+                <span className="hidden sm:inline">{language === 'th' ? 'เปิดใช้งานสำหรับโหมดการบ้าน' : 'Active for Assignment'}</span>
               </span>
             </div>
 
@@ -1622,42 +1628,32 @@ function NewAssignmentContent() {
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               {t('assignment_creator.questions_builder.add_question_hint')}
             </p>
-            <div className="flex flex-wrap items-center justify-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => handleAddQuestion('short_answer')}
-                className="px-4 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all shadow-md hover:scale-[1.02] flex items-center gap-1.5 cursor-pointer"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>{language === 'th' ? 'ข้อความสั้น' : 'Short Answer'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleAddQuestion('multiple_choice')}
-                className="px-3.5 py-2.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>{language === 'th' ? 'ปรนัย' : 'Multiple Choice'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleAddQuestion('file_upload')}
-                className="px-3.5 py-2.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>{language === 'th' ? 'อัปโหลดไฟล์' : 'File Upload'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleAddQuestion('true_false')}
-                className="px-3.5 py-2.5 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>{language === 'th' ? 'ถูก/ผิด' : 'True/False'}</span>
-              </button>
+            {/* Phones: one row of four (icon above a short label); wider screens: the full labels in a wrapped row. */}
+            <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-2.5">
+              {([
+                { type: 'short_answer', th: ['ข้อความ', 'ข้อความสั้น'], en: ['Text', 'Short Answer'] },
+                { type: 'multiple_choice', th: ['ปรนัย', 'ปรนัย'], en: ['Choice', 'Multiple Choice'] },
+                { type: 'file_upload', th: ['ไฟล์', 'อัปโหลดไฟล์'], en: ['File', 'File Upload'] },
+                { type: 'true_false', th: ['ถูก/ผิด', 'ถูก/ผิด'], en: ['T/F', 'True/False'] },
+              ] as const).map((option, i) => {
+                const [short, full] = language === 'th' ? option.th : option.en;
+                return (
+                  <button
+                    key={option.type}
+                    type="button"
+                    onClick={() => handleAddQuestion(option.type)}
+                    className={`min-w-0 px-1 py-2.5 rounded-2xl text-[11px] sm:text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 cursor-pointer ${
+                      i === 0
+                        ? 'sm:px-4 bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-md hover:scale-[1.02]'
+                        : 'sm:px-3.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    <PlusCircle className="w-4 h-4 shrink-0" />
+                    <span className="max-w-full truncate sm:hidden">{short}</span>
+                    <span className="hidden sm:inline">{full}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1690,19 +1686,29 @@ function NewAssignmentContent() {
               : schedulePublish && !editIsPublished
               ? <Clock className="w-4 h-4" />
               : <Send className="w-4 h-4" />}
-            <span>
-              {isSubmitting
-                ? isUploadingSample ? (language === 'th' ? 'กำลังอัปโหลดไฟล์...' : 'Uploading file...') : t('common.loading')
+            {/* Phones get a short label so the bar stays balanced; from sm up the full one. */}
+            {(() => {
+              const th = language === 'th';
+              const [short, full] = isSubmitting
+                ? isUploadingSample
+                  ? [th ? 'กำลังอัปโหลด...' : 'Uploading...', th ? 'กำลังอัปโหลดไฟล์...' : 'Uploading file...']
+                  : [t('common.loading'), t('common.loading')]
                 : saveAsDraft && !editIsPublished
-                ? (language === 'th' ? 'บันทึกฉบับร่าง' : 'Save draft')
+                ? [th ? 'บันทึกร่าง' : 'Save draft', th ? 'บันทึกฉบับร่าง' : 'Save draft']
                 : editId
-                ? (!editIsPublished && releaseMode === 'now'
-                  ? (language === 'th' ? 'บันทึกและเผยแพร่' : 'Save & publish')
-                  : (language === 'th' ? 'บันทึกการแก้ไข' : 'Save changes'))
+                ? !editIsPublished && releaseMode === 'now'
+                  ? [th ? 'บันทึก+เผยแพร่' : 'Save & publish', th ? 'บันทึกและเผยแพร่' : 'Save & publish']
+                  : [th ? 'บันทึก' : 'Save', th ? 'บันทึกการแก้ไข' : 'Save changes']
                 : schedulePublish
-                ? (language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule')
-                : t('assignment_creator.buttons.publish')}
-            </span>
+                ? [th ? 'ตั้งเวลา' : 'Schedule', th ? 'ตั้งเวลาเผยแพร่' : 'Schedule']
+                : [th ? 'มอบหมายทันที' : 'Publish', t('assignment_creator.buttons.publish')];
+              return (
+                <>
+                  <span className="sm:hidden">{short}</span>
+                  <span className="hidden sm:inline">{full}</span>
+                </>
+              );
+            })()}
             </span>
           </button>
         </div>
