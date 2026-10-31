@@ -12,6 +12,12 @@ export const isGraded = (sub: Pick<Submission, 'total_score'>) => sub.total_scor
 /** Handed in and still waiting for the teacher. */
 export const needsGrading = (sub: SubmissionScore) => isHandedIn(sub) && !isGraded(sub);
 
+/** Never handed in, but the teacher already scored it (e.g. gave 0 after it closed): checked, not missing. */
+export const isScoredMissing = (sub: SubmissionScore) => !isHandedIn(sub) && isGraded(sub);
+
+/** Still outstanding: nothing handed in and nothing scored by the teacher. */
+export const isMissing = (sub: SubmissionScore | null | undefined) => !sub || (!isHandedIn(sub) && !isGraded(sub));
+
 type IntegrityFields = Pick<Submission, 'status' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'>;
 
 /**
@@ -27,14 +33,20 @@ export function isIntegrityFlagged(sub: IntegrityFields, isExam?: boolean): bool
 export type GradingCounts = {
   totalStudents: number;
   handedIn: number;
+  /** Checked by the teacher: graded hand-ins plus scores given to students who never handed in. */
   graded: number;
+  /** Of `graded`, the scores given to students who never handed in (usually a 0). */
+  scoredMissing: number;
   pending: number;
+  /** What the teacher has to check: graded + pending. */
+  checkable: number;
+  /** Not handed in and not scored yet. */
   notSubmitted: number;
   /** Quizzes only: submissions flagged for leaving the screen. */
   flagged: number;
 };
 
-/** Handed in / graded / waiting / missing for one assignment's submissions. */
+/** Handed in / checked / waiting / missing for one assignment's submissions. */
 export function gradingCounts(
   subs: Array<Pick<Submission, 'status' | 'total_score' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'>>,
   totalStudents: number,
@@ -42,12 +54,16 @@ export function gradingCounts(
 ): GradingCounts {
   const handedIn = subs.filter(isHandedIn).length;
   const pending = subs.filter(needsGrading).length;
+  const scoredMissing = subs.filter(isScoredMissing).length;
+  const graded = handedIn - pending + scoredMissing;
   return {
     totalStudents,
     handedIn,
-    graded: handedIn - pending,
+    graded,
+    scoredMissing,
     pending,
-    notSubmitted: Math.max(0, totalStudents - handedIn),
+    checkable: graded + pending,
+    notSubmitted: Math.max(0, totalStudents - handedIn - scoredMissing),
     flagged: subs.filter((s) => isIntegrityFlagged(s, isExam)).length,
   };
 }

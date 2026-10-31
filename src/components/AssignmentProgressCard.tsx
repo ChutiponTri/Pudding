@@ -58,12 +58,12 @@ export function AssignmentProgressCard({
 }) {
   const { language } = useLanguage();
   const th = language === 'th';
-  const { totalStudents, handedIn, graded, pending, notSubmitted, flagged } = counts;
+  const { totalStudents, handedIn, graded, scoredMissing, pending, checkable, notSubmitted, flagged } = counts;
   const win = getAssignmentWindow(assignment);
   const status = getAssignmentStatus(win, assignment.is_exam, language);
   const StatusIcon = status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : Clock;
   const deadline = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), language) : null;
-  const done = pending === 0 && handedIn > 0;
+  const done = pending === 0 && graded > 0;
   const hasReference = !!(assignment.sample_work_url || assignment.sample_work_title);
 
   const statusBadgeClass = `ml-auto px-2 py-0.5 rounded-full border text-[11px] font-bold inline-flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
@@ -201,11 +201,13 @@ export function AssignmentProgressCard({
         }`}
       >
         {pending > 0 ? <Clock className="w-4 h-4 shrink-0" /> : done ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <Inbox className="w-4 h-4 shrink-0" />}
-        <span>
+        <span className="min-w-0">
           {pending > 0
             ? th ? `รอตรวจ ${pending} คน` : `${pending} waiting to be graded`
             : done
-            ? th ? 'ตรวจครบทุกคนที่ส่งแล้ว' : 'Every submission is graded'
+            ? scoredMissing > 0
+              ? th ? `ตรวจครบแล้ว · ให้คะแนนคนไม่ส่ง ${scoredMissing} คน` : `All checked · ${scoredMissing} missing scored`
+              : th ? 'ตรวจครบทุกคนที่ส่งแล้ว' : 'Every submission is graded'
             : th ? 'ยังไม่มีนักเรียนส่งงาน' : 'No one has handed in yet'}
         </span>
         {flagged > 0 && (
@@ -234,7 +236,7 @@ export function AssignmentProgressCard({
             <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ตรวจแล้ว' : 'Graded'}</span>
             <span className={`text-sm font-black ${done ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'}`}>
               {graded}
-              <span className="text-[10px] font-semibold text-slate-400">/{handedIn}</span>
+              <span className="text-[10px] font-semibold text-slate-400">/{checkable}</span>
             </span>
           </div>
         </div>

@@ -135,7 +135,7 @@ function GradingHubContent() {
     return courses
       .map((course) => {
         const tasks = allTasks.filter((item) => item.assignment.course_id === course.id || belongsToCourse(course, item.classroom));
-        const handedIn = tasks.reduce((sum, i) => sum + i.handedIn, 0);
+        const checkable = tasks.reduce((sum, i) => sum + i.checkable, 0);
         const graded = tasks.reduce((sum, i) => sum + i.graded, 0);
         return {
           course,
@@ -144,7 +144,7 @@ function GradingHubContent() {
           tasksToGrade: tasks.filter((i) => i.pending > 0).length,
           pending: tasks.reduce((sum, i) => sum + i.pending, 0),
           flagged: tasks.reduce((sum, i) => sum + i.flagged, 0),
-          handedIn,
+          checkable,
           graded,
         };
       })
@@ -178,7 +178,7 @@ function GradingHubContent() {
   const gradedTasks = visibleTasks.filter((i) => i.pending === 0);
   const currentHref = `/grading${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
   const coursePending = courseTasks.reduce((sum, i) => sum + i.pending, 0);
-  const courseHandedIn = courseTasks.reduce((sum, i) => sum + i.handedIn, 0);
+  const courseCheckable = courseTasks.reduce((sum, i) => sum + i.checkable, 0);
   const courseGraded = courseTasks.reduce((sum, i) => sum + i.graded, 0);
 
   if (loading && !data) {
@@ -275,7 +275,7 @@ function GradingHubContent() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
-              {courseStats.map(({ course, sectionsCount, tasksCount, tasksToGrade, pending, flagged, handedIn, graded }) => {
+              {courseStats.map(({ course, sectionsCount, tasksCount, tasksToGrade, pending, flagged, checkable, graded }) => {
                 const done = pending === 0;
                 return (
                   <button
@@ -318,8 +318,8 @@ function GradingHubContent() {
                     <div className={`p-3 rounded-2xl ${done ? 'bg-emerald-50 dark:bg-emerald-950/30' : 'bg-amber-50 dark:bg-amber-950/30'}`}>
                       {done ? (
                         <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
-                          {handedIn > 0
-                            ? th ? `ตรวจแล้วทั้งหมด ${graded} ชิ้น` : `All ${graded} submissions graded`
+                          {checkable > 0
+                            ? th ? `ตรวจแล้วทั้งหมด ${graded} ชิ้น` : `All ${graded} checked`
                             : th ? 'ยังไม่มีนักเรียนส่งงาน' : 'No submissions yet'}
                         </p>
                       ) : (
@@ -331,11 +331,11 @@ function GradingHubContent() {
                           )}
                         </p>
                       )}
-                      {handedIn > 0 && (
+                      {checkable > 0 && (
                         <div className="mt-2 space-y-1">
                           <GradingBar graded={graded} pending={pending} notSubmitted={0} />
                           <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                            {th ? `ตรวจแล้ว ${graded}/${handedIn} ชิ้นที่ส่งมา` : `${graded}/${handedIn} handed-in graded`}
+                            {th ? `ตรวจแล้ว ${graded}/${checkable} ชิ้น` : `${graded}/${checkable} checked`}
                           </p>
                         </div>
                       )}
@@ -404,7 +404,7 @@ function GradingHubContent() {
                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ตรวจแล้ว' : 'Graded'}</span>
                 <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
                   {courseGraded}
-                  <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {courseHandedIn}</span>
+                  <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {courseCheckable}</span>
                 </span>
               </div>
               <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">

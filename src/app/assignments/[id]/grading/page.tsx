@@ -48,7 +48,7 @@ import {
   Rocket,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
-import { isGraded, isHandedIn, isIntegrityFlagged, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
+import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
  * Back button that returns to wherever the teacher came from. Links into this
@@ -503,10 +503,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
     if (!matchesSearch) return false;
 
-    if (statusFilter === 'missing') return !sub || !isHandedIn(sub);
+    if (statusFilter === 'missing') return isMissing(sub);
     if (statusFilter === 'suspicious') return !!sub && isSuspicious(sub);
     if (statusFilter === 'pending') return !!sub && needsGrading(sub);
-    if (statusFilter === 'graded') return !!sub && isHandedIn(sub) && isGraded(sub);
+    if (statusFilter === 'graded') return !!sub && isGraded(sub);
 
     return true;
   });
@@ -514,9 +514,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const suspiciousTotal = submissions.filter(isSuspicious).length;
   const handedInTotal = submissions.filter(isHandedIn).length;
   const toGradeTotal = submissions.filter(needsGrading).length;
-  const gradedHandedInTotal = handedInTotal - toGradeTotal;
-  // Not handed in: no row, or a row the teacher recorded for grading (status pending).
-  const missingTotal = rosterRows.filter((row) => !row.submission || !isHandedIn(row.submission)).length;
+  // Checked: graded hand-ins plus scores (e.g. a 0) given to students who never handed in.
+  const gradedTotal = submissions.filter(isGraded).length;
+  const checkableTotal = gradedTotal + toGradeTotal;
+  // Still missing: no row, or a recorded row the teacher has not scored yet.
+  const missingTotal = rosterRows.filter((row) => isMissing(row.submission)).length;
   // Students with nothing recorded yet, who "give 0 to everyone missing" applies to.
   const unrecordedRows = rosterRows.filter((row) => !row.submission && row.rosterId);
 
@@ -595,8 +597,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     {
       id: 'graded',
       label: th ? 'ตรวจแล้ว' : 'Graded',
-      value: gradedHandedInTotal,
-      of: handedInTotal,
+      value: gradedTotal,
+      of: checkableTotal,
       active: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500',
       label_class: 'text-emerald-700 dark:text-emerald-400',
       value_class: 'text-emerald-600 dark:text-emerald-400',
@@ -699,7 +701,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               className={`p-3.5 rounded-2xl border ${
                 toGradeTotal > 0
                   ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-900 text-amber-900 dark:text-amber-200'
-                  : handedInTotal > 0
+                  : gradedTotal > 0
                   ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200'
                   : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
               }`}
@@ -709,18 +711,18 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 {toGradeTotal > 0 ? <Clock className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
                 {toGradeTotal > 0
                   ? th ? `รอตรวจ ${toGradeTotal} คน` : `${toGradeTotal} left to grade`
-                  : handedInTotal > 0
+                  : gradedTotal > 0
                   ? th ? 'ตรวจครบแล้ว' : 'All graded'
                   : th ? 'ยังไม่มีผู้ส่งงาน' : 'Nothing handed in yet'}
               </p>
               <div className="mt-2 flex w-full h-2 rounded-full overflow-hidden bg-white/70 dark:bg-slate-900/60">
-                <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(gradedHandedInTotal / (rosterRows.length || 1)) * 100}%` }} />
+                <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(gradedTotal / (rosterRows.length || 1)) * 100}%` }} />
                 <div className="h-full bg-amber-400 transition-all" style={{ width: `${(toGradeTotal / (rosterRows.length || 1)) * 100}%` }} />
               </div>
               <p className="mt-1.5 text-[11px] font-semibold opacity-90">
                 {th
-                  ? `ตรวจแล้ว ${gradedHandedInTotal}/${handedInTotal} คนที่ส่ง · ส่งแล้ว ${handedInTotal}/${rosterRows.length} คน`
-                  : `${gradedHandedInTotal}/${handedInTotal} handed-in graded · ${handedInTotal}/${rosterRows.length} handed in`}
+                  ? `ตรวจแล้ว ${gradedTotal}/${checkableTotal} คน · ส่งแล้ว ${handedInTotal}/${rosterRows.length} คน`
+                  : `${gradedTotal}/${checkableTotal} checked · ${handedInTotal}/${rosterRows.length} handed in`}
               </p>
             </div>
           </div>
@@ -979,7 +981,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
               }`}
             >
-              {t('grading.filter_graded')} ({gradedHandedInTotal})
+              {t('grading.filter_graded')} ({gradedTotal})
             </button>
           </div>
         </div>

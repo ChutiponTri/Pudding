@@ -1806,8 +1806,8 @@ export function TeacherWorkspace({
                       <h5 className="font-bold text-xs text-slate-900 dark:text-white truncate">{asg.title}</h5>
                       <GradingBar graded={c.graded} pending={c.pending} notSubmitted={c.notSubmitted} />
                       <div className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="text-slate-500 dark:text-slate-400">
-                          {language === 'th' ? `ส่งแล้ว ${c.handedIn}/${c.totalStudents} · ตรวจแล้ว ${c.graded}` : `${c.handedIn}/${c.totalStudents} in · ${c.graded} graded`}
+                        <span className="min-w-0 truncate text-slate-500 dark:text-slate-400">
+                          {language === 'th' ? `ส่งแล้ว ${c.handedIn}/${c.totalStudents} · ตรวจแล้ว ${c.graded}/${c.checkable}` : `${c.handedIn}/${c.totalStudents} in · ${c.graded}/${c.checkable} checked`}
                         </span>
                         <span
                           className={`shrink-0 inline-flex items-center gap-0.5 font-bold ${

@@ -951,7 +951,7 @@ export default function ClassroomWorkspacePage() {
     return {
       pending: all.reduce((sum, c) => sum + c.pending, 0),
       graded: all.reduce((sum, c) => sum + c.graded, 0),
-      handedIn: all.reduce((sum, c) => sum + c.handedIn, 0),
+      checkable: all.reduce((sum, c) => sum + c.checkable, 0),
       done: all.filter((c) => classworkFilterOf(c) === 'done').length,
     };
   }, [classworkCounts]);
@@ -1960,7 +1960,7 @@ export default function ClassroomWorkspacePage() {
                       <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">ตรวจแล้ว</span>
                       <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
                         {classworkSummary.graded}
-                        <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {classworkSummary.handedIn}</span>
+                        <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {classworkSummary.checkable}</span>
                       </span>
                     </div>
                     <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
