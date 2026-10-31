@@ -24,6 +24,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const saved = (localStorage.getItem('pudding_theme') || localStorage.getItem('omurice_theme')) as Theme | null;
       if (saved === 'dark' || saved === 'light') {
+        // After mount only, so the first client render matches the server (light).
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setThemeState(saved);
         if (saved === 'dark') {
           document.documentElement.classList.add('dark');

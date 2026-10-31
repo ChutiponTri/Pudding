@@ -1,228 +1,183 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useMemo, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useUser } from '@clerk/nextjs';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { dataService } from '@/lib/supabase/dataService';
-import { fetchCached, readCache, TEACHER_DASHBOARD_CACHE_KEY, watchClassrooms } from '@/lib/cache/sessionCache';
-import {
-  Assignment,
-  Classroom,
-  Course,
-  Question,
-  Submission,
-  SubmissionAnswer,
-  SubmissionEvent,
-  SubmissionOverrideStatus,
-  TeacherRole,
-} from '@/types/database';
-import { AntiCheatingBadge } from '@/components/AntiCheatingBadge';
-import { IntegrityAuditModal } from '@/components/IntegrityAuditModal';
-import { GradingWorkspace } from '@/components/GradingWorkspace';
+import { useTeacherDashboardData } from '@/lib/hooks/useTeacherDashboardData';
+import { Assignment, Classroom, Course } from '@/types/database';
 import {
   BookOpen,
-  School,
   FileCheck,
   ChevronRight,
   ArrowLeft,
-  Search,
-  Filter,
   ShieldAlert,
   Clock,
   CheckCircle2,
-  AlertTriangle,
-  UserCheck,
-  FileText,
   Lock,
   Unlock,
-  RotateCcw,
-  Check,
   Calendar,
-  Layers,
-  Sparkles,
-  ExternalLink,
-  Users,
-  AlertCircle,
-  HelpCircle,
+  Inbox,
+  ListChecks,
+  School,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { formatDateTime } from '@/lib/utils/datetime';
+import { isGraded, isHandedIn, needsGrading } from '@/lib/utils/gradingStatus';
 
+type TaskTab = 'pending' | 'done' | 'waiting';
+
+type TaskItem = {
+  classroom: Classroom;
+  assignment: Assignment;
+  totalStudents: number;
+  handedIn: number;
+  graded: number;
+  pending: number;
+  notSubmitted: number;
+  flagged: number;
+};
+
+const belongsToCourse = (course: Course, cls: Classroom) => cls.course_id === course.id || !!cls.subject_code?.startsWith(course.code);
+
+/** Graded / waiting for the teacher / not handed in, as one bar. */
+function GradingBar({ graded, pending, notSubmitted }: { graded: number; pending: number; notSubmitted: number }) {
+  const total = graded + pending + notSubmitted || 1;
+  return (
+    <div className="flex w-full h-2 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800">
+      <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(graded / total) * 100}%` }} />
+      <div className="h-full bg-amber-400 transition-all" style={{ width: `${(pending / total) * 100}%` }} />
+    </div>
+  );
+}
 
 function GradingHubContent() {
   const { t, language } = useLanguage();
-  const { user: clerkUser } = useUser();
+  const th = language === 'th';
   const searchParams = useSearchParams();
   const router = useRouter();
+  // Same session-cached data as the dashboard; refetches while open whenever something changes (a grade is saved, a student hands in…).
+  const { data, loading } = useTeacherDashboardData();
 
   // This page only picks the work to grade (course -> section/assignment).
   // Grading itself lives on /assignments/[id]/grading.
-  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(
-    searchParams.get('courseId') || null
-  );
-
-  // Core Data
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [allSubmissions, setAllSubmissions] = useState<Submission[]>([]);
-  const [loading, setLoading] = useState(true);
+  const selectedCourseId = searchParams.get('courseId');
+  const tabParam = searchParams.get('tab') as TaskTab | null;
+  const classroomFilter = searchParams.get('classroomId');
 
   // Old links pointed at ?assignmentId=…; send them to the grading page.
   const legacyAssignmentId = searchParams.get('assignmentId');
   useEffect(() => {
     if (!legacyAssignmentId) return;
-    const courseId = searchParams.get('courseId');
     router.replace(
-      `/assignments/${legacyAssignmentId}/grading?from=grading${courseId ? `&courseId=${encodeURIComponent(courseId)}` : ''}`
+      `/assignments/${legacyAssignmentId}/grading?from=grading${selectedCourseId ? `&courseId=${encodeURIComponent(selectedCourseId)}` : ''}`
     );
-  }, [legacyAssignmentId, router, searchParams]);
+  }, [legacyAssignmentId, router, selectedCourseId]);
 
-  // Load Initial Data
-  const loadInitialData = async (teacherId: string) => {
-    const apply = (data: Awaited<ReturnType<typeof dataService.getTeacherDashboard>>) => {
-      setCourses(data.courses);
-      setClassrooms(data.classrooms);
-      setAssignments(data.assignments);
-      setAllSubmissions(data.submissions);
-      watchClassrooms(data.classrooms.map((c) => c.id));
-    };
-    // Same data as the dashboard: this session's copy shows at once and is
-    // refetched only if something may have changed since.
-    const hit = readCache<Parameters<typeof apply>[0]>(TEACHER_DASHBOARD_CACHE_KEY, teacherId);
-    if (hit) {
-      apply(hit.value);
-      setLoading(false);
-      if (hit.fresh) return;
-    } else {
-      setLoading(true);
+  const courses = useMemo(() => data?.courses || [], [data]);
+  const classrooms = useMemo(() => data?.classrooms || [], [data]);
+  const assignments = useMemo(() => data?.assignments || [], [data]);
+  const submissions = useMemo(() => data?.submissions || [], [data]);
+
+  // Keep the view in the URL so "back" from the grading page returns to it.
+  const setView = (next: { courseId?: string | null; tab?: TaskTab | null; classroomId?: string | null }) => {
+    const params = new URLSearchParams();
+    const courseId = next.courseId !== undefined ? next.courseId : selectedCourseId;
+    if (courseId) {
+      params.set('courseId', courseId);
+      const tab = next.tab !== undefined ? next.tab : tabParam;
+      const cls = next.classroomId !== undefined ? next.classroomId : classroomFilter;
+      if (tab) params.set('tab', tab);
+      if (cls) params.set('classroomId', cls);
     }
-    try {
-      // Only this teacher's courses, sections, work and submission counts, in one request.
-      apply(await fetchCached(TEACHER_DASHBOARD_CACHE_KEY, teacherId, () => dataService.getTeacherDashboard()));
-    } catch (err) {
-      console.error('Error loading grading hub data:', err);
-    } finally {
-      setLoading(false);
-    }
+    const query = params.toString();
+    router.replace(query ? `/grading?${query}` : '/grading', { scroll: false });
   };
+  const handleResetToCourses = () => setView({ courseId: null });
 
-  useEffect(() => {
-    if (clerkUser?.id) loadInitialData(clerkUser.id);
-  }, [clerkUser?.id]);
+  const selectedCourse = useMemo(() => courses.find((c) => c.id === selectedCourseId) || null, [courses, selectedCourseId]);
 
-  // Selected Course
-  const selectedCourse = useMemo(() => {
-    return courses.find((c) => c.id === selectedCourseId) || null;
-  }, [courses, selectedCourseId]);
-
-  // Keep the selected course in the URL so "back" from the grading page returns here.
-  const selectCourse = (courseId: string | null) => {
-    setSelectedCourseId(courseId);
-    router.replace(courseId ? `/grading?courseId=${encodeURIComponent(courseId)}` : '/grading', { scroll: false });
-  };
-  const handleSelectCourse = (courseId: string) => selectCourse(courseId);
-  const handleResetToCourses = () => selectCourse(null);
-
-  // Calculate stats for Level 1 (Courses Overview)
-  const courseStats = useMemo(() => {
-    return courses.map((course) => {
-      const courseClassrooms = classrooms.filter(
-        (cls) => cls.course_id === course.id || cls.subject_code?.startsWith(course.code)
-      );
-      const courseAssignments = assignments.filter(
-        (asg) =>
-          asg.course_id === course.id ||
-          courseClassrooms.some((c) => c.id === asg.classroom_id)
-      );
-
-      const courseSubmissions = allSubmissions.filter((sub) =>
-        courseAssignments.some((a) => a.id === sub.assignment_id)
-      );
-
-      const pendingCount = courseSubmissions.filter(
-        (s) => (s.status === 'submitted' || s.status === 'late') && s.total_score == null
-      ).length;
-
-      // Leaving the screen is tracked during quizzes only.
-      const suspiciousCount = courseSubmissions.filter(
-        (s) => s.is_flagged_suspicious && courseAssignments.some((a) => a.id === s.assignment_id && a.is_exam)
-      ).length;
-
-      const submittedCount = courseSubmissions.filter(
-        (s) => s.status === 'submitted' || s.status === 'late'
-      ).length;
-
-      return {
-        course,
-        sectionsCount: courseClassrooms.length,
-        assignmentsCount: courseAssignments.length,
-        pendingCount,
-        suspiciousCount,
-        submittedCount,
-        totalEnrolled: courseClassrooms.reduce(
-          (sum, c) => sum + (c.students?.length || c.student_count || 0),
-          0
-        ),
-      };
-    });
-  }, [courses, classrooms, assignments, allSubmissions]);
-
-  // Calculate sections and tasks for Level 2 (Selected Course)
-  const sectionItems = useMemo(() => {
-    if (!selectedCourse) return [];
-    const courseSections = classrooms.filter(
-      (cls) =>
-        cls.course_id === selectedCourse.id ||
-        cls.subject_code?.startsWith(selectedCourse.code)
-    );
-
-    const items: Array<{
-      classroom: Classroom;
-      assignment: Assignment;
-      totalStudents: number;
-      submittedCount: number;
-      pendingCount: number;
-      notSubmittedCount: number;
-      lateCount: number;
-      flaggedCount: number;
-      gradedCount: number;
-    }> = [];
-
-    for (const cls of courseSections) {
-      const clsAssignments = assignments.filter((a) => a.classroom_id === cls.id);
-      const studentsList = cls.students || [];
-
-      for (const asg of clsAssignments) {
-        const asgSubs = allSubmissions.filter((s) => s.assignment_id === asg.id);
-        const submitted = asgSubs.filter((s) => s.status === 'submitted' || s.status === 'late');
-        const late = asgSubs.filter((s) => s.status === 'late');
-        const flagged = asg.is_exam ? asgSubs.filter((s) => s.is_flagged_suspicious) : [];
-        const graded = asgSubs.filter((s) => s.total_score != null);
-        const pending = asgSubs.filter(
-          (s) => (s.status === 'submitted' || s.status === 'late') && s.total_score == null
-        );
-        const notSubmittedCount = Math.max(0, studentsList.length - submitted.length);
-
-        items.push({
-          classroom: cls,
-          assignment: asg,
-          totalStudents: studentsList.length,
-          submittedCount: submitted.length,
-          pendingCount: pending.length,
-          notSubmittedCount,
-          lateCount: late.length,
-          flaggedCount: flagged.length,
-          gradedCount: graded.length,
-        });
-      }
+  // Every assignment with its counts, per classroom.
+  const allTasks = useMemo(() => {
+    const subsByAssignment = new Map<string, typeof submissions>();
+    for (const s of submissions) subsByAssignment.set(s.assignment_id, [...(subsByAssignment.get(s.assignment_id) || []), s]);
+    const byClassroom = new Map(classrooms.map((c) => [c.id, c]));
+    const items: TaskItem[] = [];
+    for (const asg of assignments) {
+      const cls = byClassroom.get(asg.classroom_id);
+      if (!cls) continue;
+      const subs = subsByAssignment.get(asg.id) || [];
+      const handedIn = subs.filter(isHandedIn).length;
+      const totalStudents = cls.students?.length || cls.student_count || 0;
+      items.push({
+        classroom: cls,
+        assignment: asg,
+        totalStudents,
+        handedIn,
+        graded: subs.filter((s) => isHandedIn(s) && isGraded(s)).length,
+        pending: subs.filter(needsGrading).length,
+        notSubmitted: Math.max(0, totalStudents - handedIn),
+        // Leaving the screen is tracked during quizzes only.
+        flagged: asg.is_exam ? subs.filter((s) => s.is_flagged_suspicious).length : 0,
+      });
     }
-
     return items;
-  }, [selectedCourse, classrooms, assignments, allSubmissions]);
+  }, [assignments, classrooms, submissions]);
 
-  if (loading) {
+  // Level 1: one card per course, the ones with work left to grade first.
+  const courseStats = useMemo(() => {
+    return courses
+      .map((course) => {
+        const tasks = allTasks.filter((item) => item.assignment.course_id === course.id || belongsToCourse(course, item.classroom));
+        const handedIn = tasks.reduce((sum, i) => sum + i.handedIn, 0);
+        const graded = tasks.reduce((sum, i) => sum + i.graded, 0);
+        return {
+          course,
+          sectionsCount: classrooms.filter((cls) => belongsToCourse(course, cls)).length,
+          tasksCount: tasks.length,
+          tasksToGrade: tasks.filter((i) => i.pending > 0).length,
+          pending: tasks.reduce((sum, i) => sum + i.pending, 0),
+          flagged: tasks.reduce((sum, i) => sum + i.flagged, 0),
+          handedIn,
+          graded,
+        };
+      })
+      .sort((a, b) => Number(b.pending > 0) - Number(a.pending > 0));
+  }, [courses, classrooms, allTasks]);
+
+  const totalPending = courseStats.reduce((sum, c) => sum + c.pending, 0);
+  const coursesToGrade = courseStats.filter((c) => c.pending > 0).length;
+
+  // Level 2: the selected course's work, split by what still needs the teacher.
+  const courseTasks = useMemo(() => {
+    if (!selectedCourse) return [];
+    return allTasks
+      .filter((item) => item.assignment.course_id === selectedCourse.id || belongsToCourse(selectedCourse, item.classroom))
+      .sort((a, b) => {
+        const da = getAssignmentWindow(a.assignment).deadline ?? 0;
+        const db = getAssignmentWindow(b.assignment).deadline ?? 0;
+        return db - da;
+      });
+  }, [selectedCourse, allTasks]);
+
+  const courseSections = useMemo(() => {
+    const seen = new Map<string, Classroom>();
+    courseTasks.forEach((item) => seen.set(item.classroom.id, item.classroom));
+    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name, 'th'));
+  }, [courseTasks]);
+
+  const visibleTasks = classroomFilter ? courseTasks.filter((item) => item.classroom.id === classroomFilter) : courseTasks;
+  const groups: Record<TaskTab, TaskItem[]> = {
+    pending: visibleTasks.filter((i) => i.pending > 0),
+    done: visibleTasks.filter((i) => i.pending === 0 && i.handedIn > 0),
+    waiting: visibleTasks.filter((i) => i.handedIn === 0),
+  };
+  const activeTab: TaskTab = tabParam && groups[tabParam] ? tabParam : groups.pending.length > 0 || !groups.done.length ? 'pending' : 'done';
+  const coursePending = courseTasks.reduce((sum, i) => sum + i.pending, 0);
+  const courseHandedIn = courseTasks.reduce((sum, i) => sum + i.handedIn, 0);
+  const courseGraded = courseTasks.reduce((sum, i) => sum + i.graded, 0);
+
+  if (loading && !data) {
     return (
       <div className="min-h-[70vh] flex flex-col items-center justify-center gap-3">
         <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
@@ -231,343 +186,447 @@ function GradingHubContent() {
     );
   }
 
+  const tabs: Array<{ id: TaskTab; label: string; icon: React.ElementType; active: string; badge: string }> = [
+    {
+      id: 'pending',
+      label: th ? 'ต้องตรวจ' : 'To grade',
+      icon: Clock,
+      active: 'bg-amber-500 text-slate-950',
+      badge: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+    },
+    {
+      id: 'done',
+      label: th ? 'ตรวจครบแล้ว' : 'Graded',
+      icon: CheckCircle2,
+      active: 'bg-emerald-600 text-white',
+      badge: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
+    },
+    {
+      id: 'waiting',
+      label: th ? 'ยังไม่มีผู้ส่ง' : 'No submissions',
+      icon: Inbox,
+      active: 'bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900',
+      badge: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+    },
+  ];
+
   return (
-    <div className="min-h-dvh bg-slate-50/60 dark:bg-slate-950 pb-20 transition-colors">
-      {/* Main Container */}
-      <div className="max-w-7xl mx-auto space-y-5 sm:space-y-6">
-        {/* BREADCRUMB NAVIGATION BAR */}
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-wrap items-center justify-between gap-3">
-          <nav className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-bold text-slate-500 dark:text-slate-400 min-w-0">
-            <button
-              type="button"
-              onClick={handleResetToCourses}
-              className={`hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer flex items-center gap-1.5 ${
-                !selectedCourseId ? 'text-amber-600 dark:text-amber-400 font-black' : ''
-              }`}
-            >
-              <FileCheck className="w-4 h-4" />
-              <span>{language === 'th' ? 'ตรวจข้อสอบ & วิเคราะห์' : 'Grading & Integrity'}</span>
-            </button>
+    <div className="pb-20 space-y-5 sm:space-y-6">
+      {/* BREADCRUMB */}
+      <nav className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-bold text-slate-500 dark:text-slate-400 min-w-0">
+        <button
+          type="button"
+          onClick={handleResetToCourses}
+          className={`hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer flex items-center gap-1.5 ${
+            !selectedCourse ? 'text-amber-600 dark:text-amber-400 font-black' : ''
+          }`}
+        >
+          <FileCheck className="w-4 h-4" />
+          <span>{th ? 'ตรวจข้อสอบ & วิเคราะห์' : 'Grading & Integrity'}</span>
+        </button>
+        {selectedCourse && (
+          <>
+            <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-slate-900 dark:text-white font-black truncate">
+              <span className="font-mono">{selectedCourse.code}</span> {selectedCourse.name}
+            </span>
+          </>
+        )}
+      </nav>
 
-            {selectedCourse && (
-              <>
-                <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-amber-600 dark:text-amber-400 font-black">
-                  <span className="font-mono">{selectedCourse.code}</span> {selectedCourse.name}
-                </span>
-              </>
-            )}
-          </nav>
-
-          {/* Quick Back Button when a course is open */}
-          {selectedCourseId && (
-            <button
-              type="button"
-              onClick={handleResetToCourses}
-              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>{language === 'th' ? 'ย้อนกลับ' : 'Back'}</span>
-            </button>
-          )}
-        </div>
-
-        {/* ========================================================================= */}
-        {/* LEVEL 1: SHOW COURSES THAT HAVE WORK TO GRADE (เข้าไปปุ๊บ แสดงว่ามีวิชาอะไรบ้าง) */}
-        {/* ========================================================================= */}
-        {!selectedCourseId && (
-          <div className="space-y-6 animate-in fade-in">
-            {/* Header info */}
-            <div className="bg-linear-to-br from-amber-400 via-orange-400 to-amber-500 rounded-3xl p-5 sm:p-6 md:p-8 text-slate-950 shadow-xl shadow-amber-500/15 flex flex-col md:flex-row md:items-center justify-between gap-5 sm:gap-6">
-              <div className="space-y-2">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
-                  <span>📝</span>
-                  <span>{language === 'th' ? 'ขั้นตอนที่ 1 : เลือกรหัสวิชาที่ต้องการตรวจ' : 'Step 1 : Select Course'}</span>
-                </div>
-                <h1 className="text-2xl md:text-3xl font-black tracking-tight">
-                  {language === 'th' ? 'ระบบตรวจข้อสอบและการบ้านอัจฉริยะ' : 'Grading & Integrity Assessment Hub'}
-                </h1>
-                <p className="text-slate-900/90 text-xs md:text-sm font-medium max-w-2xl">
-                  {language === 'th'
-                    ? 'เลือกรายวิชาด้านล่างเพื่อตรวจสอบห้องเรียนที่ได้รับมอบหมาย ดูรายชื่อผู้เรียนที่ส่งงานแล้วหรือยังไม่ส่ง พร้อมตรวจให้คะแนนแบบเจาะลึก'
-                    : 'Select a course below to review assigned sections, view student submission statuses, and perform continuous grading.'}
-                </p>
+      {/* ========================================================================= */}
+      {/* LEVEL 1: COURSES                                                          */}
+      {/* ========================================================================= */}
+      {!selectedCourse && (
+        <div className="space-y-5 sm:space-y-6 animate-in fade-in">
+          <div className="bg-linear-to-br from-amber-400 via-orange-400 to-amber-500 rounded-3xl p-5 sm:p-6 md:p-8 text-slate-950 shadow-xl shadow-amber-500/15 flex flex-col md:flex-row md:items-center justify-between gap-5 sm:gap-6">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
+                <span>📝</span>
+                <span>{th ? 'ขั้นตอนที่ 1 : เลือกรหัสวิชาที่ต้องการตรวจ' : 'Step 1 : Select Course'}</span>
               </div>
-
-              {/* Total pending review indicator */}
-              <div className="px-5 py-4 rounded-2xl bg-white/95 text-slate-950 shadow-lg ring-1 ring-white/60 text-center md:min-w-40 shrink-0">
-                <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
-                  {language === 'th' ? 'งานรอตรวจทั้งหมด' : 'Total Pending'}
-                </span>
-                <span className="text-3xl font-black text-amber-600 block mt-0.5">
-                  {courseStats.reduce((sum, c) => sum + c.pendingCount, 0)}
-                </span>
-                <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">
-                  {language === 'th' ? 'คำตอบที่ยังไม่ได้ให้คะแนน' : 'Unassessed Answers'}
-                </span>
-              </div>
+              <h1 className="text-2xl md:text-3xl font-black tracking-tight">
+                {th ? 'ระบบตรวจข้อสอบและการบ้านอัจฉริยะ' : 'Grading & Integrity Assessment Hub'}
+              </h1>
+              <p className="text-slate-900/90 text-xs md:text-sm font-medium max-w-2xl">
+                {th
+                  ? 'เลือกรายวิชาด้านล่าง วิชาที่ยังตรวจไม่ครบจะแสดงก่อน พร้อมจำนวนงานที่เหลือ'
+                  : 'Pick a course below. Courses with work left to grade come first, with what is left.'}
+              </p>
             </div>
 
-            {/* Courses Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-              {courseStats.map(({ course, sectionsCount, assignmentsCount, pendingCount, suspiciousCount, submittedCount, totalEnrolled }) => (
-                <div
-                  key={course.id}
-                  onClick={() => handleSelectCourse(course.id)}
-                  className="group bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-5 hover:border-amber-400 dark:hover:border-amber-500 shadow-xs hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="space-y-3">
+            <div className="px-5 py-4 rounded-2xl bg-white/95 text-slate-950 shadow-lg ring-1 ring-white/60 text-center md:min-w-44 shrink-0">
+              <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
+                {th ? 'งานรอตรวจทั้งหมด' : 'Total to grade'}
+              </span>
+              <span className={`text-3xl font-black block mt-0.5 ${totalPending > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                {totalPending}
+              </span>
+              <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">
+                {totalPending > 0
+                  ? th ? `ชิ้นงาน ใน ${coursesToGrade} วิชา` : `submissions in ${coursesToGrade} courses`
+                  : th ? 'ตรวจครบทุกวิชาแล้ว 🎉' : 'Everything is graded 🎉'}
+              </span>
+            </div>
+          </div>
+
+          {courseStats.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 p-12 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 text-center space-y-3">
+              <BookOpen className="w-10 h-10 text-slate-400 mx-auto" />
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-300">{th ? 'ยังไม่มีรายวิชา' : 'No courses yet.'}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
+              {courseStats.map(({ course, sectionsCount, tasksCount, tasksToGrade, pending, flagged, handedIn, graded }) => {
+                const done = pending === 0;
+                return (
+                  <button
+                    type="button"
+                    key={course.id}
+                    onClick={() => setView({ courseId: course.id, tab: null, classroomId: null })}
+                    className={`group text-left bg-white dark:bg-slate-900 rounded-3xl border p-4 sm:p-5 flex flex-col gap-4 shadow-xs hover:shadow-lg transition-all cursor-pointer ${
+                      done
+                        ? 'border-slate-200 dark:border-slate-800 hover:border-emerald-400 dark:hover:border-emerald-600'
+                        : 'border-amber-300 dark:border-amber-800/70 hover:border-amber-500'
+                    }`}
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <span className="px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 font-mono text-xs font-black border border-amber-200 dark:border-amber-900">
                         {course.code}
                       </span>
-                      {pendingCount > 0 ? (
-                        <span className="px-2.5 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-[11px] font-bold flex items-center gap-1 animate-pulse">
-                          <Clock className="w-3 h-3" />
-                          <span>{pendingCount} {language === 'th' ? 'รอตรวจ' : 'Pending'}</span>
-                        </span>
-                      ) : (
+                      {done ? (
                         <span className="px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" />
-                          <span>{language === 'th' ? 'ตรวจครบแล้ว' : 'All Graded'}</span>
+                          <span>{th ? 'ตรวจครบแล้ว' : 'All graded'}</span>
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px] font-bold flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          <span>{th ? 'ยังตรวจไม่ครบ' : 'Not finished'}</span>
                         </span>
                       )}
                     </div>
 
-                    <div>
-                      <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
+                    <div className="min-w-0">
+                      <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors line-clamp-2">
                         {course.name}
                       </h3>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-                        {course.description || '-'}
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        {sectionsCount} {th ? 'ห้อง' : 'sections'} · {tasksCount} {th ? 'งาน/ข้อสอบ' : 'tasks'}
                       </p>
                     </div>
 
-                    {/* Progress / Stat metrics */}
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold block">
-                          {language === 'th' ? 'ห้องเรียนในสังกัด' : 'Assigned Sections'}
-                        </span>
-                        <span className="text-sm font-black text-slate-900 dark:text-white mt-0.5 block">
-                          {sectionsCount} {language === 'th' ? 'ห้อง' : 'Rooms'}
-                        </span>
-                      </div>
-                      <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold block">
-                          {language === 'th' ? 'การบ้าน / ข้อสอบ' : 'Tasks / Exams'}
-                        </span>
-                        <span className="text-sm font-black text-slate-900 dark:text-white mt-0.5 block">
-                          {assignmentsCount} {language === 'th' ? 'รายการ' : 'Tasks'}
-                        </span>
-                      </div>
+                    {/* What is left, in words and as a bar */}
+                    <div className={`p-3 rounded-2xl ${done ? 'bg-emerald-50 dark:bg-emerald-950/30' : 'bg-amber-50 dark:bg-amber-950/30'}`}>
+                      {done ? (
+                        <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                          {handedIn > 0
+                            ? th ? `ตรวจแล้วทั้งหมด ${graded} ชิ้น` : `All ${graded} submissions graded`
+                            : th ? 'ยังไม่มีนักเรียนส่งงาน' : 'No submissions yet'}
+                        </p>
+                      ) : (
+                        <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                          {th ? (
+                            <>เหลือตรวจ <span className="text-lg font-black">{pending}</span> ชิ้น ใน {tasksToGrade} งาน</>
+                          ) : (
+                            <><span className="text-lg font-black">{pending}</span> left to grade in {tasksToGrade} tasks</>
+                          )}
+                        </p>
+                      )}
+                      {handedIn > 0 && (
+                        <div className="mt-2 space-y-1">
+                          <GradingBar graded={graded} pending={pending} notSubmitted={0} />
+                          <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                            {th ? `ตรวจแล้ว ${graded}/${handedIn} ชิ้นที่ส่งมา` : `${graded}/${handedIn} handed-in graded`}
+                          </p>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Suspicious Alerts indicator if any */}
-                    {suspiciousCount > 0 && (
-                      <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-bold flex items-center gap-2">
-                        <ShieldAlert className="w-4 h-4 text-rose-600 animate-pulse shrink-0" />
-                        <span className="text-[11px]">
-                          {language === 'th'
-                            ? `พบพฤติกรรมสลับหน้าจอ ${suspiciousCount} รายการ`
-                            : `${suspiciousCount} integrity flags detected`}
-                        </span>
+                    {flagged > 0 && (
+                      <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-[11px] font-bold flex items-center gap-2">
+                        <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>{th ? `พบพฤติกรรมสลับหน้าจอ ${flagged} รายการ` : `${flagged} integrity flags`}</span>
                       </div>
                     )}
-                  </div>
 
-                  {/* Action button */}
-                  <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                      {submittedCount} / {totalEnrolled} {language === 'th' ? 'ส่งแล้ว' : 'Submitted'}
-                    </span>
-                    <button
-                      type="button"
-                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition-all group-hover:scale-105 cursor-pointer"
+                    <span
+                      className={`mt-auto w-full py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-colors ${
+                        done
+                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 group-hover:bg-slate-200 dark:group-hover:bg-slate-700'
+                          : 'bg-amber-500 group-hover:bg-amber-600 text-slate-950 shadow-md shadow-amber-500/20'
+                      }`}
                     >
-                      <span>{language === 'th' ? 'เลือกตรวจวิชานี้' : 'View Sections'}</span>
+                      <span>{done ? (th ? 'ดูงานในวิชานี้' : 'View tasks') : th ? 'ไปตรวจงาน' : 'Start grading'}</span>
                       <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      )}
 
-        {/* ========================================================================= */}
-        {/* LEVEL 2: SHOW SECTIONS & TASKS IN SELECTED COURSE (พอกดเข้าไป 1 ครั้ง ก็จะเห็นว่ามีห้องไหนบ้าง) */}
-        {/* ========================================================================= */}
-        {selectedCourse && (
-          <div className="space-y-6 animate-in fade-in">
-            {/* Header of selected course */}
-            <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950 text-xs font-bold text-amber-900 dark:text-amber-300">
-                  <span>🏢</span>
-                  <span>{language === 'th' ? 'ขั้นตอนที่ 2 : เลือกห้องเรียนและชิ้นงานที่มอบหมาย' : 'Step 2 : Choose Section & Assignment'}</span>
-                </div>
-                <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <span className="font-mono text-amber-600 dark:text-amber-400">
-                    [{selectedCourse.code}]
-                  </span>
-                  <span>{selectedCourse.name}</span>
-                </h1>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {selectedCourse.description}
-                </p>
+      {/* ========================================================================= */}
+      {/* LEVEL 2: TASKS IN THE SELECTED COURSE                                     */}
+      {/* ========================================================================= */}
+      {selectedCourse && (
+        <div className="space-y-4 sm:space-y-5 animate-in fade-in">
+          {/* Course header + summary */}
+          <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                <span className="inline-flex px-3 py-1 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 font-mono text-xs font-black border border-amber-200 dark:border-amber-900">
+                  {selectedCourse.code}
+                </span>
+                <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white">{selectedCourse.name}</h1>
               </div>
-
               <button
                 type="button"
                 onClick={handleResetToCourses}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 cursor-pointer self-start md:self-auto"
+                className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer shrink-0"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span>{language === 'th' ? 'เปลี่ยนรายวิชา' : 'Switch Course'}</span>
+                <span className="hidden sm:inline">{th ? 'เปลี่ยนรายวิชา' : 'Switch course'}</span>
               </button>
             </div>
 
-            {/* List of assigned sections and their tasks */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-500 dark:text-slate-400 px-1">
-                <span>{language === 'th' ? 'ห้องเรียนและรายการข้อสอบ/การบ้านที่มอบหมาย' : 'Assigned Classrooms & Tasks'} ({sectionItems.length})</span>
-                <span>{language === 'th' ? 'คลิกที่ห้องเรียนเพื่อเปิดรายชื่อผู้ส่งงาน' : 'Select a classroom to view roster'}</span>
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              <div className={`p-3 rounded-2xl ${coursePending > 0 ? 'bg-amber-50 dark:bg-amber-950/40' : 'bg-emerald-50 dark:bg-emerald-950/40'}`}>
+                <span className={`text-[11px] font-bold block ${coursePending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
+                  {th ? 'รอตรวจ' : 'To grade'}
+                </span>
+                <span className={`text-xl sm:text-2xl font-black ${coursePending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
+                  {coursePending}
+                  <span className="text-[11px] font-semibold ml-1">{th ? 'ชิ้น' : ''}</span>
+                </span>
               </div>
-
-              {sectionItems.length === 0 ? (
-                <div className="bg-white dark:bg-slate-900 p-12 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 text-center space-y-3">
-                  <BookOpen className="w-10 h-10 text-slate-400 mx-auto" />
-                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
-                    {language === 'th' ? 'ยังไม่มีชิ้นงานหรือข้อสอบในรายวิชานี้' : 'No tasks assigned in this course yet.'}
-                  </p>
-                  <Link
-                    href="/creation"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-xs"
-                  >
-                    <span>+ {t('dashboard.quick_actions.create_assignment')}</span>
-                  </Link>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  {sectionItems.map((item) => (
-                    <div
-                      key={`${item.classroom.id}-${item.assignment.id}`}
-                      className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 space-y-5 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-lg transition-all"
-                    >
-                      {/* Section & Assignment Header */}
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs">
-                              {item.classroom.name}
-                            </span>
-                            <span
-                              className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
-                                item.assignment.is_exam
-                                  ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/70 dark:text-rose-300'
-                                  : 'bg-blue-100 text-blue-700 dark:bg-blue-950/70 dark:text-blue-300'
-                              }`}
-                            >
-                              {item.assignment.is_exam
-                                ? language === 'th' ? 'ข้อสอบออนไลน์' : 'Exam'
-                                : language === 'th' ? 'การบ้าน/ใบงาน' : 'Assignment'}
-                            </span>
-                          </div>
-                          <h3 className="text-base font-black text-slate-900 dark:text-white pt-1">
-                            {item.assignment.title}
-                          </h3>
-                        </div>
-
-                        {/* Submission status override badge */}
-                        <div className="text-right shrink-0">
-                          {(() => {
-                            const status = getAssignmentStatus(getAssignmentWindow(item.assignment), item.assignment.is_exam, language);
-                            const Icon = status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : Clock;
-                            return (
-                              <span
-                                className={`px-2.5 py-1 rounded-full border text-[11px] font-bold flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`}
-                                title={status.note || undefined}
-                              >
-                                <Icon className="w-3 h-3" />
-                                <span>{status.label}</span>
-                              </span>
-                            );
-                          })()}
-                        </div>
-                      </div>
-
-                      {/* Roster counts breakdown */}
-                      <div className="grid grid-cols-4 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-center">
-                        <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40">
-                          <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-bold block">
-                            {language === 'th' ? 'ส่งแล้ว' : 'Submitted'}
-                          </span>
-                          <span className="text-base font-black text-emerald-700 dark:text-emerald-300">
-                            {item.submittedCount}
-                          </span>
-                        </div>
-                        <div className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800/80">
-                          <span className="text-[10px] text-slate-600 dark:text-slate-400 font-bold block">
-                            {language === 'th' ? 'ยังไม่ส่ง' : 'Pending'}
-                          </span>
-                          <span className="text-base font-black text-slate-800 dark:text-slate-200">
-                            {item.notSubmittedCount}
-                          </span>
-                        </div>
-                        <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/40">
-                          <span className="text-[10px] text-blue-700 dark:text-blue-300 font-bold block">
-                            {language === 'th' ? 'รอตรวจ' : 'To Grade'}
-                          </span>
-                          <span className="text-base font-black text-blue-700 dark:text-blue-300">
-                            {item.pendingCount}
-                          </span>
-                        </div>
-                        <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40">
-                          <span className="text-[10px] text-rose-700 dark:text-rose-300 font-bold block">
-                            {language === 'th' ? 'สลับจอ' : 'Flagged'}
-                          </span>
-                          <span className="text-base font-black text-rose-700 dark:text-rose-300">
-                            {item.flaggedCount}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Progress bar */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                          <span>{language === 'th' ? 'ความคืบหน้าการส่งงาน' : 'Submission Rate'}</span>
-                          <span>
-                            {Math.round((item.submittedCount / (item.totalStudents || 1)) * 100)}% ({item.submittedCount}/{item.totalStudents} คน)
-                          </span>
-                        </div>
-                        <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all"
-                            style={{
-                              width: `${Math.min(100, Math.round((item.submittedCount / (item.totalStudents || 1)) * 100))}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Open the assignment's grading page */}
-                      <Link
-                        href={`/assignments/${item.assignment.id}/grading?from=grading&courseId=${encodeURIComponent(selectedCourse.id)}`}
-                        className="w-full py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md shadow-slate-900/10 cursor-pointer transition-all hover:scale-[1.01]"
-                      >
-                        <UserCheck className="w-4 h-4 text-amber-400" />
-                        <span>{language === 'th' ? 'ดูรายชื่อ & ตรวจงานของห้องนี้' : 'Manage Submissions & Grade'}</span>
-                        <ChevronRight className="w-4 h-4 text-amber-400" />
-                      </Link>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ตรวจแล้ว' : 'Graded'}</span>
+                <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
+                  {courseGraded}
+                  <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {courseHandedIn}</span>
+                </span>
+              </div>
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'งานที่ตรวจครบ' : 'Tasks done'}</span>
+                <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
+                  {courseTasks.filter((i) => i.pending === 0 && i.handedIn > 0).length}
+                  <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {courseTasks.length}</span>
+                </span>
+              </div>
             </div>
           </div>
+
+          {/* Tabs + classroom filter */}
+          <div className="space-y-3">
+            <div className="flex gap-1.5 p-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs overflow-x-auto">
+              {tabs.map(({ id, label, icon: Icon, active, badge }) => {
+                const selected = activeTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setView({ tab: id })}
+                    className={`flex-1 min-w-max px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                      selected ? active : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{label}</span>
+                    <span className={`px-1.5 min-w-5 rounded-full text-[10px] font-black ${selected ? 'bg-black/10 dark:bg-white/20' : badge}`}>
+                      {groups[id].length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {courseSections.length > 1 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                <School className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                {[null, ...courseSections].map((cls) => {
+                  const selected = (cls?.id || null) === (classroomFilter || null);
+                  return (
+                    <button
+                      key={cls?.id || 'all'}
+                      type="button"
+                      onClick={() => setView({ classroomId: cls?.id || null })}
+                      className={`px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                        selected
+                          ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                          : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:border-slate-300'
+                      }`}
+                    >
+                      {cls ? cls.name : th ? 'ทุกห้อง' : 'All sections'}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Task list */}
+          {courseTasks.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 p-12 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 text-center space-y-3">
+              <BookOpen className="w-10 h-10 text-slate-400 mx-auto" />
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                {th ? 'ยังไม่มีชิ้นงานหรือข้อสอบในรายวิชานี้' : 'No tasks assigned in this course yet.'}
+              </p>
+              <Link
+                href="/creation"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-xs"
+              >
+                <span>+ {t('dashboard.quick_actions.create_assignment')}</span>
+              </Link>
+            </div>
+          ) : groups[activeTab].length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 p-10 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 text-center space-y-2">
+              {activeTab === 'pending' ? (
+                <>
+                  <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300">{th ? 'ตรวจครบทุกงานแล้ว 🎉' : 'Nothing left to grade 🎉'}</p>
+                </>
+              ) : (
+                <>
+                  <ListChecks className="w-10 h-10 text-slate-400 mx-auto" />
+                  <p className="text-sm font-bold text-slate-500 dark:text-slate-400">{t('common.no_data')}</p>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+              {groups[activeTab].map((item) => (
+                <TaskCard key={`${item.classroom.id}-${item.assignment.id}`} item={item} courseId={selectedCourse.id} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskCard({ item, courseId }: { item: TaskItem; courseId: string }) {
+  const { language } = useLanguage();
+  const th = language === 'th';
+  const { assignment, classroom, totalStudents, handedIn, graded, pending, notSubmitted, flagged } = item;
+  const win = getAssignmentWindow(assignment);
+  const status = getAssignmentStatus(win, assignment.is_exam, language);
+  const StatusIcon = status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : Clock;
+  const deadline = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), language) : null;
+  const done = pending === 0 && handedIn > 0;
+
+  return (
+    <div
+      className={`bg-white dark:bg-slate-900 rounded-3xl border p-4 sm:p-5 flex flex-col gap-4 shadow-xs transition-colors ${
+        pending > 0 ? 'border-amber-300 dark:border-amber-800/70' : 'border-slate-200 dark:border-slate-800'
+      }`}
+    >
+      {/* Where it belongs, what it is, and whether it still takes work */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[11px]">
+            {classroom.name}
+          </span>
+          <span
+            className={`px-2 py-0.5 rounded-lg text-[11px] font-bold ${
+              assignment.is_exam
+                ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+            }`}
+          >
+            {assignment.is_exam ? (th ? 'ข้อสอบ' : 'Quiz') : th ? 'การบ้าน/ใบงาน' : 'Assignment'}
+          </span>
+          <span
+            className={`ml-auto px-2 py-0.5 rounded-full border text-[11px] font-bold inline-flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`}
+            title={status.note || undefined}
+          >
+            <StatusIcon className="w-3 h-3" />
+            {status.label}
+          </span>
+        </div>
+        <h3 className="text-base font-black text-slate-900 dark:text-white leading-snug line-clamp-2">{assignment.title}</h3>
+        {deadline && (
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
+            <Calendar className="w-3 h-3" />
+            {assignment.is_exam ? (th ? 'ปิดรับ' : 'Closes') : th ? 'กำหนดส่ง' : 'Due'} {deadline}
+          </p>
         )}
       </div>
+
+      {/* Grading state, in words */}
+      <div
+        className={`px-3 py-2.5 rounded-2xl flex items-center gap-2 text-xs font-bold ${
+          pending > 0
+            ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
+            : done
+            ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+            : 'bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400'
+        }`}
+      >
+        {pending > 0 ? <Clock className="w-4 h-4 shrink-0" /> : done ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <Inbox className="w-4 h-4 shrink-0" />}
+        <span>
+          {pending > 0
+            ? th ? `รอตรวจ ${pending} คน` : `${pending} waiting to be graded`
+            : done
+            ? th ? 'ตรวจครบทุกคนที่ส่งแล้ว' : 'Every submission is graded'
+            : th ? 'ยังไม่มีนักเรียนส่งงาน' : 'No one has handed in yet'}
+        </span>
+        {flagged > 0 && (
+          <span className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px]">
+            <ShieldAlert className="w-3 h-3" />
+            {th ? `สลับจอ ${flagged}` : `${flagged} flagged`}
+          </span>
+        )}
+      </div>
+
+      {/* Who handed in and who has been graded */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ส่งแล้ว' : 'Handed in'}</span>
+            <span className="text-sm font-black text-slate-900 dark:text-white">
+              {handedIn}
+              <span className="text-[10px] font-semibold text-slate-400">/{totalStudents}</span>
+            </span>
+          </div>
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ยังไม่ส่ง' : 'Missing'}</span>
+            <span className={`text-sm font-black ${notSubmitted > 0 ? 'text-slate-900 dark:text-white' : 'text-slate-400'}`}>{notSubmitted}</span>
+          </div>
+          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ตรวจแล้ว' : 'Graded'}</span>
+            <span className={`text-sm font-black ${done ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'}`}>
+              {graded}
+              <span className="text-[10px] font-semibold text-slate-400">/{handedIn}</span>
+            </span>
+          </div>
+        </div>
+        <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{th ? 'ตรวจแล้ว' : 'Graded'}</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" />{th ? 'รอตรวจ' : 'To grade'}</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700" />{th ? 'ยังไม่ส่ง' : 'Missing'}</span>
+        </div>
+      </div>
+
+      <Link
+        href={`/assignments/${assignment.id}/grading?from=grading&courseId=${encodeURIComponent(courseId)}`}
+        className={`mt-auto w-full py-3 rounded-2xl font-black text-xs flex items-center justify-center gap-2 transition-colors ${
+          pending > 0
+            ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-md shadow-amber-500/20'
+            : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
+        }`}
+      >
+        <span>
+          {pending > 0
+            ? th ? `ตรวจงาน (${pending} คน)` : `Grade (${pending})`
+            : th ? 'ดูรายชื่อ & คะแนน' : 'View roster & scores'}
+        </span>
+        <ChevronRight className="w-4 h-4" />
+      </Link>
     </div>
   );
 }

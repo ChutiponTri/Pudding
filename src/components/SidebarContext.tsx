@@ -68,6 +68,8 @@ export const SidebarProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Desktop: open by default unless the user closed it last time.
   // Phones and iPads: always start closed since the sidebar overlays the page.
   useEffect(() => {
+    // After mount only: the server render can't know the screen size or storage.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isDesktop()) setIsOpenState(readDesktopPreference());
   }, []);
 
@@ -81,6 +83,7 @@ export const SidebarProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Auto-close on route navigation when the sidebar overlays the page (< 1024px)
   useEffect(() => {
     if (typeof window !== 'undefined' && !isDesktop()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsOpenState(false);
     }
   }, [pathname]);

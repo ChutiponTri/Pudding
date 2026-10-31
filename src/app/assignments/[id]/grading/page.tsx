@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
-import { fetchCached, readCache, watchClassrooms } from '@/lib/cache/sessionCache';
+import { cacheVersion, fetchCached, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
 import {
   Assignment,
   Classroom,
@@ -49,6 +49,7 @@ import {
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
+import { isGraded, isHandedIn, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
  * Back button that returns to wherever the teacher came from. Links into this
@@ -137,6 +138,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const [overrideStatus, setOverrideStatus] = useState<SubmissionOverrideStatus>('auto');
   const [extendedDateTime, setExtendedDateTime] = useState('');
   const [showExtendPicker, setShowExtendPicker] = useState(false);
+  const [showControls, setShowControls] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -144,10 +146,15 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  const cacheKey = `assignmentGrading:${assignmentId}`;
+  // Each submissions fetch gets a number; only the newest may write state, so a
+  // slow earlier response (e.g. from "save & next") never brings back old scores.
+  const submissionsSeqRef = useRef(0);
+
   /** useCache: show this session's copy at once (first open only; reloads after a change always refetch). */
   const loadAllData = async ({ useCache = false }: { useCache?: boolean } = {}) => {
     const teacherId = clerkUser?.id;
-    const cacheKey = `assignmentGrading:${assignmentId}`;
+    const seq = ++submissionsSeqRef.current;
     try {
       // Assignment (with its classroom roster) and submissions load together.
       const load = async () => {
@@ -164,7 +171,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         setLoading(false);
         if (hit.fresh) return;
       }
-      applyLoaded(teacherId ? await fetchCached(cacheKey, teacherId, load) : await load());
+      const loaded = teacherId ? await fetchCached(cacheKey, teacherId, load) : await load();
+      if (seq !== submissionsSeqRef.current) return;
+      applyLoaded(loaded);
     } catch (err) {
       console.error(err);
     } finally {
@@ -192,14 +201,37 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     }
   };
 
-  const refreshSubmissions = () =>
-    dataService
-      .getSubmissions(assignmentId)
-      .then(setSubmissions)
-      .catch((err) => console.warn('Refreshing submissions failed:', err));
+  /**
+   * Refetches the submissions and also refreshes this session's cached copy,
+   * so coming back to the page later shows the new scores straight away.
+   */
+  const refreshSubmissions = async () => {
+    const seq = ++submissionsSeqRef.current;
+    const startedAt = cacheVersion();
+    try {
+      const subs = await dataService.getSubmissions(assignmentId);
+      if (seq !== submissionsSeqRef.current) return;
+      setSubmissions(subs);
+      const teacherId = clerkUser?.id;
+      const cached = teacherId ? readCache<{ subs: Submission[] }>(cacheKey, teacherId) : null;
+      if (teacherId && cached) writeCache(cacheKey, teacherId, { ...cached.value, subs }, startedAt);
+    } catch (err) {
+      console.warn('Refreshing submissions failed:', err);
+    }
+  };
+
+  /** Shows a just-saved total at once, before the refetch confirms it. */
+  const applyGradedTotal = (submissionId: string, total: number | null, maxTotal: number) => {
+    submissionsSeqRef.current++;
+    setSubmissions((prev) =>
+      prev.map((s) => (s.id === submissionId ? { ...s, total_score: total ?? undefined, max_total_score: maxTotal || s.max_total_score } : s))
+    );
+  };
 
   useEffect(() => {
-    loadAllData({ useCache: true });
+    // Shows this session's cached copy at once on purpose, then fetches if it may be stale.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadAllData({ useCache: true });
   }, [assignmentId]);
 
   // New submissions arrive as a server signal for this classroom; refetch then.
@@ -477,18 +509,20 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
     if (!matchesSearch) return false;
 
-    if (statusFilter === 'missing') return !sub || sub.status === 'pending';
+    if (statusFilter === 'missing') return !sub || !isHandedIn(sub);
     if (statusFilter === 'suspicious') return !!sub && isSuspicious(sub);
-    if (statusFilter === 'pending') return !!sub && sub.total_score == null;
-    if (statusFilter === 'graded') return !!sub && sub.total_score != null;
+    if (statusFilter === 'pending') return !!sub && needsGrading(sub);
+    if (statusFilter === 'graded') return !!sub && isHandedIn(sub) && isGraded(sub);
 
     return true;
   });
 
   const suspiciousTotal = submissions.filter(isSuspicious).length;
-  const gradedTotal = submissions.filter((s) => s.total_score != null).length;
+  const handedInTotal = submissions.filter(isHandedIn).length;
+  const toGradeTotal = submissions.filter(needsGrading).length;
+  const gradedHandedInTotal = handedInTotal - toGradeTotal;
   // Not handed in: no row, or a row the teacher recorded for grading (status pending).
-  const missingTotal = rosterRows.filter((row) => !row.submission || row.submission.status === 'pending').length;
+  const missingTotal = rosterRows.filter((row) => !row.submission || !isHandedIn(row.submission)).length;
   // Students with nothing recorded yet, who "give 0 to everyone missing" applies to.
   const unrecordedRows = rosterRows.filter((row) => !row.submission && row.rosterId);
 
@@ -529,8 +563,67 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     ? `อัตโนมัติ: เปิดรับงานถึง ${deadlineLabel} หลังจากนั้นรับงานส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง`
     : `Automatic: open until ${deadlineLabel}; late work accepted for ${LATE_WINDOW_HOURS}h more, then closes`;
 
+  const summaryTiles: Array<{
+    id: typeof statusFilter;
+    label: string;
+    icon?: React.ReactNode;
+    value: number;
+    of?: number;
+    active: string;
+    label_class: string;
+    value_class: string;
+  }> = [
+    {
+      id: 'all',
+      label: th ? 'ส่งแล้ว' : 'Handed in',
+      value: handedInTotal,
+      of: rosterRows.length,
+      active: 'bg-white dark:bg-slate-900 border-slate-900 dark:border-white',
+      label_class: 'text-slate-500 dark:text-slate-400',
+      value_class: 'text-slate-900 dark:text-white',
+    },
+    {
+      id: 'missing',
+      label: th ? 'ยังไม่ส่ง' : 'Missing',
+      value: missingTotal,
+      active: 'bg-slate-100 dark:bg-slate-800 border-slate-500',
+      label_class: 'text-slate-500 dark:text-slate-400',
+      value_class: missingTotal > 0 ? 'text-slate-900 dark:text-white' : 'text-slate-400',
+    },
+    {
+      id: 'pending',
+      label: th ? 'รอตรวจ' : 'To grade',
+      value: toGradeTotal,
+      active: 'bg-amber-50 dark:bg-amber-950/40 border-amber-500',
+      label_class: 'text-amber-700 dark:text-amber-400',
+      value_class: toGradeTotal > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400',
+    },
+    {
+      id: 'graded',
+      label: th ? 'ตรวจแล้ว' : 'Graded',
+      value: gradedHandedInTotal,
+      of: handedInTotal,
+      active: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500',
+      label_class: 'text-emerald-700 dark:text-emerald-400',
+      value_class: 'text-emerald-600 dark:text-emerald-400',
+    },
+    ...(tracksAway
+      ? [
+          {
+            id: 'suspicious' as const,
+            label: th ? 'สลับจอ' : 'Flagged',
+            icon: <ShieldAlert className="w-3.5 h-3.5" />,
+            value: suspiciousTotal,
+            active: 'bg-rose-50 dark:bg-rose-950/40 border-rose-500',
+            label_class: 'text-rose-600 dark:text-rose-400',
+            value_class: suspiciousTotal > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400',
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-8 pb-20">
+    <div className="space-y-5 sm:space-y-6 pb-20">
       {/* Toast Notice */}
       {toastMessage && (
         <div className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
@@ -553,89 +646,155 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           <GradingBackLink classroomId={assignment?.classroom_id} />
         </Suspense>
 
-        <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
-          <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 md:gap-6">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span
-                  className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                    assignment?.is_exam
-                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
-                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-                  }`}
-                >
-                  {assignment?.is_exam
-                    ? t('assignment_creator.mode_exam')
-                    : t('assignment_creator.mode_assignment')}
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 sm:space-y-5">
+          {/* What it is */}
+          <div className="space-y-2 min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span
+                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold ${
+                  assignment?.is_exam
+                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                    : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                }`}
+              >
+                {assignment?.is_exam ? t('assignment_creator.mode_exam') : t('assignment_creator.mode_assignment')}
+              </span>
+              {(classroom?.name || assignment?.classroom_name) && (
+                <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-bold">
+                  {classroom?.name || assignment?.classroom_name}
                 </span>
-                <span className="text-xs text-slate-400 font-mono">
-                  {classroom?.name || assignment?.classroom_name || ''}
-                </span>
-                {assignment && <ReferenceWorkLink assignment={assignment} className="max-w-full sm:max-w-xs py-0.5" />}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white">
-                  {assignment?.title || t('grading.title')}
-                </h1>
-                {assignment && grader && (
-                  <Link
-                    href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
-                  >
-                    ✏️ {th ? 'แก้ไขงาน' : 'Edit'}
-                  </Link>
-                )}
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {assignment?.description || '-'}
-              </p>
+              )}
+              {assignment && <ReferenceWorkLink assignment={assignment} className="max-w-full sm:max-w-xs py-0.5" />}
             </div>
-
-            {assignmentStatus && (
-              <div className="w-full md:w-auto md:min-w-64 shrink-0 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2.5">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                    {th ? 'สถานะการรับงาน' : 'Submissions'}
-                  </span>
-                  <span
-                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-black whitespace-nowrap ${ASSIGNMENT_STATUS_CLASSES[assignmentStatus.tone]}`}
-                  >
-                    {assignmentStatus.tone === 'closed' ? <Lock className="w-3.5 h-3.5" /> : assignmentStatus.tone === 'late' ? <Unlock className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
-                    <span>{assignmentStatus.label}</span>
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-4 pt-2.5 border-t border-slate-200/80 dark:border-slate-700/80">
-                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5" />
-                    {assignment?.is_exam ? (th ? 'ปิดรับคำตอบ' : 'Closes') : t('grading.due_date')}
-                  </span>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 text-right">{deadlineLabel}</span>
-                </div>
-                {assignmentStatus.note && (
-                  <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{assignmentStatus.note}</p>
-                )}
-              </div>
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white leading-snug min-w-0 break-words">
+                {assignment?.title || t('grading.title')}
+              </h1>
+              {assignment && grader && (
+                <Link
+                  href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
+                  className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
+                >
+                  ✏️ <span className="hidden sm:inline">{th ? 'แก้ไขงาน' : 'Edit'}</span>
+                </Link>
+              )}
+            </div>
+            {assignment?.description && (
+              <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">{assignment.description}</p>
             )}
           </div>
 
-          {/* INTERACTIVE MANUAL SUBMISSION CONTROL PANEL */}
-          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-3">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-              <div className="flex items-start gap-2 min-w-0">
-                <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
-                  <Clock className="w-4 h-4" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                    {t('submission_control.title')}
-                  </h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {t('submission_control.subtitle')}
-                  </p>
-                </div>
+          {/* The two answers a teacher looks for: does it still take work, and is grading done? */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {assignmentStatus && (
+              <div className={`p-3.5 rounded-2xl border ${ASSIGNMENT_STATUS_CLASSES[assignmentStatus.tone]} border-solid`}>
+                <span className="text-[11px] font-bold opacity-80 block">{th ? 'การรับงาน' : 'Submissions'}</span>
+                <p className="mt-0.5 text-base font-black flex items-center gap-1.5">
+                  {assignmentStatus.tone === 'closed' ? <Lock className="w-4 h-4" /> : assignmentStatus.tone === 'late' ? <Unlock className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                  {assignmentStatus.label}
+                </p>
+                <p className="mt-1 text-[11px] font-semibold opacity-90 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 shrink-0" />
+                  {assignment?.is_exam ? (th ? 'ปิดรับคำตอบ' : 'Closes') : t('grading.due_date')} {deadlineLabel}
+                </p>
+                {assignmentStatus.note && <p className="mt-1 text-[11px] leading-relaxed opacity-80">{assignmentStatus.note}</p>}
               </div>
+            )}
 
+            <div
+              className={`p-3.5 rounded-2xl border ${
+                toGradeTotal > 0
+                  ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-900 text-amber-900 dark:text-amber-200'
+                  : handedInTotal > 0
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200'
+                  : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              <span className="text-[11px] font-bold opacity-80 block">{th ? 'การตรวจ' : 'Grading'}</span>
+              <p className="mt-0.5 text-base font-black flex items-center gap-1.5">
+                {toGradeTotal > 0 ? <Clock className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                {toGradeTotal > 0
+                  ? th ? `รอตรวจ ${toGradeTotal} คน` : `${toGradeTotal} left to grade`
+                  : handedInTotal > 0
+                  ? th ? 'ตรวจครบแล้ว' : 'All graded'
+                  : th ? 'ยังไม่มีผู้ส่งงาน' : 'Nothing handed in yet'}
+              </p>
+              <div className="mt-2 flex w-full h-2 rounded-full overflow-hidden bg-white/70 dark:bg-slate-900/60">
+                <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(gradedHandedInTotal / (rosterRows.length || 1)) * 100}%` }} />
+                <div className="h-full bg-amber-400 transition-all" style={{ width: `${(toGradeTotal / (rosterRows.length || 1)) * 100}%` }} />
+              </div>
+              <p className="mt-1.5 text-[11px] font-semibold opacity-90">
+                {th
+                  ? `ตรวจแล้ว ${gradedHandedInTotal}/${handedInTotal} คนที่ส่ง · ส่งแล้ว ${handedInTotal}/${rosterRows.length} คน`
+                  : `${gradedHandedInTotal}/${handedInTotal} handed-in graded · ${handedInTotal}/${rosterRows.length} handed in`}
+              </p>
+            </div>
+          </div>
+
+          {/* Counts: tap one to show those students below */}
+          <div className={`grid grid-cols-2 gap-2 sm:gap-3 ${tracksAway ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
+            {summaryTiles.map((tile) => (
+              <button
+                key={tile.id}
+                type="button"
+                onClick={() => {
+                  setStatusFilter(statusFilter === tile.id ? 'all' : tile.id);
+                  document.getElementById('grading-roster')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+                className={`p-3 rounded-2xl text-left border transition-colors cursor-pointer ${
+                  statusFilter === tile.id ? tile.active : 'bg-slate-50 dark:bg-slate-800/60 border-transparent hover:border-slate-200 dark:hover:border-slate-700'
+                }`}
+              >
+                <span className={`text-[11px] font-bold flex items-center gap-1 ${tile.label_class}`}>
+                  {tile.icon}
+                  {tile.label}
+                </span>
+                <span className={`block text-xl sm:text-2xl font-black mt-0.5 ${tile.value_class}`}>
+                  {tile.value}
+                  {tile.of != null && <span className="text-xs font-semibold text-slate-400 ml-1">/ {tile.of}</span>}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && (
+            <button
+              type="button"
+              onClick={handleGiveZeroToAll}
+              disabled={recordingKeys.size > 0}
+              className="w-full sm:w-auto px-3 py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
+            >
+              {th ? `ให้ 0 คะแนนทุกคนที่ยังไม่ส่ง (${unrecordedRows.length})` : `Give 0 to all missing (${unrecordedRows.length})`}
+            </button>
+          )}
+
+          {/* Submission window controls, folded away until needed */}
+          <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80">
+            <button
+              type="button"
+              onClick={() => setShowControls((open) => !open)}
+              aria-expanded={showControls}
+              className="w-full p-3.5 flex items-center gap-2 text-left cursor-pointer"
+            >
+              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+                <Clock className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-xs font-bold text-slate-900 dark:text-white">{t('submission_control.title')}</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                  {overrideStatus === 'force_closed'
+                    ? t('submission_control.btn_force_close')
+                    : overrideStatus === 'extended'
+                    ? `${t('submission_control.btn_reopen')} · ${formatDateTime(assignment?.extended_until || extendedDateTime, language)}`
+                    : t('submission_control.mode_auto')}
+                </p>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${showControls ? 'rotate-90' : ''}`} />
+            </button>
+
+            {showControls && (
+              <div className="px-3.5 pb-3.5 space-y-3 animate-in fade-in">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">{t('submission_control.subtitle')}</p>
               {/* Status Action Buttons */}
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                 {/* 1. Automated */}
@@ -680,8 +839,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   <span>{t('submission_control.btn_reopen')}</span>
                 </button>
               </div>
-            </div>
-
             {/* Extend Date-Time Picker Drawer */}
             {showExtendPicker && (
               <div className="pt-3 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-start gap-3 animate-in fade-in">
@@ -753,71 +910,14 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 </button>
               )}
             </div>
+              </div>
+            )}
           </div>
         </div>
-      </div>
-
-      {/* Analytics Summary Banner */}
-      <div className={`grid grid-cols-2 gap-4 ${tracksAway ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            {t('grading.total_submissions')}
-          </span>
-          <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-            {submissions.filter((s) => s.status !== 'pending').length}
-            <span className="text-xs font-normal text-slate-400 ml-1">/ {rosterRows.length}</span>
-          </p>
-          {missingTotal > 0 && (
-            <span className="text-[11px] font-semibold text-slate-400">
-              {language === 'th' ? `ยังไม่ส่ง ${missingTotal} คน` : `${missingTotal} not submitted`}
-            </span>
-          )}
-          {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && (
-            <button
-              type="button"
-              onClick={handleGiveZeroToAll}
-              disabled={recordingKeys.size > 0}
-              className="mt-2 w-full px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
-            >
-              {language === 'th' ? `ให้ 0 คะแนนทุกคนที่ยังไม่ส่ง (${unrecordedRows.length})` : `Give 0 to all missing (${unrecordedRows.length})`}
-            </button>
-          )}
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            {language === 'th' ? 'ตรวจแล้ว' : 'Graded'}
-          </span>
-          <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-            {gradedTotal}
-            <span className="text-xs font-normal text-slate-400 ml-1">/ {submissions.length}</span>
-          </p>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            {t('grading.pending_eval')}
-          </span>
-          <p className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">
-            {submissions.length - gradedTotal}
-          </p>
-        </div>
-
-        {tracksAway && (
-          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-rose-200 dark:border-rose-900/50 shadow-xs">
-            <span className="text-xs text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
-              <ShieldAlert className="w-3.5 h-3.5" />
-              {t('grading.suspicious_count')}
-            </span>
-            <p className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
-              {suspiciousTotal}
-            </p>
-          </div>
-        )}
       </div>
 
       {/* Submissions Table & Filter Controls */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+      <div id="grading-roster" className="scroll-mt-20 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
         {/* Table Filters Bar */}
         <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
           {/* Search Box */}
@@ -875,7 +975,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
               }`}
             >
-              {t('grading.filter_pending')} ({submissions.length - gradedTotal})
+              {t('grading.filter_pending')} ({toGradeTotal})
             </button>
             <button
               onClick={() => setStatusFilter('graded')}
@@ -885,7 +985,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
               }`}
             >
-              {t('grading.filter_graded')} ({gradedTotal})
+              {t('grading.filter_graded')} ({gradedHandedInTotal})
             </button>
           </div>
         </div>
@@ -1215,6 +1315,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 }
               : undefined
           }
+          onGraded={(total, maxTotal) => applyGradedTotal(gradingSubmission.id, total, maxTotal)}
           onSaveGrade={(subId, qId, score, comment, teacherId, teacherName, teacherRole) =>
             dataService.saveTeacherGrade(subId, qId, score, comment, teacherId, teacherName, teacherRole as TeacherRole)
           }

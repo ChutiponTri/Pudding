@@ -36,6 +36,8 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       const savedLang = localStorage.getItem('ag_platform_lang') as Language | null;
       if (savedLang && (savedLang === 'th' || savedLang === 'en')) {
+        // After mount only, so the first client render matches the server (Thai).
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setLanguageState(savedLang);
       }
     } catch {

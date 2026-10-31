@@ -40,7 +40,8 @@ import {
 } from "lucide-react";
 import { useTheme } from "@/lib/theme/ThemeContext";
 import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
-import { dataService } from "@/lib/supabase/dataService";
+import { dataService, type ClassroomChangeEvent } from "@/lib/supabase/dataService";
+import type { Liff } from "@line/liff";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
@@ -52,6 +53,13 @@ import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploa
 import { formatMegabytes, IMAGE_MAX_BYTES, normalizeLink, PDF_MAX_BYTES } from "@/lib/storage/uploadRules";
 import { classroomTitle, roomLabel, subjectCode, subjectName } from "@/lib/utils/classroomLabel";
 import { personNameError, studentProfileError } from "@/lib/utils/studentName";
+
+/** Older questions marked file answers with these flags instead of type 'file_upload'. */
+type LegacyUploadQuestion = Question & { allow_upload?: boolean; requires_file?: boolean };
+
+/** When late homework stops being accepted (homework past its deadline always has one). */
+const formatLateUntil = (lateUntil: number | null) =>
+  formatDateTime(new Date(lateUntil ?? Date.now()).toISOString(), 'th');
 
 interface RealLineStudent {
   id: string; // LINE userId
@@ -285,7 +293,7 @@ export default function LiffStudentPage() {
   const [authStatus, setAuthStatus] = useState<"loading" | "unauthenticated" | "authenticated" | "error">("loading");
   const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
   const [isInLineClient, setIsInLineClient] = useState(false);
-  const [liffInstance, setLiffInstance] = useState<any>(null);
+  const [liffInstance, setLiffInstance] = useState<Liff | null>(null);
   const [currentStudent, setCurrentStudent] = useState<RealLineStudent | null>(null);
   // Join requests wait for a complete profile (see studentProfileError).
   const profileReady = !studentProfileError(currentStudent);
@@ -394,12 +402,13 @@ export default function LiffStudentPage() {
       const results = classList.flatMap((cls) => {
         const data = byClassroom[cls.id] || { sessions: [], records: [] };
         const recordsMap = Object.fromEntries(
-          (data.records || []).map((r: any) => [r.session_id, r.status])
+          (data.records || []).map((r: { session_id: string; status: string }) => [r.session_id, r.status])
         );
         // Overview is an action list: once this student has a record for
         // the session, remove it from the shortcut list. The attendance
         // tab still loads the full session history separately.
-        return (data.sessions || []).filter((s: any) => s.status === "open" && !recordsMap[s.id]).map((s: any) => ({
+        type OpenSession = (typeof activeAttendanceList)[number]['session'] & { status?: string };
+        return (data.sessions || []).filter((s: OpenSession) => s.status === "open" && !recordsMap[s.id]).map((s: OpenSession) => ({
           classroom: cls,
           session: s,
           checkedIn: false,
@@ -715,10 +724,10 @@ export default function LiffStudentPage() {
           setIsFirstTimeStudentId(true);
           setIsStudentIdModalOpen(true);
         }
-      } catch (err: any) {
+      } catch (err) {
         console.error("LIFF initialization error:", err);
         if (isMounted) {
-          setAuthErrorMessage(err?.message || "ไม่สามารถเชื่อมต่อ LINE LIFF ได้");
+          setAuthErrorMessage((err as { message?: string } | null)?.message || "ไม่สามารถเชื่อมต่อ LINE LIFF ได้");
           setAuthStatus("error");
         }
       }
@@ -1037,8 +1046,9 @@ export default function LiffStudentPage() {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     const unsub = dataService.subscribeToClassroomChanges(
       undefined,
-      (event: any) => {
-        const changedClassroomId = event?.detail?.classroomId || event?.payload?.new?.id || event?.payload?.new?.classroom_id;
+      (event: ClassroomChangeEvent) => {
+        const changedRow = (event?.payload as { new?: { id?: string; classroom_id?: string } } | undefined)?.new;
+        const changedClassroomId = event?.detail?.classroomId || changedRow?.id || changedRow?.classroom_id;
         const changedStudent = event?.detail?.student;
         const isAboutMe = changedStudent && (changedStudent.id === currentStudent.id || changedStudent.line_uid === currentStudent.line_uid);
         if (changedClassroomId && !isAboutMe && !enrolledClassroomIdsRef.current.has(changedClassroomId)) return;
@@ -1111,6 +1121,8 @@ export default function LiffStudentPage() {
   // short: looking an answer up in an AI chat app takes only seconds.
   const isTrackingAway = Boolean(activeAssignment?.is_exam);
   useEffect(() => {
+    // Each assignment starts a fresh away-tracking session before listening.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTabSwitchCount(0);
     tabSwitchCountRef.current = 0;
     setTotalAwaySeconds(0);
@@ -1398,6 +1410,8 @@ export default function LiffStudentPage() {
   useEffect(() => {
     if (!seenScoresKey) return;
     try {
+      // Reads this student's "seen" marks from browser storage once their key is known.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSeenScores(JSON.parse(localStorage.getItem(seenScoresKey) || "{}"));
     } catch {
       setSeenScores({});
@@ -2543,7 +2557,7 @@ export default function LiffStudentPage() {
                     <span>
                       {activeAssignment.is_exam
                         ? "หมดเวลาทำข้อสอบแล้ว กรุณากดส่งคำตอบทันที"
-                        : `เลยกำหนดส่งแล้ว — ส่งได้ถึง ${formatDateTime(new Date(getAssignmentWindow(activeAssignment).lateUntil ?? Date.now()).toISOString(), 'th')} แต่จะถูกบันทึกว่าส่งช้า`}
+                        : `เลยกำหนดส่งแล้ว — ส่งได้ถึง ${formatLateUntil(getAssignmentWindow(activeAssignment).lateUntil)} แต่จะถูกบันทึกว่าส่งช้า`}
                     </span>
                   </div>
                 )}
@@ -2585,7 +2599,7 @@ export default function LiffStudentPage() {
               <div className="space-y-4">
                 {activeQuestions.map((q, idx) => {
                   // Quizzes take no photos or files (older quizzes may still have such a question: answer it in text).
-                  const isFileUpload = !activeAssignment?.is_exam && (q.type === 'file_upload' || (q as any).allow_upload || (q as any).requires_file);
+                  const isFileUpload = !activeAssignment?.is_exam && (q.type === 'file_upload' || (q as LegacyUploadQuestion).allow_upload || (q as LegacyUploadQuestion).requires_file);
                   // True/false questions created before options were saved have none; give them the standard pair.
                   const choiceOptions = Array.isArray(q.options) && q.options.length > 0
                     ? q.options

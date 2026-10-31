@@ -146,7 +146,7 @@ type Post = {
   body: string;
   created_at: string;
   activity_type?: TimelineItem['type'];
-  metadata?: { assignmentId?: string; groupName?: string; publishAt?: string };
+  metadata?: { assignmentId?: string; groupName?: string; publishAt?: string; sessionId?: string };
 };
 
 type AttendanceResult = { sessions?: AttendanceSession[]; session?: AttendanceSession | null; records?: AttendanceRecord[] };
@@ -275,7 +275,7 @@ export default function ClassroomWorkspacePage() {
   const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
   const [newTeacherRole, setNewTeacherRole] = useState<'primary' | 'assistant' | 'researcher'>('assistant');
   const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
-  const [teacherSearchResults, setTeacherSearchResults] = useState<any[]>([]);
+  const [teacherSearchResults, setTeacherSearchResults] = useState<User[]>([]);
   const [isSearchingTeachers, setIsSearchingTeachers] = useState(false);
 
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
@@ -285,7 +285,7 @@ export default function ClassroomWorkspacePage() {
   const [bulkPendingBusy, setBulkPendingBusy] = useState(false);
   const [inviteTab, setInviteTab] = useState<'search' | 'link' | 'pending'>('search');
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
-  const [studentSearchResults, setStudentSearchResults] = useState<any[]>([]);
+  const [studentSearchResults, setStudentSearchResults] = useState<User[]>([]);
   const [isSearchingStudents, setIsSearchingStudents] = useState(false);
   const [isCopiedLiff, setIsCopiedLiff] = useState(false);
   const [isCopiedCode, setIsCopiedCode] = useState(false);
@@ -373,8 +373,8 @@ export default function ClassroomWorkspacePage() {
           ? 'ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว'
           : 'พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย'
       );
-    } catch (error: any) {
-      setNotice(error?.message || 'ไม่สามารถเชื่อมต่อ LINE Group ได้');
+    } catch (error) {
+      setNotice((error as { message?: string } | null)?.message || 'ไม่สามารถเชื่อมต่อ LINE Group ได้');
     } finally {
       setIsLineLoading(false);
     }
@@ -542,7 +542,9 @@ export default function ClassroomWorkspacePage() {
   };
 
   useEffect(() => {
-    loadWorkspace({ useCache: true });
+    // Shows this session's cached copy at once on purpose, then fetches if it may be stale.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadWorkspace({ useCache: true });
   }, [user?.id, classroomId]);
 
   // Fetch Grades when switching to Grades tab (unless they were just loaded)
@@ -680,7 +682,7 @@ export default function ClassroomWorkspacePage() {
     // 1. Process posts first
     for (const post of posts) {
       const aId = post.metadata?.assignmentId;
-      const sId = (post.metadata as any)?.sessionId;
+      const sId = post.metadata?.sessionId;
 
       if (aId) {
         // The assignment was deleted: drop its leftover announcement too.
@@ -1250,7 +1252,7 @@ export default function ClassroomWorkspacePage() {
     setNotice('นำครูผู้สอนออกจากห้องเรียนเรียบร้อย');
   };
 
-  const handleSelectFoundStudent = async (std: any) => {
+  const handleSelectFoundStudent = async (std: User) => {
     if (!classroom) return;
     const alreadyEnrolled = [...(classroom.students || []), ...(classroom.pending_students || [])]
       .some((student) => student.id === std.id || (student.student_id && std.student_id && student.student_id === std.student_id));
@@ -1334,7 +1336,7 @@ export default function ClassroomWorkspacePage() {
     await loadWorkspace();
   };
 
-  const handleSelectFoundTeacher = async (foundTeacher: any, role: 'primary' | 'assistant' | 'researcher' = 'assistant') => {
+  const handleSelectFoundTeacher = async (foundTeacher: User, role: 'primary' | 'assistant' | 'researcher' = 'assistant') => {
     if (!classroom) return;
     const currentTeachers = teachersList;
     if (currentTeachers.some((t) => t.teacher_id === foundTeacher.id)) {
@@ -2557,7 +2559,7 @@ export default function ClassroomWorkspacePage() {
               <label className="text-[10px] font-bold text-slate-400 block mb-1">หน้าที่ / บทบาท</label>
               <select
                 value={newTeacherRole}
-                onChange={(e) => setNewTeacherRole(e.target.value as any)}
+                onChange={(e) => setNewTeacherRole(e.target.value as typeof newTeacherRole)}
                 className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-slate-50 dark:bg-slate-800"
               >
                 <option value="primary">ครูประจำวิชา (Primary)</option>
@@ -3327,14 +3329,17 @@ function AttendancePanel({
   const [rosterSearch, setRosterSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'on_time' | 'late' | 'absent' | 'excused'>('all');
 
-  // Keep expanded session in sync with parent session
-  useEffect(() => {
+  // Keep expanded session in sync with parent session (adjusted during render
+  // when the parent's session changes, instead of in an effect).
+  const [syncedSessionId, setSyncedSessionId] = useState<string | undefined>(undefined);
+  if (session?.id !== syncedSessionId) {
+    setSyncedSessionId(session?.id);
     if (session?.id) {
       setExpandedSessionId(session.id);
       setEditingTitle(session.title);
       setIsEditingTitleActive(false);
     }
-  }, [session?.id]);
+  }
 
   // Open sessions sit right under the controls/overview; finished ones follow
   // in class order (class 1, class 2, ...).

@@ -37,6 +37,8 @@ function TeacherInviteContent() {
   useEffect(() => {
     if (!isLoaded) return;
     if (!inviteCode) {
+      // Waits for Clerk to load before deciding what to show.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setErrorMessage('ลิงก์คำเชิญไม่ครบถ้วน กรุณาขอลิงก์ใหม่จากคุณครูประจำวิชา');
       setLoading(false);
       return;
@@ -94,9 +96,9 @@ function TeacherInviteContent() {
       setTimeout(() => {
         router.push('/dashboard');
       }, 2000);
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      setErrorMessage(err?.message || 'ไม่สามารถบันทึกการเข้าร่วมได้ กรุณาลองใหม่อีกครั้ง');
+      setErrorMessage((err as { message?: string } | null)?.message || 'ไม่สามารถบันทึกการเข้าร่วมได้ กรุณาลองใหม่อีกครั้ง');
     } finally {
       setJoining(false);
     }

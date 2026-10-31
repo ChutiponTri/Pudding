@@ -9,7 +9,13 @@ import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/serv
 import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
 import { attachFiles, discardDrafts } from '@/lib/storage/files';
 import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
-import type { Classroom } from '@/types/database';
+import type { Classroom, Question } from '@/types/database';
+
+/** What the student's browser sends; the body is untrusted, so only these fields are read. */
+type IncomingAnswer = { question_id: string; answer_text?: string; file_url?: string };
+type IncomingEvent = { event_type: string; timestamp?: string; duration_seconds?: number; details?: string };
+type SubmissionRow = Record<string, unknown> & { student_id: string; submitted_by?: string | null };
+type StudentProfile = { id: string; first_name?: string | null; last_name?: string | null; line_uid?: string | null };
 
 /**
  * Whether a multiple-choice answer is right. The answer key may be the option
@@ -67,7 +73,7 @@ export async function GET(request: NextRequest) {
     console.error('[GET /api/submissions] query failed:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  const submissions = (data || []) as Array<Record<string, any>>;
+  const submissions = (data || []) as SubmissionRow[];
   if (!withStudents || submissions.length === 0) {
     return NextResponse.json({ submissions });
   }
@@ -84,7 +90,7 @@ export async function GET(request: NextRequest) {
     .or(`id.in.(${quoted}),line_uid.in.(${quoted})`);
   if (usersError) console.warn('[GET /api/submissions] student lookup failed:', usersError.message);
 
-  const byId = new Map<string, Record<string, any>>();
+  const byId = new Map<string, StudentProfile>();
   for (const user of users || []) {
     byId.set(user.id, user);
     if (user.line_uid) byId.set(user.line_uid, user);
@@ -274,20 +280,20 @@ export async function POST(request: NextRequest) {
     // Calculate score for objective questions and determine total score
     let calculatedTotalScore: number | undefined = undefined;
     let assignmentMaxScore = 20;
-    const scoredAnswers: any[] = [];
+    const scoredAnswers: Array<{ question_id: string; answer_text: string; file_url: string | null; teacher_score?: number }> = [];
 
     const { data: questions } = await supabase
       .from('questions')
       .select('*')
       .eq('assignment_id', assignment_id);
 
-    const qsList: any[] = questions || [];
+    const qsList = (questions || []) as Question[];
 
     // Homework: required questions must be answered (quizzes may be handed in unfinished).
     if (!assignment.is_exam) {
       const missingRequired = qsList.filter((q) => {
         if (q.is_required === false) return false;
-        const ans = (answers || []).find((a: any) => a.question_id === q.id);
+        const ans = (answers as IncomingAnswer[] || []).find((a) => a.question_id === q.id);
         return !String(ans?.answer_text || '').trim() && !normalizeLink(ans?.file_url);
       });
       if (missingRequired.length) {
@@ -304,7 +310,7 @@ export async function POST(request: NextRequest) {
 
       for (const q of qsList) {
         totalMax += Number(q.max_score || 0);
-        const studentAns = (answers || []).find((a: any) => a.question_id === q.id);
+        const studentAns = (answers as IncomingAnswer[] || []).find((a) => a.question_id === q.id);
         const studentText = (studentAns?.answer_text || '').trim();
 
         let questionScore: number | undefined = undefined;
@@ -409,7 +415,7 @@ export async function POST(request: NextRequest) {
       const events = tracked ? antiCheating.events || [] : [];
       if (events.length > 0) {
         const { error: eventsError } = await supabase.from('submission_events').insert(
-          events.map((evt: any, i: number) => ({
+          events.map((evt: IncomingEvent, i: number) => ({
             id: `evt-${subId}-${Date.now()}-${i}`,
             submission_id: subId,
             event_type: evt.event_type,
@@ -426,7 +432,7 @@ export async function POST(request: NextRequest) {
       console.error('[POST /api/submissions] Supabase service write error:', dbErr);
       return NextResponse.json({
         error: 'บันทึกคำตอบลงฐานข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
-        detail: dbErr instanceof Error ? dbErr.message : (dbErr as any)?.message || 'Supabase write failed',
+        detail: dbErr instanceof Error ? dbErr.message : (dbErr as { message?: string } | null)?.message || 'Supabase write failed',
       }, { status: 503 });
     }
 
@@ -438,8 +444,8 @@ export async function POST(request: NextRequest) {
     // Teacher pages with this classroom open refresh their counts now instead of polling.
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id }));
     return NextResponse.json({ success: true, submission: submissionRecord });
-  } catch (error: any) {
+  } catch (error) {
     console.error('[POST /api/submissions] Fatal error:', error);
-    return NextResponse.json({ error: error?.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: (error as { message?: string } | null)?.message || 'Internal Server Error' }, { status: 500 });
   }
 }

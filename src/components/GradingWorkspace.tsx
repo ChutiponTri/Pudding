@@ -1,9 +1,11 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ClassroomTeacher, Question, Submission, SubmissionAnswer, TeacherRole } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { Avatar } from '@/components/Avatar';
+import { useSidebar } from '@/components/SidebarContext';
 import { isImageUrl, isPdfUrl as isPdf } from '@/lib/utils/referenceWork';
 import { isObjectiveAnswerCorrect, isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade';
 import { TRUE_FALSE_OPTIONS } from '@/lib/utils/trueFalse';
@@ -53,6 +55,8 @@ interface GradingWorkspaceProps {
     teacherName: string,
     teacherRole: TeacherRole
   ) => Promise<void>;
+  /** After saving: the official total once every question has a score (null while some are missing). */
+  onGraded?: (total: number | null, maxTotal: number) => void;
   /**
    * Corrects a choice / true-false answer key; the server re-scores every
    * submitted answer to it. Missing = the key can't be changed here.
@@ -101,6 +105,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   onPrevStudent,
   onNextStudent,
   onSaveGrade,
+  onGraded,
   onUpdateAnswerKey,
 }) => {
   const { t, language } = useLanguage();
@@ -286,6 +291,12 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           return false;
         }
       }
+      // Researcher scores never change the official total.
+      if (dirtyQuestions.length && !isResearcher && onGraded) {
+        const scoreOf = (q: Question) => (isDirty(grades[q.id]) ? grades[q.id].score : grades[q.id]?.savedScore ?? '');
+        const complete = questions.every((q) => scoreOf(q).trim() !== '');
+        onGraded(complete ? Math.round(questions.reduce((sum, q) => sum + Number(scoreOf(q)), 0) * 10) / 10 : null, maxTotal);
+      }
       return true;
     } finally {
       setIsSavingAll(false);
@@ -354,11 +365,18 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       file_upload: th ? 'อัปโหลดไฟล์' : 'File upload',
     } as Record<string, string>)[type] || type;
 
+  const { isOpen: sidebarOpen } = useSidebar();
   const studentName = `${submission.student?.first_name || ''} ${submission.student?.last_name || ''}`.trim() || (th ? 'นักเรียน' : 'Student');
   const isLast = !onNextStudent;
 
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-slate-100 dark:bg-slate-950 animate-in fade-in">
+  // Portaled to <body> so no page wrapper can trap it under the navbar or the
+  // sidebar; on desktop it sits beside an open sidebar instead of under it.
+  return createPortal(
+    <div
+      className={`fixed inset-y-0 right-0 left-0 z-50 flex flex-col bg-slate-100 dark:bg-slate-950 animate-in fade-in transition-[left] duration-300 ${
+        sidebarOpen ? 'lg:left-80' : ''
+      }`}
+    >
       {/* ── Header: who is being graded, progress, and who is grading ── */}
       <header className="pt-[env(safe-area-inset-top)] bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 shrink-0">
         <div className="min-h-16 px-3 sm:px-6 flex items-center gap-3">
@@ -860,7 +878,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           <span />
         )}
 
-        <span className={`flex-1 text-xs font-semibold truncate ${dirtyQuestions.length ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}`}>
+        <span className={`flex-1 min-w-0 text-xs font-semibold truncate ${dirtyQuestions.length ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}`}>
           {dirtyQuestions.length
             ? th ? `ยังไม่บันทึก ${dirtyQuestions.length} ข้อ` : `${dirtyQuestions.length} unsaved`
             : gradedCount === questions.length
@@ -873,7 +891,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           type="button"
           onClick={saveAll}
           disabled={isSavingAll || dirtyQuestions.length === 0}
-          className="px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="shrink-0 px-3 sm:px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {isSavingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           <span className="hidden sm:inline">{th ? 'บันทึก' : 'Save'}</span>
@@ -882,13 +900,16 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           type="button"
           onClick={handleSaveAndNext}
           disabled={isSavingAll}
-          className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+          className="shrink-0 px-3 sm:px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
         >
           {isLast ? <Check className="w-4 h-4" /> : null}
-          <span>
+          <span className="hidden sm:inline">
             {isLast
               ? th ? 'บันทึกแล้วปิด' : 'Save & close'
               : th ? 'บันทึกแล้วไปคนถัดไป' : 'Save & next'}
+          </span>
+          <span className="sm:hidden whitespace-nowrap">
+            {isLast ? (th ? 'บันทึก & ปิด' : 'Save & close') : th ? 'บันทึก & ถัดไป' : 'Save & next'}
           </span>
           {!isLast && <ChevronRight className="w-4 h-4" />}
         </button>
@@ -948,6 +969,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 };

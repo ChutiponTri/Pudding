@@ -5,10 +5,13 @@ import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
-import { dataService } from '@/lib/supabase/dataService';
+import { dataService, type ClassroomChangeEvent } from '@/lib/supabase/dataService';
 import { fetchCached, readCache, TEACHER_DASHBOARD_CACHE_KEY, watchClassrooms } from '@/lib/cache/sessionCache';
 
 type TeacherDashboardData = Awaited<ReturnType<typeof dataService.getTeacherDashboard>>;
+
+/** Temporary id for an indicator added in the editor (kept outside render code). */
+const draftIndicatorId = (n: number) => `ind-${Date.now()}-${n}`;
 import {
   Assignment,
   Submission,
@@ -66,6 +69,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
+import { isHandedIn, needsGrading } from '@/lib/utils/gradingStatus';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 import { SemesterSelect } from '@/components/SemesterSelect';
@@ -360,7 +364,9 @@ export function TeacherWorkspace({
   };
 
   useEffect(() => {
-    loadAllData({ useCache: true });
+    // Shows this session's cached copy at once on purpose, then fetches if it may be stale.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadAllData({ useCache: true });
   }, [clerkUser?.id]);
 
   // While a classroom waits for the bot to join a group, poll its status so the
@@ -390,7 +396,7 @@ export function TeacherWorkspace({
     if (!teacherId) return;
     // Realtime and the fallback poll often fire together; reload once per burst.
     let reloadTimer: ReturnType<typeof setTimeout> | null = null;
-    const unsub = dataService.subscribeToClassroomChanges(teacherId, (payload: any) => {
+    const unsub = dataService.subscribeToClassroomChanges(teacherId, (payload: ClassroomChangeEvent) => {
       if (reloadTimer) clearTimeout(reloadTimer);
       reloadTimer = setTimeout(loadAllData, 600);
       if (payload?.eventType === 'LOCAL_SYNC') {
@@ -562,10 +568,25 @@ export function TeacherWorkspace({
   }, [groupedCourses, classroomQuery, view]);
 
   const pendingGradingCount = useMemo(() => {
-    return filteredSubmissions.filter(
-      (s) => s.status === "submitted" || s.status === "late" || !s.total_score || s.total_score === 0
-    ).length;
+    return filteredSubmissions.filter(needsGrading).length;
   }, [filteredSubmissions]);
+
+  // Per assignment: handed in, and how many of those still wait for a grade.
+  const gradingByAssignment = useMemo(() => {
+    const map = new Map<string, { handedIn: number; pending: number }>();
+    for (const s of filteredSubmissions) {
+      if (!isHandedIn(s)) continue;
+      const entry = map.get(s.assignment_id) || { handedIn: 0, pending: 0 };
+      entry.handedIn += 1;
+      if (needsGrading(s)) entry.pending += 1;
+      map.set(s.assignment_id, entry);
+    }
+    return map;
+  }, [filteredSubmissions]);
+  const assignmentsToGradeCount = useMemo(
+    () => [...gradingByAssignment.values()].filter((g) => g.pending > 0).length,
+    [gradingByAssignment]
+  );
 
   // Leaving the screen is tracked during quizzes only.
   const suspiciousAlertCount = useMemo(() => {
@@ -974,7 +995,9 @@ export function TeacherWorkspace({
   // when the teacher comes back to this tab (e.g. after adding Pudding Bot in LINE).
   useEffect(() => {
     if (!clerkUser?.id) return;
-    loadTeacherLineLink();
+    // The state updates happen after the request resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadTeacherLineLink();
     if (!isInstitutionModalOpen) return;
     const onFocus = () => loadTeacherLineLink();
     window.addEventListener('focus', onFocus);
@@ -1039,7 +1062,7 @@ export function TeacherWorkspace({
   const handleAddFromSavedLibrary = (savedInd: CourseLearningIndicator) => {
     const nextNum = indicatorListDraft.length + 1;
     const newInd: CourseLearningIndicator = {
-      id: `ind-${Date.now()}-${nextNum}`,
+      id: draftIndicatorId(nextNum),
       course_id: editingCourseIndicators?.id,
       code: savedInd.code || '',
       title: savedInd.title,
@@ -1348,12 +1371,22 @@ export function TeacherWorkspace({
               <FileCheck className="w-5 h-5" />
             </div>
           </div>
-          <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+          <p className={`text-3xl font-black mt-3 ${pendingGradingCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-white'}`}>
             {pendingGradingCount}
           </p>
-          <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium mt-1 hidden sm:block">
-            {language === 'th' ? 'มีคำตอบรอการตรวจแบบ Continuous View' : 'Answers awaiting continuous review'}
-          </span>
+          {pendingGradingCount > 0 ? (
+            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-1 flex items-center gap-1">
+              <span className="truncate">
+                {language === 'th' ? `ใน ${assignmentsToGradeCount} งาน · ไปตรวจ` : `in ${assignmentsToGradeCount} tasks · grade now`}
+              </span>
+              <ArrowRight className="w-3 h-3 shrink-0" />
+            </span>
+          ) : (
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 shrink-0" />
+              <span className="truncate">{language === 'th' ? 'ตรวจครบทุกงานแล้ว' : 'All work graded'}</span>
+            </span>
+          )}
         </Link>
 
         {/* Anti-Cheating Alerts */}
@@ -1772,13 +1805,35 @@ export function TeacherWorkspace({
                           </h5>
                         </div>
 
-                        <Link
-                          href={`/assignments/${asg.id}/grading?from=dashboard`}
-                          className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all shadow-xs flex items-center gap-1 shrink-0 cursor-pointer"
-                        >
-                          <span>{t('dashboard.pending_section.grade_now')}</span>
-                          <ArrowRight className="w-3 h-3" />
-                        </Link>
+                        {(() => {
+                          const grading = gradingByAssignment.get(asg.id);
+                          const pending = grading?.pending || 0;
+                          return (
+                            <div className="flex items-center gap-2 shrink-0">
+                              {pending > 0 ? (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-bold whitespace-nowrap">
+                                  {language === 'th' ? `รอตรวจ ${pending}` : `${pending} to grade`}
+                                </span>
+                              ) : grading ? (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold whitespace-nowrap inline-flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  {language === 'th' ? 'ตรวจครบ' : 'Graded'}
+                                </span>
+                              ) : null}
+                              <Link
+                                href={`/assignments/${asg.id}/grading?from=dashboard`}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer ${
+                                  pending > 0
+                                    ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+                                    : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
+                                }`}
+                              >
+                                <span>{pending > 0 ? t('dashboard.pending_section.grade_now') : language === 'th' ? 'ดูคะแนน' : 'View'}</span>
+                                <ArrowRight className="w-3 h-3" />
+                              </Link>
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
