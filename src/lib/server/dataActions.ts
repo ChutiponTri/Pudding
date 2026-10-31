@@ -259,6 +259,27 @@ async function teacherClassroomIds(supabase: Supabase, teacherId: string): Promi
   return new Set([...(own.data || []), ...(shared.data || [])].map((r: { id: string }) => r.id));
 }
 
+/**
+ * Assignments of already-authorised classrooms. Teachers see drafts (until the
+ * retention sweep removes them); students only published work.
+ */
+async function loadAssignments(supabase: Supabase, classroomIds: string[], forTeacher: boolean): Promise<Assignment[]> {
+  if (classroomIds.length === 0) return [];
+  const results = await Promise.all(chunk(classroomIds).map((part) => supabase.from('assignments').select('*').in('classroom_id', part)));
+  const failed = results.find((r) => r.error);
+  if (failed?.error) throw toDatabaseError(failed.error, 'assignments');
+  const list = results.flatMap((r) => (r.data || []) as Assignment[]).sort(byCreatedDesc);
+  if (!forTeacher) return list.filter((a) => isAssignmentPublished(a));
+  // Drafts never published are deleted after DRAFT_RETENTION_DAYS; hide them until the sweep runs.
+  after(() => deleteExpiredAssignmentDraftsOccasionally(supabase));
+  const draftCutoff = Date.now() - DRAFT_RETENTION_MS;
+  return list.filter((a) => !isAssignmentDraft(a) || !a.created_at || new Date(a.created_at).getTime() >= draftCutoff);
+}
+
+/** Submission columns the dashboard counts from (no answers, no profiles). */
+const DASHBOARD_SUBMISSION_FIELDS =
+  'id, assignment_id, student_id, status, total_score, max_total_score, is_flagged_suspicious, tab_switch_count, total_time_away_seconds';
+
 /** Classroom ids the student belongs to or asked to join. */
 async function studentClassroomIds(supabase: Supabase, actor: Extract<Actor, { kind: 'student' }>): Promise<Set<string>> {
   const [fromRoster, links] = await Promise.all([
@@ -473,6 +494,40 @@ export const dataActions = {
     const value = [...new Set((data || []).map((d: { institution: string }) => d.institution.trim()).filter(Boolean))];
     registeredInstitutionsCache = { value, expiresAt: Date.now() + 5 * 60 * 1000 };
     return value;
+  },
+
+  // ---------- TEACHER DASHBOARD ----------
+  /**
+   * Everything the teacher dashboard shows, in one request. Independent reads
+   * run in parallel and classroom ids come straight from the teacher's own
+   * classrooms, so nothing is re-authorised along the way.
+   */
+  async getTeacherDashboard(ctx: Ctx) {
+    const me = requireTeacher(ctx.actor);
+    const { supabase } = ctx;
+    const [courses, ownCls, sharedCls, indicators, profile] = await Promise.all([
+      dataActions.getCourses(ctx),
+      supabase.from('classrooms').select('*').eq('teacher_id', me.userId),
+      supabase.from('classrooms').select('*').contains('teachers', jsonArray({ teacher_id: me.userId })),
+      dataActions.getLearningIndicators(ctx),
+      supabase.from('users').select(USER_FIELDS).eq('id', me.userId).maybeSingle(),
+    ]);
+    if (ownCls.error || sharedCls.error) throw toDatabaseError((ownCls.error || sharedCls.error)!, 'classrooms');
+    const rows = uniqueById([...(ownCls.data || []), ...(sharedCls.data || [])] as Classroom[]).sort(byCreatedDesc);
+
+    const loadWork = async () => {
+      const assignments = await loadAssignments(supabase, rows.map((c) => c.id), true);
+      const results = await Promise.all(
+        chunk(assignments.map((a) => a.id)).map((part) =>
+          supabase.from('submissions').select(DASHBOARD_SUBMISSION_FIELDS).in('assignment_id', part)
+        )
+      );
+      const failed = results.find((r) => r.error);
+      if (failed?.error) throw toDatabaseError(failed.error, 'submissions');
+      return { assignments, submissions: results.flatMap((r) => r.data || []) };
+    };
+    const [classrooms, work] = await Promise.all([hydrateClassrooms(supabase, rows), loadWork()]);
+    return { courses, classrooms, indicators, profile: (profile.data as User | null) || null, ...work };
   },
 
   // ---------- COURSES ----------
@@ -889,16 +944,7 @@ export const dataActions = {
     if (!actor) throw UNAUTHORIZED();
     const allowed = actor.kind === 'teacher' ? await teacherClassroomIds(supabase, actor.userId) : await studentClassroomIds(supabase, actor);
     const ids = [...new Set(classroomIds.filter(Boolean))].filter((id) => allowed.has(id));
-    if (ids.length === 0) return [];
-    const results = await Promise.all(chunk(ids).map((part) => supabase.from('assignments').select('*').in('classroom_id', part)));
-    const failed = results.find((r) => r.error);
-    if (failed?.error) throw toDatabaseError(failed.error, 'assignments');
-    const list = results.flatMap((r) => (r.data || []) as Assignment[]).sort(byCreatedDesc);
-    if (actor.kind !== 'teacher') return list.filter((a) => isAssignmentPublished(a));
-    // Drafts never published are deleted after DRAFT_RETENTION_DAYS; hide them until the sweep runs.
-    after(() => deleteExpiredAssignmentDraftsOccasionally(supabase));
-    const draftCutoff = Date.now() - DRAFT_RETENTION_MS;
-    return list.filter((a) => !isAssignmentDraft(a) || !a.created_at || new Date(a.created_at).getTime() >= draftCutoff);
+    return loadAssignments(supabase, ids, actor.kind === 'teacher');
   },
 
   async getAssignmentsByClassroomId(ctx: Ctx, classroomId: string) {

@@ -218,6 +218,18 @@ export const dataService = {
     }
   },
 
+  /** The teacher dashboard's courses, classrooms (with rosters), work and score-only submissions, in one request. */
+  async getTeacherDashboard(): Promise<{
+    courses: Course[];
+    classrooms: Classroom[];
+    indicators: LearningIndicator[];
+    profile: User | null;
+    assignments: Assignment[];
+    submissions: Submission[];
+  }> {
+    return call('getTeacherDashboard');
+  },
+
   // ==============================================================================
   // COURSES (always the signed-in teacher's own)
   // ==============================================================================

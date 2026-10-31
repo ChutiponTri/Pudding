@@ -209,26 +209,24 @@ export default function DashboardPage() {
   // does not restart on every reload.
   const myClassroomIdsRef = useRef<string[]>([]);
 
+  // Each load gets a number; only the newest one may write state, so a slow
+  // earlier response never overwrites fresher data.
+  const loadSeqRef = useRef(0);
+  const profilePrefilledRef = useRef(false);
+
   const loadAllData = async () => {
     const teacherId = clerkUser?.id;
     if (!teacherId) return;
+    const seq = ++loadSeqRef.current;
     try {
-      // Everything is filtered by teacher on the server; only this teacher's
-      // assignments and submissions are fetched (scores only, no profiles).
-      const [crs, myClassrooms, ind, profile] = await Promise.all([
-        dataService.getCourses(teacherId),
-        dataService.getClassrooms(teacherId),
-        dataService.getLearningIndicators(),
-        dataService.getUserById(teacherId),
-      ]);
+      // One request: the server reads everything in parallel, filtered to this
+      // teacher (submissions are scores only, no profiles).
+      const data = await dataService.getTeacherDashboard();
+      if (seq !== loadSeqRef.current) return;
+      const myClassrooms = data.classrooms;
       myClassroomIdsRef.current = myClassrooms.map((c) => c.id);
-      const myAssignments = await dataService.getAssignmentsByClassroomIds(myClassroomIdsRef.current);
-      const mySubmissions = await dataService.getSubmissionsByAssignmentIds(
-        myAssignments.map((a) => a.id),
-        { includeStudents: false }
-      );
 
-      setCourses(crs);
+      setCourses(data.courses);
       setClassrooms(myClassrooms);
       setLineConnectionStatuses(Object.fromEntries(
         myClassrooms.map((classroom) => [
@@ -236,32 +234,36 @@ export default function DashboardPage() {
           classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected'),
         ])
       ));
-      setAssignments(myAssignments);
-      setIndicators(ind);
-      setAllSubmissions(mySubmissions);
+      setAssignments(data.assignments);
+      setIndicators(data.indicators);
+      setAllSubmissions(data.submissions);
 
+      const profile = data.profile;
       if (profile) {
         setTeacherProfile(profile);
-        // Pre-fill name from profile or fall back to Clerk data
-        setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
-        setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
-        // Do NOT pre-fill institution — teacher must actively choose/confirm it
-        setTeacherInstitutionInput('');
-        if (!profile.institution || !profile.first_name || !profile.last_name) {
-          // Prompt teacher to complete their profile on first visit
-          setIsProfileRequired(true);
-          setIsInstitutionModalOpen(true);
+        // Prefill once; later (realtime) reloads must not wipe what the teacher is typing.
+        if (!profilePrefilledRef.current) {
+          profilePrefilledRef.current = true;
+          // Pre-fill name from profile or fall back to Clerk data
+          setTeacherFirstNameInput(profile.first_name || clerkUser?.firstName || '');
+          setTeacherLastNameInput(profile.last_name || clerkUser?.lastName || '');
+          // Do NOT pre-fill institution — teacher must actively choose/confirm it
+          setTeacherInstitutionInput('');
+          if (!profile.institution || !profile.first_name || !profile.last_name) {
+            // Prompt teacher to complete their profile on first visit
+            setIsProfileRequired(true);
+            setIsInstitutionModalOpen(true);
+          }
         }
       }
 
       // The open roster dialog shows the freshly loaded (already hydrated) classroom.
-      if (managingClassroom) {
-        setManagingClassroom(myClassrooms.find((c) => c.id === managingClassroom.id) || null);
-      }
+      // Functional update: realtime reloads run an older closure of this function.
+      setManagingClassroom((current) => (current ? myClassrooms.find((c) => c.id === current.id) || null : current));
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   };
 
