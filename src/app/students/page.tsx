@@ -12,6 +12,7 @@ import { Avatar } from '@/components/Avatar';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
+import { institutionLabel } from '@/lib/data/thaiInstitutions';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 
 type StudentFields = Pick<User, 'first_name' | 'last_name' | 'student_id' | 'institution'>;
@@ -186,7 +187,7 @@ function StudentsContent() {
                     <span className="font-mono text-[10px] text-slate-400">ID: {student.student_id || '-'}</span>
                   </div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                    {[student.institution && `🏫 ${student.institution}`, student.email].filter(Boolean).join(' • ') || ' '}
+                    {[student.institution && `🏫 ${institutionLabel(student.institution, language)}`, student.email].filter(Boolean).join(' • ') || ' '}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {row.classrooms.map((cls) => (

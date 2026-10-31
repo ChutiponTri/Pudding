@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, Building, Check, ChevronDown, School, GraduationCap } from 'lucide-react';
-import { searchInstitutions, EducationalInstitution } from '@/lib/data/thaiInstitutions';
+import { searchInstitutions, institutionLabel, provinceLabel, EducationalInstitution } from '@/lib/data/thaiInstitutions';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 interface Props {
@@ -23,7 +23,7 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
   disabled = false,
   required = false,
 }) => {
-  const { tr } = useLanguage();
+  const { tr, language } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
@@ -103,7 +103,7 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
       >
         <div className="flex items-center gap-2 truncate">
           <School className="w-4 h-4 text-amber-500 shrink-0" />
-          <span className="truncate">{value || placeholder || tr('เลือกโรงเรียน / สถาบันการศึกษา...', 'Select a school / institution...')}</span>
+          <span className="truncate">{institutionLabel(value, language) || placeholder || tr('เลือกโรงเรียน / สถาบันการศึกษา...', 'Select a school / institution...')}</span>
         </div>
         <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
@@ -158,8 +158,8 @@ export const InstitutionSearchSelect: React.FC<Props> = ({
                         <Building className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                       )}
                       <div className="truncate">
-                        <div className="truncate font-medium">{inst.name}</div>
-                        <span className="text-[10px] text-slate-400">{inst.province}</span>
+                        <div className="truncate font-medium">{language === 'en' ? inst.nameEn : inst.name}</div>
+                        <span className="text-[10px] text-slate-400">{provinceLabel(inst.province, language)}</span>
                       </div>
                     </div>
                     {isSelected && <Check className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
