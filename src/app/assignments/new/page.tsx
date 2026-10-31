@@ -60,6 +60,8 @@ function NewAssignmentContent() {
   const urlClassroomId = searchParams.get('classroomId');
   const urlFrom = searchParams.get('from');
   const isFromDashboard = urlFrom === 'dashboard' || (!urlClassroomId && urlFrom !== 'classroom');
+  // Opened from the grading hub: go back to the same view (only /grading paths are accepted).
+  const returnTo = urlFrom === 'grading' && searchParams.get('returnTo')?.startsWith('/grading') ? searchParams.get('returnTo') : null;
   // ?edit=<assignmentId>: the same form, filled with a saved assignment or quiz.
   const editId = searchParams.get('edit');
   const { user: clerkUser } = useUser();
@@ -572,7 +574,7 @@ function NewAssignmentContent() {
             ? language === 'th' ? 'บันทึกฉบับร่างแล้ว นักเรียนยังไม่เห็นงานนี้' : 'Draft saved. Students cannot see it yet.'
             : language === 'th' ? 'บันทึกการแก้ไขเรียบร้อยแล้ว' : 'Changes saved'
         );
-        router.push(isFromDashboard ? '/dashboard' : `/classrooms/${editingAssignment.classroom_id}?tab=classwork`);
+        router.push(returnTo || (isFromDashboard ? '/dashboard' : `/classrooms/${editingAssignment.classroom_id}?tab=classwork`));
         return;
       }
 
@@ -648,7 +650,9 @@ function NewAssignmentContent() {
         <button
           type="button"
           onClick={() => {
-            if (isFromDashboard) {
+            if (returnTo) {
+              router.push(returnTo);
+            } else if (isFromDashboard) {
               router.push('/dashboard');
             } else {
               const targetId = urlClassroomId || selectedClassroomIds[0];
@@ -662,7 +666,7 @@ function NewAssignmentContent() {
           className="inline-flex items-center gap-2 max-w-full px-3.5 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span className="truncate">{isFromDashboard ? 'กลับสู่แดชบอร์ด (Dashboard)' : 'กลับไปหน้าห้องเรียน (งานและเนื้อหา)'}</span>
+          <span className="truncate">{returnTo ? 'กลับไปหน้าตรวจงาน' : isFromDashboard ? 'กลับสู่แดชบอร์ด (Dashboard)' : 'กลับไปหน้าห้องเรียน (งานและเนื้อหา)'}</span>
         </button>
       </div>
 

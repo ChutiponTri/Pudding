@@ -10,10 +10,11 @@ import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
-import { ReferenceWorkLink } from '@/components/ReferenceWorkLink';
+import { AssignmentProgressCard } from '@/components/AssignmentProgressCard';
+import { gradingCounts, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { roomLabel } from '@/lib/utils/classroomLabel';
-import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
 import {
   ArrowLeft,
@@ -41,7 +42,6 @@ import {
   Pencil,
   Plus,
   QrCode,
-  Rocket,
   RefreshCw,
   Search,
   Send,
@@ -148,6 +148,16 @@ type Post = {
   activity_type?: TimelineItem['type'];
   metadata?: { assignmentId?: string; groupName?: string; publishAt?: string; sessionId?: string };
 };
+
+type ClassworkFilter = 'all' | 'pending' | 'done' | 'waiting';
+const CLASSWORK_FILTERS: Array<{ id: ClassworkFilter; label: string; active: string }> = [
+  { id: 'all', label: 'ทั้งหมด', active: 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' },
+  { id: 'pending', label: 'ต้องตรวจ', active: 'bg-amber-500 text-slate-950' },
+  { id: 'done', label: 'ตรวจครบแล้ว', active: 'bg-emerald-600 text-white' },
+  { id: 'waiting', label: 'ยังไม่มีผู้ส่ง', active: 'bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900' },
+];
+const classworkFilterOf = (c: GradingCounts): Exclude<ClassworkFilter, 'all'> =>
+  c.pending > 0 ? 'pending' : c.handedIn > 0 ? 'done' : 'waiting';
 
 type AttendanceResult = { sessions?: AttendanceSession[]; session?: AttendanceSession | null; records?: AttendanceRecord[] };
 
@@ -921,6 +931,34 @@ export default function ClassroomWorkspacePage() {
     setShowAddGroupModal(false);
     setNewGroupName('');
     setNotice(`เพิ่มหมวดหมู่ "${name}" แล้ว ลากงานมาวางในกลุ่มนี้เพื่อบันทึก`);
+  };
+
+  // Classwork progress per assignment (same counts as the grading hub).
+  const [classworkFilter, setClassworkFilter] = useState<ClassworkFilter>('all');
+  const classworkCounts = useMemo(() => {
+    const bySubmission = new Map<string, Submission[]>();
+    for (const s of submissions) bySubmission.set(s.assignment_id, [...(bySubmission.get(s.assignment_id) || []), s]);
+    const total = classroom?.students?.length || 0;
+    return new Map(assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], total, a.is_exam)]));
+  }, [assignments, submissions, classroom?.students?.length]);
+  const classworkSummary = useMemo(() => {
+    const all = [...classworkCounts.values()];
+    return {
+      pending: all.reduce((sum, c) => sum + c.pending, 0),
+      graded: all.reduce((sum, c) => sum + c.graded, 0),
+      handedIn: all.reduce((sum, c) => sum + c.handedIn, 0),
+      done: all.filter((c) => classworkFilterOf(c) === 'done').length,
+    };
+  }, [classworkCounts]);
+  const classworkFilterCounts = useMemo(() => {
+    const counts: Record<ClassworkFilter, number> = { all: classworkCounts.size, pending: 0, done: 0, waiting: 0 };
+    classworkCounts.forEach((c) => counts[classworkFilterOf(c)]++);
+    return counts;
+  }, [classworkCounts]);
+  const matchesClassworkFilter = (assignmentId: string) => {
+    if (classworkFilter === 'all') return true;
+    const c = classworkCounts.get(assignmentId);
+    return !!c && classworkFilterOf(c) === classworkFilter;
   };
 
   const groupKeyOf = (item: Assignment) => item.group_name || (item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป');
@@ -1902,8 +1940,61 @@ export default function ClassroomWorkspacePage() {
                 </div>
               </div>
 
+              {/* Progress summary + filter, same as the grading hub */}
+              {assignments.length > 0 && (
+                <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+                  <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                    <div className={`p-3 rounded-2xl ${classworkSummary.pending > 0 ? 'bg-amber-50 dark:bg-amber-950/40' : 'bg-emerald-50 dark:bg-emerald-950/40'}`}>
+                      <span className={`text-[11px] font-bold block ${classworkSummary.pending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>รอตรวจ</span>
+                      <span className={`text-xl sm:text-2xl font-black ${classworkSummary.pending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
+                        {classworkSummary.pending}
+                        <span className="text-[11px] font-semibold ml-1">ชิ้น</span>
+                      </span>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">ตรวจแล้ว</span>
+                      <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
+                        {classworkSummary.graded}
+                        <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {classworkSummary.handedIn}</span>
+                      </span>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">งานที่ตรวจครบ</span>
+                      <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
+                        {classworkSummary.done}
+                        <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {assignments.length}</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-1.5 p-1 rounded-2xl bg-slate-50 dark:bg-slate-800/60 overflow-x-auto">
+                    {CLASSWORK_FILTERS.map(({ id, label, active }) => {
+                      const selected = classworkFilter === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setClassworkFilter(id)}
+                          className={`flex-1 min-w-max px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                            selected ? active : 'text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          <span>{label}</span>
+                          <span className={`px-1.5 min-w-5 rounded-full text-[10px] font-black ${selected ? 'bg-black/10 dark:bg-white/20' : 'bg-white dark:bg-slate-900'}`}>
+                            {classworkFilterCounts[id]}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {classworkFilter !== 'all' && (
+                    <p className="text-[11px] text-slate-400">กลับไปที่ “ทั้งหมด” เพื่อลากเรียงลำดับหรือย้ายกลุ่ม</p>
+                  )}
+                </div>
+              )}
+
               {/* Grouped Assignments List */}
-              <div className="grid md:grid-cols-2 gap-4">
+              <div className="space-y-5">
                 {Object.entries(
                   assignments.reduce<Record<string, Assignment[]>>(
                     (groups, item) => {
@@ -1913,7 +2004,10 @@ export default function ClassroomWorkspacePage() {
                     },
                     Object.fromEntries(customGroups.map((name) => [name, [] as Assignment[]]))
                   )
-                ).map(([group, unsorted]) => [group, [...unsorted].sort(byClassworkOrder)] as const).map(([group, items]) => (
+                )
+                  .map(([group, unsorted]) => [group, [...unsorted].sort(byClassworkOrder).filter((a) => matchesClassworkFilter(a.id))] as const)
+                  .filter(([, items]) => classworkFilter === 'all' || items.length > 0)
+                  .map(([group, items]) => (
                   <div
                     key={group}
                     onDragOver={(e) => {
@@ -1939,23 +2033,29 @@ export default function ClassroomWorkspacePage() {
                       setDraggingAssignmentId(null);
                       if (id) handleDropAssignment(id, group, index);
                     }}
-                    className={`bg-white dark:bg-slate-900 rounded-3xl border p-5 shadow-xs space-y-4 transition-all ${
+                    className={`rounded-3xl p-3 sm:p-4 space-y-3 transition-all border ${
                       dragOverGroup === group
                         ? 'border-amber-400 ring-2 ring-amber-400/60 bg-amber-50/60 dark:bg-amber-950/20'
                         : draggingAssignmentId
-                        ? 'border-dashed border-slate-300 dark:border-slate-700'
-                        : 'border-slate-200 dark:border-slate-800'
+                        ? 'border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40'
+                        : 'border-transparent bg-slate-100/60 dark:bg-slate-900/40'
                     }`}
                   >
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-                      <div className="flex items-center gap-2">
-                        <span className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-600">
-                          <Layers className="w-4 h-4" />
-                        </span>
-                        <h3 className="font-black text-sm text-slate-900 dark:text-white">
-                          {group} <span className="text-slate-400 font-normal">({items.length})</span>
-                        </h3>
-                      </div>
+                    <div className="flex items-center gap-2 px-1">
+                      <span className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-600">
+                        <Layers className="w-4 h-4" />
+                      </span>
+                      <h3 className="font-black text-sm text-slate-900 dark:text-white">
+                        {group} <span className="text-slate-400 font-normal">({items.length})</span>
+                      </h3>
+                      {(() => {
+                        const left = items.reduce((sum, a) => sum + (classworkCounts.get(a.id)?.pending || 0), 0);
+                        return left > 0 ? (
+                          <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-bold">
+                            รอตรวจ {left}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
 
                     {items.length === 0 && (
@@ -1964,7 +2064,7 @@ export default function ClassroomWorkspacePage() {
                       </div>
                     )}
 
-                    <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
                       {items.map((item, itemIndex, all) => {
                         // Show the insertion line only where a drop would change something.
                         const draggedIndex = all.findIndex((a) => a.id === draggingAssignmentId);
@@ -1973,16 +2073,12 @@ export default function ClassroomWorkspacePage() {
                           dropTarget?.group === group &&
                           dropTarget.index === index &&
                           (draggedIndex === -1 || (index !== draggedIndex && index !== draggedIndex + 1));
-                        const submittedCount = submissions.filter((s) => s.assignment_id === item.id && s.status !== 'pending').length;
                         const itemWindow = getAssignmentWindow(item);
-                        const itemStatus = getAssignmentStatus(itemWindow, item.is_exam);
-                        const isClosed = itemStatus.tone === 'closed';
-                        const isLate = itemStatus.tone === 'late';
-                        const isDraft = itemStatus.tone === 'draft';
+                        const canDrag = classworkFilter === 'all';
                         return (
                           <div
                             key={item.id}
-                            draggable
+                            draggable={canDrag}
                             onDragStart={(e) => {
                               e.dataTransfer.setData('text/plain', item.id);
                               e.dataTransfer.effectAllowed = 'move';
@@ -2004,130 +2100,46 @@ export default function ClassroomWorkspacePage() {
                               if (dragOverGroup !== group) setDragOverGroup(group);
                               if (dropTarget?.group !== group || dropTarget.index !== index) setDropTarget({ group, index });
                             }}
-                            title="ลากเพื่อเรียงลำดับ หรือย้ายไปกลุ่มอื่น"
-                            className={`relative p-3.5 rounded-2xl border hover:border-amber-400 transition-all space-y-2 cursor-grab active:cursor-grabbing ${
-                              draggingAssignmentId === item.id ? 'opacity-40' : ''
-                            } ${
-                              isClosed
-                                ? 'border-rose-200 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/20'
-                                : isLate
-                                ? 'border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20'
-                                : isDraft
-                                ? 'border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900'
-                                : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850'
-                            }`}
+                            title={canDrag ? 'ลากเพื่อเรียงลำดับ หรือย้ายไปกลุ่มอื่น' : undefined}
+                            className={`relative flex ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''} ${draggingAssignmentId === item.id ? 'opacity-40' : ''}`}
                           >
                             {/* Insertion line: where the dragged card will land */}
                             {lineAt(itemIndex) && (
-                              <span aria-hidden className="pointer-events-none absolute -top-[7px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
+                              <span aria-hidden className="pointer-events-none absolute -top-[9px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
                             )}
                             {itemIndex === items.length - 1 && lineAt(items.length) && (
-                              <span aria-hidden className="pointer-events-none absolute -bottom-[7px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
+                              <span aria-hidden className="pointer-events-none absolute -bottom-[9px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
                             )}
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <GripVertical className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 shrink-0 -ml-1" aria-hidden />
-                                  <span
-                                    className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
-                                      item.is_exam
-                                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
-                                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                                    }`}
-                                  >
-                                    {item.is_exam ? 'ข้อสอบ' : 'งาน'}
+                            <AssignmentProgressCard
+                              className="flex-1 min-w-0 hover:border-amber-400"
+                              assignment={item}
+                              counts={classworkCounts.get(item.id) || gradingCounts([], classroom.students?.length || 0, item.is_exam)}
+                              gradingHref={`/assignments/${item.id}/grading?from=classroom&classroomId=${classroomId}`}
+                              editHref={`/assignments/new?edit=${item.id}&classroomId=${classroomId}&from=classroom`}
+                              onStatusClick={() => setStatusAssignment(item)}
+                              onDelete={() => handleDeleteAssignment(item.id)}
+                              onPublishNow={itemWindow.isScheduled || itemWindow.isDraft ? () => handlePublishAssignmentNow(item) : undefined}
+                              leading={canDrag ? <GripVertical className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 shrink-0 -ml-1" aria-hidden /> : undefined}
+                              footer={
+                                <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
+                                  <span className="text-slate-400 flex items-center gap-1 min-w-0">
+                                    <Tag className="w-3 h-3 shrink-0" />
+                                    <span className="truncate">หมวดหมู่: {item.group_name || 'ไม่ได้จัดกลุ่ม'}</span>
                                   </span>
-                                  <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{item.title}</p>
                                   <button
                                     type="button"
-                                    onClick={() => setStatusAssignment(item)}
-                                    className={`shrink-0 inline-flex items-center gap-0.5 text-[10px] font-black pl-2 pr-1.5 py-0.5 rounded-full border cursor-pointer hover:brightness-95 dark:hover:brightness-125 transition ${ASSIGNMENT_STATUS_CLASSES[itemStatus.tone]}`}
-                                    title={`${itemStatus.note ? `${itemStatus.note} • ` : ''}กดเพื่อเปลี่ยนสถานะการรับงาน`}
-                                    aria-label={`สถานะ: ${itemStatus.label} — กดเพื่อเปลี่ยน`}
+                                    draggable={false}
+                                    onClick={() => {
+                                      setEditingAssignmentGroup(item);
+                                      setTargetGroupForAssignment(item.group_name || '');
+                                    }}
+                                    className="text-amber-600 font-bold hover:underline cursor-pointer shrink-0"
                                   >
-                                    {isClosed ? '🔒 ' : ''}{itemStatus.label}
-                                    <ChevronDown className="w-3 h-3" />
+                                    ย้ายกลุ่ม
                                   </button>
                                 </div>
-                                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                                  {(itemWindow.isScheduled || itemWindow.isDraft) && item.publish_at && (
-                                    <>
-                                      {itemWindow.isDraft ? (
-                                        <span className="font-bold text-slate-600 dark:text-slate-300" title="ฉบับร่างที่ไม่ได้เผยแพร่จะถูกลบอัตโนมัติ">
-                                          ฉบับร่าง{draftExpiresAt(item) ? ` • ลบอัตโนมัติ ${formatDateTime(draftExpiresAt(item), 'th')}` : ''}
-                                        </span>
-                                      ) : (
-                                        <span className="font-bold text-sky-700 dark:text-sky-400">เผยแพร่: {formatDateTime(item.publish_at, 'th')}</span>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => handlePublishAssignmentNow(item)}
-                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-black cursor-pointer transition-colors"
-                                        title="สอนถึงหัวข้อนี้แล้ว — เปิดให้นักเรียนทำได้ทันที"
-                                      >
-                                        <Rocket className="w-3 h-3" />
-                                        เผยแพร่ตอนนี้
-                                      </button>
-                                      <span>•</span>
-                                    </>
-                                  )}
-                                  <span>
-                                    {item.is_exam ? 'ปิดรับ' : 'กำหนดส่ง'}: {formatDateTime(itemWindow.deadline !== null ? new Date(itemWindow.deadline).toISOString() : item.due_date, 'th')} • คะแนนเต็ม: {item.total_points || 20}
-                                  </span>
-                                  <span className="font-bold text-amber-600">
-                                    • ส่งแล้ว {submittedCount}/{classroom.students?.length || 0} คน
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {/* Full editor: questions, answer keys, attachment, schedule and everything else */}
-                                <Link
-                                  href={`/assignments/new?edit=${item.id}&classroomId=${classroomId}&from=classroom`}
-                                  draggable={false}
-                                  className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                                  title="แก้ไขงาน/ข้อสอบ (ทุกส่วน)"
-                                  aria-label="แก้ไขงาน/ข้อสอบ"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </Link>
-                                <button
-                                  onClick={() => handleDeleteAssignment(item.id)}
-                                  className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                                  title="ลบงาน/ข้อสอบ"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                                <Link
-                                  href={`/assignments/${item.id}/grading?from=classroom&classroomId=${classroomId}`}
-                                  className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-amber-500 hover:text-slate-950 text-xs font-bold transition-colors cursor-pointer shrink-0"
-                                >
-                                  ตรวจคะแนน
-                                </Link>
-                              </div>
-                            </div>
-
-                            {/* Teacher's reference work (link or uploaded file) */}
-                            {(item.sample_work_url || item.sample_work_title) && (
-                              <ReferenceWorkLink assignment={item} preview />
-                            )}
-
-                            {/* Quick Group Switcher for Teacher */}
-                            <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-800 text-[11px]">
-                              <span className="text-slate-400 flex items-center gap-1">
-                                <Tag className="w-3 h-3" />
-                                <span>หมวดหมู่: {item.group_name || 'ไม่ได้จัดกลุ่ม'}</span>
-                              </span>
-                              <button
-                                onClick={() => {
-                                  setEditingAssignmentGroup(item);
-                                  setTargetGroupForAssignment(item.group_name || '');
-                                }}
-                                className="text-amber-600 font-bold hover:underline cursor-pointer"
-                              >
-                                ย้ายกลุ่ม
-                              </button>
-                            </div>
+                              }
+                            />
                           </div>
                         );
                       })}

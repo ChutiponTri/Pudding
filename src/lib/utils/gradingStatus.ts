@@ -10,3 +10,31 @@ export const isGraded = (sub: Pick<Submission, 'total_score'>) => sub.total_scor
 
 /** Handed in and still waiting for the teacher. */
 export const needsGrading = (sub: SubmissionScore) => isHandedIn(sub) && !isGraded(sub);
+
+export type GradingCounts = {
+  totalStudents: number;
+  handedIn: number;
+  graded: number;
+  pending: number;
+  notSubmitted: number;
+  /** Quizzes only: submissions flagged for leaving the screen. */
+  flagged: number;
+};
+
+/** Handed in / graded / waiting / missing for one assignment's submissions. */
+export function gradingCounts(
+  subs: Array<Pick<Submission, 'status' | 'total_score' | 'is_flagged_suspicious'>>,
+  totalStudents: number,
+  isExam?: boolean
+): GradingCounts {
+  const handedIn = subs.filter(isHandedIn).length;
+  const pending = subs.filter(needsGrading).length;
+  return {
+    totalStudents,
+    handedIn,
+    graded: handedIn - pending,
+    pending,
+    notSubmitted: Math.max(0, totalStudents - handedIn),
+    flagged: isExam ? subs.filter((s) => s.is_flagged_suspicious).length : 0,
+  };
+}

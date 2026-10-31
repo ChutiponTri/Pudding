@@ -1,55 +1,27 @@
 'use client';
 
-import React, { useMemo, useEffect, Suspense } from 'react';
+import React, { useMemo, useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useTeacherDashboardData } from '@/lib/hooks/useTeacherDashboardData';
 import { Assignment, Classroom, Course } from '@/types/database';
-import {
-  BookOpen,
-  FileCheck,
-  ChevronRight,
-  ArrowLeft,
-  ShieldAlert,
-  Clock,
-  CheckCircle2,
-  Lock,
-  Unlock,
-  Calendar,
-  Inbox,
-  ListChecks,
-  School,
-} from 'lucide-react';
-import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { dataService } from '@/lib/supabase/dataService';
+import { AssignmentProgressCard, GradingBar } from '@/components/AssignmentProgressCard';
+import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
+import { BookOpen, FileCheck, ChevronRight, ArrowLeft, ShieldAlert, Clock, CheckCircle2, Check, Inbox, ListChecks, School } from 'lucide-react';
+import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
-import { isGraded, isHandedIn, needsGrading } from '@/lib/utils/gradingStatus';
+import { gradingCounts, type GradingCounts } from '@/lib/utils/gradingStatus';
 
 type TaskTab = 'pending' | 'done' | 'waiting';
 
-type TaskItem = {
-  classroom: Classroom;
-  assignment: Assignment;
-  totalStudents: number;
-  handedIn: number;
-  graded: number;
-  pending: number;
-  notSubmitted: number;
-  flagged: number;
-};
+type TaskItem = GradingCounts & { classroom: Classroom; assignment: Assignment };
+
+type LocalEdits = { updated: Record<string, Assignment>; deleted: string[] };
+const NO_EDITS: LocalEdits = { updated: {}, deleted: [] };
 
 const belongsToCourse = (course: Course, cls: Classroom) => cls.course_id === course.id || !!cls.subject_code?.startsWith(course.code);
-
-/** Graded / waiting for the teacher / not handed in, as one bar. */
-function GradingBar({ graded, pending, notSubmitted }: { graded: number; pending: number; notSubmitted: number }) {
-  const total = graded + pending + notSubmitted || 1;
-  return (
-    <div className="flex w-full h-2 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800">
-      <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(graded / total) * 100}%` }} />
-      <div className="h-full bg-amber-400 transition-all" style={{ width: `${(pending / total) * 100}%` }} />
-    </div>
-  );
-}
 
 function GradingHubContent() {
   const { t, language } = useLanguage();
@@ -58,6 +30,16 @@ function GradingHubContent() {
   const router = useRouter();
   // Same session-cached data as the dashboard; refetches while open whenever something changes (a grade is saved, a student hands in…).
   const { data, loading } = useTeacherDashboardData();
+
+  // Editing from the task cards. Saves invalidate the session cache, so the
+  // list above refetches on its own; local edits only cover the wait.
+  const [statusAssignment, setStatusAssignment] = useState<Assignment | null>(null);
+  const [localEdits, setLocalEdits] = useState<LocalEdits & { base: typeof data }>({ base: null, ...NO_EDITS });
+  const [toast, setToast] = useState<string | null>(null);
+  const showToast = (message: string) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  };
 
   // This page only picks the work to grade (course -> section/assignment).
   // Grading itself lives on /assignments/[id]/grading.
@@ -76,7 +58,46 @@ function GradingHubContent() {
 
   const courses = useMemo(() => data?.courses || [], [data]);
   const classrooms = useMemo(() => data?.classrooms || [], [data]);
-  const assignments = useMemo(() => data?.assignments || [], [data]);
+  // Edits made before the refetch arrives; a new copy of the data replaces them.
+  const edits = localEdits.base === data ? localEdits : NO_EDITS;
+  const assignments = useMemo(
+    () => (data?.assignments || []).filter((a) => !edits.deleted.includes(a.id)).map((a) => edits.updated[a.id] || a),
+    [data, edits]
+  );
+  const patchAssignment = (updated: Assignment | null, deletedId?: string) =>
+    setLocalEdits((prev) => {
+      const current = prev.base === data ? prev : NO_EDITS;
+      return {
+        base: data,
+        updated: updated ? { ...current.updated, [updated.id]: { ...(current.updated[updated.id] || {}), ...updated } } : current.updated,
+        deleted: deletedId ? [...current.deleted, deletedId] : current.deleted,
+      };
+    });
+
+  const handleDeleteAssignment = async (assignment: Assignment) => {
+    if (!confirm(th ? 'คุณแน่ใจหรือไม่ว่าต้องการลบงาน/ข้อสอบนี้? (คะแนนและข้อสอบทั้งหมดจะถูกลบออก)' : 'Delete this task? All its answers and scores are removed.')) return;
+    try {
+      await dataService.deleteAssignment(assignment.id);
+      patchAssignment(null, assignment.id);
+      showToast(th ? 'ลบงาน/ข้อสอบเรียบร้อยแล้ว' : 'Deleted');
+    } catch {
+      showToast(th ? 'เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ' : 'Could not delete');
+    }
+  };
+
+  const handlePublishNow = async (assignment: Assignment) => {
+    const kind = assignment.is_exam ? (th ? 'ข้อสอบ' : 'quiz') : th ? 'งาน' : 'assignment';
+    if (!confirm(th
+      ? `เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`
+      : `Publish "${assignment.title}" now? Students can start right away and get a LINE notification.`)) return;
+    try {
+      const updated = await dataService.publishAssignmentNow(assignment.id);
+      patchAssignment({ ...assignment, ...(updated || {}), publish_at: updated?.publish_at || new Date().toISOString() });
+      showToast(th ? `เผยแพร่${kind}แล้ว นักเรียนเริ่มทำได้ทันที` : 'Published; students can start now');
+    } catch (err) {
+      showToast(err instanceof Error && err.message ? err.message : th ? 'เผยแพร่งานไม่สำเร็จ' : 'Could not publish');
+    }
+  };
   const submissions = useMemo(() => data?.submissions || [], [data]);
 
   // Keep the view in the URL so "back" from the grading page returns to it.
@@ -107,19 +128,8 @@ function GradingHubContent() {
       const cls = byClassroom.get(asg.classroom_id);
       if (!cls) continue;
       const subs = subsByAssignment.get(asg.id) || [];
-      const handedIn = subs.filter(isHandedIn).length;
-      const totalStudents = cls.students?.length || cls.student_count || 0;
-      items.push({
-        classroom: cls,
-        assignment: asg,
-        totalStudents,
-        handedIn,
-        graded: subs.filter((s) => isHandedIn(s) && isGraded(s)).length,
-        pending: subs.filter(needsGrading).length,
-        notSubmitted: Math.max(0, totalStudents - handedIn),
-        // Leaving the screen is tracked during quizzes only.
-        flagged: asg.is_exam ? subs.filter((s) => s.is_flagged_suspicious).length : 0,
-      });
+      // Leaving the screen is tracked during quizzes only, so only quizzes count flags.
+      items.push({ classroom: cls, assignment: asg, ...gradingCounts(subs, cls.students?.length || cls.student_count || 0, asg.is_exam) });
     }
     return items;
   }, [assignments, classrooms, submissions]);
@@ -173,6 +183,7 @@ function GradingHubContent() {
     waiting: visibleTasks.filter((i) => i.handedIn === 0),
   };
   const activeTab: TaskTab = tabParam && groups[tabParam] ? tabParam : groups.pending.length > 0 || !groups.done.length ? 'pending' : 'done';
+  const currentHref = `/grading${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
   const coursePending = courseTasks.reduce((sum, i) => sum + i.pending, 0);
   const courseHandedIn = courseTasks.reduce((sum, i) => sum + i.handedIn, 0);
   const courseGraded = courseTasks.reduce((sum, i) => sum + i.graded, 0);
@@ -497,136 +508,53 @@ function GradingHubContent() {
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-              {groups[activeTab].map((item) => (
-                <TaskCard key={`${item.classroom.id}-${item.assignment.id}`} item={item} courseId={selectedCourse.id} />
-              ))}
+              {groups[activeTab].map((item) => {
+                const { classroom, assignment, ...counts } = item;
+                const win = getAssignmentWindow(assignment);
+                return (
+                  <AssignmentProgressCard
+                    key={`${classroom.id}-${assignment.id}`}
+                    assignment={assignment}
+                    counts={counts}
+                    classroomName={classroom.name}
+                    gradingHref={`/assignments/${assignment.id}/grading?from=grading&courseId=${encodeURIComponent(selectedCourse.id)}`}
+                    editHref={`/assignments/new?edit=${assignment.id}&classroomId=${classroom.id}&from=grading&returnTo=${encodeURIComponent(currentHref)}`}
+                    onStatusClick={() => setStatusAssignment(assignment)}
+                    onDelete={() => handleDeleteAssignment(assignment)}
+                    onPublishNow={win.isScheduled || win.isDraft ? () => handlePublishNow(assignment) : undefined}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
       )}
-    </div>
-  );
-}
 
-function TaskCard({ item, courseId }: { item: TaskItem; courseId: string }) {
-  const { language } = useLanguage();
-  const th = language === 'th';
-  const { assignment, classroom, totalStudents, handedIn, graded, pending, notSubmitted, flagged } = item;
-  const win = getAssignmentWindow(assignment);
-  const status = getAssignmentStatus(win, assignment.is_exam, language);
-  const StatusIcon = status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : Clock;
-  const deadline = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), language) : null;
-  const done = pending === 0 && handedIn > 0;
+      {statusAssignment && (
+        <AssignmentStatusDialog
+          assignment={statusAssignment}
+          onClose={() => setStatusAssignment(null)}
+          onSaved={(updated) => {
+            patchAssignment(updated);
+            setStatusAssignment(null);
+            const kind = updated.is_exam ? (th ? 'ข้อสอบ' : 'quiz') : th ? 'งาน' : 'assignment';
+            showToast(
+              updated.status_override === 'force_closed'
+                ? th ? `🔒 ปิดรับ${kind} “${updated.title}” แล้ว` : `🔒 Closed “${updated.title}”`
+                : updated.status_override === 'extended'
+                ? th ? `⏳ ขยายเวลาส่ง${kind} “${updated.title}” ถึง ${formatDateTime(updated.extended_until, language)} แล้ว` : `⏳ Extended “${updated.title}”`
+                : th ? `${kind} “${updated.title}” กลับไปรับงานตามกำหนดส่งแล้ว` : `“${updated.title}” is back on its deadline`
+            );
+          }}
+        />
+      )}
 
-  return (
-    <div
-      className={`bg-white dark:bg-slate-900 rounded-3xl border p-4 sm:p-5 flex flex-col gap-4 shadow-xs transition-colors ${
-        pending > 0 ? 'border-amber-300 dark:border-amber-800/70' : 'border-slate-200 dark:border-slate-800'
-      }`}
-    >
-      {/* Where it belongs, what it is, and whether it still takes work */}
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[11px]">
-            {classroom.name}
-          </span>
-          <span
-            className={`px-2 py-0.5 rounded-lg text-[11px] font-bold ${
-              assignment.is_exam
-                ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
-                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-            }`}
-          >
-            {assignment.is_exam ? (th ? 'ข้อสอบ' : 'Quiz') : th ? 'การบ้าน/ใบงาน' : 'Assignment'}
-          </span>
-          <span
-            className={`ml-auto px-2 py-0.5 rounded-full border text-[11px] font-bold inline-flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`}
-            title={status.note || undefined}
-          >
-            <StatusIcon className="w-3 h-3" />
-            {status.label}
-          </span>
+      {toast && (
+        <div className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
+          <Check className="w-4 h-4" />
+          <span>{toast}</span>
         </div>
-        <h3 className="text-base font-black text-slate-900 dark:text-white leading-snug line-clamp-2">{assignment.title}</h3>
-        {deadline && (
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
-            <Calendar className="w-3 h-3" />
-            {assignment.is_exam ? (th ? 'ปิดรับ' : 'Closes') : th ? 'กำหนดส่ง' : 'Due'} {deadline}
-          </p>
-        )}
-      </div>
-
-      {/* Grading state, in words */}
-      <div
-        className={`px-3 py-2.5 rounded-2xl flex items-center gap-2 text-xs font-bold ${
-          pending > 0
-            ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
-            : done
-            ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-            : 'bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400'
-        }`}
-      >
-        {pending > 0 ? <Clock className="w-4 h-4 shrink-0" /> : done ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <Inbox className="w-4 h-4 shrink-0" />}
-        <span>
-          {pending > 0
-            ? th ? `รอตรวจ ${pending} คน` : `${pending} waiting to be graded`
-            : done
-            ? th ? 'ตรวจครบทุกคนที่ส่งแล้ว' : 'Every submission is graded'
-            : th ? 'ยังไม่มีนักเรียนส่งงาน' : 'No one has handed in yet'}
-        </span>
-        {flagged > 0 && (
-          <span className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px]">
-            <ShieldAlert className="w-3 h-3" />
-            {th ? `สลับจอ ${flagged}` : `${flagged} flagged`}
-          </span>
-        )}
-      </div>
-
-      {/* Who handed in and who has been graded */}
-      <div className="space-y-2">
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ส่งแล้ว' : 'Handed in'}</span>
-            <span className="text-sm font-black text-slate-900 dark:text-white">
-              {handedIn}
-              <span className="text-[10px] font-semibold text-slate-400">/{totalStudents}</span>
-            </span>
-          </div>
-          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ยังไม่ส่ง' : 'Missing'}</span>
-            <span className={`text-sm font-black ${notSubmitted > 0 ? 'text-slate-900 dark:text-white' : 'text-slate-400'}`}>{notSubmitted}</span>
-          </div>
-          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ตรวจแล้ว' : 'Graded'}</span>
-            <span className={`text-sm font-black ${done ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'}`}>
-              {graded}
-              <span className="text-[10px] font-semibold text-slate-400">/{handedIn}</span>
-            </span>
-          </div>
-        </div>
-        <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{th ? 'ตรวจแล้ว' : 'Graded'}</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" />{th ? 'รอตรวจ' : 'To grade'}</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700" />{th ? 'ยังไม่ส่ง' : 'Missing'}</span>
-        </div>
-      </div>
-
-      <Link
-        href={`/assignments/${assignment.id}/grading?from=grading&courseId=${encodeURIComponent(courseId)}`}
-        className={`mt-auto w-full py-3 rounded-2xl font-black text-xs flex items-center justify-center gap-2 transition-colors ${
-          pending > 0
-            ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-md shadow-amber-500/20'
-            : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
-        }`}
-      >
-        <span>
-          {pending > 0
-            ? th ? `ตรวจงาน (${pending} คน)` : `Grade (${pending})`
-            : th ? 'ดูรายชื่อ & คะแนน' : 'View roster & scores'}
-        </span>
-        <ChevronRight className="w-4 h-4" />
-      </Link>
+      )}
     </div>
   );
 }
