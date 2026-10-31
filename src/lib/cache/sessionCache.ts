@@ -84,6 +84,17 @@ export function writeCache<T>(key: string, owner: string, value: T, startedAt = 
   entries.set(key, { owner, value, version: startedAt, fetchedAt: Date.now() });
 }
 
+/**
+ * Replaces a cached value with what the page now shows (after a refetch of one
+ * part, or a local edit) without changing how fresh the entry is, so the next
+ * visit starts from the latest data but still refetches if it was stale.
+ */
+export function patchCache<T>(key: string, owner: string, value: T) {
+  const entry = entries.get(key);
+  if (!entry || entry.owner !== owner) return;
+  entries.set(key, { ...entry, value });
+}
+
 /** The current version, to pass back to writeCache for a fetch starting now. */
 export function cacheVersion() {
   return version;

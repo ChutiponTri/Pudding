@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
-import { cacheVersion, fetchCached, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
+import { fetchCached, patchCache, readCache, watchClassrooms } from '@/lib/cache/sessionCache';
 import {
   Assignment,
   Classroom,
@@ -48,8 +48,7 @@ import {
   Rocket,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
-import { isSuspiciousActivity } from '@/lib/utils/integrity';
-import { isGraded, isHandedIn, needsGrading } from '@/lib/utils/gradingStatus';
+import { isGraded, isHandedIn, isIntegrityFlagged, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
  * Back button that returns to wherever the teacher came from. Links into this
@@ -207,14 +206,13 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
    */
   const refreshSubmissions = async () => {
     const seq = ++submissionsSeqRef.current;
-    const startedAt = cacheVersion();
     try {
       const subs = await dataService.getSubmissions(assignmentId);
       if (seq !== submissionsSeqRef.current) return;
       setSubmissions(subs);
       const teacherId = clerkUser?.id;
       const cached = teacherId ? readCache<{ subs: Submission[] }>(cacheKey, teacherId) : null;
-      if (teacherId && cached) writeCache(cacheKey, teacherId, { ...cached.value, subs }, startedAt);
+      if (teacherId && cached) patchCache(cacheKey, teacherId, { ...cached.value, subs });
     } catch (err) {
       console.warn('Refreshing submissions failed:', err);
     }
@@ -463,10 +461,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     const rows: RosterRow[] = (classroom?.students || []).map((std) => {
       const sub = submissions.find(
         (s) =>
-          !used.has(s.id) &&
-          (s.student_id === std.id ||
-            (std.line_uid && s.student_id === std.line_uid) ||
-            (std.student_id && (s.student_id === std.student_id || s.student?.student_id === std.student_id)))
+          !used.has(s.id) && isStudentSubmission(s, std)
       );
       if (sub) used.add(sub.id);
       return { key: `std-${std.id}`, student: sub?.student || std, submission: sub || null, rosterId: std.id };
@@ -497,8 +492,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   // Leaving the screen is tracked during quizzes only, so homework never counts as suspicious.
   const tracksAway = !!assignment?.is_exam;
-  const isSuspicious = (sub: Submission) =>
-    tracksAway && (sub.is_flagged_suspicious || isSuspiciousActivity(sub.tab_switch_count || 0, sub.total_time_away_seconds || 0));
+  const isSuspicious = (sub: Submission) => isIntegrityFlagged(sub, tracksAway);
 
   const filteredRows = rosterRows.filter(({ student, submission: sub }) => {
     const studentName = `${student?.first_name || ''} ${student?.last_name || ''}`;
@@ -1076,7 +1070,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
                             </span>
                           )}
-                          {tracksAway && sub.is_flagged_suspicious && (
+                          {isSuspicious(sub) && (
                             <button
                               type="button"
                               onClick={() => handleOpenAudit(sub)}
@@ -1232,7 +1226,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
                             </span>
                           )}
-                          {tracksAway && sub.is_flagged_suspicious && (
+                          {isSuspicious(sub) && (
                             <button
                               type="button"
                               onClick={() => handleOpenAudit(sub)}

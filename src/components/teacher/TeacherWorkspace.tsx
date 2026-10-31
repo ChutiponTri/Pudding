@@ -69,8 +69,8 @@ import {
   Loader2,
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
-import { isHandedIn, needsGrading } from '@/lib/utils/gradingStatus';
-import { isSuspiciousActivity } from '@/lib/utils/integrity';
+import { gradingCounts, isIntegrityFlagged, needsGrading } from '@/lib/utils/gradingStatus';
+import { GradingBar } from '@/components/AssignmentProgressCard';
 import { InstitutionSearchSelect } from '@/components/InstitutionSearchSelect';
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
@@ -573,16 +573,15 @@ export function TeacherWorkspace({
 
   // Per assignment: handed in, and how many of those still wait for a grade.
   const gradingByAssignment = useMemo(() => {
-    const map = new Map<string, { handedIn: number; pending: number }>();
-    for (const s of filteredSubmissions) {
-      if (!isHandedIn(s)) continue;
-      const entry = map.get(s.assignment_id) || { handedIn: 0, pending: 0 };
-      entry.handedIn += 1;
-      if (needsGrading(s)) entry.pending += 1;
-      map.set(s.assignment_id, entry);
-    }
-    return map;
-  }, [filteredSubmissions]);
+    const bySubmission = new Map<string, Submission[]>();
+    for (const s of filteredSubmissions) bySubmission.set(s.assignment_id, [...(bySubmission.get(s.assignment_id) || []), s]);
+    const rosterSize = new Map(classrooms.map((c) => [c.id, c.students?.length || c.student_count || 0]));
+    return new Map(
+      assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSize.get(a.classroom_id) || 0, a.is_exam)])
+    );
+  }, [filteredSubmissions, assignments, classrooms]);
+  // Course cards: the "graded" group is folded while work is left, unless opened.
+  const [openGradedCourses, setOpenGradedCourses] = useState<Record<string, boolean>>({});
   const assignmentsToGradeCount = useMemo(
     () => [...gradingByAssignment.values()].filter((g) => g.pending > 0).length,
     [gradingByAssignment]
@@ -591,11 +590,7 @@ export function TeacherWorkspace({
   // Leaving the screen is tracked during quizzes only.
   const suspiciousAlertCount = useMemo(() => {
     const examIds = new Set(filteredAssignments.filter((a) => a.is_exam).map((a) => a.id));
-    return filteredSubmissions.filter(
-      (s) =>
-        examIds.has(s.assignment_id) &&
-        (s.is_flagged_suspicious || isSuspiciousActivity(s.tab_switch_count || 0, s.total_time_away_seconds || 0))
-    ).length;
+    return filteredSubmissions.filter((s) => isIntegrityFlagged(s, examIds.has(s.assignment_id))).length;
   }, [filteredSubmissions, filteredAssignments]);
 
   // Course Creation & Deletion Handlers
@@ -1772,73 +1767,103 @@ export function TeacherWorkspace({
                 </div>
               </div>
 
-              {/* Course-level Assignments preview */}
-              {course.assignments.length > 0 && (
-                <div className="pt-2">
-                  <div className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1.5">
-                    <FileCheck className="w-3.5 h-3.5 text-blue-500" />
-                    <span>{language === 'th' ? 'การบ้านและข้อสอบประจำวิชา' : 'Course Assignments & Assessments'}</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {course.assignments.map((asg) => (
-                      <div
-                        key={asg.id}
-                        className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shadow-xs"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                                asg.is_exam
-                                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
-                                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-                              }`}
-                            >
-                              {asg.is_exam ? t('assignment_creator.mode_exam') : t('assignment_creator.mode_assignment')}
-                            </span>
-                            <span className="text-[11px] text-slate-400 truncate">
-                              {asg.classroom_name}
-                            </span>
-                          </div>
-                          <h5 className="font-bold text-xs text-slate-900 dark:text-white truncate">
-                            {asg.title}
-                          </h5>
-                        </div>
-
-                        {(() => {
-                          const grading = gradingByAssignment.get(asg.id);
-                          const pending = grading?.pending || 0;
-                          return (
-                            <div className="flex items-center gap-2 shrink-0">
-                              {pending > 0 ? (
-                                <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-bold whitespace-nowrap">
-                                  {language === 'th' ? `รอตรวจ ${pending}` : `${pending} to grade`}
-                                </span>
-                              ) : grading ? (
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold whitespace-nowrap inline-flex items-center gap-1">
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  {language === 'th' ? 'ตรวจครบ' : 'Graded'}
-                                </span>
-                              ) : null}
-                              <Link
-                                href={`/assignments/${asg.id}/grading?from=dashboard`}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1 cursor-pointer ${
-                                  pending > 0
-                                    ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
-                                    : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
-                                }`}
-                              >
-                                <span>{pending > 0 ? t('dashboard.pending_section.grade_now') : language === 'th' ? 'ดูคะแนน' : 'View'}</span>
-                                <ArrowRight className="w-3 h-3" />
-                              </Link>
-                            </div>
-                          );
-                        })()}
+              {/* Course work, split by whether the teacher still has grading to do */}
+              {course.assignments.length > 0 && (() => {
+                const countsOf = (asg: Assignment) => gradingByAssignment.get(asg.id) || gradingCounts([], 0, asg.is_exam);
+                const toGrade = course.assignments.filter((asg) => countsOf(asg).pending > 0);
+                const graded = course.assignments.filter((asg) => countsOf(asg).pending === 0);
+                const pendingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).pending, 0);
+                const showGraded = openGradedCourses[course.id] ?? toGrade.length === 0;
+                const row = (asg: Assignment) => {
+                  const c = countsOf(asg);
+                  const pending = c.pending > 0;
+                  return (
+                    <Link
+                      key={asg.id}
+                      href={`/assignments/${asg.id}/grading?from=dashboard`}
+                      className={`group p-3 rounded-2xl bg-white dark:bg-slate-900 border flex flex-col gap-2 shadow-xs transition-colors ${
+                        pending ? 'border-amber-300 dark:border-amber-800/70 hover:border-amber-500' : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
+                            asg.is_exam
+                              ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                          }`}
+                        >
+                          {asg.is_exam ? t('assignment_creator.mode_exam') : t('assignment_creator.mode_assignment')}
+                        </span>
+                        <span className="text-[11px] text-slate-400 truncate">{asg.classroom_name}</span>
+                        {c.flagged > 0 && (
+                          <span className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
+                            <ShieldAlert className="w-3 h-3" />
+                            {c.flagged}
+                          </span>
+                        )}
                       </div>
-                    ))}
+                      <h5 className="font-bold text-xs text-slate-900 dark:text-white truncate">{asg.title}</h5>
+                      <GradingBar graded={c.graded} pending={c.pending} notSubmitted={c.notSubmitted} />
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-slate-500 dark:text-slate-400">
+                          {language === 'th' ? `ส่งแล้ว ${c.handedIn}/${c.totalStudents} · ตรวจแล้ว ${c.graded}` : `${c.handedIn}/${c.totalStudents} in · ${c.graded} graded`}
+                        </span>
+                        <span
+                          className={`shrink-0 inline-flex items-center gap-0.5 font-bold ${
+                            pending ? 'text-amber-700 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-800 dark:group-hover:text-slate-200'
+                          }`}
+                        >
+                          {pending
+                            ? language === 'th' ? `ตรวจ ${c.pending} คน` : `Grade ${c.pending}`
+                            : language === 'th' ? 'ดูคะแนน' : 'View'}
+                          <ArrowRight className="w-3 h-3" />
+                        </span>
+                      </div>
+                    </Link>
+                  );
+                };
+                return (
+                  <div className="pt-2 space-y-3">
+                    {/* Still to grade */}
+                    <div className={`rounded-2xl p-3 space-y-2.5 ${toGrade.length ? 'bg-amber-50/70 dark:bg-amber-950/20 ring-1 ring-amber-200 dark:ring-amber-900/50' : 'bg-emerald-50/70 dark:bg-emerald-950/20 ring-1 ring-emerald-200 dark:ring-emerald-900/50'}`}>
+                      <div className="flex items-center gap-1.5 text-xs font-bold">
+                        {toGrade.length ? (
+                          <>
+                            <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                            <span className="text-amber-800 dark:text-amber-300">
+                              {language === 'th' ? `ต้องตรวจ ${toGrade.length} งาน · ${pendingTotal} ชิ้น` : `To grade: ${toGrade.length} tasks · ${pendingTotal} submissions`}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                            <span className="text-emerald-700 dark:text-emerald-300">{language === 'th' ? 'ตรวจครบทุกงานแล้ว' : 'Everything is graded'}</span>
+                          </>
+                        )}
+                      </div>
+                      {toGrade.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{toGrade.map(row)}</div>}
+                    </div>
+
+                    {/* Already graded (or nothing handed in yet) */}
+                    {graded.length > 0 && (
+                      <div className="space-y-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setOpenGradedCourses((prev) => ({ ...prev, [course.id]: !showGraded }))}
+                          aria-expanded={showGraded}
+                          className="w-full flex items-center gap-1.5 px-1 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                          <span>{language === 'th' ? `ตรวจครบแล้ว (${graded.length})` : `Graded (${graded.length})`}</span>
+                          <ChevronDown className={`w-3.5 h-3.5 ml-auto transition-transform ${showGraded ? 'rotate-180' : ''}`} />
+                        </button>
+                        {showGraded && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{graded.map(row)}</div>}
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
             ))
           )}

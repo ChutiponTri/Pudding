@@ -3,6 +3,7 @@
 import React from 'react';
 import { AlertTriangle, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { isSuspiciousActivity } from '@/lib/utils/integrity';
 
 interface AntiCheatingBadgeProps {
   isFlagged: boolean;
@@ -21,8 +22,9 @@ export const AntiCheatingBadge: React.FC<AntiCheatingBadgeProps> = ({
 }) => {
   const { t, language } = useLanguage();
 
-  const isSevere = isFlagged || tabSwitchCount >= 4 || totalTimeAwaySeconds >= 60;
-  const isModerate = !isSevere && (tabSwitchCount > 0 || totalTimeAwaySeconds > 10);
+  // Same limits as every count (isIntegrityFlagged): flagged means "suspicious"; any lesser activity is a watch.
+  const isSevere = isFlagged || isSuspiciousActivity(tabSwitchCount || 0, totalTimeAwaySeconds || 0);
+  const isModerate = !isSevere && (tabSwitchCount > 0 || totalTimeAwaySeconds > 0);
 
   if (!isSevere && !isModerate) {
     return (

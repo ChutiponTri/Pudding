@@ -5,13 +5,13 @@ import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { dataService } from '@/lib/supabase/dataService';
-import { cacheVersion, cachedCall, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
+import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { AssignmentProgressCard } from '@/components/AssignmentProgressCard';
-import { gradingCounts, type GradingCounts } from '@/lib/utils/gradingStatus';
+import { gradingCounts, isGraded, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { roomLabel } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
@@ -109,16 +109,7 @@ const sameInstitution = (a?: string, b?: string) =>
 
 /** Submissions may reference the student by users.id, LINE uid or school number. */
 const findStudentSubmission = (submissions: Submission[], assignmentId: string, student: User) =>
-  submissions.find(
-    (s) =>
-      s.assignment_id === assignmentId &&
-      ((s.student_id && s.student_id === student.id) ||
-        (student.line_uid && s.student_id === student.line_uid) ||
-        (student.student_id && s.student_id === student.student_id) ||
-        (s.student?.student_id && student.student_id && s.student.student_id === student.student_id) ||
-        (s.student?.id && student.id && s.student.id === student.id) ||
-        (s.student?.line_uid && student.line_uid && s.student.line_uid === student.line_uid))
-  );
+  submissions.find((s) => s.assignment_id === assignmentId && isStudentSubmission(s, student));
 
 /** A record replaces any earlier one for the same student in the same session. */
 const upsertRecord = (records: AttendanceRecord[], record: AttendanceRecord) => [
@@ -149,15 +140,14 @@ type Post = {
   metadata?: { assignmentId?: string; groupName?: string; publishAt?: string; sessionId?: string };
 };
 
-type ClassworkFilter = 'all' | 'pending' | 'done' | 'waiting';
+type ClassworkFilter = 'all' | 'pending' | 'done';
 const CLASSWORK_FILTERS: Array<{ id: ClassworkFilter; label: string; active: string }> = [
   { id: 'all', label: 'ทั้งหมด', active: 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' },
   { id: 'pending', label: 'ต้องตรวจ', active: 'bg-amber-500 text-slate-950' },
   { id: 'done', label: 'ตรวจครบแล้ว', active: 'bg-emerald-600 text-white' },
-  { id: 'waiting', label: 'ยังไม่มีผู้ส่ง', active: 'bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900' },
 ];
-const classworkFilterOf = (c: GradingCounts): Exclude<ClassworkFilter, 'all'> =>
-  c.pending > 0 ? 'pending' : c.handedIn > 0 ? 'done' : 'waiting';
+// Same split as the grading hub and the dashboard course cards.
+const classworkFilterOf = (c: GradingCounts): Exclude<ClassworkFilter, 'all'> => (c.pending > 0 ? 'pending' : 'done');
 
 type AttendanceResult = { sessions?: AttendanceSession[]; session?: AttendanceSession | null; records?: AttendanceRecord[] };
 
@@ -557,6 +547,21 @@ export default function ClassroomWorkspacePage() {
     void loadWorkspace({ useCache: true });
   }, [user?.id, classroomId]);
 
+  // Keep the cached copy in step with what this page shows (check-ins, status
+  // switches, new submissions, edits), so coming back starts from the latest
+  // data instead of the first load. Freshness is unchanged: a stale copy still refetches.
+  useEffect(() => {
+    if (!user?.id || !classroom || classroom.id !== classroomId) return;
+    patchCache<WorkspaceSnapshot>(`classroomWorkspace:${classroomId}`, user.id, {
+      classroom,
+      assignments,
+      posts,
+      attendance: { sessions, records: allRecords, session: sessions.find((s) => s.id === selectedSessionId) || null },
+      submissions,
+      submissionsFetchedAt: submissionsFetchedAtRef.current,
+    });
+  }, [user?.id, classroomId, classroom, assignments, posts, sessions, allRecords, selectedSessionId, submissions]);
+
   // Fetch Grades when switching to Grades tab (unless they were just loaded)
   useEffect(() => {
     if (tab !== 'grades' || !assignments.length) return;
@@ -951,7 +956,7 @@ export default function ClassroomWorkspacePage() {
     };
   }, [classworkCounts]);
   const classworkFilterCounts = useMemo(() => {
-    const counts: Record<ClassworkFilter, number> = { all: classworkCounts.size, pending: 0, done: 0, waiting: 0 };
+    const counts: Record<ClassworkFilter, number> = { all: classworkCounts.size, pending: 0, done: 0 };
     classworkCounts.forEach((c) => counts[classworkFilterOf(c)]++);
     return counts;
   }, [classworkCounts]);
@@ -1246,7 +1251,7 @@ export default function ClassroomWorkspacePage() {
       ...(classroom.students || []).map((student) => {
         const scores = gradeColumns.map((item) => {
           const sub = findStudentSubmission(submissions, item.id, student);
-          return sub?.total_score != null ? sub.total_score : sub ? 'รอตรวจ' : '-';
+          return sub && isGraded(sub) ? sub.total_score ?? '-' : sub && needsGrading(sub) ? 'รอตรวจ' : '-';
         });
         const total = scores.reduce<number>((sum, score) => sum + (typeof score === 'number' ? score : 0), 0);
         return [`${student.first_name} ${student.last_name}`, student.student_id || '', ...scores, total];
@@ -2356,11 +2361,11 @@ export default function ClassroomWorkspacePage() {
                           const sub = findStudentSubmission(submissions, item.id, student);
                           return (
                             <td key={item.id} className="p-3 text-center font-bold">
-                              {sub?.total_score != null ? (
+                              {sub && isGraded(sub) ? (
                                 <span className="text-emerald-600 dark:text-emerald-400 font-black text-sm">
                                   {sub.total_score}
                                 </span>
-                              ) : sub ? (
+                              ) : sub && needsGrading(sub) ? (
                                 <span className="text-amber-500 text-[10px] bg-amber-50 dark:bg-amber-950 px-2 py-0.5 rounded-full font-bold">
                                   รอตรวจ
                                 </span>
@@ -3402,7 +3407,7 @@ function AttendancePanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-            <CalendarCheck className="w-5 h-5 text-emerald-500" />
+            <CalendarCheck className="w-5 h-5 text-amber-500" />
             <span>เช็คชื่อรายคาบ</span>
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -3418,7 +3423,7 @@ function AttendancePanel({
               title="ส่งออกการเช็คชื่อทุกคาบ (แถว = นักเรียน, คอลัมน์ = คาบเรียน)"
               className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              <Download className="w-3.5 h-3.5 text-slate-500" />
               <span>ส่งออก CSV ทุกคาบ</span>
             </button>
           )}
@@ -3426,7 +3431,7 @@ function AttendancePanel({
           <button
             type="button"
             onClick={() => setShowCreateForm((prev) => !prev)}
-            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>{showCreateForm ? 'ปิดแบบฟอร์ม' : 'เปิดคาบเช็คชื่อใหม่'}</span>
@@ -3436,10 +3441,10 @@ function AttendancePanel({
 
       {/* 3. Collapsible New Session Creation Form */}
       {showCreateForm && (
-        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-emerald-300 dark:border-emerald-800 p-5 shadow-md space-y-4 animate-in slide-in-from-top-2 duration-200">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-amber-300 dark:border-amber-800/70 p-5 shadow-md space-y-4 animate-in slide-in-from-top-2 duration-200">
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
             <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
-              <CalendarCheck className="w-4 h-4 text-emerald-600" />
+              <CalendarCheck className="w-4 h-4 text-amber-500" />
               <span>กำหนดรายละเอียดคาบเช็คชื่อใหม่</span>
             </h3>
             <button
@@ -3457,7 +3462,7 @@ function AttendancePanel({
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500"
                 placeholder="เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร"
               />
             </div>
@@ -3468,7 +3473,6 @@ function AttendancePanel({
                 onChange={setStartsAt}
                 presets="start"
                 allowEmpty
-                accent="emerald"
                 emptyHint="เริ่มทันทีเมื่อกดสร้างคาบ"
               />
             </div>
@@ -3510,7 +3514,7 @@ function AttendancePanel({
                 create();
                 setShowCreateForm(false);
               }}
-              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-md"
+              className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20"
             >
               <Plus className="w-4 h-4" />
               <span>เริ่มเปิดเช็คชื่อและส่งแจ้งเตือน LINE</span>
@@ -3520,16 +3524,19 @@ function AttendancePanel({
       )}
 
       {/* 4. Statistics Summary Bento Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
         {[
-          ['on_time', 'ตรงเวลา', counts['on_time'] || 0, 'text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60'],
-          ['late', 'มาสาย', counts['late'] || 0, 'text-amber-700 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60'],
-          ['absent', 'ขาด / ยังไม่เช็ค', counts['absent'] || 0, 'text-rose-700 bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60'],
-          ['excused', 'ลา', counts['excused'] || 0, 'text-blue-700 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800/60'],
-        ].map(([key, label, count, colorCls]) => (
-          <div key={key} className={`p-4 rounded-3xl border ${colorCls} shadow-xs`}>
-            <p className="text-3xl font-black">{count}</p>
-            <p className="text-xs font-bold mt-1 opacity-90">{label}</p>
+          ['on_time', 'ตรงเวลา', counts['on_time'] || 0, 'bg-emerald-500', 'text-emerald-600 dark:text-emerald-400'],
+          ['late', 'มาสาย', counts['late'] || 0, 'bg-amber-400', 'text-amber-600 dark:text-amber-400'],
+          ['absent', 'ขาด / ยังไม่เช็ค', counts['absent'] || 0, 'bg-rose-500', 'text-rose-600 dark:text-rose-400'],
+          ['excused', 'ลา', counts['excused'] || 0, 'bg-sky-500', 'text-sky-600 dark:text-sky-400'],
+        ].map(([key, label, count, dotCls, numberCls]) => (
+          <div key={key} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${dotCls}`} />
+              {label}
+            </span>
+            <p className={`text-2xl font-black mt-0.5 ${Number(count) > 0 ? numberCls : 'text-slate-400'}`}>{count}</p>
           </div>
         ))}
       </div>
@@ -3553,9 +3560,9 @@ function AttendancePanel({
               key={item.id}
               className={`rounded-3xl border transition-all overflow-hidden bg-white dark:bg-slate-900 ${
                 isOpen
-                  ? 'border-emerald-400 dark:border-emerald-700 shadow-lg shadow-emerald-500/15 ring-1 ring-emerald-400/40'
+                  ? 'border-amber-300 dark:border-amber-800/70 shadow-md shadow-amber-500/10'
                   : isExpanded
-                    ? 'border-emerald-400 dark:border-emerald-700 shadow-md'
+                    ? 'border-slate-300 dark:border-slate-700 shadow-md'
                     : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
               }`}
             >
@@ -3565,7 +3572,7 @@ function AttendancePanel({
                 onClick={() => toggleSession(item.id)}
                 className={`p-4 flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none ${
                   isOpen
-                    ? 'bg-linear-to-r from-emerald-500/15 via-emerald-500/5 to-teal-500/15 border-l-4 border-emerald-500'
+                    ? 'bg-amber-50/70 dark:bg-amber-950/20 border-l-4 border-amber-500'
                     : ''
                 }`}
               >
@@ -3583,13 +3590,13 @@ function AttendancePanel({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       {isOpen && (
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-black text-[10px] shadow-xs">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px] shadow-xs">
                           กำลังเปิดรับเช็คชื่อ
                         </span>
                       )}
                       <h4 className="text-sm font-black text-slate-900 dark:text-white">{item.title}</h4>
                     </div>
-                    <p className={`text-[11px] mt-0.5 ${isOpen ? 'text-emerald-800/80 dark:text-emerald-300/80' : 'text-slate-400'}`}>
+                    <p className={`text-[11px] mt-0.5 ${isOpen ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400'}`}>
                       {isOpen
                         ? `เริ่มเมื่อ ${new Date(item.starts_at).toLocaleTimeString('th-TH')} • ตรงเวลาภายใน ${item.on_time_until_minutes} นาที • สายได้ถึง ${item.late_until_minutes} นาที`
                         : `${new Date(item.starts_at).toLocaleString('th-TH')} • ตรงเวลา ${item.on_time_until_minutes}m / สาย ${item.late_until_minutes}m`}
@@ -3603,7 +3610,7 @@ function AttendancePanel({
                       <button
                         type="button"
                         onClick={() => action(item.id, 'extend')}
-                        className="px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-50 cursor-pointer shadow-xs"
+                        className="px-3 py-1.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 text-amber-800 dark:text-amber-300 text-xs font-bold hover:bg-amber-50 dark:hover:bg-amber-950/40 cursor-pointer shadow-xs"
                       >
                         +10 นาที
                       </button>
@@ -3622,7 +3629,7 @@ function AttendancePanel({
                     onClick={() => toggleSession(item.id)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer ${
                       isOpen
-                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                        ? 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-200 text-white dark:text-slate-900 shadow-xs'
                         : 'border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
                     }`}
                   >
@@ -3693,10 +3700,10 @@ function AttendancePanel({
                       {(
                         [
                           ['all', 'ทั้งหมด'],
-                          ['on_time', 'ตรงเวลา 🟢'],
-                          ['late', 'มาสาย 🟡'],
-                          ['absent', 'ขาด 🔴'],
-                          ['excused', 'ลา 🔵'],
+                          ['on_time', 'ตรงเวลา'],
+                          ['late', 'มาสาย'],
+                          ['absent', 'ขาด'],
+                          ['excused', 'ลา'],
                         ] as const
                       ).map(([key, label]) => (
                         <button
@@ -3765,7 +3772,7 @@ function AttendancePanel({
                               [
                                 ['on_time', 'ตรงเวลา', 'bg-emerald-100 text-emerald-800 border-emerald-300'],
                                 ['late', 'มาสาย', 'bg-amber-100 text-amber-800 border-amber-300'],
-                                ['excused', 'ลา', 'bg-blue-100 text-blue-800 border-blue-300'],
+                                ['excused', 'ลา', 'bg-sky-100 text-sky-800 border-sky-300'],
                                 ['absent', 'ขาด', 'bg-rose-100 text-rose-800 border-rose-300'],
                               ] as const
                             ).map(([stKey, stLabel, activeCls]) => {

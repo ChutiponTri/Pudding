@@ -9,12 +9,11 @@ import { Assignment, Classroom, Course } from '@/types/database';
 import { dataService } from '@/lib/supabase/dataService';
 import { AssignmentProgressCard, GradingBar } from '@/components/AssignmentProgressCard';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
-import { BookOpen, FileCheck, ChevronRight, ArrowLeft, ShieldAlert, Clock, CheckCircle2, Check, Inbox, ListChecks, School } from 'lucide-react';
+import { BookOpen, FileCheck, ChevronRight, ArrowLeft, ShieldAlert, Clock, CheckCircle2, Check, School } from 'lucide-react';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { gradingCounts, type GradingCounts } from '@/lib/utils/gradingStatus';
 
-type TaskTab = 'pending' | 'done' | 'waiting';
 
 type TaskItem = GradingCounts & { classroom: Classroom; assignment: Assignment };
 
@@ -44,7 +43,6 @@ function GradingHubContent() {
   // This page only picks the work to grade (course -> section/assignment).
   // Grading itself lives on /assignments/[id]/grading.
   const selectedCourseId = searchParams.get('courseId');
-  const tabParam = searchParams.get('tab') as TaskTab | null;
   const classroomFilter = searchParams.get('classroomId');
 
   // Old links pointed at ?assignmentId=…; send them to the grading page.
@@ -101,14 +99,12 @@ function GradingHubContent() {
   const submissions = useMemo(() => data?.submissions || [], [data]);
 
   // Keep the view in the URL so "back" from the grading page returns to it.
-  const setView = (next: { courseId?: string | null; tab?: TaskTab | null; classroomId?: string | null }) => {
+  const setView = (next: { courseId?: string | null; classroomId?: string | null }) => {
     const params = new URLSearchParams();
     const courseId = next.courseId !== undefined ? next.courseId : selectedCourseId;
     if (courseId) {
       params.set('courseId', courseId);
-      const tab = next.tab !== undefined ? next.tab : tabParam;
       const cls = next.classroomId !== undefined ? next.classroomId : classroomFilter;
-      if (tab) params.set('tab', tab);
       if (cls) params.set('classroomId', cls);
     }
     const query = params.toString();
@@ -177,12 +173,9 @@ function GradingHubContent() {
   }, [courseTasks]);
 
   const visibleTasks = classroomFilter ? courseTasks.filter((item) => item.classroom.id === classroomFilter) : courseTasks;
-  const groups: Record<TaskTab, TaskItem[]> = {
-    pending: visibleTasks.filter((i) => i.pending > 0),
-    done: visibleTasks.filter((i) => i.pending === 0 && i.handedIn > 0),
-    waiting: visibleTasks.filter((i) => i.handedIn === 0),
-  };
-  const activeTab: TaskTab = tabParam && groups[tabParam] ? tabParam : groups.pending.length > 0 || !groups.done.length ? 'pending' : 'done';
+  // Same split as the dashboard course cards: work left to grade, then everything else.
+  const toGradeTasks = visibleTasks.filter((i) => i.pending > 0);
+  const gradedTasks = visibleTasks.filter((i) => i.pending === 0);
   const currentHref = `/grading${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
   const coursePending = courseTasks.reduce((sum, i) => sum + i.pending, 0);
   const courseHandedIn = courseTasks.reduce((sum, i) => sum + i.handedIn, 0);
@@ -197,29 +190,23 @@ function GradingHubContent() {
     );
   }
 
-  const tabs: Array<{ id: TaskTab; label: string; icon: React.ElementType; active: string; badge: string }> = [
-    {
-      id: 'pending',
-      label: th ? 'ต้องตรวจ' : 'To grade',
-      icon: Clock,
-      active: 'bg-amber-500 text-slate-950',
-      badge: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-    },
-    {
-      id: 'done',
-      label: th ? 'ตรวจครบแล้ว' : 'Graded',
-      icon: CheckCircle2,
-      active: 'bg-emerald-600 text-white',
-      badge: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-    },
-    {
-      id: 'waiting',
-      label: th ? 'ยังไม่มีผู้ส่ง' : 'No submissions',
-      icon: Inbox,
-      active: 'bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900',
-      badge: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-    },
-  ];
+  const renderTask = (item: TaskItem) => {
+    const { classroom, assignment, ...counts } = item;
+    const win = getAssignmentWindow(assignment);
+    return (
+      <AssignmentProgressCard
+        key={`${classroom.id}-${assignment.id}`}
+        assignment={assignment}
+        counts={counts}
+        classroomName={classroom.name}
+        gradingHref={`/assignments/${assignment.id}/grading?from=grading&courseId=${encodeURIComponent(selectedCourse?.id || '')}`}
+        editHref={`/assignments/new?edit=${assignment.id}&classroomId=${classroom.id}&from=grading&returnTo=${encodeURIComponent(currentHref)}`}
+        onStatusClick={() => setStatusAssignment(assignment)}
+        onDelete={() => handleDeleteAssignment(assignment)}
+        onPublishNow={win.isScheduled || win.isDraft ? () => handlePublishNow(assignment) : undefined}
+      />
+    );
+  };
 
   return (
     <div className="pb-20 space-y-5 sm:space-y-6">
@@ -294,7 +281,7 @@ function GradingHubContent() {
                   <button
                     type="button"
                     key={course.id}
-                    onClick={() => setView({ courseId: course.id, tab: null, classroomId: null })}
+                    onClick={() => setView({ courseId: course.id, classroomId: null })}
                     className={`group text-left bg-white dark:bg-slate-900 rounded-3xl border p-4 sm:p-5 flex flex-col gap-4 shadow-xs hover:shadow-lg transition-all cursor-pointer ${
                       done
                         ? 'border-slate-200 dark:border-slate-800 hover:border-emerald-400 dark:hover:border-emerald-600'
@@ -423,37 +410,15 @@ function GradingHubContent() {
               <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'งานที่ตรวจครบ' : 'Tasks done'}</span>
                 <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white">
-                  {courseTasks.filter((i) => i.pending === 0 && i.handedIn > 0).length}
+                  {courseTasks.filter((i) => i.pending === 0).length}
                   <span className="text-[11px] font-semibold text-slate-400 ml-1">/ {courseTasks.length}</span>
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Tabs + classroom filter */}
+          {/* Classroom filter */}
           <div className="space-y-3">
-            <div className="flex gap-1.5 p-1 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs overflow-x-auto">
-              {tabs.map(({ id, label, icon: Icon, active, badge }) => {
-                const selected = activeTab === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setView({ tab: id })}
-                    className={`flex-1 min-w-max px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                      selected ? active : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span>{label}</span>
-                    <span className={`px-1.5 min-w-5 rounded-full text-[10px] font-black ${selected ? 'bg-black/10 dark:bg-white/20' : badge}`}>
-                      {groups[id].length}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
             {courseSections.length > 1 && (
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
                 <School className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -492,39 +457,36 @@ function GradingHubContent() {
                 <span>+ {t('dashboard.quick_actions.create_assignment')}</span>
               </Link>
             </div>
-          ) : groups[activeTab].length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 p-10 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 text-center space-y-2">
-              {activeTab === 'pending' ? (
-                <>
-                  <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
-                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300">{th ? 'ตรวจครบทุกงานแล้ว 🎉' : 'Nothing left to grade 🎉'}</p>
-                </>
-              ) : (
-                <>
-                  <ListChecks className="w-10 h-10 text-slate-400 mx-auto" />
-                  <p className="text-sm font-bold text-slate-500 dark:text-slate-400">{t('common.no_data')}</p>
-                </>
-              )}
-            </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-              {groups[activeTab].map((item) => {
-                const { classroom, assignment, ...counts } = item;
-                const win = getAssignmentWindow(assignment);
-                return (
-                  <AssignmentProgressCard
-                    key={`${classroom.id}-${assignment.id}`}
-                    assignment={assignment}
-                    counts={counts}
-                    classroomName={classroom.name}
-                    gradingHref={`/assignments/${assignment.id}/grading?from=grading&courseId=${encodeURIComponent(selectedCourse.id)}`}
-                    editHref={`/assignments/new?edit=${assignment.id}&classroomId=${classroom.id}&from=grading&returnTo=${encodeURIComponent(currentHref)}`}
-                    onStatusClick={() => setStatusAssignment(assignment)}
-                    onDelete={() => handleDeleteAssignment(assignment)}
-                    onPublishNow={win.isScheduled || win.isDraft ? () => handlePublishNow(assignment) : undefined}
-                  />
-                );
-              })}
+            <div className="space-y-6">
+              {/* ต้องตรวจ */}
+              <section className="space-y-3">
+                <h2 className="px-1 flex items-center gap-2 text-sm font-black text-amber-700 dark:text-amber-400">
+                  <Clock className="w-4 h-4" />
+                  <span>{th ? 'ต้องตรวจ' : 'To grade'}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px]">{toGradeTasks.length}</span>
+                </h2>
+                {toGradeTasks.length === 0 ? (
+                  <div className="p-6 rounded-3xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-center">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+                    <p className="mt-2 text-sm font-bold text-emerald-700 dark:text-emerald-300">{th ? 'ตรวจครบทุกงานแล้ว 🎉' : 'Nothing left to grade 🎉'}</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">{toGradeTasks.map(renderTask)}</div>
+                )}
+              </section>
+
+              {/* ตรวจครบแล้ว */}
+              {gradedTasks.length > 0 && (
+                <section className="space-y-3">
+                  <h2 className="px-1 flex items-center gap-2 text-sm font-black text-emerald-700 dark:text-emerald-400">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{th ? 'ตรวจครบแล้ว' : 'Graded'}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[11px]">{gradedTasks.length}</span>
+                  </h2>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">{gradedTasks.map(renderTask)}</div>
+                </section>
+              )}
             </div>
           )}
         </div>

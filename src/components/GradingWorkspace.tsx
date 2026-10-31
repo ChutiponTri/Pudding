@@ -9,6 +9,7 @@ import { useSidebar } from '@/components/SidebarContext';
 import { isImageUrl, isPdfUrl as isPdf } from '@/lib/utils/referenceWork';
 import { isObjectiveAnswerCorrect, isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade';
 import { TRUE_FALSE_OPTIONS } from '@/lib/utils/trueFalse';
+import { isIntegrityFlagged } from '@/lib/utils/gradingStatus';
 import {
   AlertCircle,
   Award,
@@ -499,7 +500,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                 <span>Δ {agreement.avg} · {agreement.high ? t('grading.workspace.irr_agreement_high') : t('grading.workspace.irr_agreement_moderate')}</span>
               </div>
             )}
-            {tracksAway && submission.is_flagged_suspicious && (
+            {isIntegrityFlagged(submission, tracksAway) && (
               <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 space-y-0.5">
                 <span className="font-bold flex items-center gap-1">
                   <AlertCircle className="w-3.5 h-3.5" />
