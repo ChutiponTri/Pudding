@@ -2,10 +2,25 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  BookOpen,
+  CalendarCheck,
+  ClipboardList,
+  FileText,
+  Inbox,
+  MessageCircleOff,
+  Smartphone,
+  Table2,
+  UserCheck,
+  Users,
+} from 'lucide-react';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { ADMIN_DATASETS, ADMIN_TABLES, getAdmin, loadDataset } from '@/lib/server/admin';
 import { AdminStorage } from '@/components/AdminStorage';
-import { AdminHeader, AdminMain } from '@/components/AdminUi';
+import { AdminDatasetBuilder } from '@/components/AdminDatasetBuilder';
+import { AdminHeader, AdminMain, AdminPage, AdminSectionTitle } from '@/components/AdminUi';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Pudding Admin', robots: { index: false, follow: false } };
@@ -17,12 +32,12 @@ const exportHref = (name: string, format: string, anonymize = true) =>
 
 function ExportLinks({ name, anonymize = true }: { name: string; anonymize?: boolean }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-1">
       {FORMATS.map((format) => (
         <a
           key={format}
           href={exportHref(name, format, anonymize)}
-          className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] font-bold uppercase hover:bg-slate-100 dark:hover:bg-slate-800"
+          className="px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300 hover:border-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300"
         >
           {format}
         </a>
@@ -31,11 +46,35 @@ function ExportLinks({ name, anonymize = true }: { name: string; anonymize?: boo
   );
 }
 
-function StatCard({ href, className, children }: { href?: string; className: string; children: ReactNode }) {
-  return href ? <Link href={href} className={className}>{children}</Link> : <div className={className}>{children}</div>;
+type Tone = 'amber' | 'indigo' | 'emerald' | 'sky' | 'violet' | 'teal' | 'orange' | 'rose' | 'cyan';
+const TONES: Record<Tone, { card: string; icon: string }> = {
+  amber: { card: 'from-amber-50 to-white border-amber-200 dark:from-amber-950/40 dark:to-slate-900 dark:border-amber-900/60', icon: 'bg-amber-500 text-white' },
+  indigo: { card: 'from-indigo-50 to-white border-indigo-200 dark:from-indigo-950/40 dark:to-slate-900 dark:border-indigo-900/60', icon: 'bg-indigo-500 text-white' },
+  emerald: { card: 'from-emerald-50 to-white border-emerald-200 dark:from-emerald-950/40 dark:to-slate-900 dark:border-emerald-900/60', icon: 'bg-emerald-500 text-white' },
+  sky: { card: 'from-sky-50 to-white border-sky-200 dark:from-sky-950/40 dark:to-slate-900 dark:border-sky-900/60', icon: 'bg-sky-500 text-white' },
+  violet: { card: 'from-violet-50 to-white border-violet-200 dark:from-violet-950/40 dark:to-slate-900 dark:border-violet-900/60', icon: 'bg-violet-500 text-white' },
+  teal: { card: 'from-teal-50 to-white border-teal-200 dark:from-teal-950/40 dark:to-slate-900 dark:border-teal-900/60', icon: 'bg-teal-500 text-white' },
+  orange: { card: 'from-orange-50 to-white border-orange-200 dark:from-orange-950/40 dark:to-slate-900 dark:border-orange-900/60', icon: 'bg-orange-500 text-white' },
+  rose: { card: 'from-rose-50 to-white border-rose-200 dark:from-rose-950/40 dark:to-slate-900 dark:border-rose-900/60', icon: 'bg-rose-500 text-white' },
+  cyan: { card: 'from-cyan-50 to-white border-cyan-200 dark:from-cyan-950/40 dark:to-slate-900 dark:border-cyan-900/60', icon: 'bg-cyan-500 text-white' },
+};
+
+function StatCard({ href, tone, icon, label, value, hint }: { href?: string; tone: Tone; icon: ReactNode; label: string; value: number | null | undefined; hint?: string }) {
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 leading-tight">{label}</p>
+        <span className={`p-1.5 rounded-xl shadow-sm ${TONES[tone].icon}`}>{icon}</span>
+      </div>
+      <p className="mt-2 text-3xl font-black tabular-nums text-slate-900 dark:text-white">{value ?? '—'}</p>
+      {hint && <p className="text-[10px] text-slate-400 mt-0.5">{hint}</p>}
+    </>
+  );
+  const className = `group p-4 rounded-2xl border bg-linear-to-br ${TONES[tone].card} transition-all ${href ? 'hover:-translate-y-0.5 hover:shadow-md' : ''}`;
+  return href ? <Link href={href} className={className}>{body}</Link> : <div className={className}>{body}</div>;
 }
 
-export default async function AdminPage() {
+export default async function AdminOverviewPage() {
   const admin = await getAdmin();
   // Non-admins see the same page as a route that does not exist.
   if (!admin) notFound();
@@ -57,60 +96,80 @@ export default async function AdminPage() {
     supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'teacher').or('teacher_approval.is.null,teacher_approval.eq.pending'),
   ]);
   const countOf = Object.fromEntries(counts);
+  const pending = pendingTeachers.error ? null : pendingTeachers.count ?? 0;
 
-  const stats = [
-    { label: 'ครูรออนุมัติ', value: pendingTeachers.error ? null : pendingTeachers.count ?? 0, tone: 'amber', href: '/admin/teachers?status=pending' },
-    { label: 'ผู้ใช้', value: countOf.users, href: '/admin/users' },
-    { label: 'ห้องเรียน', value: countOf.classrooms, href: '/admin/classrooms' },
-    { label: 'งาน/ข้อสอบ', value: countOf.assignments, href: '/admin/assignments' },
-    { label: 'งานที่ส่ง', value: countOf.submissions, href: '/admin/submissions' },
-    { label: 'บันทึกเช็คชื่อ', value: countOf.attendance_records, href: '/admin/attendance_records' },
-    { label: 'ครูที่บอท LINE ยังติดต่อไม่ได้', value: unlinkedTeachers.count ?? 0, tone: 'amber', href: '/admin/users?col=role&val=teacher' },
-    { label: 'ส่ง/เช็คชื่อแทนเพื่อน', value: proxyActivity.length, tone: 'sky' },
-    { label: 'งานน่าสงสัย', value: flaggedCount.count ?? 0, tone: 'rose', href: '/admin/submissions?col=is_flagged_suspicious&val=true' },
+  const stats: Array<{ label: string; value: number | null | undefined; tone: Tone; icon: ReactNode; href?: string }> = [
+    { label: 'ผู้ใช้', value: countOf.users, tone: 'indigo', icon: <Users className="w-4 h-4" />, href: '/admin/users' },
+    { label: 'ห้องเรียน', value: countOf.classrooms, tone: 'emerald', icon: <BookOpen className="w-4 h-4" />, href: '/admin/classrooms' },
+    { label: 'งาน/ข้อสอบ', value: countOf.assignments, tone: 'sky', icon: <ClipboardList className="w-4 h-4" />, href: '/admin/assignments' },
+    { label: 'งานที่ส่ง', value: countOf.submissions, tone: 'violet', icon: <Inbox className="w-4 h-4" />, href: '/admin/submissions' },
+    { label: 'บันทึกเช็คชื่อ', value: countOf.attendance_records, tone: 'teal', icon: <CalendarCheck className="w-4 h-4" />, href: '/admin/attendance_records' },
+    { label: 'ครูที่บอท LINE ยังติดต่อไม่ได้', value: unlinkedTeachers.count ?? 0, tone: 'orange', icon: <MessageCircleOff className="w-4 h-4" />, href: '/admin/users?col=role&val=teacher' },
+    { label: 'ส่ง/เช็คชื่อแทนเพื่อน', value: proxyActivity.length, tone: 'cyan', icon: <Smartphone className="w-4 h-4" />, href: '#proxy' },
+    { label: 'งานน่าสงสัย', value: flaggedCount.count ?? 0, tone: 'rose', icon: <AlertTriangle className="w-4 h-4" />, href: '/admin/submissions?col=is_flagged_suspicious&val=true' },
   ];
 
   return (
-    <div className="min-h-dvh bg-slate-50 dark:bg-slate-950">
-      <AdminHeader email={admin.primaryEmailAddress?.emailAddress} />
+    <AdminPage>
+      <AdminHeader email={admin.primaryEmailAddress?.emailAddress} active="overview" pendingTeachers={pending} />
 
       <AdminMain>
+        {/* Pending teachers: the one thing that blocks people, so it leads. */}
+        <section
+          className={`relative overflow-hidden rounded-3xl p-5 sm:p-6 flex flex-wrap items-center justify-between gap-4 ${
+            pending
+              ? 'bg-linear-to-r from-amber-400 via-amber-300 to-orange-300 text-slate-950'
+              : 'bg-linear-to-r from-emerald-500 to-teal-500 text-white'
+          }`}
+        >
+          <div className="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-white/20 blur-2xl" aria-hidden />
+          <div className="relative flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-white/30 backdrop-blur flex items-center justify-center">
+              <UserCheck className="w-7 h-7" />
+            </div>
+            <div>
+              <p className="text-xs font-bold opacity-80">บัญชีครู</p>
+              <h1 className="text-xl sm:text-2xl font-black">
+                {pending ? `มีครูรออนุมัติ ${pending} คน` : 'ไม่มีครูรออนุมัติ'}
+              </h1>
+              <p className="text-xs opacity-80">ครูที่สมัครใหม่ใช้งานระบบไม่ได้จนกว่าจะอนุมัติ • ดูการใช้ปุ่มทดสอบส่ง LINE ได้ที่หน้าเดียวกัน</p>
+            </div>
+          </div>
+          <Link
+            href={pending ? '/admin/teachers?status=pending' : '/admin/teachers'}
+            className={`relative inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl text-sm font-black shadow-lg ${
+              pending ? 'bg-slate-950 text-white hover:bg-slate-800' : 'bg-white text-emerald-700 hover:bg-emerald-50'
+            }`}
+          >
+            {pending ? 'ตรวจและอนุมัติ' : 'ดูครูทั้งหมด'} <ArrowRight className="w-4 h-4" />
+          </Link>
+        </section>
+
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {stats.map((stat) => (
-            <StatCard
-              key={stat.label}
-              href={stat.href}
-              className={`p-4 rounded-2xl border bg-white dark:bg-slate-900 ${
-                stat.tone === 'sky'
-                  ? 'border-sky-200 dark:border-sky-900'
-                  : stat.tone === 'rose'
-                    ? 'border-rose-200 dark:border-rose-900'
-                    : stat.tone === 'amber'
-                      ? 'border-amber-200 dark:border-amber-900'
-                      : 'border-slate-200 dark:border-slate-800'
-              } ${stat.href ? 'hover:bg-slate-50 dark:hover:bg-slate-800/60' : ''}`}
-            >
-              <p className="text-[11px] font-bold text-slate-500">{stat.label}</p>
-              <p className="text-2xl font-black tabular-nums">{stat.value ?? '—'}</p>
-            </StatCard>
+            <StatCard key={stat.label} {...stat} />
           ))}
         </section>
 
+        <AdminDatasetBuilder />
+
         <section className="space-y-3">
-          <h2 className="text-sm font-black">ชุดข้อมูลสำหรับเทรน / Fine-tune</h2>
-          <p className="text-xs text-slate-500">
-            ชุดข้อมูลเหล่านี้ปกปิดตัวตนนักเรียนโดยแทนด้วยรหัสสุ่มคงที่ (ไม่มีชื่อหรือ LINE ID) — ใช้ลิงก์ &quot;ไม่ปกปิด&quot; เฉพาะเมื่อจำเป็น
-          </p>
-          <div className="grid sm:grid-cols-2 gap-3">
+          <AdminSectionTitle
+            icon={<FileText className="w-4 h-4" />}
+            tone="indigo"
+            title="ชุดข้อมูลสำเร็จรูป (ดาวน์โหลดด่วน)"
+            description={<>ปกปิดตัวตนนักเรียนด้วยรหัสสุ่มคงที่ (ไม่มีชื่อหรือ LINE ID) — ใช้ลิงก์ &quot;ไม่ปกปิด&quot; เฉพาะเมื่อจำเป็น</>}
+          />
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {Object.entries(ADMIN_DATASETS).map(([name, description]) => (
-              <div key={name} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
-                <div>
-                  <p className="font-mono text-sm font-bold">{name}</p>
-                  <p className="text-xs text-slate-500">{description}</p>
+              <div key={name} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col gap-3">
+                <div className="flex-1">
+                  <p className="font-mono text-sm font-bold text-indigo-700 dark:text-indigo-300">{name}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{description}</p>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <ExportLinks name={name} />
-                  <a href={exportHref(name, 'csv', false)} className="text-[11px] text-slate-500 hover:underline">
+                  <a href={exportHref(name, 'csv', false)} className="text-[10px] text-slate-400 hover:text-rose-600 hover:underline">
                     ไม่ปกปิด (CSV)
                   </a>
                 </div>
@@ -119,14 +178,14 @@ export default async function AdminPage() {
           </div>
         </section>
 
-        <section className="space-y-3">
-          <h2 className="text-sm font-black">ส่งงาน / เช็คชื่อแทนเพื่อน (ล่าสุด)</h2>
+        <section id="proxy" className="space-y-3 scroll-mt-28">
+          <AdminSectionTitle icon={<Smartphone className="w-4 h-4" />} tone="sky" title="ส่งงาน / เช็คชื่อแทนเพื่อน (ล่าสุด)" />
           {proxyActivity.length === 0 ? (
-            <p className="text-xs text-slate-500">ยังไม่มีการใช้เครื่องของเพื่อนส่งงานหรือเช็คชื่อ</p>
+            <p className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500">ยังไม่มีการใช้เครื่องของเพื่อนส่งงานหรือเช็คชื่อ</p>
           ) : (
             <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
               <table className="w-full text-xs">
-                <thead className="text-left text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <thead className="text-left text-slate-500 bg-slate-50 dark:bg-slate-800/60">
                   <tr>
                     {['เวลา', 'ประเภท', 'ห้องเรียน', 'งาน/คาบ', 'นักเรียน (เจ้าของงาน)', 'เครื่องของ'].map((h) => (
                       <th key={h} className="px-3 py-2 font-bold whitespace-nowrap">{h}</th>
@@ -135,9 +194,13 @@ export default async function AdminPage() {
                 </thead>
                 <tbody>
                   {proxyActivity.slice(0, 30).map((row, i) => (
-                    <tr key={i} className="border-b last:border-0 border-slate-100 dark:border-slate-800">
-                      <td className="px-3 py-2 whitespace-nowrap font-mono">{row.at ? new Date(row.at).toLocaleString('th-TH') : '-'}</td>
-                      <td className="px-3 py-2">{row.kind === 'submission' ? '📄 ส่งงาน' : '⏰ เช็คชื่อ'}</td>
+                    <tr key={i} className="border-t border-slate-100 dark:border-slate-800 hover:bg-sky-50/50 dark:hover:bg-sky-950/20">
+                      <td className="px-3 py-2 whitespace-nowrap font-mono">{row.at ? new Date(row.at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) : '-'}</td>
+                      <td className="px-3 py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${row.kind === 'submission' ? 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' : 'bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300'}`}>
+                          {row.kind === 'submission' ? 'ส่งงาน' : 'เช็คชื่อ'}
+                        </span>
+                      </td>
                       <td className="px-3 py-2">{row.classroom}</td>
                       <td className="px-3 py-2">{row.item}</td>
                       <td className="px-3 py-2">{row.for_student.name} <span className="text-slate-400">{row.for_student.student_number}</span></td>
@@ -150,42 +213,27 @@ export default async function AdminPage() {
           )}
         </section>
 
-        <section className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl border border-amber-200 dark:border-amber-900 bg-white dark:bg-slate-900">
-          <div>
-            <h2 className="text-sm font-black">บัญชีครู</h2>
-            <p className="text-xs text-slate-500">อนุมัติหรือปฏิเสธครูที่สมัครใหม่ และดูการใช้ปุ่มทดสอบส่ง LINE ของครูแต่ละคน</p>
-          </div>
-          <Link href="/admin/teachers" className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold">
-            จัดการครู{pendingTeachers.count ? ` (รอ ${pendingTeachers.count})` : ''} →
-          </Link>
-        </section>
-
         <AdminStorage />
 
-        <section className="space-y-3">
-          <h2 className="text-sm font-black">ตารางข้อมูลดิบ</h2>
-          <p className="text-xs text-slate-500">ค้นหา เปิดดู แก้ไข หรือลบแต่ละแถวได้ • คอลัมน์ที่เป็น token/secret จะถูกตัดออกเสมอ</p>
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <table className="w-full text-xs">
-              <tbody>
-                {ADMIN_TABLES.map((name) => (
-                  <tr key={name} className="border-b last:border-0 border-slate-100 dark:border-slate-800">
-                    <td className="px-3 py-2 font-mono font-bold">{name}</td>
-                    <td className="px-3 py-2 tabular-nums text-slate-500">{countOf[name] ?? 'ไม่พบตาราง'}</td>
-                    <td className="px-3 py-2">
-                      <Link href={`/admin/${name}`} className="font-bold text-amber-700 dark:text-amber-400 hover:underline">
-                        ดู / แก้ไข
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2"><ExportLinks name={name} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <section id="tables" className="space-y-3 scroll-mt-28">
+          <AdminSectionTitle
+            icon={<Table2 className="w-4 h-4" />}
+            title="ตารางข้อมูลดิบ"
+            description="ค้นหา เปิดดู แก้ไข หรือลบแต่ละแถวได้ • คอลัมน์ที่เป็น token/secret จะถูกตัดออกเสมอ"
+          />
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {ADMIN_TABLES.map((name) => (
+              <div key={name} className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-indigo-300 dark:hover:border-indigo-800">
+                <Link href={`/admin/${name}`} className="min-w-0 group">
+                  <p className="font-mono text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-indigo-700 dark:group-hover:text-indigo-300 truncate">{name}</p>
+                  <p className="text-[10px] text-slate-400 tabular-nums">{countOf[name] === null || countOf[name] === undefined ? 'ไม่พบตาราง' : `${countOf[name].toLocaleString()} แถว`}</p>
+                </Link>
+                <ExportLinks name={name} />
+              </div>
+            ))}
           </div>
         </section>
-
       </AdminMain>
-    </div>
+    </AdminPage>
   );
 }

@@ -357,8 +357,10 @@ export async function POST(request: NextRequest) {
       student_id: targetUserDbId,
       student: studentInfo,
       // Quiz sheets that arrive in the hidden grace after the bell are late too (only teachers see it).
-      // Work the teacher reopened keeps its original on-time / late mark.
-      status: reopened ? existingSubmission.status : assignmentWindow.isPastDeadline ? 'late' : 'submitted',
+      // Within the (possibly extended) deadline it is on time. Past it, work the
+      // teacher reopened keeps its original on-time / late mark, so fixing a
+      // wrong file after the deadline never turns on-time work late.
+      status: !assignmentWindow.isPastDeadline ? 'submitted' : reopened ? existingSubmission.status : 'late',
       started_at: new Date(submittedAt.getTime() - (awaySeconds * 1000 + 120000)).toISOString(),
       submitted_at: submittedAt.toISOString(),
       time_spent_seconds: 120 + awaySeconds,

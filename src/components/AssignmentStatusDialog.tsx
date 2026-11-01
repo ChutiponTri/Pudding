@@ -60,7 +60,12 @@ export function AssignmentStatusDialog({
       id: 'force_closed',
       icon: Lock,
       title: tr('ปิดรับงานทันที', 'Close now'),
-      detail: tr('นักเรียนส่งหรือแก้ไขงานไม่ได้จนกว่าจะเปิดอีกครั้ง', 'Students cannot submit or edit until you reopen it'),
+      detail: assignment.is_exam
+        ? tr('นักเรียนส่งคำตอบไม่ได้จนกว่าจะเปิดอีกครั้ง', 'Students cannot submit until you reopen it')
+        : tr(
+            'นักเรียนส่งหรือแก้ไขงานไม่ได้จนกว่าจะเปิดอีกครั้ง (ยกเลิกสิทธิ์ "ให้แก้ไขงาน" รายคนด้วย)',
+            'Students cannot submit or edit until you reopen it (also cancels per-student "Allow edit")'
+          ),
       tone: 'rose',
     },
     {
@@ -68,8 +73,8 @@ export function AssignmentStatusDialog({
       icon: Unlock,
       title: tr('ขยายเวลาส่ง', 'Extend deadline'),
       detail: assignment.is_exam ? tr('เปิดรับคำตอบถึงเวลาใหม่ที่เลือก', 'Accept answers until the new time you pick') : tr(
-            `ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก (รับงานส่งช้าต่ออีก ${LATE_WINDOW_HOURS} ชม.) — ใช้เปิดรับงานที่ปิดไปแล้วอีกครั้งได้`,
-            `Move the due date to the new time (late work accepted for ${LATE_WINDOW_HOURS} more hours) — also reopens closed work`
+            `ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก (รับงานส่งช้าต่ออีก ${LATE_WINDOW_HOURS} ชม.) — เปิดรับงานที่ปิดไปแล้วให้ทั้งห้อง • ถ้าต้องการให้แก้เฉพาะบางคน ใช้ "ให้แก้ไขงาน" ในหน้าตรวจงานแทน`,
+            `Move the due date to the new time (late work accepted for ${LATE_WINDOW_HOURS} more hours) — reopens closed work for everyone • to let only some students fix their work, use "Allow edit" on the grading page`
           ),
       tone: 'amber',
     },

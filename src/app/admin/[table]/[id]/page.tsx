@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAdmin } from '@/lib/server/admin';
 import { getRecord, isAdminTable, isReadOnlyColumn, linkedTable, relatedCounts } from '@/lib/server/adminRecords';
-import { AdminHeader, AdminMain } from '@/components/AdminUi';
+import { AdminHeader, AdminMain, AdminPage } from '@/components/AdminUi';
 import { AdminRecordEditor } from '@/components/AdminRecordEditor';
 
 export const dynamic = 'force-dynamic';
@@ -45,8 +45,8 @@ export default async function AdminRecordPage({ params }: { params: Promise<{ ta
   const links = Object.fromEntries(columns.map((c) => [c, linkedTable(table, c)]).filter(([, target]) => target));
 
   return (
-    <div className="min-h-dvh bg-slate-50 dark:bg-slate-950">
-      <AdminHeader email={admin.primaryEmailAddress?.emailAddress} crumbs={[{ label: table, href: `/admin/${table}` }, { label: id }]} />
+    <AdminPage>
+      <AdminHeader email={admin.primaryEmailAddress?.emailAddress} crumbs={[{ label: table, href: `/admin/${table}` }, { label: id }]} active="tables" />
       <AdminMain>
         {lineUid && (
           <section className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs space-y-1">
@@ -90,6 +90,6 @@ export default async function AdminRecordPage({ params }: { params: Promise<{ ta
           links={links as Record<string, string>}
         />
       </AdminMain>
-    </div>
+    </AdminPage>
   );
 }

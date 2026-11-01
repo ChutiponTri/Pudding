@@ -1,30 +1,86 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { ArrowLeft, Database, FolderArchive, LayoutDashboard, Table2, UserCheck } from 'lucide-react';
 
-/** Header shared by the admin pages, with a breadcrumb back up. */
-export function AdminHeader({ email, crumbs = [] }: { email?: string; crumbs?: Array<{ label: string; href?: string }> }) {
+export type AdminSection = 'overview' | 'teachers' | 'datasets' | 'storage' | 'tables';
+
+const NAV: Array<{ id: AdminSection; label: string; href: string; icon: typeof LayoutDashboard }> = [
+  { id: 'overview', label: 'ภาพรวม', href: '/admin', icon: LayoutDashboard },
+  { id: 'teachers', label: 'อนุมัติครู', href: '/admin/teachers', icon: UserCheck },
+  { id: 'datasets', label: 'ชุดข้อมูล', href: '/admin#datasets', icon: Database },
+  { id: 'storage', label: 'ไฟล์ R2', href: '/admin#storage', icon: FolderArchive },
+  { id: 'tables', label: 'ตารางข้อมูล', href: '/admin#tables', icon: Table2 },
+];
+
+/** Header shared by the admin pages: brand, section tabs and a breadcrumb back up. */
+export function AdminHeader({
+  email,
+  crumbs = [],
+  active = 'overview',
+  pendingTeachers,
+}: {
+  email?: string;
+  crumbs?: Array<{ label: string; href?: string }>;
+  active?: AdminSection;
+  /** Shows a badge on the teachers tab. */
+  pendingTeachers?: number | null;
+}) {
   return (
-    <header className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <nav className="flex flex-wrap items-center gap-1.5 text-lg font-black">
-            <Link href="/admin" className="hover:underline">Pudding Admin</Link>
-            {crumbs.map((crumb) => (
-              <span key={crumb.label} className="flex items-center gap-1.5 min-w-0">
-                <span className="text-slate-300 dark:text-slate-600">/</span>
-                {crumb.href ? (
-                  <Link href={crumb.href} className="font-mono text-base hover:underline truncate">{crumb.label}</Link>
-                ) : (
-                  <span className="font-mono text-base truncate max-w-[60vw]">{crumb.label}</span>
-                )}
-              </span>
-            ))}
-          </nav>
-          {email && <p className="text-xs text-slate-500">ข้อมูลทั้งระบบ • {email}</p>}
+    <header className="sticky top-0 z-30 bg-slate-950 text-white shadow-lg shadow-slate-950/10">
+      <div className="absolute inset-0 bg-linear-to-r from-indigo-950 via-slate-950 to-violet-950 opacity-90" aria-hidden />
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6">
+        <div className="py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex items-center gap-3">
+            <Link href="/admin" className="w-10 h-10 shrink-0 rounded-2xl bg-linear-to-br from-amber-300 to-amber-500 flex items-center justify-center text-xl shadow-lg shadow-amber-500/30">
+              🍮
+            </Link>
+            <div className="min-w-0">
+              <nav className="flex flex-wrap items-center gap-1.5 text-base font-black">
+                <Link href="/admin" className="hover:text-amber-300">Pudding Admin</Link>
+                {crumbs.map((crumb) => (
+                  <span key={crumb.label} className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-slate-500">/</span>
+                    {crumb.href ? (
+                      <Link href={crumb.href} className="font-mono text-sm text-slate-200 hover:text-amber-300 truncate">{crumb.label}</Link>
+                    ) : (
+                      <span className="font-mono text-sm text-slate-300 truncate max-w-[50vw]">{crumb.label}</span>
+                    )}
+                  </span>
+                ))}
+              </nav>
+              {email && <p className="text-[11px] text-slate-400 truncate">ข้อมูลทั้งระบบ • {email}</p>}
+            </div>
+          </div>
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-slate-100"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> กลับหน้าครู
+          </Link>
         </div>
-        <Link href="/dashboard" className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:underline">
-          ← กลับหน้าครู
-        </Link>
+        <nav className="-mb-px flex gap-1 overflow-x-auto scrollbar-none" aria-label="Admin sections">
+          {NAV.map(({ id, label, href, icon: Icon }) => {
+            const on = active === id;
+            return (
+              <Link
+                key={id}
+                href={href}
+                aria-current={on ? 'page' : undefined}
+                className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold border-b-2 transition-colors ${
+                  on ? 'border-amber-400 text-white' : 'border-transparent text-slate-400 hover:text-white hover:border-slate-600'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+                {id === 'teachers' && !!pendingTeachers && (
+                  <span className="min-w-5 h-5 px-1.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black flex items-center justify-center tabular-nums">
+                    {pendingTeachers}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </nav>
       </div>
     </header>
   );
@@ -32,6 +88,42 @@ export function AdminHeader({ email, crumbs = [] }: { email?: string; crumbs?: A
 
 export function AdminMain({ children }: { children: ReactNode }) {
   return <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">{children}</main>;
+}
+
+/** Page shell: soft tinted background behind every admin page. */
+export function AdminPage({ children }: { children: ReactNode }) {
+  return <div className="min-h-dvh bg-linear-to-b from-slate-100 via-slate-50 to-white dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">{children}</div>;
+}
+
+/** Section heading with an icon chip. */
+export function AdminSectionTitle({ icon, title, description, tone = 'slate', action }: {
+  icon: ReactNode;
+  title: string;
+  description?: ReactNode;
+  tone?: 'slate' | 'amber' | 'violet' | 'sky' | 'emerald' | 'rose' | 'indigo';
+  action?: ReactNode;
+}) {
+  const tones = {
+    slate: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+    violet: 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300',
+    sky: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
+    emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+    rose: 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
+    indigo: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
+  };
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex items-start gap-2.5">
+        <span className={`p-1.5 rounded-lg ${tones[tone]}`}>{icon}</span>
+        <div>
+          <h2 className="text-sm font-black text-slate-900 dark:text-white">{title}</h2>
+          {description && <p className="text-xs text-slate-500 dark:text-slate-400">{description}</p>}
+        </div>
+      </div>
+      {action}
+    </div>
+  );
 }
 
 /** One cell's value as short text. */

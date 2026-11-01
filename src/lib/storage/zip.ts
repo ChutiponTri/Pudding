@@ -1,5 +1,6 @@
 /**
- * Minimal ZIP writer for backups, built in the browser. Files are stored
+ * Minimal ZIP writer for backups and exports, built in the browser (also
+ * usable on the server: createZipBytes returns plain bytes). Files are stored
  * without compression: photos and PDFs are already compressed, so deflating
  * them again would only cost time. No ZIP64, so keep a batch under 4GB.
  */
@@ -33,9 +34,26 @@ export interface ZipEntry {
   modified?: Date;
 }
 
+/** The archive as a Blob (parts are not copied, so large backups stay light). */
 export function createZip(entries: ZipEntry[]): Blob {
+  return new Blob(zipParts(entries) as BlobPart[], { type: 'application/zip' });
+}
+
+/** The archive as one byte array. */
+export function createZipBytes(entries: ZipEntry[]): Uint8Array {
+  const all = zipParts(entries);
+  const out = new Uint8Array(all.reduce((sum, part) => sum + part.length, 0));
+  let at = 0;
+  for (const part of all) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
+
+function zipParts(entries: ZipEntry[]): Uint8Array[] {
   const encoder = new TextEncoder();
-  const parts: BlobPart[] = [];
+  const parts: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
 
@@ -56,7 +74,7 @@ export function createZip(entries: ZipEntry[]): Blob {
     local.setUint32(18, size, true);
     local.setUint32(22, size, true);
     local.setUint16(26, name.length, true);
-    parts.push(local.buffer, name as BlobPart, entry.data as BlobPart);
+    parts.push(new Uint8Array(local.buffer), name, entry.data);
 
     const header = new DataView(new ArrayBuffer(46));
     header.setUint32(0, 0x02014b50, true);
@@ -88,5 +106,16 @@ export function createZip(entries: ZipEntry[]): Blob {
   end.setUint16(10, entries.length, true);
   end.setUint32(12, centralSize, true);
   end.setUint32(16, offset, true);
-  return new Blob([...parts, ...(central as BlobPart[]), end.buffer], { type: 'application/zip' });
+  return [...parts, ...central, new Uint8Array(end.buffer)];
+}
+
+/** Saves bytes or a blob as a file in the browser. */
+export function downloadBlob(filename: string, data: Blob | Uint8Array, type = 'application/octet-stream') {
+  const blob = data instanceof Blob ? data : new Blob([data as BlobPart], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }

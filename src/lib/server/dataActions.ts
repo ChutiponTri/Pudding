@@ -1,7 +1,7 @@
 import 'server-only';
 import { after } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Actor } from '@/lib/auth/actor';
+import { forgetStudentActor, type Actor } from '@/lib/auth/actor';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import type { ClassroomSignal } from '@/lib/realtime/signals';
@@ -41,6 +41,7 @@ import type {
   CourseLearningIndicator,
   LearningIndicator,
   Question,
+  Submission,
   SubmissionAnswer,
   SubmissionEvent,
   TeacherGradeRecord,
@@ -377,6 +378,7 @@ export const dataActions = {
     if (institution) payload.institution = institution;
     const { error } = await supabase.from('users').upsert(payload);
     if (error) throw toDatabaseError(error, 'users');
+    forgetStudentActor(lineUid);
     return {
       id: payload.id as string,
       first_name: firstName,
@@ -1083,6 +1085,104 @@ export const dataActions = {
     const failed = results.find((r) => r.error);
     if (failed?.error) throw toDatabaseError(failed.error, 'submissions');
     return { assignments, submissions: results.flatMap((r) => r.data || []) };
+  },
+
+  /**
+   * Fresh data for the teacher's export page (/exports): the chosen classrooms
+   * with rosters, their work, every submission, per-question scores, questions
+   * and attendance. Only classrooms this teacher teaches are returned; an empty
+   * list means all of them.
+   */
+  async getTeacherExportData(ctx: Ctx, classroomIds: string[] = []) {
+    requireTeacher(ctx.actor);
+    const { supabase } = ctx;
+    const mine = (await dataActions.getClassrooms(ctx, { withRoster: false })) as Classroom[];
+    const wanted = new Set(classroomIds.filter(Boolean));
+    const rows = wanted.size ? mine.filter((c) => wanted.has(c.id)) : mine;
+    const ids = rows.map((c) => c.id);
+    if (!ids.length) {
+      return { classrooms: [] as Classroom[], assignments: [] as Assignment[], questions: [] as Question[], submissions: [] as Submission[], answers: [] as SubmissionAnswer[], sessions: [], records: [] };
+    }
+    // Every matching row: PostgREST returns at most 1000 per request, and an
+    // export must never be silently cut short.
+    const byChunks = async <T,>(table: string, columns: string, column: string, values: string[]) => {
+      const pageSize = 1000;
+      const readPart = async (part: string[]) => {
+        const out: T[] = [];
+        for (let from = 0; ; from += pageSize) {
+          const { data, error } = await supabase.from(table).select(columns).in(column, part).range(from, from + pageSize - 1);
+          if (error) throw toDatabaseError(error, table);
+          out.push(...((data || []) as unknown as T[]));
+          if (!data || data.length < pageSize) return out;
+        }
+      };
+      return (await Promise.all(chunk(values).map(readPart))).flat();
+    };
+    const [classrooms, assignments, sessions, records] = await Promise.all([
+      hydrateClassrooms(supabase, rows),
+      loadAssignments(supabase, ids, true),
+      byChunks<Record<string, unknown>>('attendance_sessions', 'id, classroom_id, title, starts_at, status', 'classroom_id', ids),
+      byChunks<Record<string, unknown>>('attendance_records', 'session_id, classroom_id, student_id, status, checked_at, checked_in_by', 'classroom_id', ids),
+    ]);
+    const assignmentIds = assignments.map((a) => a.id);
+    const [questions, submissions] = await Promise.all([
+      byChunks<Question>('questions', 'id, assignment_id, type, question_text, max_score, indicator_id', 'assignment_id', assignmentIds),
+      byChunks<Submission>('submissions', '*', 'assignment_id', assignmentIds),
+    ]);
+    const answers = await byChunks<SubmissionAnswer>(
+      'submission_answers',
+      'submission_id, question_id, teacher_score, teacher_comment, graded_at',
+      'submission_id',
+      submissions.map((s) => s.id)
+    );
+    return { classrooms, assignments, questions, submissions, answers, sessions, records };
+  },
+
+  /**
+   * Everything the LIFF home screen needs, in one request: the student's
+   * classrooms (their own roster entries only), published work, their
+   * submissions and the score rows of those submissions. Replaces
+   * getStudentClassrooms → getStudentWork → getAnswersForSubmissions, which
+   * the phone had to wait for one after another.
+   */
+  async getStudentHome({ supabase, actor }: Ctx) {
+    const me = requireStudent(actor);
+    const [fromRoster, links] = await Promise.all([
+      findClassroomsContainingStudent(supabase, me.keys),
+      supabase.from('classroom_students').select('classroom_id').in('student_id', me.keys),
+    ]);
+    const known = new Set(fromRoster.map((c) => c.id));
+    const extraIds = [...new Set((links.data || []).map((l: { classroom_id: string }) => l.classroom_id))].filter((id) => !known.has(id));
+    let extra: Classroom[] = [];
+    if (extraIds.length) {
+      const { data } = await supabase.from('classrooms').select('*').in('id', extraIds);
+      extra = (data || []) as Classroom[];
+    }
+    const rows = [...fromRoster, ...extra].sort(byCreatedDesc);
+    const classroomIds = rows.map((c) => c.id);
+
+    // Rosters, work and the student's own submissions (with score rows) at once.
+    const [hydrated, assignments, submissionResult] = await Promise.all([
+      hydrateClassrooms(supabase, rows),
+      loadAssignments(supabase, classroomIds, false),
+      classroomIds.length
+        ? supabase
+            .from('submissions')
+            .select('*, submission_answers(id, submission_id, question_id, teacher_score, teacher_comment, graded_at)')
+            .in('student_id', me.keys)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (submissionResult.error) throw toDatabaseError(submissionResult.error, 'submissions');
+    const assignmentIds = new Set(assignments.map((a) => a.id));
+    const submissions: Submission[] = [];
+    const answers: SubmissionAnswer[] = [];
+    for (const row of (submissionResult.data || []) as Array<Submission & { submission_answers?: SubmissionAnswer[] }>) {
+      if (!assignmentIds.has(row.assignment_id)) continue;
+      const { submission_answers: rowAnswers, ...submission } = row;
+      submissions.push(submission as Submission);
+      answers.push(...(rowAnswers || []));
+    }
+    return { classrooms: hydrated.map((c) => classroomForStudent(c, me)), assignments, submissions, answers };
   },
 
   async getAssignmentsByClassroomId(ctx: Ctx, classroomId: string) {

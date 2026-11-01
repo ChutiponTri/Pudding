@@ -220,10 +220,10 @@ export function AdminStorage() {
   const buttonClass = 'px-3 py-1.5 rounded-lg border text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer';
 
   return (
-    <section className="space-y-3">
+    <section id="storage" className="space-y-3 scroll-mt-28 p-5 rounded-3xl border border-sky-200 dark:border-sky-900/60 bg-white dark:bg-slate-900">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 className="text-sm font-black">ไฟล์ใน R2 (สำรองและลบ)</h2>
+          <h2 className="text-sm font-black flex items-center gap-2"><span className="p-1.5 rounded-lg bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300">🗄️</span> ไฟล์ใน R2 (สำรองและลบ)</h2>
           <p className="text-xs text-slate-500">
             เลือกไฟล์แล้วกด &quot;ดาวน์โหลด ZIP&quot; เพื่อสำรอง (ระบบจะทำเครื่องหมายว่าสำรองแล้วให้อัตโนมัติ) จากนั้นลบออกเพื่อคืนพื้นที่
           </p>

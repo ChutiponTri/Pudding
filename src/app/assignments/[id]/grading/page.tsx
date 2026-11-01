@@ -315,6 +315,19 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       alert(language === 'th' ? 'เลือกเวลาในอนาคต' : 'Please pick a time in the future');
       return;
     }
+    // "Close now" also cancels the per-student edit permissions (latest action wins).
+    const reopenedCount = submissions.filter((s) => s.reopened_at).length;
+    if (
+      newStatus === 'force_closed' &&
+      reopenedCount > 0 &&
+      !confirm(
+        language === 'th'
+          ? `มีนักเรียน ${reopenedCount} คนที่เปิดให้แก้ไขงานอยู่\nปิดรับงานทันทีจะยกเลิกสิทธิ์แก้ไขของทุกคนด้วย (กด "ให้แก้ไขงาน" รายคนอีกครั้งได้ภายหลัง)\n\nปิดรับงานเลยหรือไม่?`
+          : `${reopenedCount} student(s) are allowed to edit their work.\nClosing now cancels that for everyone too (you can allow them again afterwards).\n\nClose now?`
+      )
+    ) {
+      return;
+    }
     try {
       const updated = await dataService.updateAssignmentDeadlineOverride(assignmentId, {
         status_override: newStatus,
@@ -324,6 +337,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       if (updated) {
         setAssignment(updated);
         setOverrideStatus(newStatus);
+      }
+      if (newStatus === 'force_closed' && reopenedCount > 0) {
+        setSubmissions((prev) => prev.map((s) => (s.reopened_at ? { ...s, reopened_at: null } : s)));
       }
 
       const name = (updated || assignment)?.title || '';
@@ -442,12 +458,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const handleToggleReopen = async (sub: Submission) => {
     const open = !sub.reopened_at;
     const name = sub.student?.first_name || (th ? 'นักเรียน' : 'the student');
+    // Closed work: this permission is the per-student extension, no need to reopen the whole class.
+    const closedNow = !!assignment && !getAssignmentWindow(assignment).acceptsSubmissions;
     const message = open
       ? th
         ? `เปิดให้ ${name} แก้ไขงานที่ส่งแล้ว?
-นักเรียนแก้ไขได้แม้ปิดรับงานแล้ว เมื่อส่งใหม่ คะแนนและความเห็นเดิมจะถูกล้างเพื่อตรวจใหม่`
+${closedNow ? 'งานนี้ปิดรับแล้ว แต่นักเรียนคนนี้จะแก้และส่งใหม่ได้ทันทีโดยไม่ต้องขยายเวลาทั้งห้อง' : 'นักเรียนแก้ได้แม้เลยกำหนดหรือปิดรับงานไปแล้วในภายหลัง'} • สิทธิ์นี้หมดเมื่อส่งใหม่ หรือเมื่อคุณกด "ปิดรับงานทันที"
+เมื่อส่งใหม่ คะแนนและความเห็นเดิมจะถูกล้างเพื่อตรวจใหม่ (สถานะส่งตรงเวลา/ส่งช้าเดิมยังคงอยู่)`
         : `Let ${name} edit this work again?
-They can edit it even if closed. Handing in again clears the current score and comments for regrading.`
+${closedNow ? 'This work is closed, but this student can fix and hand in again right away — no need to extend for the whole class.' : 'They can edit it even after the deadline or once it closes.'} The permission ends when they hand in again or when you choose "Close now".
+Handing in again clears the current score and comments for regrading (their on-time/late mark is kept).`
       : th
       ? `ยกเลิกการเปิดให้ ${name} แก้ไขงาน?`
       : `Stop letting ${name} edit this work?`;
@@ -619,8 +639,8 @@ They can edit it even if closed. Handing in again clears the current score and c
         : `Automatic: open until ${deadlineLabel}, then closes (sheets arriving within ${QUIZ_LATE_GRACE_MINUTES} min after are saved as late; students are not told)`
     : assignmentWindow?.isLateClosed
     ? th
-      ? `อัตโนมัติ: ปิดรับแล้ว (เลยกำหนด ${LATE_WINDOW_HOURS} ชม.) — กด "ขยายเวลา" เพื่อเปิดอีกครั้ง`
-      : `Automatic: closed ${LATE_WINDOW_HOURS}h after the deadline. Extend the deadline to reopen.`
+      ? `อัตโนมัติ: ปิดรับแล้ว (เลยกำหนด ${LATE_WINDOW_HOURS} ชม.) — กด "ขยายเวลา" เพื่อเปิดทั้งห้อง หรือกด "ให้แก้ไขงาน" ที่ชื่อนักเรียนเพื่อเปิดเฉพาะคน`
+      : `Automatic: closed ${LATE_WINDOW_HOURS}h after the deadline. Extend to reopen for everyone, or use "Allow edit" on a student to reopen just their work.`
     : assignmentWindow?.isPastDeadline
     ? th
       ? `อัตโนมัติ: เลยกำหนดแล้ว รับงานส่งช้าถึง ${lateUntilLabel} แล้วปิดเอง`
@@ -875,6 +895,29 @@ They can edit it even if closed. Handing in again clears the current score and c
             {showControls && (
               <div className="px-3.5 pb-3.5 space-y-3 animate-in fade-in">
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">{t('submission_control.subtitle')}</p>
+                {!assignment?.is_exam && (
+                  <ul className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 rounded-xl bg-white/70 dark:bg-slate-900/60 ring-1 ring-slate-200 dark:ring-slate-700 px-3 py-2 space-y-0.5">
+                    <li>
+                      <b className="text-amber-700 dark:text-amber-400">{t('submission_control.btn_reopen')}</b>{' '}
+                      {th ? '— ทั้งห้องส่งได้ และแก้งานที่ครูยังไม่ได้ตรวจได้' : '— everyone can hand in, and edit work not graded yet'}
+                    </li>
+                    <li>
+                      <b className="text-amber-700 dark:text-amber-400">{th ? 'ให้แก้ไขงาน' : 'Allow edit'}</b>{' '}
+                      {th
+                        ? '(ปุ่มในรายชื่อนักเรียน) — เปิดเฉพาะคน แม้ตรวจแล้วหรือปิดรับแล้ว ไม่ต้องขยายเวลา'
+                        : '(on a student row) — just that student, even after grading or closing; no extension needed'}
+                      {submissions.some((s) => s.reopened_at) && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold">
+                          {th ? `เปิดอยู่ ${submissions.filter((s) => s.reopened_at).length} คน` : `${submissions.filter((s) => s.reopened_at).length} open`}
+                        </span>
+                      )}
+                    </li>
+                    <li>
+                      <b className="text-rose-600 dark:text-rose-400">{t('submission_control.btn_force_close')}</b>{' '}
+                      {th ? '— หยุดทุกคน รวมถึงสิทธิ์แก้ไขรายคน' : '— stops everyone, including per-student edits'}
+                    </li>
+                  </ul>
+                )}
               {/* Status Action Buttons */}
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                 {/* 1. Automated */}

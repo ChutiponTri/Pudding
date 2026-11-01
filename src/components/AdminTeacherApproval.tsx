@@ -32,17 +32,17 @@ export function AdminTeacherApproval({ id, name, approval }: { id: string; name:
     }
   };
 
-  const button = 'inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap';
+  const button = 'inline-flex items-center justify-center gap-1 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap transition-colors';
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-2 pt-2">
       {approval !== 'approved' && (
-        <button type="button" disabled={!!saving} onClick={() => set('approved')} className={`${button} bg-emerald-600 hover:bg-emerald-500 text-white`}>
+        <button type="button" disabled={!!saving} onClick={() => set('approved')} className={`${button} flex-1 bg-linear-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white shadow-sm shadow-emerald-500/30`}>
           {saving === 'approved' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
           อนุมัติ
         </button>
       )}
       {approval !== 'rejected' && (
-        <button type="button" disabled={!!saving} onClick={() => set('rejected')} className={`${button} bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 hover:bg-rose-100`}>
+        <button type="button" disabled={!!saving} onClick={() => set('rejected')} className={`${button} ${approval === 'approved' ? '' : 'flex-1'} bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 hover:bg-rose-100 dark:hover:bg-rose-950/70`}>
           {saving === 'rejected' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
           ปฏิเสธ
         </button>
@@ -53,7 +53,7 @@ export function AdminTeacherApproval({ id, name, approval }: { id: string; name:
           รอตรวจ
         </button>
       )}
-      {error && <span className="text-[11px] font-bold text-rose-600">{error}</span>}
+      {error && <span className="w-full text-[11px] font-bold text-rose-600">{error}</span>}
     </div>
   );
 }

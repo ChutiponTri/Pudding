@@ -68,6 +68,7 @@ import {
   UserX,
   Building2,
   Loader2,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
 import { gradingCounts, isIntegrityFlagged, needsGrading } from '@/lib/utils/gradingStatus';
@@ -1282,6 +1283,15 @@ export function TeacherWorkspace({
               <span className="truncate">{institutionLabel(teacherProfile?.institution, language) || (language === 'th' ? '+ ระบุสถานศึกษา' : '+ Specify School')}</span>
               <Edit2 className="w-3 h-3 opacity-70 ml-0.5" />
             </button>
+            {/* Secondary: the export centre (grade books, attendance … as Excel). */}
+            <Link
+              href="/exports"
+              className="inline-flex items-center gap-1.5 shrink-0 px-3 py-1.5 rounded-xl bg-white/40 hover:bg-white/70 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors border border-white/50"
+              title={tr('ดาวน์โหลดคะแนน การเข้าเรียน และรายงานอื่น ๆ เป็นไฟล์ Excel', 'Download grades, attendance and other reports as Excel')}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>{tr('ส่งออกข้อมูล', 'Export data')}</span>
+            </Link>
           </div>
         </div>
 

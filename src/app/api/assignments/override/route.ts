@@ -18,6 +18,8 @@ const STATUSES: SubmissionOverrideStatus[] = ['auto', 'force_closed', 'extended'
  * close now, or extend. No LINE message is pushed (it would use the LINE
  * message quota); open student pages update right away, and the teacher can
  * ask the bot in the group ("พุดดิ้ง งาน") to post what is still open.
+ * Per-student "let them edit" (submissions.reopened_at) works beside this: it
+ * outlasts the deadline and extensions, and only "close now" cancels it.
  * `action: 'publish_now'` instead releases scheduled work immediately (the class
  * reached the topic early); it is announced like a scheduled release. A draft
  * is published the same way and gets its timeline post and LINE message now.
@@ -121,8 +123,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'บันทึกสถานะการรับงานไม่สำเร็จ' }, { status: 500 });
   }
 
+  // "Close now" stops everyone, including students the teacher had let edit
+  // handed-in work ("ให้แก้ไขงาน"): the latest teacher action wins. Letting one
+  // student edit again after closing still works, since that comes later.
+  // Extending or going back to the deadline leaves those permissions alone.
+  let clearedReopens = 0;
+  if (status === 'force_closed') {
+    const { data: cleared, error: clearError } = await supabase
+      .from('submissions')
+      .update({ reopened_at: null })
+      .eq('assignment_id', assignmentId)
+      .not('reopened_at', 'is', null)
+      .select('id');
+    // Databases without submissions.reopened_at have nothing to clear.
+    if (clearError && !clearError.message.includes('reopened_at')) console.warn('Clearing reopened submissions failed:', clearError.message);
+    clearedReopens = cleared?.length || 0;
+  }
+
   // Open student pages pick up the new status.
   after(() => signalClassroom(classroom.id, { type: 'timeline' }));
 
-  return NextResponse.json({ assignment: updated });
+  return NextResponse.json({ assignment: updated, clearedReopens });
 }

@@ -516,6 +516,24 @@ export const dataService = {
   },
 
   /** The LINE student's published work in these classrooms and their own submissions, in one request. */
+  /** Fresh data for the export page: chosen classrooms (empty = all) with work, scores and attendance. */
+  async getTeacherExportData(classroomIds: string[]): Promise<{
+    classrooms: Classroom[];
+    assignments: Assignment[];
+    questions: Question[];
+    submissions: Submission[];
+    answers: SubmissionAnswer[];
+    sessions: Array<{ id: string; classroom_id: string; title: string; starts_at: string; status: string }>;
+    records: Array<{ session_id: string; classroom_id: string; student_id: string; status: string; checked_at: string | null; checked_in_by: string | null }>;
+  }> {
+    return call('getTeacherExportData', classroomIds);
+  },
+
+  /** LIFF home in one request: classrooms, published work, own submissions and their score rows. */
+  async getStudentHome(): Promise<{ classrooms: Classroom[]; assignments: Assignment[]; submissions: Submission[]; answers: SubmissionAnswer[] }> {
+    return call('getStudentHome');
+  },
+
   async getStudentWork(classroomIds: string[]): Promise<{ assignments: Assignment[]; submissions: Submission[] }> {
     const ids = [...new Set(classroomIds.filter(Boolean))];
     if (ids.length === 0) return { assignments: [], submissions: [] };

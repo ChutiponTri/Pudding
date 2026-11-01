@@ -42,6 +42,7 @@ import {
 import { useTheme } from "@/lib/theme/ThemeContext";
 import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
 import { dataService, type ClassroomChangeEvent } from "@/lib/supabase/dataService";
+import { clearLiffSnapshots, readLiffSnapshot, writeLiffSnapshot, type LiffSnapshot } from "@/lib/cache/liffSnapshot";
 import type { Liff } from "@line/liff";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
@@ -298,6 +299,11 @@ export default function LiffStudentPage() {
   const [isInLineClient, setIsInLineClient] = useState(false);
   const [liffInstance, setLiffInstance] = useState<Liff | null>(null);
   const [currentStudent, setCurrentStudent] = useState<RealLineStudent | null>(null);
+  // Latest profile for the saved home screen (background loads may outlive a profile edit).
+  const currentStudentRef = useRef<RealLineStudent | null>(null);
+  useEffect(() => {
+    currentStudentRef.current = currentStudent;
+  }, [currentStudent]);
   // Join requests wait for a complete profile (see studentProfileError).
   const profileReady = !studentProfileError(currentStudent);
 
@@ -639,6 +645,16 @@ export default function LiffStudentPage() {
     answers: Record<string, SubmissionAnswer>;
   } | null>(null);
 
+  /** Shows a saved home screen (see liffSnapshot) until fresh data replaces it. */
+  const applySnapshot = (snapshot: LiffSnapshot) => {
+    enrolledClassroomIdsRef.current = new Set(snapshot.classrooms.map((c) => c.id));
+    setClassrooms(snapshot.classrooms);
+    setAssignments(snapshot.assignments);
+    setSubmissions(snapshot.submissions);
+    setGradedSubmissionIds(new Set(snapshot.gradedIds));
+    setTeacherGradedIds(new Set(snapshot.teacherGradedIds));
+  };
+
   // 1. Initialize LIFF SDK & Enforce Authentication
   useEffect(() => {
     let isMounted = true;
@@ -648,9 +664,15 @@ export default function LiffStudentPage() {
       setAuthErrorMessage(null);
 
       try {
-        const res = await fetch("/api/liff/config");
-        const config = await res.json();
-        const id = config.liffId || process.env.NEXT_PUBLIC_LINE_LIFF_ID || "";
+        // Download the LIFF SDK while the id is resolved. The id is built into
+        // the page; the config request only runs when the build did not have it.
+        const liffModule = import("@line/liff");
+        let id = process.env.NEXT_PUBLIC_LINE_LIFF_ID || "";
+        if (!id) {
+          const res = await fetch("/api/liff/config");
+          const config = await res.json();
+          id = config.liffId || "";
+        }
 
         if (!isMounted) return;
         setLiffId(id);
@@ -659,7 +681,7 @@ export default function LiffStudentPage() {
           throw new Error("ไม่พบ LINE_LIFF_ID ในระบบ กรุณาตรวจสอบการตั้งค่า .env");
         }
 
-        const liff = (await import("@line/liff")).default;
+        const liff = (await liffModule).default;
         await liff.init({ liffId: id });
 
         if (!isMounted) return;
@@ -691,7 +713,27 @@ export default function LiffStudentPage() {
 
         // Every API call carries this token; the server verifies it with LINE.
         setLineAccessToken(liff.getAccessToken());
+
+        // Returning student: show their last home screen right away while the
+        // profile sync and fresh data load in parallel. Only this LINE account's
+        // copy is read (the id comes from LINE's signed ID token).
+        const snapshot = readLiffSnapshot(liff.getDecodedIDToken()?.sub);
+        if (snapshot && isMounted) {
+          applySnapshot(snapshot);
+          setCurrentStudent(snapshot.student);
+          setAuthStatus("authenticated");
+        }
+
         const profile = await liff.getProfile();
+        if (snapshot && snapshot.student.line_uid !== profile.userId && isMounted) {
+          // Never keep another account's screen (should not happen: same token).
+          clearLiffSnapshots();
+          setClassrooms([]);
+          setAssignments([]);
+          setSubmissions({});
+          setCurrentStudent(null);
+          setAuthStatus("loading");
+        }
 
         // Real sync of LINE profile into Supabase users table
         const syncedUser = await dataService.syncLineStudentUser({
@@ -769,6 +811,8 @@ export default function LiffStudentPage() {
         liffInstance.logout();
       }
       setLineAccessToken(null);
+      // The next person on this phone must not see this student's work.
+      clearLiffSnapshots();
       setCurrentStudent(null);
       setAuthStatus("unauthenticated");
     }
@@ -849,10 +893,10 @@ export default function LiffStudentPage() {
         const codeParam = params.get("code");
         const classIdParam = params.get("classId");
 
-        // Only the student's own classrooms are fetched; an invite link adds the
-        // one classroom it points to.
-        const [myClasses, institutions, linkedClass] = await Promise.all([
-          dataService.getStudentClassrooms({ id: currentStudent.id, line_uid: currentStudent.line_uid }),
+        // Classrooms, work, submissions and scores in one request; an invite
+        // link adds the one classroom it points to.
+        const [firstHome, institutions, linkedClass] = await Promise.all([
+          dataService.getStudentHome(),
           isInitial ? dataService.getRegisteredInstitutions() : Promise.resolve(null),
           // The invite code identifies the classroom for students who have not joined yet;
           // classId alone only opens a classroom the student already belongs to.
@@ -870,7 +914,9 @@ export default function LiffStudentPage() {
           if (assignmentParam || view) pendingDeepLinkRef.current = { assignmentId: assignmentParam, view };
         }
 
-        let enrolled = myClasses;
+        let home = firstHome;
+        let enrolled = home.classrooms;
+        let joinedNow = false;
 
         // Default to Overview (null) unless a specific class was requested via URL
         // link. Background refreshes keep the classroom the student has open.
@@ -919,11 +965,17 @@ export default function LiffStudentPage() {
                   },
                   { autoAdmit: false, inviteCode: codeParam || undefined }
                 );
+                joinedNow = true;
                 setJoinMessage(`🎉 ส่งคำขอเข้าห้อง "${classroomTitle(matched)}" แล้ว (รอคุณครูอนุมัติ)`);
                 setTimeout(() => setJoinMessage(null), 3500);
               }
 
               active = matched;
+              if (joinedNow) {
+                // The home was read before joining: read it again with the new classroom.
+                home = await dataService.getStudentHome();
+                enrolled = home.classrooms;
+              }
               if (!enrolled.some((c) => c.id === matched.id)) {
                 enrolled = [matched, ...enrolled];
               }
@@ -941,13 +993,10 @@ export default function LiffStudentPage() {
           }
         }
 
-        // Single-beat unified data loading: filter assignments and load student submissions together
-        const enrolledClassIds = new Set(enrolled.map((c) => c.id));
-        // Published work and this student's own submissions, in one request.
+        // Published work and this student's own submissions came with the home.
         // Scheduled work stays hidden until its publish time.
-        const work = await dataService.getStudentWork([...enrolledClassIds]);
-        const relevantAssigns = work.assignments.filter((a) => isAssignmentPublished(a));
-        const allSubmissions = work.submissions;
+        const relevantAssigns = home.assignments.filter((a) => isAssignmentPublished(a));
+        const allSubmissions = home.submissions;
         const subMap: Record<string, Submission> = {};
         const assignmentsById = new Map(relevantAssigns.map((a) => [a.id, a]));
         for (const submission of allSubmissions) {
@@ -968,7 +1017,8 @@ export default function LiffStudentPage() {
         // Grading is finished only when every answer has a teacher score; a
         // running total alone may be partial (objective items auto-scored).
         const studentSubmissions = Object.values(subMap);
-        const answerRows = await dataService.getAnswersForSubmissions(studentSubmissions.map((submission) => submission.id));
+        const studentSubmissionIds = new Set(studentSubmissions.map((submission) => submission.id));
+        const answerRows = home.answers.filter((row) => studentSubmissionIds.has(row.submission_id));
         const answersBySubmission = new Map<string, SubmissionAnswer[]>();
         for (const row of answerRows) {
           const list = answersBySubmission.get(row.submission_id) || [];
@@ -993,13 +1043,26 @@ export default function LiffStudentPage() {
         enrolledClassroomIdsRef.current = new Set(enrolled.map((c) => c.id));
         latestEnrolled = enrolled;
         syncSignals(enrolled.map((c) => c.id));
-        schedulePublishReload(work.assignments);
+        schedulePublishReload(home.assignments);
         setClassrooms(enrolled);
-        setSelectedClassroom(active);
+        // A saved home screen may already show a classroom: keep it while it still exists.
+        setSelectedClassroom(active || (isInitial ? enrolled.find((c) => c.id === selectedClassroomIdRef.current) || null : null));
         setAssignments(relevantAssigns);
         setSubmissions(subMap);
         setGradedSubmissionIds(graded);
         setTeacherGradedIds(teacherGraded);
+        // Saved for the next app open (server data only, this LINE account only).
+        const student = currentStudentRef.current || currentStudent;
+        if (student.line_uid) {
+          writeLiffSnapshot({
+            student,
+            classrooms: enrolled,
+            assignments: relevantAssigns,
+            submissions: subMap,
+            gradedIds: [...graded],
+            teacherGradedIds: [...teacherGraded],
+          });
+        }
         if (currentStudent.line_uid) {
           loadAllActiveAttendance(enrolled, currentStudent.line_uid);
         }
@@ -1955,12 +2018,12 @@ export default function LiffStudentPage() {
                   className="text-left p-4 rounded-3xl bg-linear-to-br from-amber-400 to-orange-500 text-white shadow-lg shadow-orange-500/20 cursor-pointer active:scale-[0.98] transition-transform"
                 >
                   <p className="text-xs font-semibold text-amber-50">งานที่ต้องทำ</p>
-                  <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData ? '–' : openPendingAssignments.length}</p>
+                  <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : openPendingAssignments.length}</p>
                   <p className="text-[11px] text-amber-50/90 mt-0.5">{isHomeworkListOpen ? 'แตะเพื่อซ่อนรายการ' : 'แตะเพื่อดูรายการ'}</p>
                 </button>
                 <div className="p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20">
                   <p className="text-xs font-semibold text-emerald-50">ส่งแล้ว</p>
-                  <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData ? '–' : completedAssignments.length}</p>
+                  <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : completedAssignments.length}</p>
                   <p className="text-[11px] text-emerald-50/90 mt-0.5">ตรวจแล้ว / รอผล</p>
                 </div>
               </div>
@@ -2291,7 +2354,8 @@ export default function LiffStudentPage() {
                                 </span>
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
                               </div>
-                              <div className="shrink-0">
+                              <div className="shrink-0 flex flex-col items-end gap-1">
+                                {isSubmitted && !assignment.is_exam && submission.reopened_at && <Pill tone="violet">✏️ ครูเปิดให้แก้ไข</Pill>}
                                 {isGraded ? (
                                   <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 font-black">
                                     <span className="text-base tabular-nums">{submission.total_score}</span>

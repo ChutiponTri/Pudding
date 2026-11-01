@@ -114,6 +114,7 @@ export async function loadDataset(supabase: Supabase, dataset: AdminDataset, ano
         {
           answer_id: answer.id,
           assignment_id: submission.assignment_id,
+          classroom_id: assignment?.classroom_id || null,
           assignment_title: assignment?.title || '',
           is_exam: !!assignment?.is_exam,
           question_id: question.id,

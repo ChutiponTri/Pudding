@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAdmin } from '@/lib/server/admin';
 import { isAdminTable, linkedTable, listRecords, LIST_COLUMNS, primaryKeyOf } from '@/lib/server/adminRecords';
-import { AdminHeader, AdminMain, adminRecordHref, previewValue } from '@/components/AdminUi';
+import { AdminHeader, AdminMain, AdminPage, adminRecordHref, previewValue } from '@/components/AdminUi';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Pudding Admin', robots: { index: false, follow: false } };
@@ -48,8 +48,8 @@ export default async function AdminTablePage({
   };
 
   return (
-    <div className="min-h-dvh bg-slate-50 dark:bg-slate-950">
-      <AdminHeader email={admin.primaryEmailAddress?.emailAddress} crumbs={[{ label: table }]} />
+    <AdminPage>
+      <AdminHeader email={admin.primaryEmailAddress?.emailAddress} crumbs={[{ label: table }]} active="tables" />
       <AdminMain>
         <form className="flex flex-wrap items-center gap-2" action={`/admin/${table}`}>
           <input
@@ -64,7 +64,7 @@ export default async function AdminTablePage({
               <input type="hidden" name="val" value={filter.value} />
             </>
           )}
-          <button className="h-10 px-4 rounded-xl bg-amber-500 text-slate-950 text-sm font-bold cursor-pointer">ค้นหา</button>
+          <button className="h-10 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold cursor-pointer">ค้นหา</button>
           {(q || filter) && (
             <Link href={`/admin/${table}`} className="text-xs font-bold text-slate-500 hover:underline">ล้างตัวกรอง</Link>
           )}
@@ -88,7 +88,7 @@ export default async function AdminTablePage({
             </p>
             <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
               <table className="w-full text-xs">
-                <thead className="text-left text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                <thead className="text-left text-slate-500 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     {columns.map((c) => (
                       <th key={c} className="px-3 py-2 font-mono font-bold whitespace-nowrap">{c}</th>
@@ -131,6 +131,6 @@ export default async function AdminTablePage({
           </>
         ) : null}
       </AdminMain>
-    </div>
+    </AdminPage>
   );
 }
