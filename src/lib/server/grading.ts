@@ -40,21 +40,42 @@ export function submissionTotal(questions: Pick<Question, 'id'>[], answers: Arra
   return Math.round(total * 10) / 10;
 }
 
-/** Recomputes total_score / max_total_score of an assignment's submissions (all, or the given ones). */
-export async function recomputeSubmissionTotals(supabase: SupabaseClient, assignmentId: string, submissionIds?: string[]) {
-  const { data: questions, error: qError } = await supabase.from('questions').select('id, max_score').eq('assignment_id', assignmentId);
-  if (qError) throw new Error(qError.message);
-  let ids = submissionIds;
-  if (!ids) {
-    const { data: subs, error } = await supabase.from('submissions').select('id').eq('assignment_id', assignmentId);
-    if (error) throw new Error(error.message);
-    ids = (subs || []).map((s) => s.id as string);
-  }
+/**
+ * Recomputes total_score / max_total_score of an assignment's submissions (all, or the given ones).
+ * Callers that already loaded the assignment's questions pass them to save a round trip.
+ */
+export async function recomputeSubmissionTotals(
+  supabase: SupabaseClient,
+  assignmentId: string,
+  submissionIds?: string[],
+  knownQuestions?: Pick<Question, 'id' | 'max_score'>[]
+) {
+  // Questions, the submission ids and (when ids are given) the answers load side by side.
+  const questionsPromise = knownQuestions
+    ? Promise.resolve(knownQuestions)
+    : supabase
+        .from('questions')
+        .select('id, max_score')
+        .eq('assignment_id', assignmentId)
+        .then(({ data, error }) => {
+          if (error) throw new Error(error.message);
+          return (data || []) as Pick<Question, 'id' | 'max_score'>[];
+        });
+  const idsPromise = submissionIds
+    ? Promise.resolve(submissionIds)
+    : supabase
+        .from('submissions')
+        .select('id')
+        .eq('assignment_id', assignmentId)
+        .then(({ data, error }) => {
+          if (error) throw new Error(error.message);
+          return (data || []).map((s) => s.id as string);
+        });
+  const answersPromise = idsPromise.then((ids) => (ids.length ? answersFor(supabase, 'submission_id', ids) : []));
+  const [qs, ids, answers] = await Promise.all([questionsPromise, idsPromise, answersPromise]);
   if (!ids.length) return;
-  const answers = await answersFor(supabase, 'submission_id', ids);
   const bySubmission = new Map<string, AnswerRow[]>();
   for (const a of answers) bySubmission.set(a.submission_id, [...(bySubmission.get(a.submission_id) || []), a]);
-  const qs = (questions || []) as Pick<Question, 'id' | 'max_score'>[];
   const maxTotal = qs.reduce((sum, q) => sum + Number(q.max_score || 0), 0);
   await Promise.all(
     ids.map(async (id) => {
@@ -87,6 +108,7 @@ export async function regradeObjectiveQuestions(
   const changeFor = new Map(relevant.map((change) => [change.after.id, change]));
   const touched = new Set<string>();
   const now = new Date().toISOString();
+  const updates: Array<{ id: string; score: number }> = [];
   for (const answer of answers) {
     const change = changeFor.get(answer.question_id);
     if (!change) continue;
@@ -99,10 +121,17 @@ export async function regradeObjectiveQuestions(
       continue;
     }
     if (current != null && Number(current) === next) continue;
-    const { error } = await supabase.from('submission_answers').update({ teacher_score: next, graded_at: now, updated_at: now }).eq('id', answer.id);
-    if (error) throw new Error(error.message);
+    updates.push({ id: answer.id, score: next });
     rescored += 1;
     touched.add(answer.submission_id);
+  }
+  // Each answer gets its own score, so one update per row, sent a batch at a time instead of one after another.
+  for (const part of chunk(updates, 25)) {
+    const results = await Promise.all(
+      part.map(({ id, score }) => supabase.from('submission_answers').update({ teacher_score: score, graded_at: now, updated_at: now }).eq('id', id))
+    );
+    const failed = results.find((r) => r.error)?.error;
+    if (failed) throw new Error(failed.message);
   }
   if (touched.size) await recomputeSubmissionTotals(supabase, assignmentId, [...touched]);
   return { rescored, keptManual };

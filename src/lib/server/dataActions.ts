@@ -1536,8 +1536,39 @@ export const dataActions = {
     return results.flatMap((r) => (r.data || []) as SubmissionAnswer[]);
   },
 
+  /**
+   * The student's own result sheet in one request: the assignment's questions
+   * (without answer keys) and their answers with the teacher's scores and
+   * comments. Replaces getQuestions + getSubmissionAnswers on the LIFF.
+   */
+  async getStudentResult({ supabase, actor }: Ctx, submissionId: string) {
+    const me = requireStudent(actor);
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('id, submission_answers(*), assignment:assignments(*, questions(*), classroom:classrooms(id, teacher_id, teachers, students, pending_students))')
+      .eq('id', submissionId)
+      .in('student_id', me.keys)
+      .maybeSingle();
+    if (error) throw toDatabaseError(error, 'submissions');
+    if (!data) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
+    type Row = {
+      submission_answers: SubmissionAnswer[] | null;
+      assignment: (Assignment & { questions?: Question[] | null; classroom?: Classroom | null }) | null;
+    };
+    const row = data as unknown as Row;
+    const { questions, classroom, ...assignment } = row.assignment || ({} as NonNullable<Row['assignment']>);
+    // Same rule as getAssignmentById: published work of a classroom the student belongs to.
+    const role = classroom ? await classroomRole(supabase, actor, classroom) : null;
+    if (!role || !isAssignmentPublished(assignment as Assignment)) throw FORBIDDEN();
+    const answers: Record<string, SubmissionAnswer> = {};
+    // Students see their own scores and comments, not other teachers' or researchers' grades.
+    for (const ans of row.submission_answers || []) answers[ans.question_id] = { ...ans, co_grades: undefined, research_grades: undefined };
+    return { questions: questionsForStudent(questions || []), answers };
+  },
+
+  /** Saves one grade; see saveTeacherGrades. */
   async saveTeacherGrade(
-    { supabase, actor }: Ctx,
+    ctx: Ctx,
     submissionId: string,
     questionId: string,
     teacherScore: number,
@@ -1545,56 +1576,89 @@ export const dataActions = {
     _teacherId: string,
     teacherName: string
   ) {
+    await dataActions.saveTeacherGrades(ctx, submissionId, [{ questionId, score: teacherScore, comment: teacherComment }], teacherName);
+  },
+
+  /**
+   * Saves several question grades of one submission in one go: one access
+   * check (which also brings the questions and the current answer rows), one
+   * write, then the official total. The server decides from the classroom
+   * whether the grades are official or research-only.
+   */
+  async saveTeacherGrades(
+    { supabase, actor }: Ctx,
+    submissionId: string,
+    grades: Array<{ questionId: string; score: number; comment?: string | null }>,
+    teacherName: string
+  ) {
     const me = requireTeacher(actor);
-    const { classroom } = await requireTeacherOfSubmission(supabase, actor, submissionId);
+    if (!Array.isArray(grades) || grades.length === 0) return;
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('id, assignment_id, submission_answers(*), assignment:assignments(id, classroom:classrooms(id, teacher_id, teachers), questions(id, max_score))')
+      .eq('id', submissionId)
+      .maybeSingle();
+    if (error) throw toDatabaseError(error, 'submissions');
+    if (!data) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
+    type Row = {
+      assignment_id: string;
+      submission_answers: SubmissionAnswer[] | null;
+      assignment: { classroom: Pick<Classroom, 'id' | 'teacher_id' | 'teachers'> | null; questions: Pick<Question, 'id' | 'max_score'>[] | null } | null;
+    };
+    const row = data as unknown as Row;
+    const classroom = row.assignment?.classroom;
+    if (!classroom) throw new HttpError(404, 'ไม่พบห้องเรียน');
+    if (!isTeacherOf(classroom, me.userId)) throw FORBIDDEN();
     // The grading role comes from the classroom, not from the browser.
     const teacherRole: TeacherRole = classroom.teacher_id === me.userId
       ? 'primary'
       : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role || 'assistant';
     const isOfficial = teacherRole === 'primary' || teacherRole === 'assistant';
     const isResearcher = teacherRole === 'researcher';
+
+    const questions = row.assignment?.questions || [];
+    const maxScoreOf = new Map(questions.map((q) => [q.id, Number(q.max_score || 0)]));
+    const existingOf = new Map((row.submission_answers || []).map((a) => [a.question_id, a]));
     const gradedAt = new Date().toISOString();
-    const record: TeacherGradeRecord = {
-      teacher_id: me.userId,
-      teacher_name: teacherName,
-      teacher_role: teacherRole,
-      score: teacherScore,
-      comment: teacherComment,
-      graded_at: gradedAt,
-    };
-    // Reuse the row when it exists: UNIQUE(submission_id, question_id) forbids a second.
-    const { data: row, error: readError } = await supabase
-      .from('submission_answers')
-      .select('*')
-      .eq('submission_id', submissionId)
-      .eq('question_id', questionId)
-      .maybeSingle();
-    if (readError) throw toDatabaseError(readError, 'submission_answers');
-    const existing = (row || {}) as Partial<SubmissionAnswer>;
-    const { error: writeError } = await supabase.from('submission_answers').upsert(
-      {
+    // The last grade of a question wins if the browser sent it twice.
+    const byQuestion = new Map<string, { score: number; comment: string }>();
+    for (const grade of grades) {
+      const score = Number(grade?.score);
+      if (!grade || typeof grade.questionId !== 'string' || !maxScoreOf.has(grade.questionId)) throw new HttpError(400, 'ไม่พบคำถามนี้ในงาน');
+      if (!Number.isFinite(score) || score < 0 || score > maxScoreOf.get(grade.questionId)!) throw new HttpError(400, 'คะแนนไม่ถูกต้อง');
+      byQuestion.set(grade.questionId, { score, comment: typeof grade.comment === 'string' ? grade.comment : '' });
+    }
+    // Reuse each row when it exists: UNIQUE(submission_id, question_id) forbids a second.
+    const rows = [...byQuestion].map(([questionId, { score, comment }]) => {
+      const existing = (existingOf.get(questionId) || {}) as Partial<SubmissionAnswer>;
+      const record: TeacherGradeRecord = {
+        teacher_id: me.userId,
+        teacher_name: teacherName,
+        teacher_role: teacherRole,
+        score,
+        comment,
+        graded_at: gradedAt,
+      };
+      return {
         id: existing.id || `ans-${submissionId}-${questionId}`,
         submission_id: submissionId,
         question_id: questionId,
-        teacher_score: isOfficial ? teacherScore : existing.teacher_score ?? null,
-        teacher_comment: isOfficial ? teacherComment : existing.teacher_comment ?? null,
+        teacher_score: isOfficial ? score : existing.teacher_score ?? null,
+        teacher_comment: isOfficial ? comment : existing.teacher_comment ?? null,
         co_grades: { ...(existing.co_grades || {}), [me.userId]: record },
         research_grades: isResearcher ? { ...(existing.research_grades || {}), [me.userId]: record } : existing.research_grades || {},
         graded_at: isOfficial ? gradedAt : existing.graded_at ?? null,
         updated_at: gradedAt,
-      },
-      { onConflict: 'submission_id,question_id' }
-    );
+      };
+    });
+    const { error: writeError } = await supabase.from('submission_answers').upsert(rows, { onConflict: 'submission_id,question_id' });
     if (writeError) throw toDatabaseError(writeError, 'submission_answers');
     if (isOfficial) {
-      // Total = sum of official scores, set once every question has one.
-      const { data: sub } = await supabase.from('submissions').select('assignment_id').eq('id', submissionId).maybeSingle();
-      if (sub?.assignment_id) {
-        await recomputeSubmissionTotals(supabase, sub.assignment_id, [submissionId]);
-        // Open score tables (classroom grades tab, co-teachers, the student) refetch.
-        const assignmentId = sub.assignment_id;
-        after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
-      }
+      // Total = sum of official scores, set once every question has one (read after the write).
+      await recomputeSubmissionTotals(supabase, row.assignment_id, [submissionId], questions);
+      // Open score tables (classroom grades tab, co-teachers, the student) refetch.
+      const assignmentId = row.assignment_id;
+      after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
     }
   },
 
@@ -1733,10 +1797,20 @@ export type DataActionName = keyof typeof dataActions;
 
 /** Body text of an assignment's timeline post (also what LINE announces). */
 async function submissionWithClassroom(supabase: Supabase, submissionId: string) {
-  const { data: submission } = await supabase.from('submissions').select('id, assignment_id, student_id').eq('id', submissionId).maybeSingle();
-  if (!submission) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
-  const { data: assignment } = await supabase.from('assignments').select('id, classroom_id').eq('id', submission.assignment_id).maybeSingle();
-  const classroom = assignment ? await loadClassroom(supabase, assignment.classroom_id) : null;
+  // One round trip: the submission with its assignment's classroom (only what access checks need).
+  const { data } = await supabase
+    .from('submissions')
+    .select('id, assignment_id, student_id, assignment:assignments(classroom:classrooms(id, teacher_id, teachers))')
+    .eq('id', submissionId)
+    .maybeSingle();
+  if (!data) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
+  const { assignment, ...submission } = data as unknown as {
+    id: string;
+    assignment_id: string;
+    student_id: string;
+    assignment: { classroom: Classroom | null } | null;
+  };
+  const classroom = assignment?.classroom;
   if (!classroom) throw new HttpError(404, 'ไม่พบห้องเรียน');
   return { submission, classroom };
 }

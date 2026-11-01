@@ -16,7 +16,6 @@ import {
   SubmissionAnswer,
   SubmissionEvent,
   SubmissionOverrideStatus,
-  TeacherRole,
   User,
 } from '@/types/database';
 import { DateTimeField } from '@/components/DateTimeField';
@@ -1465,9 +1464,7 @@ Handing in again clears the current score and comments for regrading (their on-t
               : undefined
           }
           onGraded={(total, maxTotal) => applyGradedTotal(gradingSubmission.id, total, maxTotal)}
-          onSaveGrade={(subId, qId, score, comment, teacherId, teacherName, teacherRole) =>
-            dataService.saveTeacherGrade(subId, qId, score, comment, teacherId, teacherName, teacherRole as TeacherRole)
-          }
+          onSaveGrades={(subId, grades, gradingTeacher) => dataService.saveTeacherGrades(subId, grades, gradingTeacher.name)}
           onUpdateAnswerKey={async (questionId, idealAnswer) => {
             const result = await dataService.updateAnswerKey(assignmentId, questionId, idealAnswer);
             setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, ideal_answer: result.question.ideal_answer } : q)));

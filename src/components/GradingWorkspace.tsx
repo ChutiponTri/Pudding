@@ -47,14 +47,11 @@ interface GradingWorkspaceProps {
   onClose: () => void;
   onPrevStudent?: () => void;
   onNextStudent?: () => void;
-  onSaveGrade: (
+  /** Saves several question grades of the submission in one request. */
+  onSaveGrades: (
     submissionId: string,
-    questionId: string,
-    score: number,
-    comment: string,
-    teacherId: string,
-    teacherName: string,
-    teacherRole: TeacherRole
+    grades: Array<{ questionId: string; score: number; comment: string }>,
+    grader: ClassroomTeacher
   ) => Promise<void>;
   /** After saving: the official total once every question has a score (null while some are missing). */
   onGraded?: (total: number | null, maxTotal: number) => void;
@@ -113,7 +110,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   onClose,
   onPrevStudent,
   onNextStudent,
-  onSaveGrade,
+  onSaveGrades,
   onGraded,
   onUpdateAnswerKey,
 }) => {
@@ -239,67 +236,87 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
     return [...presets].sort((a, b) => weight(b) - weight(a));
   };
 
-  /** Save one question; returns false when the score is invalid or saving failed. */
-  const saveQuestion = async (q: Question): Promise<boolean> => {
-    const g = grades[q.id];
-    if (!g || !isDirty(g)) return true;
-    if (g.score.trim() === '') {
-      alert(th ? `ข้อที่ ${questions.indexOf(q) + 1}: กรุณาใส่คะแนนก่อนบันทึก` : `Question ${questions.indexOf(q) + 1}: enter a score first`);
-      return false;
+  /**
+   * Saves the given questions (the changed ones among them) in one request.
+   * Returns false when a score is invalid (nothing is saved; that card is
+   * scrolled into view) or saving failed.
+   */
+  const saveQuestions = async (targets: Question[], scrollToInvalid = false): Promise<boolean> => {
+    const pending: Array<{ q: Question; score: number; comment: string }> = [];
+    for (const q of targets) {
+      const g = grades[q.id];
+      if (!g || !isDirty(g)) continue;
+      const score = Number(g.score);
+      const invalid =
+        g.score.trim() === ''
+          ? th ? `ข้อที่ ${questions.indexOf(q) + 1}: กรุณาใส่คะแนนก่อนบันทึก` : `Question ${questions.indexOf(q) + 1}: enter a score first`
+          : Number.isNaN(score) || score < 0 || score > q.max_score
+          ? th ? `ข้อที่ ${questions.indexOf(q) + 1}: คะแนนต้องอยู่ระหว่าง 0 ถึง ${q.max_score}` : `Question ${questions.indexOf(q) + 1}: score must be 0–${q.max_score}`
+          : null;
+      if (invalid) {
+        alert(invalid);
+        if (scrollToInvalid) document.getElementById(`question-card-${q.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return false;
+      }
+      pending.push({ q, score, comment: g.comment });
     }
-    const score = Number(g.score);
-    if (Number.isNaN(score) || score < 0 || score > q.max_score) {
-      alert(th ? `ข้อที่ ${questions.indexOf(q) + 1}: คะแนนต้องอยู่ระหว่าง 0 ถึง ${q.max_score}` : `Question ${questions.indexOf(q) + 1}: score must be 0–${q.max_score}`);
-      return false;
-    }
+    if (!pending.length) return true;
 
-    setGrade(q.id, { status: 'saving' });
+    setGrades((prev) => {
+      const next = { ...prev };
+      for (const { q } of pending) next[q.id] = { ...prev[q.id], status: 'saving' };
+      return next;
+    });
     try {
-      await onSaveGrade(submission.id, q.id, score, g.comment, grader.teacher_id, grader.name, grader.role);
-      const record = {
-        teacher_id: grader.teacher_id,
-        teacher_name: grader.name,
-        teacher_role: grader.role,
-        score,
-        comment: g.comment,
-        graded_at: new Date().toISOString(),
-      };
+      await onSaveGrades(
+        submission.id,
+        pending.map(({ q, score, comment }) => ({ questionId: q.id, score, comment })),
+        grader
+      );
+      const gradedAt = new Date().toISOString();
       setAnswers((prev) => {
-        const existing = prev[q.id] || ({ id: `ans-${submission.id}-${q.id}`, submission_id: submission.id, question_id: q.id } as SubmissionAnswer);
-        return {
-          ...prev,
-          [q.id]: {
+        const next = { ...prev };
+        for (const { q, score, comment } of pending) {
+          const record = { teacher_id: grader.teacher_id, teacher_name: grader.name, teacher_role: grader.role, score, comment, graded_at: gradedAt };
+          const existing = prev[q.id] || ({ id: `ans-${submission.id}-${q.id}`, submission_id: submission.id, question_id: q.id } as SubmissionAnswer);
+          next[q.id] = {
             ...existing,
             teacher_score: isResearcher ? existing.teacher_score : score,
-            teacher_comment: isResearcher ? existing.teacher_comment : g.comment,
+            teacher_comment: isResearcher ? existing.teacher_comment : comment,
             co_grades: { ...(existing.co_grades || {}), [grader.teacher_id]: record },
             research_grades: isResearcher ? { ...(existing.research_grades || {}), [grader.teacher_id]: record } : existing.research_grades,
-          },
-        };
+          };
+        }
+        return next;
       });
-      setGrades((prev) => ({
-        ...prev,
-        [q.id]: { ...prev[q.id], score: String(score), savedScore: String(score), savedComment: g.comment, status: 'saved' },
-      }));
+      setGrades((prev) => {
+        const next = { ...prev };
+        for (const { q, score, comment } of pending) {
+          next[q.id] = { ...prev[q.id], score: String(score), savedScore: String(score), savedComment: comment, status: 'saved' };
+        }
+        return next;
+      });
       return true;
     } catch (err) {
       console.error(err);
-      setGrade(q.id, { status: 'error' });
+      setGrades((prev) => {
+        const next = { ...prev };
+        for (const { q } of pending) next[q.id] = { ...prev[q.id], status: 'error' };
+        return next;
+      });
       alert(err instanceof Error ? `${th ? 'บันทึกคะแนนไม่สำเร็จ' : 'Could not save'}: ${err.message}` : th ? 'บันทึกคะแนนไม่สำเร็จ' : 'Could not save');
       return false;
     }
   };
 
-  /** Save every changed question in order; stops at the first problem. */
+  /** Save one question; returns false when the score is invalid or saving failed. */
+  const saveQuestion = (q: Question) => saveQuestions([q]);
+
+  /** Save every changed question in one request; nothing is saved while a score is invalid. */
   const saveAll = async (): Promise<boolean> => {
     setIsSavingAll(true);
     try {
-      for (const q of dirtyQuestions) {
-        if (!(await saveQuestion(q))) {
-          document.getElementById(`question-card-${q.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          return false;
-        }
-      }
+      if (!(await saveQuestions(dirtyQuestions, true))) return false;
       // Researcher scores never change the official total.
       if (dirtyQuestions.length && !isResearcher && onGraded) {
         const scoreOf = (q: Question) => (isDirty(grades[q.id]) ? grades[q.id].score : grades[q.id]?.savedScore ?? '');

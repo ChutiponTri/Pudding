@@ -705,6 +705,21 @@ export const dataService = {
     return call<SubmissionAnswer[]>('getAnswersForSubmissions', ids);
   },
 
+  /** The student's own result sheet (questions without answer keys + their scored answers) in one request. */
+  async getStudentResult(submissionId: string): Promise<{ questions: Question[]; answers: Record<string, SubmissionAnswer> }> {
+    return call('getStudentResult', submissionId);
+  },
+
+  /** Saves several question grades of one submission in one request (official or research-only, decided by the server). */
+  async saveTeacherGrades(
+    submissionId: string,
+    grades: Array<{ questionId: string; score: number; comment: string }>,
+    teacherName: string
+  ): Promise<void> {
+    if (grades.length === 0) return;
+    await call('saveTeacherGrades', submissionId, grades, teacherName);
+  },
+
   /** Saves a grade; the server decides from the classroom whether it is official or research-only. */
   async saveTeacherGrade(
     submissionId: string,

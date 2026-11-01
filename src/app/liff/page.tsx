@@ -638,12 +638,16 @@ export default function LiffStudentPage() {
   const pendingDeepLinkRef = useRef<{ assignmentId?: string; view?: "timeline" | "work" | "attendance" } | null>(null);
 
   // Graded Detail Modal
+  // questions is null while the sheet loads; loadFailed shows a retry instead.
   const [viewingGradedSub, setViewingGradedSub] = useState<{
     assignment: Assignment;
     submission: Submission;
-    questions: Question[];
+    questions: Question[] | null;
     answers: Record<string, SubmissionAnswer>;
+    loadFailed?: boolean;
   } | null>(null);
+  // Result sheets already loaded this session: reopening shows them at once while a fresh copy loads.
+  const gradedDetailCacheRef = useRef(new Map<string, { questions: Question[]; answers: Record<string, SubmissionAnswer> }>());
 
   /** Shows a saved home screen (see liffSnapshot) until fresh data replaces it. */
   const applySnapshot = (snapshot: LiffSnapshot) => {
@@ -1530,11 +1534,23 @@ export default function LiffStudentPage() {
   }, [seenScoresKey]);
 
   const handleOpenGradedDetail = async (a: Assignment, s: Submission) => {
-    const [qs, answers] = await Promise.all([
-      dataService.getQuestions(a.id),
-      dataService.getSubmissionAnswers(s.id),
-    ]);
-    setViewingGradedSub({ assignment: a, submission: s, questions: qs, answers });
+    // The sheet opens at once (score header from the home data); the per-question
+    // details arrive in one request, or show straight away when opened before.
+    // Keyed by the hand-in too, so answers from before a resubmission are never shown (or edited) as current.
+    const cacheKey = `${s.id}|${s.submitted_at || ""}|${s.reopened_at || ""}|${s.total_score ?? ""}`;
+    const cached = gradedDetailCacheRef.current.get(cacheKey);
+    setViewingGradedSub({ assignment: a, submission: s, questions: cached?.questions ?? null, answers: cached?.answers ?? {} });
+    let detail: { questions: Question[]; answers: Record<string, SubmissionAnswer> };
+    try {
+      detail = await dataService.getStudentResult(s.id);
+    } catch (err) {
+      console.error("Could not load the result sheet:", err);
+      if (!cached) setViewingGradedSub((prev) => (prev?.submission.id === s.id ? { ...prev, loadFailed: true } : prev));
+      return;
+    }
+    gradedDetailCacheRef.current.set(cacheKey, detail);
+    // Only fill the sheet that is still open (the student may have closed it or opened another).
+    setViewingGradedSub((prev) => (prev?.submission.id === s.id ? { ...prev, ...detail, loadFailed: false } : prev));
     // Once a graded result is opened, it no longer needs announcing on the overview.
     if (gradedSubmissionIds.has(s.id) && s.total_score != null) {
       setSeenScores((prev) => {
@@ -3254,7 +3270,28 @@ export default function LiffStudentPage() {
 
           <div className="space-y-3">
             <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">คะแนนและข้อเสนอแนะรายข้อ</h4>
-            {viewingGradedSub.questions.map((q, i) => {
+            {viewingGradedSub.questions === null && viewingGradedSub.loadFailed ? (
+              <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 ring-1 ring-rose-200 dark:ring-rose-900 text-center space-y-2">
+                <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">โหลดรายละเอียดไม่สำเร็จ</p>
+                <button
+                  type="button"
+                  onClick={() => handleOpenGradedDetail(viewingGradedSub.assignment, viewingGradedSub.submission)}
+                  className="h-9 px-4 rounded-xl bg-white dark:bg-slate-900 ring-1 ring-rose-200 dark:ring-rose-900 text-sm font-bold text-rose-700 dark:text-rose-300 cursor-pointer"
+                >
+                  ลองอีกครั้ง
+                </button>
+              </div>
+            ) : viewingGradedSub.questions === null ? (
+              <div className="space-y-3" aria-busy="true" aria-label="กำลังโหลด">
+                {[0, 1].map((i) => (
+                  <div key={i} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200/80 dark:ring-slate-700/70 space-y-2.5 animate-pulse">
+                    <div className="h-4 w-2/3 rounded bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-12 rounded-xl bg-white dark:bg-slate-900" />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {(viewingGradedSub.questions || []).map((q, i) => {
               const ans = viewingGradedSub.answers[q.id];
               // Students only see the teacher's official score, never the AI draft.
               const score = ans?.teacher_score;
@@ -3297,7 +3334,9 @@ export default function LiffStudentPage() {
               <button
                 type="button"
                 onClick={() => handleEditSubmission(viewingGradedSub.assignment, viewingGradedSub.submission, viewingGradedSub.answers)}
-                className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform"
+                // The edit form starts from the saved answers, so wait until they have loaded.
+                disabled={viewingGradedSub.questions === null}
+                className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform disabled:opacity-50 disabled:cursor-wait"
               >
                 <PencilLine className="w-4 h-4" />
                 แก้ไขงานที่ส่ง
