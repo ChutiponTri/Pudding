@@ -11,6 +11,19 @@ import { isObjectiveAnswerCorrect, isObjectiveQuestion, scoreObjectiveAnswer } f
 import { TRUE_FALSE_OPTIONS } from '@/lib/utils/trueFalse';
 import { isIntegrityFlagged } from '@/lib/utils/gradingStatus';
 import {
+  SCORE_LEVELS,
+  defaultFeedbackPresets,
+  finalizeScoreInput,
+  loadFeedbackPresets,
+  maxScoreOf,
+  normalizeScoreInput,
+  presetsForLevel,
+  scoreLevel,
+  scoreLevelLabel,
+  type FeedbackPreset,
+  type PresetLevel,
+} from '@/lib/utils/feedbackLevels';
+import {
   AlertCircle,
   Award,
   KeyRound,
@@ -73,27 +86,19 @@ interface QuestionGradeState {
   status: SaveStatus;
 }
 
-type Preset = { id: string; category: string; text: string };
-
-/** Subject-neutral starter comments; teachers add their own in "จัดการ". */
-const DEFAULT_PRESETS: Preset[] = [
-  { id: 'p1', category: 'praise', text: 'ดีมาก ตอบครบถ้วนและตรงประเด็น' },
-  { id: 'p2', category: 'reasoning', text: 'แสดงวิธีคิดและเหตุผลได้ชัดเจน' },
-  { id: 'p3', category: 'missing', text: 'ควรอธิบายขั้นตอนหรือเหตุผลเพิ่มเติม' },
-  { id: 'p4', category: 'missing', text: 'ควรยกตัวอย่างประกอบให้ชัดเจนขึ้น' },
-  { id: 'p5', category: 'improvement', text: 'ควรตรวจทานความถูกต้องอีกครั้งก่อนส่ง' },
-  { id: 'p6', category: 'integrity', text: 'ควรเรียบเรียงคำตอบด้วยความเข้าใจและสำนวนของตนเอง' },
-];
-const DEFAULT_PRESETS_EN: Preset[] = [
-  { id: 'p1', category: 'praise', text: 'Great work, complete and on point' },
-  { id: 'p2', category: 'reasoning', text: 'Clear reasoning and working shown' },
-  { id: 'p3', category: 'missing', text: 'Explain your steps or reasoning in more detail' },
-  { id: 'p4', category: 'missing', text: 'Add an example to support your answer' },
-  { id: 'p5', category: 'improvement', text: 'Check your answer again before handing in' },
-  { id: 'p6', category: 'integrity', text: 'Write the answer in your own words' },
-];
+type Preset = FeedbackPreset;
 
 const roundHalf = (n: number) => Math.round(n * 2) / 2;
+/** Badge colour of each score level (suggestion chips and the manage dialog). */
+const LEVEL_TONE: Record<PresetLevel, string> = {
+  full: 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300',
+  high: 'bg-teal-100 dark:bg-teal-950/70 text-teal-800 dark:text-teal-300',
+  good: 'bg-sky-100 dark:bg-sky-950/70 text-sky-800 dark:text-sky-300',
+  fair: 'bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300',
+  low: 'bg-orange-100 dark:bg-orange-950/70 text-orange-800 dark:text-orange-300',
+  zero: 'bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-300',
+  any: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
+};
 /** What the student wrote with a file; older submissions filled the box with "ส่งไฟล์แนบ: <name>" automatically. */
 const fileDescription = (text?: string) => {
   const trimmed = (text || '').trim();
@@ -185,13 +190,14 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   };
 
   // Feedback chips: per teacher, remembered in this browser.
-  const presetsKey = `pudding_feedback_presets_${grader.teacher_id}`;
+  // Saved per teacher in this browser. v2 lists carry a score level per suggestion.
+  const legacyPresetsKey = `pudding_feedback_presets_${grader.teacher_id}`;
+  const presetsKey = `pudding_feedback_presets_v2_${grader.teacher_id}`;
   const [presets, setPresets] = useState<Preset[]>(() => {
     try {
-      const stored = typeof window !== 'undefined' ? localStorage.getItem(presetsKey) : null;
-      return stored ? (JSON.parse(stored) as Preset[]) : th ? DEFAULT_PRESETS : DEFAULT_PRESETS_EN;
+      return loadFeedbackPresets(localStorage.getItem(presetsKey), localStorage.getItem(legacyPresetsKey), th);
     } catch {
-      return th ? DEFAULT_PRESETS : DEFAULT_PRESETS_EN;
+      return defaultFeedbackPresets(th);
     }
   });
   const updatePresets = (next: Preset[]) => {
@@ -202,6 +208,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   };
   const [isPresetModalOpen, setIsPresetModalOpen] = useState(false);
   const [newPresetText, setNewPresetText] = useState('');
+  const [newPresetLevel, setNewPresetLevel] = useState<PresetLevel>('any');
+  // Question id -> why the last keystroke in its score box was refused.
+  const [scoreHints, setScoreHints] = useState<Record<string, string>>({});
 
   const isDirty = (g?: QuestionGradeState) => !!g && (g.score !== g.savedScore || g.comment !== g.savedComment);
   const dirtyQuestions = questions.filter((q) => isDirty(grades[q.id]));
@@ -212,9 +221,39 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   const setGrade = (qId: string, patch: Partial<QuestionGradeState>) =>
     setGrades((prev) => ({ ...prev, [qId]: { ...prev[qId], ...patch, status: patch.status ?? 'idle' } }));
 
+  const clearScoreHint = (qId: string) =>
+    setScoreHints((prev) => {
+      if (!(qId in prev)) return prev;
+      const { [qId]: _cleared, ...rest } = prev;
+      return rest;
+    });
+
+  /** Sets a score, always inside 0 – full score. */
+  const setScore = (q: Question, value: number) => {
+    const max = maxScoreOf(q);
+    const safe = Number.isFinite(value) ? Math.min(max, Math.max(0, value)) : 0;
+    clearScoreHint(q.id);
+    setGrade(q.id, { score: String(safe) });
+  };
+
   const stepScore = (q: Question, delta: number) => {
     const current = Number(grades[q.id]?.score) || 0;
-    setGrade(q.id, { score: String(Math.min(q.max_score, Math.max(0, roundHalf(current + delta)))) });
+    setScore(q, roundHalf(current + delta));
+  };
+
+  /** Typing in the score box: anything that is not a score from 0 to the full score is refused. */
+  const typeScore = (q: Question, raw: string) => {
+    const max = maxScoreOf(q);
+    const next = normalizeScoreInput(raw, max);
+    if (next === null) {
+      setScoreHints((prev) => ({
+        ...prev,
+        [q.id]: th ? `ใส่คะแนนได้ 0 – ${max} (ทศนิยมไม่เกิน 2 ตำแหน่ง)` : `Enter 0 – ${max} (up to 2 decimals)`,
+      }));
+      return;
+    }
+    clearScoreHint(q.id);
+    setGrade(q.id, { score: next });
   };
 
   const insertPreset = (qId: string, text: string) => {
@@ -223,9 +262,10 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   };
 
   // Rank chips by words already typed (praise, missing work, improvement, integrity).
-  const rankedPresets = (text: string) => {
+  const rankedPresets = (text: string, level: ReturnType<typeof scoreLevel>) => {
+    const pool = presetsForLevel(presets, level);
     const lower = text.toLowerCase();
-    if (!lower.trim()) return presets;
+    if (!lower.trim()) return pool;
     const hints: Record<string, string[]> = {
       praise: ['ดี', 'ยอด', 'เก่ง', 'ชัด', 'good', 'great', 'well', 'clear'],
       missing: ['ขาด', 'ตก', 'หล่น', 'ยัง', 'missing', 'incomplete', 'more'],
@@ -233,7 +273,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       integrity: ['วาง', 'ลอก', 'ก๊อป', 'ทุจริต', 'ai', 'copy', 'copied', 'own words'],
     };
     const weight = (p: Preset) => (hints[p.category]?.some((w) => lower.includes(w)) ? 1 : 0);
-    return [...presets].sort((a, b) => weight(b) - weight(a));
+    return [...pool].sort((a, b) => weight(b) - weight(a));
   };
 
   /**
@@ -250,8 +290,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       const invalid =
         g.score.trim() === ''
           ? th ? `ข้อที่ ${questions.indexOf(q) + 1}: กรุณาใส่คะแนนก่อนบันทึก` : `Question ${questions.indexOf(q) + 1}: enter a score first`
-          : Number.isNaN(score) || score < 0 || score > q.max_score
-          ? th ? `ข้อที่ ${questions.indexOf(q) + 1}: คะแนนต้องอยู่ระหว่าง 0 ถึง ${q.max_score}` : `Question ${questions.indexOf(q) + 1}: score must be 0–${q.max_score}`
+          : !Number.isFinite(score) || score < 0 || score > maxScoreOf(q)
+          ? th ? `ข้อที่ ${questions.indexOf(q) + 1}: คะแนนต้องอยู่ระหว่าง 0 ถึง ${maxScoreOf(q)}` : `Question ${questions.indexOf(q) + 1}: score must be 0–${maxScoreOf(q)}`
           : null;
       if (invalid) {
         alert(invalid);
@@ -550,6 +590,10 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
               const isObjective = isObjectiveQuestion(q);
               const choiceOptions = q.options?.length ? q.options : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : [];
               const isCorrect = isObjectiveAnswerCorrect(q, ans?.text_answer);
+              // A saved score above the full score (e.g. the full score was lowered later) is flagged until fixed.
+              const scoreText = g?.score ?? '';
+              const scoreInvalid = scoreText.trim() !== '' && !(Number(scoreText) >= 0 && Number(scoreText) <= maxScoreOf(q));
+              const level = scoreLevel(scoreText, maxScoreOf(q));
               const editingKey = keyDrafts[q.id] !== undefined;
 
               return (
@@ -798,32 +842,44 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                         <button type="button" onClick={() => stepScore(q, -0.5)} className="px-2.5 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="-0.5">
                           <Minus className="w-4 h-4" />
                         </button>
+                        {/* Text box (not type=number): the browser cannot slip in "e", "-" or a scroll-wheel change, and every keystroke is checked. */}
                         <input
-                          type="number"
+                          type="text"
                           inputMode="decimal"
-                          step="0.5"
-                          min="0"
-                          max={q.max_score}
+                          autoComplete="off"
+                          aria-label={th ? `คะแนนข้อ ${idx + 1} (0 – ${maxScoreOf(q)})` : `Score for question ${idx + 1} (0 – ${maxScoreOf(q)})`}
+                          aria-invalid={scoreInvalid || undefined}
                           value={g?.score ?? ''}
-                          onChange={(e) => setGrade(q.id, { score: e.target.value })}
+                          onChange={(e) => typeScore(q, e.target.value)}
+                          onBlur={() => {
+                            const tidy = finalizeScoreInput(g?.score ?? '');
+                            if (tidy !== (g?.score ?? '')) setGrade(q.id, { score: tidy });
+                            clearScoreHint(q.id);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              stepScore(q, e.key === 'ArrowUp' ? 0.5 : -0.5);
+                            }
+                          }}
                           placeholder="–"
-                          className="w-16 py-1.5 bg-transparent text-center font-mono font-black text-lg text-slate-900 dark:text-white focus:outline-hidden [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                          className={`w-16 py-1.5 bg-transparent text-center font-mono font-black text-lg focus:outline-hidden ${scoreInvalid ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}
                         />
                         <button type="button" onClick={() => stepScore(q, 0.5)} className="px-2.5 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="+0.5">
                           <Plus className="w-4 h-4" />
                         </button>
                       </div>
-                      <span className="text-sm text-slate-400 font-mono">/ {q.max_score}</span>
+                      <span className="text-sm text-slate-400 font-mono">/ {maxScoreOf(q)}</span>
                       <div className="flex items-center gap-1.5 sm:ml-auto">
                         {[
                           { label: '0', value: 0, cls: 'bg-rose-100 dark:bg-rose-950/70 text-rose-800 dark:text-rose-300' },
-                          { label: th ? 'ครึ่ง' : 'Half', value: roundHalf(q.max_score / 2), cls: 'bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300' },
-                          { label: th ? 'เต็ม' : 'Full', value: q.max_score, cls: 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300' },
+                          { label: th ? 'ครึ่ง' : 'Half', value: roundHalf(maxScoreOf(q) / 2), cls: 'bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300' },
+                          { label: th ? 'เต็ม' : 'Full', value: maxScoreOf(q), cls: 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300' },
                         ].map((chip) => (
                           <button
                             key={chip.label}
                             type="button"
-                            onClick={() => setGrade(q.id, { score: String(chip.value) })}
+                            onClick={() => setScore(q, chip.value)}
                             className={`px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer hover:opacity-80 ${chip.cls}`}
                           >
                             {chip.label}
@@ -832,6 +888,12 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                       </div>
                     </div>
 
+                    {(scoreHints[q.id] || scoreInvalid) && (
+                      <p role="alert" className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        {scoreHints[q.id] || (th ? `คะแนนต้องอยู่ระหว่าง 0 ถึง ${maxScoreOf(q)}` : `Score must be 0 – ${maxScoreOf(q)}`)}
+                      </p>
+                    )}
                     {isObjective && !isResearcher && (
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
                         {th ? 'ตรวจอัตโนมัติจากเฉลย ปรับเองรายคนได้ (เช่น ให้บางส่วน)' : 'Scored automatically from the key; you can still adjust it for this student.'}
@@ -847,7 +909,13 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
 
                     <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none -mx-1 px-1">
                       <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      {rankedPresets(g?.comment || '').map((preset) => (
+                      {/* Suggestions follow the score: its level's comments first, then those for any score. */}
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap shrink-0 ${level ? LEVEL_TONE[level] : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}
+                      >
+                        {level ? scoreLevelLabel(level, th) : th ? 'ใส่คะแนนเพื่อดูคำแนะนำตามระดับ' : 'Enter a score for matching suggestions'}
+                      </span>
+                      {rankedPresets(g?.comment || '', level).map((preset) => (
                         <button
                           key={preset.id}
                           type="button"
@@ -958,26 +1026,52 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
               </button>
             </div>
 
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {presets.map((preset) => (
-                <div key={preset.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 text-xs">
-                  <span className="text-slate-800 dark:text-slate-200 font-medium">{preset.text}</span>
-                  <button type="button" onClick={() => updatePresets(presets.filter((p) => p.id !== preset.id))} className="p-1 text-slate-400 hover:text-rose-500 rounded shrink-0 cursor-pointer">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+              {[...SCORE_LEVELS, 'any' as const].map((lv) => {
+                const items = presets.filter((p) => (p.level || 'any') === lv);
+                if (!items.length) return null;
+                return (
+                  <div key={lv} className="space-y-1.5">
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${LEVEL_TONE[lv]}`}>{scoreLevelLabel(lv, th)}</span>
+                    {items.map((preset) => (
+                      <div key={preset.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2 text-xs">
+                        <span className="text-slate-800 dark:text-slate-200 font-medium">{preset.text}</span>
+                        <button
+                          type="button"
+                          aria-label={th ? 'ลบ' : 'Delete'}
+                          onClick={() => updatePresets(presets.filter((p) => p.id !== preset.id))}
+                          className="p-1 text-slate-400 hover:text-rose-500 rounded shrink-0 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
 
             <form
-              className="pt-2 border-t border-slate-100 dark:border-slate-800 flex gap-2"
+              className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!newPresetText.trim()) return;
-                updatePresets([...presets, { id: `preset-${Date.now()}`, category: 'custom', text: newPresetText.trim() }]);
+                updatePresets([...presets, { id: `preset-${Date.now()}`, category: 'custom', level: newPresetLevel, text: newPresetText.trim() }]);
                 setNewPresetText('');
               }}
             >
+              <select
+                value={newPresetLevel}
+                onChange={(e) => setNewPresetLevel(e.target.value as PresetLevel)}
+                aria-label={th ? 'ระดับคะแนน' : 'Score level'}
+                className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white cursor-pointer"
+              >
+                {(['any', ...SCORE_LEVELS] as PresetLevel[]).map((lv) => (
+                  <option key={lv} value={lv}>
+                    {scoreLevelLabel(lv, th)}
+                  </option>
+                ))}
+              </select>
               <input
                 type="text"
                 value={newPresetText}
@@ -989,7 +1083,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                 {th ? 'เพิ่ม' : 'Add'}
               </button>
             </form>
-            <button type="button" onClick={() => updatePresets(DEFAULT_PRESETS)} className="text-[11px] text-slate-400 hover:text-slate-600 underline cursor-pointer">
+            <button type="button" onClick={() => updatePresets(defaultFeedbackPresets(th))} className="text-[11px] text-slate-400 hover:text-slate-600 underline cursor-pointer">
               {th ? 'คืนค่าเริ่มต้น' : 'Reset to defaults'}
             </button>
           </div>
