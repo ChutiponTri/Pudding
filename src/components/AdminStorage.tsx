@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createZip, type ZipEntry } from '@/lib/storage/zip';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 /**
  * Admin panel for files in R2: back them up as a ZIP (downloaded straight from
@@ -33,12 +34,12 @@ const PAGE = 200;
 /** Above this a single ZIP gets heavy for the browser (and nears the ZIP 4GB limit). */
 const ZIP_WARN_BYTES = 1.5 * 1024 * 1024 * 1024;
 
-const STATUS_LABEL: Record<AdminFile['status'], string> = {
-  uploading: 'กำลังอัปโหลด',
-  draft: 'ร่าง (ยังไม่ส่ง)',
-  attached: 'ใช้งานอยู่',
-  orphan: 'ไม่มีที่ใช้',
-  deleted: 'ลบแล้ว',
+const STATUS_LABEL: Record<AdminFile['status'], [string, string]> = {
+  uploading: ['กำลังอัปโหลด', 'Uploading'],
+  draft: ['ร่าง (ยังไม่ส่ง)', 'Draft (not handed in)'],
+  attached: ['ใช้งานอยู่', 'In use'],
+  orphan: ['ไม่มีที่ใช้', 'Unused'],
+  deleted: ['ลบแล้ว', 'Deleted'],
 };
 const STATUS_TONE: Record<AdminFile['status'], string> = {
   uploading: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
@@ -50,7 +51,8 @@ const STATUS_TONE: Record<AdminFile['status'], string> = {
 
 const formatBytes = (bytes: number) =>
   bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : bytes >= 1024 ** 2 ? `${(bytes / 1024 ** 2).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
-const formatDate = (iso: string | null) => (iso ? new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }) : '');
+const formatDate = (iso: string | null, lang: 'th' | 'en' = 'th') =>
+  iso ? new Date(iso).toLocaleString(lang === 'en' ? 'en-GB' : 'th-TH', { dateStyle: 'short', timeStyle: 'short' }) : '';
 const safePart = (value: string | null | undefined, fallback: string) => (value || fallback).replace(/[\\/:*?"<>|\n\r]+/g, '_').trim().slice(0, 80) || fallback;
 const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
@@ -84,6 +86,7 @@ export function AdminStorage() {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [limit, setLimit] = useState(PAGE);
+  const { tr, language } = useLanguage();
 
   const load = useCallback(async () => {
     setError(null);
@@ -109,13 +112,14 @@ export function AdminStorage() {
     const sum = (list: AdminFile[]) => list.reduce((total, f) => total + Number(f.size_bytes || 0), 0);
     const backedUp = stored.filter((f) => f.backed_up_at);
     const notBackedUp = stored.filter((f) => !f.backed_up_at);
+    const filesLabel = tr('ไฟล์', 'files');
     return [
-      { label: 'อยู่ใน R2', value: `${stored.length} ไฟล์`, sub: formatBytes(sum(stored)) },
-      { label: 'สำรองแล้ว', value: `${backedUp.length} ไฟล์`, sub: formatBytes(sum(backedUp)), tone: 'emerald' },
-      { label: 'ยังไม่สำรอง', value: `${notBackedUp.length} ไฟล์`, sub: formatBytes(sum(notBackedUp)), tone: 'amber' },
-      { label: 'ไม่มีที่ใช้ / ร่าง', value: `${stored.filter((f) => f.status === 'orphan' || f.status === 'draft' || f.status === 'uploading').length} ไฟล์`, sub: 'ลบได้โดยไม่กระทบงาน', tone: 'rose' },
+      { label: tr('อยู่ใน R2', 'In R2'), value: `${stored.length} ${filesLabel}`, sub: formatBytes(sum(stored)) },
+      { label: tr('สำรองแล้ว', 'Backed up'), value: `${backedUp.length} ${filesLabel}`, sub: formatBytes(sum(backedUp)), tone: 'emerald' },
+      { label: tr('ยังไม่สำรอง', 'Not backed up'), value: `${notBackedUp.length} ${filesLabel}`, sub: formatBytes(sum(notBackedUp)), tone: 'amber' },
+      { label: tr('ไม่มีที่ใช้ / ร่าง', 'Unused / drafts'), value: `${stored.filter((f) => f.status === 'orphan' || f.status === 'draft' || f.status === 'uploading').length} ${filesLabel}`, sub: tr('ลบได้โดยไม่กระทบงาน', 'Safe to delete'), tone: 'rose' },
     ];
-  }, [files]);
+  }, [files, tr]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -147,7 +151,7 @@ export function AdminStorage() {
       const message = await task();
       if (message) setNotice(message);
     } catch (err) {
-      setNotice(`❌ ${err instanceof Error ? err.message : 'เกิดข้อผิดพลาด'}`);
+      setNotice(`❌ ${err instanceof Error ? err.message : tr('เกิดข้อผิดพลาด', 'Something went wrong')}`);
     } finally {
       setBusy(null);
     }
@@ -162,8 +166,8 @@ export function AdminStorage() {
   const downloadZip = () =>
     run('download', async () => {
       const targets = selectedFiles.filter((f) => f.status !== 'deleted');
-      if (!targets.length) return 'ยังไม่ได้เลือกไฟล์ที่อยู่ใน R2';
-      if (selectedBytes > ZIP_WARN_BYTES && !confirm(`ไฟล์ที่เลือกรวม ${formatBytes(selectedBytes)} อาจใหญ่เกินไปสำหรับเบราว์เซอร์ แนะนำให้แบ่งดาวน์โหลดทีละชุด\n\nดาวน์โหลดต่อหรือไม่?`)) return;
+      if (!targets.length) return tr('ยังไม่ได้เลือกไฟล์ที่อยู่ใน R2', 'No files in R2 selected');
+      if (selectedBytes > ZIP_WARN_BYTES && !confirm(tr(`ไฟล์ที่เลือกรวม ${formatBytes(selectedBytes)} อาจใหญ่เกินไปสำหรับเบราว์เซอร์ แนะนำให้แบ่งดาวน์โหลดทีละชุด\n\nดาวน์โหลดต่อหรือไม่?`, `The selection is ${formatBytes(selectedBytes)}, which may be too large for the browser. Downloading in smaller batches is recommended.\n\nContinue?`))) return;
       const entries: ZipEntry[] = [];
       const done: string[] = [];
       const failed: string[] = [];
@@ -174,8 +178,8 @@ export function AdminStorage() {
         try {
           const data = await fetchFileBytes(f);
           const folder = f.purpose === 'sample'
-            ? `${safePart(f.classroom_title, 'ไม่ทราบห้อง')}/${safePart(f.assignment_title, f.key.split('/')[1] || 'งาน')}/_ไฟล์ตัวอย่างของครู`
-            : `${safePart(f.classroom_title, 'ไม่ทราบห้อง')}/${safePart(f.assignment_title, f.key.split('/')[1] || 'งาน')}/${safePart([f.owner_number, f.owner_name].filter(Boolean).join('_'), f.key.split('/')[2] || 'นักเรียน')}`;
+            ? `${safePart(f.classroom_title, tr('ไม่ทราบห้อง', 'unknown_class'))}/${safePart(f.assignment_title, f.key.split('/')[1] || tr('งาน', 'assignment'))}/${tr('_ไฟล์ตัวอย่างของครู', '_teacher_sample')}`
+            : `${safePart(f.classroom_title, tr('ไม่ทราบห้อง', 'unknown_class'))}/${safePart(f.assignment_title, f.key.split('/')[1] || tr('งาน', 'assignment'))}/${safePart([f.owner_number, f.owner_name].filter(Boolean).join('_'), f.key.split('/')[2] || tr('นักเรียน', 'student'))}`;
           let name = `${folder}/${safePart(f.original_filename, f.key.split('/').pop() || 'file')}`;
           for (let n = 2; usedNames.has(name); n++) name = name.replace(/(\.[^./]+)?$/, `-${n}$1`);
           usedNames.add(name);
@@ -186,7 +190,7 @@ export function AdminStorage() {
           failed.push(f.original_filename || f.key);
         }
       }
-      if (!entries.length) throw new Error('ดาวน์โหลดไฟล์ไม่สำเร็จเลย');
+      if (!entries.length) throw new Error(tr('ดาวน์โหลดไฟล์ไม่สำเร็จเลย', 'No file could be downloaded'));
       // UTF-8 BOM so Excel shows Thai names correctly.
       entries.push({ name: 'manifest.csv', data: new TextEncoder().encode('﻿' + manifest.join('\n')) });
       const blob = createZip(entries);
@@ -196,25 +200,28 @@ export function AdminStorage() {
       link.click();
       setTimeout(() => URL.revokeObjectURL(link.href), 60_000);
       await markBackedUp(done, true);
-      return `✅ ดาวน์โหลด ${done.length} ไฟล์ (${formatBytes(blob.size)}) และทำเครื่องหมายว่าสำรองแล้ว${failed.length ? ` — ดาวน์โหลดไม่สำเร็จ ${failed.length} ไฟล์: ${failed.slice(0, 5).join(', ')}` : ''}`;
+      return tr(
+        `✅ ดาวน์โหลด ${done.length} ไฟล์ (${formatBytes(blob.size)}) และทำเครื่องหมายว่าสำรองแล้ว${failed.length ? ` — ดาวน์โหลดไม่สำเร็จ ${failed.length} ไฟล์: ${failed.slice(0, 5).join(', ')}` : ''}`,
+        `✅ Downloaded ${done.length} files (${formatBytes(blob.size)}) and marked them backed up${failed.length ? ` — ${failed.length} failed: ${failed.slice(0, 5).join(', ')}` : ''}`
+      );
     });
 
   const deleteSelected = () =>
     run('delete', async () => {
       const targets = selectedFiles.filter((f) => f.status !== 'deleted');
-      if (!targets.length) return 'ยังไม่ได้เลือกไฟล์ที่อยู่ใน R2';
+      if (!targets.length) return tr('ยังไม่ได้เลือกไฟล์ที่อยู่ใน R2', 'No files in R2 selected');
       const notBackedUp = targets.filter((f) => !f.backed_up_at).length;
       const inUse = targets.filter((f) => f.status === 'attached').length;
       const warning = [
-        notBackedUp ? `⚠️ ${notBackedUp} ไฟล์ยังไม่ได้สำรอง — ลบแล้วกู้คืนไม่ได้` : '',
-        inUse ? `⚠️ ${inUse} ไฟล์เป็นงานที่นักเรียนส่ง/ไฟล์ตัวอย่างที่ใช้อยู่ ครูจะเปิดดูไม่ได้อีก` : '',
+        notBackedUp ? tr(`⚠️ ${notBackedUp} ไฟล์ยังไม่ได้สำรอง — ลบแล้วกู้คืนไม่ได้`, `⚠️ ${notBackedUp} files are not backed up — they cannot be recovered`) : '',
+        inUse ? tr(`⚠️ ${inUse} ไฟล์เป็นงานที่นักเรียนส่ง/ไฟล์ตัวอย่างที่ใช้อยู่ ครูจะเปิดดูไม่ได้อีก`, `⚠️ ${inUse} files are handed-in work or sample files in use; teachers will no longer open them`) : '',
       ].filter(Boolean).join('\n');
-      if (!confirm(`ลบ ${targets.length} ไฟล์ (${formatBytes(selectedBytes)}) ออกจาก R2?\n${warning}`)) return;
-      if (notBackedUp && !confirm(`ยืนยันอีกครั้ง: ลบไฟล์ที่ยังไม่สำรอง ${notBackedUp} ไฟล์?`)) return;
+      if (!confirm(tr(`ลบ ${targets.length} ไฟล์ (${formatBytes(selectedBytes)}) ออกจาก R2?\n${warning}`, `Delete ${targets.length} files (${formatBytes(selectedBytes)}) from R2?\n${warning}`))) return;
+      if (notBackedUp && !confirm(tr(`ยืนยันอีกครั้ง: ลบไฟล์ที่ยังไม่สำรอง ${notBackedUp} ไฟล์?`, `Confirm again: delete ${notBackedUp} files that are not backed up?`))) return;
       const { removed } = await postAction({ action: 'delete', keys: targets.map((f) => f.key) });
       setSelected(new Set());
       await load();
-      return `🗑️ ลบออกจาก R2 แล้ว ${removed} ไฟล์`;
+      return tr(`🗑️ ลบออกจาก R2 แล้ว ${removed} ไฟล์`, `🗑️ Deleted ${removed} files from R2`);
     });
 
   const buttonClass = 'px-3 py-1.5 rounded-lg border text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer';
@@ -223,9 +230,9 @@ export function AdminStorage() {
     <section id="storage" className="space-y-3 scroll-mt-28 p-5 rounded-3xl border border-sky-200 dark:border-sky-900/60 bg-white dark:bg-slate-900">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 className="text-sm font-black flex items-center gap-2"><span className="p-1.5 rounded-lg bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300">🗄️</span> ไฟล์ใน R2 (สำรองและลบ)</h2>
+          <h2 className="text-sm font-black flex items-center gap-2"><span className="p-1.5 rounded-lg bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300">🗄️</span> {tr('ไฟล์ใน R2 (สำรองและลบ)', 'Files in R2 (back up & delete)')}</h2>
           <p className="text-xs text-slate-500">
-            เลือกไฟล์แล้วกด &quot;ดาวน์โหลด ZIP&quot; เพื่อสำรอง (ระบบจะทำเครื่องหมายว่าสำรองแล้วให้อัตโนมัติ) จากนั้นลบออกเพื่อคืนพื้นที่
+            {tr('เลือกไฟล์แล้วกด "ดาวน์โหลด ZIP" เพื่อสำรอง (ระบบจะทำเครื่องหมายว่าสำรองแล้วให้อัตโนมัติ) จากนั้นลบออกเพื่อคืนพื้นที่', 'Select files and press "Download ZIP" to back them up (they are marked backed up automatically), then delete them to free space')}
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -235,11 +242,14 @@ export function AdminStorage() {
             onClick={() => run('sync', async () => {
               const r = await postAction({ action: 'sync' });
               await load();
-              return `🔄 ใน bucket ${r.objects} ไฟล์ • เพิ่มไฟล์เก่าที่ยังไม่อยู่ในรายการ ${r.added} • ไม่พบใน bucket ${r.missing} • ไม่มีที่ใช้ ${r.orphaned}`;
+              return tr(
+                `🔄 ใน bucket ${r.objects} ไฟล์ • เพิ่มไฟล์เก่าที่ยังไม่อยู่ในรายการ ${r.added} • ไม่พบใน bucket ${r.missing} • ไม่มีที่ใช้ ${r.orphaned}`,
+                `🔄 ${r.objects} files in the bucket • added older untracked files ${r.added} • missing from bucket ${r.missing} • unused ${r.orphaned}`
+              );
             })}
             className={`${buttonClass} border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900`}
           >
-            ซิงก์กับ bucket
+            {tr('ซิงก์กับ bucket', 'Sync with bucket')}
           </button>
           <button
             type="button"
@@ -247,11 +257,11 @@ export function AdminStorage() {
             onClick={() => run('sweep', async () => {
               const r = await postAction({ action: 'sweep' });
               await load();
-              return `🧹 ลบไฟล์ร่างที่ไม่ได้ส่งเกิน 3 วันแล้ว ${r.removed} ไฟล์`;
+              return tr(`🧹 ลบไฟล์ร่างที่ไม่ได้ส่งเกิน 3 วันแล้ว ${r.removed} ไฟล์`, `🧹 Removed ${r.removed} draft uploads older than 3 days`);
             })}
             className={`${buttonClass} border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900`}
           >
-            ล้างไฟล์ร่างที่หมดอายุ
+            {tr('ล้างไฟล์ร่างที่หมดอายุ', 'Remove expired drafts')}
           </button>
         </div>
       </div>
@@ -275,48 +285,48 @@ export function AdminStorage() {
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as StatusFilter); setLimit(PAGE); }} className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-          <option value="stored">อยู่ใน R2 ทั้งหมด</option>
-          <option value="attached">ใช้งานอยู่</option>
-          <option value="draft">ร่าง (ยังไม่ส่ง)</option>
-          <option value="orphan">ไม่มีที่ใช้</option>
-          <option value="deleted">ลบแล้ว</option>
-          <option value="all">ทั้งหมด (รวมที่ลบแล้ว)</option>
+          <option value="stored">{tr('อยู่ใน R2 ทั้งหมด', 'All in R2')}</option>
+          <option value="attached">{tr('ใช้งานอยู่', 'In use')}</option>
+          <option value="draft">{tr('ร่าง (ยังไม่ส่ง)', 'Draft (not handed in)')}</option>
+          <option value="orphan">{tr('ไม่มีที่ใช้', 'Unused')}</option>
+          <option value="deleted">{tr('ลบแล้ว', 'Deleted')}</option>
+          <option value="all">{tr('ทั้งหมด (รวมที่ลบแล้ว)', 'All (incl. deleted)')}</option>
         </select>
         <select value={backupFilter} onChange={(e) => { setBackupFilter(e.target.value as BackupFilter); setLimit(PAGE); }} className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-          <option value="all">สำรอง: ทั้งหมด</option>
-          <option value="no">ยังไม่สำรอง</option>
-          <option value="yes">สำรองแล้ว</option>
+          <option value="all">{tr('สำรอง: ทั้งหมด', 'Backup: all')}</option>
+          <option value="no">{tr('ยังไม่สำรอง', 'Not backed up')}</option>
+          <option value="yes">{tr('สำรองแล้ว', 'Backed up')}</option>
         </select>
         <input
           value={search}
           onChange={(e) => { setSearch(e.target.value); setLimit(PAGE); }}
-          placeholder="ค้นหา ชื่อไฟล์ / งาน / ห้อง / นักเรียน"
+          placeholder={tr('ค้นหา ชื่อไฟล์ / งาน / ห้อง / นักเรียน', 'Search file / assignment / class / student')}
           className="flex-1 min-w-48 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
         />
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
         <span className="font-bold text-slate-600 dark:text-slate-300 mr-1">
-          เลือก {selected.size} ไฟล์ • {formatBytes(selectedBytes)}
+          {tr('เลือก', 'Selected')} {selected.size} {tr('ไฟล์', 'files')} • {formatBytes(selectedBytes)}
         </span>
         <button type="button" disabled={!!busy || !selected.size} onClick={downloadZip} className={`${buttonClass} border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300`}>
-          ดาวน์โหลด ZIP
+          {tr('ดาวน์โหลด ZIP', 'Download ZIP')}
         </button>
-        <button type="button" disabled={!!busy || !selected.size} onClick={() => run('mark', async () => { await markBackedUp([...selected], true); return '✅ ทำเครื่องหมายว่าสำรองแล้ว'; })} className={`${buttonClass} border-emerald-200 dark:border-emerald-900 bg-white dark:bg-slate-900`}>
-          ตั้งว่าสำรองแล้ว
+        <button type="button" disabled={!!busy || !selected.size} onClick={() => run('mark', async () => { await markBackedUp([...selected], true); return tr('✅ ทำเครื่องหมายว่าสำรองแล้ว', '✅ Marked as backed up'); })} className={`${buttonClass} border-emerald-200 dark:border-emerald-900 bg-white dark:bg-slate-900`}>
+          {tr('ตั้งว่าสำรองแล้ว', 'Mark backed up')}
         </button>
-        <button type="button" disabled={!!busy || !selected.size} onClick={() => run('unmark', async () => { await markBackedUp([...selected], false); return 'ตั้งว่ายังไม่สำรองแล้ว'; })} className={`${buttonClass} border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900`}>
-          ตั้งว่ายังไม่สำรอง
+        <button type="button" disabled={!!busy || !selected.size} onClick={() => run('unmark', async () => { await markBackedUp([...selected], false); return tr('ตั้งว่ายังไม่สำรองแล้ว', 'Marked as not backed up'); })} className={`${buttonClass} border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900`}>
+          {tr('ตั้งว่ายังไม่สำรอง', 'Mark not backed up')}
         </button>
         <button type="button" disabled={!!busy || !selected.size} onClick={deleteSelected} className={`${buttonClass} border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300`}>
-          ลบออกจาก R2
+          {tr('ลบออกจาก R2', 'Delete from R2')}
         </button>
         {selected.size > 0 && (
           <button type="button" disabled={!!busy} onClick={() => setSelected(new Set())} className="px-2 py-1.5 text-slate-500 hover:underline cursor-pointer">
-            ล้างที่เลือก
+            {tr('ล้างที่เลือก', 'Clear selection')}
           </button>
         )}
-        {busy && <span className="text-slate-500">กำลังทำงาน… {busy.startsWith('download ') ? busy.slice(9) : ''}</span>}
+        {busy && <span className="text-slate-500">{tr('กำลังทำงาน…', 'Working…')} {busy.startsWith('download ') ? busy.slice(9) : ''}</span>}
       </div>
       {notice && <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">{notice}</p>}
 
@@ -327,7 +337,7 @@ export function AdminStorage() {
               <th className="px-3 py-2">
                 <input
                   type="checkbox"
-                  aria-label="เลือกทั้งหมดที่กรองไว้"
+                  aria-label={tr('เลือกทั้งหมดที่กรองไว้', 'Select all filtered')}
                   checked={allFilteredSelected}
                   onChange={() =>
                     setSelected((prev) => {
@@ -341,21 +351,21 @@ export function AdminStorage() {
                   }
                 />
               </th>
-              {['ไฟล์', 'ห้อง / งาน', 'ผู้อัปโหลด', 'ขนาด', 'อัปโหลดเมื่อ', 'สถานะ', 'สำรอง'].map((h) => (
+              {[tr('ไฟล์', 'File'), tr('ห้อง / งาน', 'Class / assignment'), tr('ผู้อัปโหลด', 'Uploader'), tr('ขนาด', 'Size'), tr('อัปโหลดเมื่อ', 'Uploaded'), tr('สถานะ', 'Status'), tr('สำรอง', 'Backup')].map((h) => (
                 <th key={h} className="px-3 py-2 font-bold whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {files === null ? (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">กำลังโหลด…</td></tr>
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">{tr('กำลังโหลด…', 'Loading…')}</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">ไม่มีไฟล์ตามเงื่อนไขนี้</td></tr>
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">{tr('ไม่มีไฟล์ตามเงื่อนไขนี้', 'No files match')}</td></tr>
             ) : (
               filtered.slice(0, limit).map((f) => (
                 <tr key={f.key} className={`border-t border-slate-100 dark:border-slate-800 align-top ${selected.has(f.key) ? 'bg-sky-50/60 dark:bg-sky-950/20' : ''}`}>
                   <td className="px-3 py-2">
-                    <input type="checkbox" aria-label={`เลือก ${f.original_filename || f.key}`} checked={selected.has(f.key)} onChange={() => toggle(f.key)} />
+                    <input type="checkbox" aria-label={`${tr('เลือก', 'Select')} ${f.original_filename || f.key}`} checked={selected.has(f.key)} onChange={() => toggle(f.key)} />
                   </td>
                   <td className="px-3 py-2 max-w-xs">
                     {f.status === 'deleted' ? (
@@ -365,7 +375,7 @@ export function AdminStorage() {
                         {f.original_filename || f.key}
                       </a>
                     )}
-                    <span className="text-[10px] text-slate-400">{f.purpose === 'sample' ? 'ไฟล์ตัวอย่างของครู' : 'งานนักเรียน'}</span>
+                    <span className="text-[10px] text-slate-400">{f.purpose === 'sample' ? tr('ไฟล์ตัวอย่างของครู', 'Teacher sample') : tr('งานนักเรียน', 'Student work')}</span>
                   </td>
                   <td className="px-3 py-2 max-w-56">
                     <span className="block truncate">{f.classroom_title || '—'}</span>
@@ -375,21 +385,21 @@ export function AdminStorage() {
                     {f.owner_name || '—'} <span className="text-slate-400">{f.owner_number || ''}</span>
                   </td>
                   <td className="px-3 py-2 tabular-nums whitespace-nowrap">{f.size_bytes ? formatBytes(Number(f.size_bytes)) : '—'}</td>
-                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">{formatDate(f.created_at)}</td>
+                  <td className="px-3 py-2 tabular-nums whitespace-nowrap">{formatDate(f.created_at, language)}</td>
                   <td className="px-3 py-2 whitespace-nowrap">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_TONE[f.status]}`}>{STATUS_LABEL[f.status]}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_TONE[f.status]}`}>{tr(...STATUS_LABEL[f.status])}</span>
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <button
                       type="button"
                       disabled={!!busy}
                       onClick={() => run('mark', () => markBackedUp([f.key], !f.backed_up_at))}
-                      title="คลิกเพื่อเปลี่ยนสถานะการสำรอง"
+                      title={tr('คลิกเพื่อเปลี่ยนสถานะการสำรอง', 'Click to toggle backup status')}
                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold cursor-pointer disabled:cursor-not-allowed ${
                         f.backed_up_at ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                       }`}
                     >
-                      {f.backed_up_at ? `✓ ${formatDate(f.backed_up_at)}` : 'ยังไม่สำรอง'}
+                      {f.backed_up_at ? `✓ ${formatDate(f.backed_up_at, language)}` : tr('ยังไม่สำรอง', 'Not backed up')}
                     </button>
                   </td>
                 </tr>
@@ -400,7 +410,7 @@ export function AdminStorage() {
       </div>
       {filtered.length > limit && (
         <button type="button" onClick={() => setLimit((n) => n + PAGE)} className="text-xs font-bold text-amber-700 dark:text-amber-400 hover:underline cursor-pointer">
-          แสดงเพิ่ม ({filtered.length - limit} ไฟล์)
+          {tr('แสดงเพิ่ม', 'Show more')} ({filtered.length - limit} {tr('ไฟล์', 'files')})
         </button>
       )}
     </section>

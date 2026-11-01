@@ -3,6 +3,7 @@
 import React, { createContext, useCallback, useContext, useState, useEffect } from 'react';
 import th from './th.json';
 import en from './en.json';
+import { LANGUAGE_COOKIE } from './languageCookie';
 
 export type Language = 'th' | 'en';
 
@@ -15,6 +16,18 @@ interface LanguageContextType {
   /** Inline bilingual text: the Thai or the English value for the current language. */
   tr: <T,>(thai: T, english: T) => T;
   isLoaded: boolean;
+}
+
+/**
+ * The choice is mirrored in a cookie so server-rendered pages (the admin
+ * pages) can render in the same language. localStorage stays the source.
+ */
+function writeLanguageCookie(lang: Language) {
+  try {
+    document.cookie = `${LANGUAGE_COOKIE}=${lang}; path=/; max-age=31536000; samesite=lax`;
+  } catch {
+    // ignore
+  }
 }
 
 const dictionaries: Record<Language, Translations> = {
@@ -42,6 +55,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         // After mount only, so the first client render matches the server (Thai).
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setLanguageState(savedLang);
+        writeLanguageCookie(savedLang);
       }
     } catch {
       // ignore SSR or restricted localStorage
@@ -51,6 +65,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const setLanguage = (newLang: Language) => {
     setLanguageState(newLang);
+    writeLanguageCookie(newLang);
     try {
       localStorage.setItem('ag_platform_lang', newLang);
     } catch {

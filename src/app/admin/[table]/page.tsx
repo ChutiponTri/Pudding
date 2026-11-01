@@ -5,6 +5,7 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAdmin } from '@/lib/server/admin';
 import { isAdminTable, linkedTable, listRecords, LIST_COLUMNS, primaryKeyOf } from '@/lib/server/adminRecords';
 import { AdminHeader, AdminMain, AdminPage, adminRecordHref, previewValue } from '@/components/AdminUi';
+import { getAdminLang, translator } from '@/lib/server/adminLang';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Pudding Admin', robots: { index: false, follow: false } };
@@ -24,13 +25,14 @@ export default async function AdminTablePage({
   if (!isAdminTable(table)) notFound();
   const { q = '', page: pageParam, col, val } = await searchParams;
   const filter = col && val !== undefined ? { column: col, value: val } : undefined;
+  const tr = translator(await getAdminLang());
 
   let result: Awaited<ReturnType<typeof listRecords>> | null = null;
   let loadError: string | null = null;
   try {
     result = await listRecords(createServiceSupabaseClient(), table, { q, filter, page: Number(pageParam) || 1, pageSize: PAGE_SIZE });
   } catch (error) {
-    loadError = error instanceof Error ? error.message : 'โหลดข้อมูลไม่สำเร็จ';
+    loadError = error instanceof Error ? error.message : tr('โหลดข้อมูลไม่สำเร็จ', 'Could not load data');
   }
   const pk = primaryKeyOf(table);
   const columns = LIST_COLUMNS[table];
@@ -55,7 +57,7 @@ export default async function AdminTablePage({
           <input
             name="q"
             defaultValue={q}
-            placeholder="ค้นหา (ชื่อ, id, อีเมล, ชื่องาน …)"
+            placeholder={tr('ค้นหา (ชื่อ, id, อีเมล, ชื่องาน …)', 'Search (name, id, email, title …)')}
             className="flex-1 min-w-48 h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm"
           />
           {filter && (
@@ -64,15 +66,15 @@ export default async function AdminTablePage({
               <input type="hidden" name="val" value={filter.value} />
             </>
           )}
-          <button className="h-10 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold cursor-pointer">ค้นหา</button>
+          <button className="h-10 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold cursor-pointer">{tr('ค้นหา', 'Search')}</button>
           {(q || filter) && (
-            <Link href={`/admin/${table}`} className="text-xs font-bold text-slate-500 hover:underline">ล้างตัวกรอง</Link>
+            <Link href={`/admin/${table}`} className="text-xs font-bold text-slate-500 hover:underline">{tr('ล้างตัวกรอง', 'Clear filters')}</Link>
           )}
         </form>
 
         {filter && (
           <p className="text-xs text-slate-500">
-            เฉพาะแถวที่ <span className="font-mono font-bold">{filter.column}</span> ={' '}
+            {tr('เฉพาะแถวที่', 'Only rows where')} <span className="font-mono font-bold">{filter.column}</span> ={' '}
             <span className="font-mono font-bold">{filter.value}</span>
           </p>
         )}
@@ -80,11 +82,11 @@ export default async function AdminTablePage({
         {loadError ? (
           <p className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-sm">{loadError}</p>
         ) : result && result.rows.length === 0 ? (
-          <p className="text-sm text-slate-500">ไม่พบข้อมูล</p>
+          <p className="text-sm text-slate-500">{tr('ไม่พบข้อมูล', 'No rows found')}</p>
         ) : result ? (
           <>
             <p className="text-xs text-slate-500 tabular-nums">
-              {result.total} แถว • หน้า {result.page}/{pageCount}
+              {result.total} {tr('แถว', 'rows')} • {tr('หน้า', 'page')} {result.page}/{pageCount}
             </p>
             <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
               <table className="w-full text-xs">
@@ -124,8 +126,8 @@ export default async function AdminTablePage({
             </div>
             {pageCount > 1 && (
               <div className="flex items-center gap-3 text-xs font-bold">
-                {result.page > 1 && <Link href={pageHref(result.page - 1)} className="hover:underline">← ก่อนหน้า</Link>}
-                {result.page < pageCount && <Link href={pageHref(result.page + 1)} className="hover:underline">ถัดไป →</Link>}
+                {result.page > 1 && <Link href={pageHref(result.page - 1)} className="hover:underline">← {tr('ก่อนหน้า', 'Previous')}</Link>}
+                {result.page < pageCount && <Link href={pageHref(result.page + 1)} className="hover:underline">{tr('ถัดไป', 'Next')} →</Link>}
               </div>
             )}
           </>

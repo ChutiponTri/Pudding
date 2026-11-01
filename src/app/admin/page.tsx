@@ -21,6 +21,7 @@ import { ADMIN_DATASETS, ADMIN_TABLES, getAdmin, loadDataset } from '@/lib/serve
 import { AdminStorage } from '@/components/AdminStorage';
 import { AdminDatasetBuilder } from '@/components/AdminDatasetBuilder';
 import { AdminHeader, AdminMain, AdminPage, AdminSectionTitle } from '@/components/AdminUi';
+import { getAdminLang, translator } from '@/lib/server/adminLang';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Pudding Admin', robots: { index: false, follow: false } };
@@ -80,6 +81,8 @@ export default async function AdminOverviewPage() {
   if (!admin) notFound();
 
   const supabase = createServiceSupabaseClient();
+  const lang = await getAdminLang();
+  const tr = translator(lang);
 
   const [counts, proxyActivity, flaggedCount, unlinkedTeachers, pendingTeachers] = await Promise.all([
     Promise.all(
@@ -99,14 +102,14 @@ export default async function AdminOverviewPage() {
   const pending = pendingTeachers.error ? null : pendingTeachers.count ?? 0;
 
   const stats: Array<{ label: string; value: number | null | undefined; tone: Tone; icon: ReactNode; href?: string }> = [
-    { label: 'ผู้ใช้', value: countOf.users, tone: 'indigo', icon: <Users className="w-4 h-4" />, href: '/admin/users' },
-    { label: 'ห้องเรียน', value: countOf.classrooms, tone: 'emerald', icon: <BookOpen className="w-4 h-4" />, href: '/admin/classrooms' },
-    { label: 'งาน/ข้อสอบ', value: countOf.assignments, tone: 'sky', icon: <ClipboardList className="w-4 h-4" />, href: '/admin/assignments' },
-    { label: 'งานที่ส่ง', value: countOf.submissions, tone: 'violet', icon: <Inbox className="w-4 h-4" />, href: '/admin/submissions' },
-    { label: 'บันทึกเช็คชื่อ', value: countOf.attendance_records, tone: 'teal', icon: <CalendarCheck className="w-4 h-4" />, href: '/admin/attendance_records' },
-    { label: 'ครูที่บอท LINE ยังติดต่อไม่ได้', value: unlinkedTeachers.count ?? 0, tone: 'orange', icon: <MessageCircleOff className="w-4 h-4" />, href: '/admin/users?col=role&val=teacher' },
-    { label: 'ส่ง/เช็คชื่อแทนเพื่อน', value: proxyActivity.length, tone: 'cyan', icon: <Smartphone className="w-4 h-4" />, href: '#proxy' },
-    { label: 'งานน่าสงสัย', value: flaggedCount.count ?? 0, tone: 'rose', icon: <AlertTriangle className="w-4 h-4" />, href: '/admin/submissions?col=is_flagged_suspicious&val=true' },
+    { label: tr('ผู้ใช้', 'Users'), value: countOf.users, tone: 'indigo', icon: <Users className="w-4 h-4" />, href: '/admin/users' },
+    { label: tr('ห้องเรียน', 'Classrooms'), value: countOf.classrooms, tone: 'emerald', icon: <BookOpen className="w-4 h-4" />, href: '/admin/classrooms' },
+    { label: tr('งาน/ข้อสอบ', 'Assignments'), value: countOf.assignments, tone: 'sky', icon: <ClipboardList className="w-4 h-4" />, href: '/admin/assignments' },
+    { label: tr('งานที่ส่ง', 'Submissions'), value: countOf.submissions, tone: 'violet', icon: <Inbox className="w-4 h-4" />, href: '/admin/submissions' },
+    { label: tr('บันทึกเช็คชื่อ', 'Attendance records'), value: countOf.attendance_records, tone: 'teal', icon: <CalendarCheck className="w-4 h-4" />, href: '/admin/attendance_records' },
+    { label: tr('ครูที่บอท LINE ยังติดต่อไม่ได้', 'Teachers the LINE bot cannot reach'), value: unlinkedTeachers.count ?? 0, tone: 'orange', icon: <MessageCircleOff className="w-4 h-4" />, href: '/admin/users?col=role&val=teacher' },
+    { label: tr('ส่ง/เช็คชื่อแทนเพื่อน', "From a classmate's phone"), value: proxyActivity.length, tone: 'cyan', icon: <Smartphone className="w-4 h-4" />, href: '#proxy' },
+    { label: tr('งานน่าสงสัย', 'Flagged work'), value: flaggedCount.count ?? 0, tone: 'rose', icon: <AlertTriangle className="w-4 h-4" />, href: '/admin/submissions?col=is_flagged_suspicious&val=true' },
   ];
 
   return (
@@ -128,11 +131,11 @@ export default async function AdminOverviewPage() {
               <UserCheck className="w-7 h-7" />
             </div>
             <div>
-              <p className="text-xs font-bold opacity-80">บัญชีครู</p>
+              <p className="text-xs font-bold opacity-80">{tr('บัญชีครู', 'Teacher accounts')}</p>
               <h1 className="text-xl sm:text-2xl font-black">
-                {pending ? `มีครูรออนุมัติ ${pending} คน` : 'ไม่มีครูรออนุมัติ'}
+                {pending ? tr(`มีครูรออนุมัติ ${pending} คน`, `${pending} teacher${pending > 1 ? 's' : ''} waiting for approval`) : tr('ไม่มีครูรออนุมัติ', 'No teachers waiting')}
               </h1>
-              <p className="text-xs opacity-80">ครูที่สมัครใหม่ใช้งานระบบไม่ได้จนกว่าจะอนุมัติ • ดูการใช้ปุ่มทดสอบส่ง LINE ได้ที่หน้าเดียวกัน</p>
+              <p className="text-xs opacity-80">{tr('ครูที่สมัครใหม่ใช้งานระบบไม่ได้จนกว่าจะอนุมัติ • ดูการใช้ปุ่มทดสอบส่ง LINE ได้ที่หน้าเดียวกัน', 'New teachers cannot use the app until approved • LINE test-send usage is on the same page')}</p>
             </div>
           </div>
           <Link
@@ -141,7 +144,7 @@ export default async function AdminOverviewPage() {
               pending ? 'bg-slate-950 text-white hover:bg-slate-800' : 'bg-white text-emerald-700 hover:bg-emerald-50'
             }`}
           >
-            {pending ? 'ตรวจและอนุมัติ' : 'ดูครูทั้งหมด'} <ArrowRight className="w-4 h-4" />
+            {pending ? tr('ตรวจและอนุมัติ', 'Review & approve') : tr('ดูครูทั้งหมด', 'All teachers')} <ArrowRight className="w-4 h-4" />
           </Link>
         </section>
 
@@ -157,20 +160,20 @@ export default async function AdminOverviewPage() {
           <AdminSectionTitle
             icon={<FileText className="w-4 h-4" />}
             tone="indigo"
-            title="ชุดข้อมูลสำเร็จรูป (ดาวน์โหลดด่วน)"
-            description={<>ปกปิดตัวตนนักเรียนด้วยรหัสสุ่มคงที่ (ไม่มีชื่อหรือ LINE ID) — ใช้ลิงก์ &quot;ไม่ปกปิด&quot; เฉพาะเมื่อจำเป็น</>}
+            title={tr('ชุดข้อมูลสำเร็จรูป (ดาวน์โหลดด่วน)', 'Ready-made datasets (quick download)')}
+            description={tr('ปกปิดตัวตนนักเรียนด้วยรหัสสุ่มคงที่ (ไม่มีชื่อหรือ LINE ID) — ใช้ลิงก์ "ไม่ปกปิด" เฉพาะเมื่อจำเป็น', 'Students are replaced by stable random ids (no names or LINE ids) — use "not anonymised" only when needed')}
           />
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {Object.entries(ADMIN_DATASETS).map(([name, description]) => (
               <div key={name} className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col gap-3">
                 <div className="flex-1">
                   <p className="font-mono text-sm font-bold text-indigo-700 dark:text-indigo-300">{name}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">{description}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{tr(description[0], description[1])}</p>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <ExportLinks name={name} />
                   <a href={exportHref(name, 'csv', false)} className="text-[10px] text-slate-400 hover:text-rose-600 hover:underline">
-                    ไม่ปกปิด (CSV)
+                    {tr('ไม่ปกปิด (CSV)', 'Not anonymised (CSV)')}
                   </a>
                 </div>
               </div>
@@ -179,15 +182,15 @@ export default async function AdminOverviewPage() {
         </section>
 
         <section id="proxy" className="space-y-3 scroll-mt-28">
-          <AdminSectionTitle icon={<Smartphone className="w-4 h-4" />} tone="sky" title="ส่งงาน / เช็คชื่อแทนเพื่อน (ล่าสุด)" />
+          <AdminSectionTitle icon={<Smartphone className="w-4 h-4" />} tone="sky" title={tr('ส่งงาน / เช็คชื่อแทนเพื่อน (ล่าสุด)', "From a classmate's phone (latest)")} />
           {proxyActivity.length === 0 ? (
-            <p className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500">ยังไม่มีการใช้เครื่องของเพื่อนส่งงานหรือเช็คชื่อ</p>
+            <p className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500">{tr('ยังไม่มีการใช้เครื่องของเพื่อนส่งงานหรือเช็คชื่อ', "Nobody has used a classmate's phone yet")}</p>
           ) : (
             <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
               <table className="w-full text-xs">
                 <thead className="text-left text-slate-500 bg-slate-50 dark:bg-slate-800/60">
                   <tr>
-                    {['เวลา', 'ประเภท', 'ห้องเรียน', 'งาน/คาบ', 'นักเรียน (เจ้าของงาน)', 'เครื่องของ'].map((h) => (
+                    {[tr('เวลา', 'Time'), tr('ประเภท', 'Type'), tr('ห้องเรียน', 'Classroom'), tr('งาน/คาบ', 'Work/period'), tr('นักเรียน (เจ้าของงาน)', 'Student (owner)'), tr('เครื่องของ', 'Phone of')].map((h) => (
                       <th key={h} className="px-3 py-2 font-bold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -195,10 +198,10 @@ export default async function AdminOverviewPage() {
                 <tbody>
                   {proxyActivity.slice(0, 30).map((row, i) => (
                     <tr key={i} className="border-t border-slate-100 dark:border-slate-800 hover:bg-sky-50/50 dark:hover:bg-sky-950/20">
-                      <td className="px-3 py-2 whitespace-nowrap font-mono">{row.at ? new Date(row.at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) : '-'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap font-mono">{row.at ? new Date(row.at).toLocaleString(lang === 'en' ? 'en-GB' : 'th-TH', { timeZone: 'Asia/Bangkok' }) : '-'}</td>
                       <td className="px-3 py-2">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${row.kind === 'submission' ? 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' : 'bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300'}`}>
-                          {row.kind === 'submission' ? 'ส่งงาน' : 'เช็คชื่อ'}
+                          {row.kind === 'submission' ? tr('ส่งงาน', 'Work') : tr('เช็คชื่อ', 'Check-in')}
                         </span>
                       </td>
                       <td className="px-3 py-2">{row.classroom}</td>
@@ -218,15 +221,15 @@ export default async function AdminOverviewPage() {
         <section id="tables" className="space-y-3 scroll-mt-28">
           <AdminSectionTitle
             icon={<Table2 className="w-4 h-4" />}
-            title="ตารางข้อมูลดิบ"
-            description="ค้นหา เปิดดู แก้ไข หรือลบแต่ละแถวได้ • คอลัมน์ที่เป็น token/secret จะถูกตัดออกเสมอ"
+            title={tr('ตารางข้อมูลดิบ', 'Raw tables')}
+            description={tr('ค้นหา เปิดดู แก้ไข หรือลบแต่ละแถวได้ • คอลัมน์ที่เป็น token/secret จะถูกตัดออกเสมอ', 'Search, open, edit or delete rows • token/secret columns are always removed')}
           />
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {ADMIN_TABLES.map((name) => (
               <div key={name} className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-indigo-300 dark:hover:border-indigo-800">
                 <Link href={`/admin/${name}`} className="min-w-0 group">
                   <p className="font-mono text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-indigo-700 dark:group-hover:text-indigo-300 truncate">{name}</p>
-                  <p className="text-[10px] text-slate-400 tabular-nums">{countOf[name] === null || countOf[name] === undefined ? 'ไม่พบตาราง' : `${countOf[name].toLocaleString()} แถว`}</p>
+                  <p className="text-[10px] text-slate-400 tabular-nums">{countOf[name] === null || countOf[name] === undefined ? tr('ไม่พบตาราง', 'Table missing') : `${countOf[name].toLocaleString()} ${tr('แถว', 'rows')}`}</p>
                 </Link>
                 <ExportLinks name={name} />
               </div>

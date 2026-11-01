@@ -53,11 +53,11 @@ export type AdminTable = (typeof ADMIN_TABLES)[number];
 
 /** Derived datasets built for analysis and model training. */
 export const ADMIN_DATASETS = {
-  grading_pairs: 'คำถาม + คำตอบนักเรียน + คะแนน/คอมเมนต์ครู (1 แถวต่อคำตอบ)',
-  grading_chat: 'รูปแบบ chat fine-tune (messages) เฉพาะคำตอบที่ครูให้คะแนนแล้ว',
-  proxy_activity: 'การส่งงาน/เช็คชื่อแทนเพื่อน (ใช้เครื่องของเพื่อน)',
-  integrity: 'งานที่ถูกตรวจจับพฤติกรรมน่าสงสัย + เหตุการณ์ออกจากหน้าจอ',
-} as const;
+  grading_pairs: ['คำถาม + คำตอบนักเรียน + คะแนน/คอมเมนต์ครู (1 แถวต่อคำตอบ)', 'Question + student answer + teacher score/comment (one row per answer)'],
+  grading_chat: ['รูปแบบ chat fine-tune (messages) เฉพาะคำตอบที่ครูให้คะแนนแล้ว', 'Chat fine-tune format (messages), teacher-graded answers only'],
+  proxy_activity: ['การส่งงาน/เช็คชื่อแทนเพื่อน (ใช้เครื่องของเพื่อน)', "Work handed in / check-ins from a classmate's phone"],
+  integrity: ['งานที่ถูกตรวจจับพฤติกรรมน่าสงสัย + เหตุการณ์ออกจากหน้าจอ', 'Flagged submissions + leaving-the-screen events'],
+} as const satisfies Record<string, readonly [string, string]>;
 export type AdminDataset = keyof typeof ADMIN_DATASETS;
 
 /** Login/connection secrets never leave the database, even for admins. */

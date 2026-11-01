@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Database, Download, FileImage, FileSpreadsheet, FolderTree, Loader2, RefreshCw, Square } from 'lucide-react';
 import { createZip, downloadBlob, type ZipEntry } from '@/lib/storage/zip';
 import { createXlsx, sheetFromObjects, sheetToCsv, XLSX_MIME, type Sheet } from '@/lib/export/xlsx';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 /**
  * Admin dataset builder: turns graded work into training data.
@@ -36,21 +37,21 @@ type LabelScheme = 'score_band' | 'pass_fail' | 'exact_score' | 'question_type' 
 type SplitGroup = 'student' | 'answer' | 'assignment' | 'question';
 type Split = 'train' | 'val' | 'test';
 
-const LABELS: Record<LabelScheme, string> = {
-  score_band: 'ช่วงคะแนน (zero / low / mid / high / full)',
-  pass_fail: 'ผ่าน / ไม่ผ่าน (ตามเกณฑ์ %)',
-  exact_score: 'คะแนนจริง (score_0, score_1 …)',
-  question_type: 'ประเภทคำถาม',
-  assignment: 'ชื่องาน',
-  classroom: 'ห้องเรียน',
-  flagged: 'พฤติกรรมน่าสงสัย / ปกติ',
-  none: 'ไม่มี label (all)',
+const LABELS: Record<LabelScheme, [string, string]> = {
+  score_band: ['ช่วงคะแนน (zero / low / mid / high / full)', 'Score band (zero / low / mid / high / full)'],
+  pass_fail: ['ผ่าน / ไม่ผ่าน (ตามเกณฑ์ %)', 'Pass / fail (by % threshold)'],
+  exact_score: ['คะแนนจริง (score_0, score_1 …)', 'Exact score (score_0, score_1 …)'],
+  question_type: ['ประเภทคำถาม', 'Question type'],
+  assignment: ['ชื่องาน', 'Assignment'],
+  classroom: ['ห้องเรียน', 'Classroom'],
+  flagged: ['พฤติกรรมน่าสงสัย / ปกติ', 'Flagged / normal'],
+  none: ['ไม่มี label (all)', 'No label (all)'],
 };
-const GROUPS: Record<SplitGroup, string> = {
-  student: 'ตามนักเรียน (กันข้อมูลรั่วข้าม split)',
-  answer: 'สุ่มรายคำตอบ',
-  assignment: 'ตามงาน',
-  question: 'ตามคำถาม',
+const GROUPS: Record<SplitGroup, [string, string]> = {
+  student: ['ตามนักเรียน (กันข้อมูลรั่วข้าม split)', 'By student (no leakage across splits)'],
+  answer: ['สุ่มรายคำตอบ', 'Random per answer'],
+  assignment: ['ตามงาน', 'By assignment'],
+  question: ['ตามคำถาม', 'By question'],
 };
 const TEXT_COLUMNS = [
   'answer_id', 'classroom', 'assignment_title', 'is_exam', 'question_id', 'question_type', 'question_text', 'options',
@@ -126,6 +127,7 @@ const chip = (on: boolean) =>
   }`;
 
 export function AdminDatasetBuilder() {
+  const { tr } = useLanguage();
   const [kind, setKind] = useState<Kind>('text');
   const [rows, setRows] = useState<Record<Kind, Row[] | null>>({ text: null, files: null });
   const [loading, setLoading] = useState(false);
@@ -161,10 +163,10 @@ export function AdminDatasetBuilder() {
     try {
       const res = await fetch(`/api/admin/dataset?kind=${which}${anonymize ? '' : '&anonymize=0'}`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || 'โหลดข้อมูลไม่สำเร็จ');
+      if (!res.ok) throw new Error(json.error || tr('โหลดข้อมูลไม่สำเร็จ', 'Could not load data'));
       setRows((prev) => ({ ...prev, [which]: json.rows as Row[] }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'โหลดข้อมูลไม่สำเร็จ');
+      setError(err instanceof Error ? err.message : tr('โหลดข้อมูลไม่สำเร็จ', 'Could not load data'));
     } finally {
       setLoading(false);
     }
@@ -430,7 +432,7 @@ export function AdminDatasetBuilder() {
       if (kind === 'text') buildText();
       else await buildFiles();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'สร้างไฟล์ไม่สำเร็จ');
+      setError(err instanceof Error ? err.message : tr('สร้างไฟล์ไม่สำเร็จ', 'Could not build the file'));
       setProgress(null);
     }
   };
@@ -458,14 +460,14 @@ export function AdminDatasetBuilder() {
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-white/15"><Database className="w-5 h-5" /></div>
           <div>
-            <h2 className="text-sm font-black">สร้างชุดข้อมูลสำหรับเทรนโมเดล</h2>
-            <p className="text-[11px] text-violet-100">เลือก label • แบ่ง train/val/test • ดาวน์โหลดเป็น Excel หรือโฟลเดอร์แบบ YOLO</p>
+            <h2 className="text-sm font-black">{tr('สร้างชุดข้อมูลสำหรับเทรนโมเดล', 'Build a training dataset')}</h2>
+            <p className="text-[11px] text-violet-100">{tr('เลือก label • แบ่ง train/val/test • ดาวน์โหลดเป็น Excel หรือโฟลเดอร์แบบ YOLO', 'Pick labels • split train/val/test • download as Excel or YOLO folders')}</p>
           </div>
         </div>
         <div className="flex rounded-xl bg-white/15 p-1 text-xs font-bold">
           {([
-            ['text', 'ข้อความ → Excel', FileSpreadsheet],
-            ['files', 'รูป / PDF → YOLO', FileImage],
+            ['text', tr('ข้อความ → Excel', 'Text → Excel'), FileSpreadsheet],
+            ['files', tr('รูป / PDF → YOLO', 'Images / PDF → YOLO'), FileImage],
           ] as const).map(([id, label, Icon]) => (
             <button
               key={id}
@@ -492,7 +494,7 @@ export function AdminDatasetBuilder() {
             className="h-9 px-4 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
           >
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-            {current ? 'โหลดใหม่' : 'โหลดข้อมูล'}
+            {current ? tr('โหลดใหม่', 'Reload') : tr('โหลดข้อมูล', 'Load data')}
           </button>
           <label className="flex items-center gap-1.5 text-xs font-semibold cursor-pointer">
             <input
@@ -505,35 +507,37 @@ export function AdminDatasetBuilder() {
               }}
               className="accent-violet-600"
             />
-            ปกปิดตัวตนนักเรียน
+            {tr('ปกปิดตัวตนนักเรียน', 'Anonymise students')}
           </label>
           {current && (
             <span className="text-xs text-slate-500 tabular-nums">
-              ทั้งหมด {current.length.toLocaleString()} แถว • หลังกรอง <b className="text-violet-700 dark:text-violet-300">{labelled.length.toLocaleString()}</b>
+              {tr('ทั้งหมด', 'Total')} {current.length.toLocaleString()} {tr('แถว', 'rows')} • {tr('หลังกรอง', 'after filters')} <b className="text-violet-700 dark:text-violet-300">{labelled.length.toLocaleString()}</b>
               {kind === 'files' && ` • ${formatBytes(totalBytes)}`}
             </span>
           )}
-          {!anonymize && <span className="text-[11px] font-bold text-rose-600">⚠️ ไฟล์จะมีรหัสนักเรียนจริง</span>}
+          {!anonymize && <span className="text-[11px] font-bold text-rose-600">{tr('⚠️ ไฟล์จะมีรหัสนักเรียนจริง', '⚠️ Files will contain real student ids')}</span>}
         </div>
 
         {error && <p className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-semibold">{error}</p>}
 
         {!current ? (
           <p className="text-xs text-slate-500">
-            กด “โหลดข้อมูล” เพื่อดึง{kind === 'text' ? 'คำตอบแบบข้อความทั้งหมด' : 'รายการไฟล์ที่นักเรียนแนบ (รูป, PDF)'} แล้วเลือก label และรูปแบบไฟล์ได้ก่อนดาวน์โหลด
+            {kind === 'text'
+              ? tr('กด “โหลดข้อมูล” เพื่อดึงคำตอบแบบข้อความทั้งหมด แล้วเลือก label และรูปแบบไฟล์ได้ก่อนดาวน์โหลด', 'Press “Load data” to fetch every text answer, then choose labels and the file format before downloading')
+              : tr('กด “โหลดข้อมูล” เพื่อดึงรายการไฟล์ที่นักเรียนแนบ (รูป, PDF) แล้วเลือก label และรูปแบบไฟล์ได้ก่อนดาวน์โหลด', 'Press “Load data” to fetch the files students attached (images, PDF), then choose labels and the layout before downloading')}
           </p>
         ) : (
           <div className="grid lg:grid-cols-[1fr_320px] gap-5">
             <div className="space-y-4">
               {/* 1. Filters */}
               <fieldset className="space-y-2">
-                <legend className="text-[11px] font-black uppercase tracking-wide text-violet-700 dark:text-violet-300">1 · กรองข้อมูล</legend>
+                <legend className="text-[11px] font-black uppercase tracking-wide text-violet-700 dark:text-violet-300">1 · {tr('กรองข้อมูล', 'Filters')}</legend>
                 <div className="flex flex-wrap gap-1.5">
-                  <button type="button" className={chip(gradedOnly)} onClick={() => setGradedOnly(!gradedOnly)}>เฉพาะที่ครูตรวจแล้ว</button>
+                  <button type="button" className={chip(gradedOnly)} onClick={() => setGradedOnly(!gradedOnly)}>{tr('เฉพาะที่ครูตรวจแล้ว', 'Graded only')}</button>
                   {kind === 'files' &&
                     (['image', 'pdf', 'other'] as const).map((k) => (
                       <button key={k} type="button" className={chip(fileKinds.has(k))} onClick={() => toggle(fileKinds, k, setFileKinds)}>
-                        {k === 'image' ? '🖼 รูปภาพ' : k === 'pdf' ? '📄 PDF' : '📎 อื่น ๆ'}
+                        {k === 'image' ? tr('🖼 รูปภาพ', '🖼 Images') : k === 'pdf' ? '📄 PDF' : tr('📎 อื่น ๆ', '📎 Other')}
                       </button>
                     ))}
                 </div>
@@ -551,19 +555,19 @@ export function AdminDatasetBuilder() {
                     ))}
                   </div>
                 )}
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหาชื่องาน / คำถาม" className={`${field} w-full sm:w-72`} />
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tr('ค้นหาชื่องาน / คำถาม', 'Search assignment / question')} className={`${field} w-full sm:w-72`} />
               </fieldset>
 
               {/* 2. Labels and splits */}
               <fieldset className="space-y-2">
-                <legend className="text-[11px] font-black uppercase tracking-wide text-violet-700 dark:text-violet-300">2 · Label และการแบ่งชุด</legend>
+                <legend className="text-[11px] font-black uppercase tracking-wide text-violet-700 dark:text-violet-300">2 · {tr('Label และการแบ่งชุด', 'Labels & splits')}</legend>
                 <div className="flex flex-wrap items-center gap-2">
                   <select value={scheme} onChange={(e) => setScheme(e.target.value as LabelScheme)} className={field}>
-                    {Object.entries(LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                    {Object.entries(LABELS).map(([id, label]) => <option key={id} value={id}>{tr(label[0], label[1])}</option>)}
                   </select>
                   {scheme === 'pass_fail' && (
                     <label className="text-xs flex items-center gap-1">
-                      ผ่านเมื่อ ≥
+                      {tr('ผ่านเมื่อ ≥', 'Pass at ≥')}
                       <input type="number" min={1} max={100} value={passPercent} onChange={(e) => setPassPercent(Number(e.target.value) || 50)} className={`${field} w-16`} />%
                     </label>
                   )}
@@ -582,9 +586,9 @@ export function AdminDatasetBuilder() {
                       />
                     </label>
                   ))}
-                  {splitTotal !== 100 && <span className="text-amber-600 font-bold">รวม {splitTotal}% (คิดตามสัดส่วน)</span>}
+                  {splitTotal !== 100 && <span className="text-amber-600 font-bold">{tr(`รวม ${splitTotal}% (คิดตามสัดส่วน)`, `Total ${splitTotal}% (used as ratios)`)}</span>}
                   <select value={group} onChange={(e) => setGroup(e.target.value as SplitGroup)} className={field}>
-                    {Object.entries(GROUPS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                    {Object.entries(GROUPS).map(([id, label]) => <option key={id} value={id}>{tr(label[0], label[1])}</option>)}
                   </select>
                   <label className="flex items-center gap-1 font-semibold">
                     seed
@@ -595,15 +599,15 @@ export function AdminDatasetBuilder() {
 
               {/* 3. Output */}
               <fieldset className="space-y-2">
-                <legend className="text-[11px] font-black uppercase tracking-wide text-violet-700 dark:text-violet-300">3 · รูปแบบไฟล์</legend>
+                <legend className="text-[11px] font-black uppercase tracking-wide text-violet-700 dark:text-violet-300">3 · {tr('รูปแบบไฟล์', 'Output')}</legend>
                 {kind === 'text' ? (
                   <>
                     <div className="flex flex-wrap gap-1.5">
-                      <button type="button" className={chip(textOutput === 'xlsx')} onClick={() => setTextOutput('xlsx')}>Excel (.xlsx) อย่างเดียว</button>
-                      <button type="button" className={chip(textOutput === 'bundle')} onClick={() => setTextOutput('bundle')}>ชุดเต็ม .zip (xlsx + JSONL + chat + CSV)</button>
+                      <button type="button" className={chip(textOutput === 'xlsx')} onClick={() => setTextOutput('xlsx')}>{tr('Excel (.xlsx) อย่างเดียว', 'Excel (.xlsx) only')}</button>
+                      <button type="button" className={chip(textOutput === 'bundle')} onClick={() => setTextOutput('bundle')}>{tr('ชุดเต็ม .zip (xlsx + JSONL + chat + CSV)', 'Full bundle .zip (xlsx + JSONL + chat + CSV)')}</button>
                     </div>
                     <details className="text-xs">
-                      <summary className="cursor-pointer font-bold text-slate-600 dark:text-slate-300">เลือกคอลัมน์ ({columns.size}/{TEXT_COLUMNS.length})</summary>
+                      <summary className="cursor-pointer font-bold text-slate-600 dark:text-slate-300">{tr('เลือกคอลัมน์', 'Columns')} ({columns.size}/{TEXT_COLUMNS.length})</summary>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {TEXT_COLUMNS.map((c) => (
                           <button key={c} type="button" className={`${chip(columns.has(c))} font-mono`} onClick={() => toggle(columns, c, setColumns)}>{c}</button>
@@ -613,12 +617,12 @@ export function AdminDatasetBuilder() {
                   </>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
-                    <button type="button" className={chip(layout === 'yolo-cls')} onClick={() => setLayout('yolo-cls')}>YOLO Classification (โฟลเดอร์ตาม class)</button>
+                    <button type="button" className={chip(layout === 'yolo-cls')} onClick={() => setLayout('yolo-cls')}>YOLO Classification ({tr('โฟลเดอร์ตาม class', 'folder per class')})</button>
                     <button type="button" className={chip(layout === 'yolo-det')} onClick={() => setLayout('yolo-det')}>YOLO Detection (images + labels)</button>
                     {layout === 'yolo-det' && (
                       <select value={boxes} onChange={(e) => setBoxes(e.target.value as 'empty' | 'full')} className={field}>
-                        <option value="empty">ไฟล์ label ว่าง (ไปวาดกรอบเอง)</option>
-                        <option value="full">กรอบเต็มภาพ + class (weak label)</option>
+                        <option value="empty">{tr('ไฟล์ label ว่าง (ไปวาดกรอบเอง)', 'Empty label files (draw boxes later)')}</option>
+                        <option value="full">{tr('กรอบเต็มภาพ + class (weak label)', 'Whole-image box + class (weak label)')}</option>
                       </select>
                     )}
                   </div>
@@ -629,7 +633,7 @@ export function AdminDatasetBuilder() {
             {/* Preview */}
             <aside className="space-y-3">
               <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-3">
-                <p className="text-[11px] font-black text-slate-500 mb-2 flex items-center gap-1"><FolderTree className="w-3.5 h-3.5" /> โครงสร้างไฟล์</p>
+                <p className="text-[11px] font-black text-slate-500 mb-2 flex items-center gap-1"><FolderTree className="w-3.5 h-3.5" /> {tr('โครงสร้างไฟล์', 'File layout')}</p>
                 <pre className="text-[10.5px] leading-relaxed font-mono text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-all">{tree}</pre>
               </div>
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -652,7 +656,7 @@ export function AdminDatasetBuilder() {
                       </tr>
                     ))}
                     {matrix.size === 0 && (
-                      <tr><td colSpan={4} className="px-2 py-3 text-center text-slate-400">ไม่มีข้อมูลตามตัวกรอง</td></tr>
+                      <tr><td colSpan={4} className="px-2 py-3 text-center text-slate-400">{tr('ไม่มีข้อมูลตามตัวกรอง', 'Nothing matches the filters')}</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -663,9 +667,9 @@ export function AdminDatasetBuilder() {
                     <div className="h-full bg-violet-600 transition-all" style={{ width: `${(progress.done / Math.max(1, progress.total)) * 100}%` }} />
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-500 tabular-nums">
-                    <span>ดาวน์โหลดไฟล์ {progress.done}/{progress.total}{progress.failed ? ` • ล้มเหลว ${progress.failed}` : ''}</span>
+                    <span>{tr('ดาวน์โหลดไฟล์', 'Downloading')} {progress.done}/{progress.total}{progress.failed ? ` • ${tr('ล้มเหลว', 'failed')} ${progress.failed}` : ''}</span>
                     <button type="button" onClick={() => abortRef.current?.abort()} className="flex items-center gap-1 font-bold text-rose-600 cursor-pointer">
-                      <Square className="w-3 h-3" /> ยกเลิก
+                      <Square className="w-3 h-3" /> {tr('ยกเลิก', 'Cancel')}
                     </button>
                   </div>
                 </div>
@@ -677,11 +681,11 @@ export function AdminDatasetBuilder() {
                   className="w-full h-11 rounded-2xl bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-sm font-black flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-lg shadow-violet-600/20"
                 >
                   <Download className="w-4 h-4" />
-                  ดาวน์โหลด {labelled.length.toLocaleString()} {kind === 'text' ? 'แถว' : 'ไฟล์'}
+                  {tr('ดาวน์โหลด', 'Download')} {labelled.length.toLocaleString()} {kind === 'text' ? tr('แถว', 'rows') : tr('ไฟล์', 'files')}
                 </button>
               )}
               {kind === 'files' && totalBytes > 1.5 * 1024 ** 3 && (
-                <p className="text-[11px] font-bold text-amber-600">ไฟล์รวมเกิน 1.5 GB — แนะนำให้กรองทีละห้อง/งาน</p>
+                <p className="text-[11px] font-bold text-amber-600">{tr('ไฟล์รวมเกิน 1.5 GB — แนะนำให้กรองทีละห้อง/งาน', 'Over 1.5 GB in total — filter by classroom/assignment first')}</p>
               )}
             </aside>
           </div>

@@ -7,6 +7,7 @@ import { fetchAll, getAdmin } from '@/lib/server/admin';
 import { LINE_TEST_WINDOW_DAYS, lineTestWindowStart } from '@/lib/server/lineTestQuota';
 import { AdminHeader, AdminMain, AdminPage, adminRecordHref } from '@/components/AdminUi';
 import { AdminTeacherApproval } from '@/components/AdminTeacherApproval';
+import { getAdminLang, translator, type AdminLang } from '@/lib/server/adminLang';
 import { isTeacherProfileComplete, type TeacherApproval } from '@/lib/utils/teacherProfile';
 
 export const dynamic = 'force-dynamic';
@@ -14,41 +15,41 @@ export const metadata: Metadata = { title: 'Pudding Admin', robots: { index: fal
 
 type TabKey = TeacherApproval | 'all';
 
-const TABS: Array<{ key: TabKey; label: string; icon: typeof Clock; on: string; off: string }> = [
+const TABS: Array<{ key: TabKey; label: [string, string]; icon: typeof Clock; on: string; off: string }> = [
   {
     key: 'pending',
-    label: 'รอตรวจ',
+    label: ['รอตรวจ', 'Pending'],
     icon: Clock,
     on: 'bg-linear-to-br from-amber-400 to-orange-400 text-slate-950 border-transparent shadow-lg shadow-amber-500/25',
     off: 'bg-white dark:bg-slate-900 border-amber-200 dark:border-amber-900/60 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30',
   },
   {
     key: 'approved',
-    label: 'อนุมัติแล้ว',
+    label: ['อนุมัติแล้ว', 'Approved'],
     icon: CheckCircle2,
     on: 'bg-linear-to-br from-emerald-500 to-teal-500 text-white border-transparent shadow-lg shadow-emerald-500/25',
     off: 'bg-white dark:bg-slate-900 border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30',
   },
   {
     key: 'rejected',
-    label: 'ปฏิเสธแล้ว',
+    label: ['ปฏิเสธแล้ว', 'Rejected'],
     icon: UserX,
     on: 'bg-linear-to-br from-rose-500 to-pink-500 text-white border-transparent shadow-lg shadow-rose-500/25',
     off: 'bg-white dark:bg-slate-900 border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30',
   },
   {
     key: 'all',
-    label: 'ทั้งหมด',
+    label: ['ทั้งหมด', 'All'],
     icon: Users,
     on: 'bg-linear-to-br from-indigo-500 to-violet-500 text-white border-transparent shadow-lg shadow-indigo-500/25',
     off: 'bg-white dark:bg-slate-900 border-indigo-200 dark:border-indigo-900/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30',
   },
 ];
 
-const STATUS_STYLE: Record<TeacherApproval, { badge: string; strip: string; label: string }> = {
-  pending: { badge: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300', strip: 'from-amber-400 to-orange-400', label: 'รอตรวจ' },
-  approved: { badge: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300', strip: 'from-emerald-400 to-teal-400', label: 'อนุมัติแล้ว' },
-  rejected: { badge: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300', strip: 'from-rose-400 to-pink-400', label: 'ปฏิเสธแล้ว' },
+const STATUS_STYLE: Record<TeacherApproval, { badge: string; strip: string; label: [string, string] }> = {
+  pending: { badge: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300', strip: 'from-amber-400 to-orange-400', label: ['รอตรวจ', 'Pending'] },
+  approved: { badge: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300', strip: 'from-emerald-400 to-teal-400', label: ['อนุมัติแล้ว', 'Approved'] },
+  rejected: { badge: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300', strip: 'from-rose-400 to-pink-400', label: ['ปฏิเสธแล้ว', 'Rejected'] },
 };
 
 const AVATAR_TONES = [
@@ -74,14 +75,16 @@ type TeacherRow = {
 
 const approvalOf = (value: string | null): TeacherApproval => (value === 'approved' || value === 'rejected' ? value : 'pending');
 
-function relativeThai(iso: string | null) {
+function relativeTime(iso: string | null, lang: AdminLang) {
   if (!iso) return '';
+  const th = lang === 'th';
   const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (minutes < 60) return `${Math.max(1, minutes)} นาทีที่แล้ว`;
+  if (minutes < 60) return th ? `${Math.max(1, minutes)} นาทีที่แล้ว` : `${Math.max(1, minutes)} min ago`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} ชม.ที่แล้ว`;
+  if (hours < 24) return th ? `${hours} ชม.ที่แล้ว` : `${hours} h ago`;
   const days = Math.round(hours / 24);
-  return days < 60 ? `${days} วันที่แล้ว` : `${Math.round(days / 30)} เดือนที่แล้ว`;
+  if (days < 60) return th ? `${days} วันที่แล้ว` : `${days} days ago`;
+  return th ? `${Math.round(days / 30)} เดือนที่แล้ว` : `${Math.round(days / 30)} months ago`;
 }
 
 export default async function AdminTeachersPage({ searchParams }: { searchParams: Promise<{ status?: string; q?: string }> }) {
@@ -90,6 +93,8 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
   const { status: statusParam, q = '' } = await searchParams;
 
   const supabase = createServiceSupabaseClient();
+  const lang = await getAdminLang();
+  const tr = translator(lang);
   const since = lineTestWindowStart();
   const [teachers, classrooms, testSends] = await Promise.all([
     supabase
@@ -127,9 +132,12 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
       <AdminMain>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-xl font-black text-slate-900 dark:text-white">อนุมัติบัญชีครู</h1>
+            <h1 className="text-xl font-black text-slate-900 dark:text-white">{tr('อนุมัติบัญชีครู', 'Teacher approval')}</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              ครูที่สมัครใหม่จะใช้งานระบบไม่ได้จนกว่าจะอนุมัติที่นี่ • ทดสอบส่ง LINE = จำนวนครั้งใน {LINE_TEST_WINDOW_DAYS} วันล่าสุด
+              {tr(
+                `ครูที่สมัครใหม่จะใช้งานระบบไม่ได้จนกว่าจะอนุมัติที่นี่ • ทดสอบส่ง LINE = จำนวนครั้งใน ${LINE_TEST_WINDOW_DAYS} วันล่าสุด`,
+                `New teachers cannot use the app until approved here • LINE tests = sends in the last ${LINE_TEST_WINDOW_DAYS} days`
+              )}
             </p>
           </div>
           <form action="/admin/teachers" className="relative w-full sm:w-80">
@@ -138,13 +146,13 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
             <input
               name="q"
               defaultValue={q}
-              placeholder="ค้นหาชื่อ, โรงเรียน, อีเมล"
+              placeholder={tr('ค้นหาชื่อ, โรงเรียน, อีเมล', 'Search name, school, email')}
               className="w-full h-10 pl-9 pr-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
           </form>
         </div>
 
-        <nav className="grid grid-cols-2 sm:grid-cols-4 gap-3" aria-label="สถานะ">
+        <nav className="grid grid-cols-2 sm:grid-cols-4 gap-3" aria-label={tr('สถานะ', 'Status')}>
           {TABS.map(({ key, label, icon: Icon, on, off }) => (
             <Link
               key={key}
@@ -153,7 +161,7 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
               className={`p-4 rounded-2xl border transition-all ${status === key ? on : off}`}
             >
               <span className="flex items-center gap-1.5 text-xs font-bold">
-                <Icon className="w-4 h-4" /> {label}
+                <Icon className="w-4 h-4" /> {tr(label[0], label[1])}
               </span>
               <span className="block text-3xl font-black tabular-nums mt-1">{counts[key]}</span>
             </Link>
@@ -165,15 +173,15 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
         ) : rows.length === 0 ? (
           <div className="p-10 rounded-3xl border border-dashed border-slate-300 dark:border-slate-700 text-center">
             <CheckCircle2 className="w-10 h-10 mx-auto text-emerald-500" />
-            <p className="mt-2 text-sm font-bold text-slate-700 dark:text-slate-200">{status === 'pending' ? 'ไม่มีครูรอตรวจ 🎉' : 'ไม่มีครูในรายการนี้'}</p>
-            {needle && <p className="text-xs text-slate-500 mt-1">ลองล้างคำค้นหา “{q}”</p>}
+            <p className="mt-2 text-sm font-bold text-slate-700 dark:text-slate-200">{status === 'pending' ? tr('ไม่มีครูรอตรวจ 🎉', 'Nobody waiting 🎉') : tr('ไม่มีครูในรายการนี้', 'No teachers in this list')}</p>
+            {needle && <p className="text-xs text-slate-500 mt-1">{tr(`ลองล้างคำค้นหา “${q}”`, `Try clearing the search “${q}”`)}</p>}
           </div>
         ) : (
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
             {rows.map((t, index) => {
               const approval = approvalOf(t.teacher_approval);
               const style = STATUS_STYLE[approval];
-              const name = `${t.first_name || ''} ${t.last_name || ''}`.trim() || '(ไม่มีชื่อ)';
+              const name = `${t.first_name || ''} ${t.last_name || ''}`.trim() || tr('(ไม่มีชื่อ)', '(no name)');
               const initials = (t.first_name?.[0] || '') + (t.last_name?.[0] || '') || '?';
               const tests = testCount.get(t.id) || 0;
               const complete = isTeacherProfileComplete(t);
@@ -200,32 +208,32 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
                           <Link href={adminRecordHref('users', t.id)} className="font-black text-sm text-slate-900 dark:text-white hover:text-indigo-700 dark:hover:text-indigo-300 truncate">
                             {name}
                           </Link>
-                          <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-black ${style.badge}`}>{style.label}</span>
+                          <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-black ${style.badge}`}>{tr(style.label[0], style.label[1])}</span>
                         </div>
                         <p className="text-xs text-slate-500 flex items-center gap-1 truncate"><Mail className="w-3 h-3 shrink-0" />{t.email || '-'}</p>
-                        <p className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1 truncate"><Building2 className="w-3 h-3 shrink-0" />{t.institution || <span className="text-slate-400">ไม่ระบุสถานศึกษา</span>}</p>
+                        <p className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1 truncate"><Building2 className="w-3 h-3 shrink-0" />{t.institution || <span className="text-slate-400">{tr('ไม่ระบุสถานศึกษา', 'No school')}</span>}</p>
                       </div>
                     </div>
 
                     <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
                       <span className={`px-2 py-0.5 rounded-full flex items-center gap-1 ${t.teacher_line_uid ? 'bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
-                        <MessageCircle className="w-3 h-3" /> {t.teacher_line_uid ? 'เชื่อม LINE แล้ว' : 'ยังไม่เชื่อม LINE'}
+                        <MessageCircle className="w-3 h-3" /> {t.teacher_line_uid ? tr('เชื่อม LINE แล้ว', 'LINE linked') : tr('ยังไม่เชื่อม LINE', 'LINE not linked')}
                       </span>
-                      {!complete && <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300">โปรไฟล์ยังไม่ครบ</span>}
+                      {!complete && <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300">{tr('โปรไฟล์ยังไม่ครบ', 'Profile incomplete')}</span>}
                     </div>
 
                     <dl className="grid grid-cols-3 gap-2 text-center">
                       <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2">
-                        <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><BookOpen className="w-3 h-3" />ห้องเรียน</dt>
+                        <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><BookOpen className="w-3 h-3" />{tr('ห้องเรียน', 'Classes')}</dt>
                         <dd className="text-base font-black tabular-nums">{classroomCount.get(t.id) || 0}</dd>
                       </div>
                       <div className={`rounded-xl py-2 ${tests >= 5 ? 'bg-rose-50 dark:bg-rose-950/40' : 'bg-slate-50 dark:bg-slate-800/60'}`}>
-                        <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><Send className="w-3 h-3" />ทดสอบ LINE</dt>
+                        <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><Send className="w-3 h-3" />{tr('ทดสอบ LINE', 'LINE tests')}</dt>
                         <dd className={`text-base font-black tabular-nums ${tests >= 5 ? 'text-rose-600' : ''}`}>{tests}</dd>
                       </div>
-                      <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2" title={t.created_at ? new Date(t.created_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) : ''}>
-                        <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><Clock className="w-3 h-3" />สมัคร</dt>
-                        <dd className="text-[11px] font-bold pt-1">{relativeThai(t.created_at) || '-'}</dd>
+                      <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2" title={t.created_at ? new Date(t.created_at).toLocaleString(lang === 'en' ? 'en-GB' : 'th-TH', { timeZone: 'Asia/Bangkok' }) : ''}>
+                        <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><Clock className="w-3 h-3" />{tr('สมัคร', 'Joined')}</dt>
+                        <dd className="text-[11px] font-bold pt-1">{relativeTime(t.created_at, lang) || '-'}</dd>
                       </div>
                     </dl>
 

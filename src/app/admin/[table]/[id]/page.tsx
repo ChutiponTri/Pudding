@@ -6,6 +6,7 @@ import { getAdmin } from '@/lib/server/admin';
 import { getRecord, isAdminTable, isReadOnlyColumn, linkedTable, relatedCounts } from '@/lib/server/adminRecords';
 import { AdminHeader, AdminMain, AdminPage } from '@/components/AdminUi';
 import { AdminRecordEditor } from '@/components/AdminRecordEditor';
+import { getAdminLang, translator } from '@/lib/server/adminLang';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Pudding Admin', robots: { index: false, follow: false } };
@@ -33,6 +34,7 @@ export default async function AdminRecordPage({ params }: { params: Promise<{ ta
   if (!isAdminTable(table)) notFound();
   const id = decodeURIComponent(rawId);
   const supabase = createServiceSupabaseClient();
+  const tr = translator(await getAdminLang());
   const record = await getRecord(supabase, table, id);
   if (!record) notFound();
 
@@ -50,16 +52,16 @@ export default async function AdminRecordPage({ params }: { params: Promise<{ ta
       <AdminMain>
         {lineUid && (
           <section className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs space-y-1">
-            <p className="font-black text-sm">สถานะ LINE (ตรวจสดจาก LINE)</p>
+            <p className="font-black text-sm">{tr('สถานะ LINE (ตรวจสดจาก LINE)', 'LINE status (checked live with LINE)')}</p>
             <p>
               LINE ID: <span className="font-mono">{lineUid}</span>
             </p>
             <p>
-              เป็นเพื่อนกับบอท:{' '}
-              <span className="font-bold">{friend === null ? 'ตรวจไม่ได้' : friend ? '✅ ใช่' : '❌ ไม่ใช่'}</span>
+              {tr('เป็นเพื่อนกับบอท:', 'Friends with the bot:')}{' '}
+              <span className="font-bold">{friend === null ? tr('ตรวจไม่ได้', 'Could not check') : friend ? tr('✅ ใช่', '✅ Yes') : tr('❌ ไม่ใช่', '❌ No')}</span>
               {record.role === 'teacher' && friend !== null && record.line_bot_friend !== friend && (
                 <span className="ml-2 text-rose-600 dark:text-rose-400 font-bold">
-                  ไม่ตรงกับฐานข้อมูล (line_bot_friend = {String(record.line_bot_friend)}) — แก้ค่าด้านล่างได้
+                  {tr('ไม่ตรงกับฐานข้อมูล', 'Differs from the database')} (line_bot_friend = {String(record.line_bot_friend)}) — {tr('แก้ค่าด้านล่างได้', 'fix it below')}
                 </span>
               )}
             </p>

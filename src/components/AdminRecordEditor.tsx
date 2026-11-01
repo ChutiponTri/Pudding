@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 /**
  * Edits one database row as an admin. Every column is shown; the key,
@@ -21,12 +22,12 @@ const toDraft = (value: unknown, kind: Kind) =>
   value === null || value === undefined ? '' : kind === 'json' ? JSON.stringify(value, null, 2) : String(value);
 
 /** Deleting these takes rows below them with it. */
-const CASCADE_WARNING: Record<string, string> = {
-  classrooms: 'งาน คำตอบ การเช็คชื่อ และไฟล์ของห้องนี้จะถูกลบไปด้วย',
-  assignments: 'คำถาม งานที่นักเรียนส่ง และไฟล์ของงานนี้จะถูกลบไปด้วย',
-  courses: 'ห้องเรียนที่ผูกกับรายวิชานี้อาจได้รับผลกระทบ',
-  users: 'ข้อมูลที่อ้างถึงผู้ใช้นี้ (งานที่ส่ง การเช็คชื่อ) อาจถูกลบหรือค้างอยู่',
-  submissions: 'คำตอบและบันทึกการออกจากหน้าจอของงานนี้จะถูกลบไปด้วย',
+const CASCADE_WARNING: Record<string, [string, string]> = {
+  classrooms: ['งาน คำตอบ การเช็คชื่อ และไฟล์ของห้องนี้จะถูกลบไปด้วย', "This classroom's work, answers, attendance and files are deleted too"],
+  assignments: ['คำถาม งานที่นักเรียนส่ง และไฟล์ของงานนี้จะถูกลบไปด้วย', "This assignment's questions, submissions and files are deleted too"],
+  courses: ['ห้องเรียนที่ผูกกับรายวิชานี้อาจได้รับผลกระทบ', 'Classrooms linked to this course may be affected'],
+  users: ['ข้อมูลที่อ้างถึงผู้ใช้นี้ (งานที่ส่ง การเช็คชื่อ) อาจถูกลบหรือค้างอยู่', 'Rows pointing at this user (submissions, attendance) may be deleted or left dangling'],
+  submissions: ['คำตอบและบันทึกการออกจากหน้าจอของงานนี้จะถูกลบไปด้วย', 'Its answers and leaving-the-screen events are deleted too'],
 };
 
 export function AdminRecordEditor({
@@ -53,6 +54,7 @@ export function AdminRecordEditor({
   const [drafts, setDrafts] = useState(initial);
   const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const { tr } = useLanguage();
 
   const changed = columns.filter(
     (c) => !readOnly.includes(c) && (drafts[c].isNull !== initial[c].isNull || drafts[c].text !== initial[c].text)
@@ -72,13 +74,13 @@ export function AdminRecordEditor({
       if (kind === 'boolean') changes[column] = draft.text === 'true';
       else if (kind === 'number') {
         const value = Number(draft.text);
-        if (draft.text.trim() === '' || !Number.isFinite(value)) return setMessage({ tone: 'error', text: `${column}: ต้องเป็นตัวเลข` });
+        if (draft.text.trim() === '' || !Number.isFinite(value)) return setMessage({ tone: 'error', text: `${column}: ${tr('ต้องเป็นตัวเลข', 'must be a number')}` });
         changes[column] = value;
       } else if (kind === 'json') {
         try {
           changes[column] = JSON.parse(draft.text);
         } catch {
-          return setMessage({ tone: 'error', text: `${column}: JSON ไม่ถูกต้อง` });
+          return setMessage({ tone: 'error', text: `${column}: ${tr('JSON ไม่ถูกต้อง', 'invalid JSON')}` });
         }
       } else changes[column] = draft.text;
     }
@@ -91,25 +93,26 @@ export function AdminRecordEditor({
         body: JSON.stringify({ table, id, changes }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || 'บันทึกไม่สำเร็จ');
+      if (!res.ok) throw new Error(json.error || tr('บันทึกไม่สำเร็จ', 'Could not save'));
       // The database's own form of the values (e.g. timestamps), matching the refreshed record.
       const saved = (json.record || {}) as Row;
       setDrafts((prev) => ({
         ...prev,
         ...Object.fromEntries(Object.keys(saved).filter((c) => c in prev).map((c) => [c, { text: toDraft(saved[c], kinds[c]), isNull: saved[c] === null }])),
       }));
-      setMessage({ tone: 'ok', text: `บันทึกแล้ว (${changed.length} คอลัมน์)` });
+      setMessage({ tone: 'ok', text: tr(`บันทึกแล้ว (${changed.length} คอลัมน์)`, `Saved (${changed.length} column${changed.length > 1 ? 's' : ''})`) });
       router.refresh();
     } catch (error) {
-      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'บันทึกไม่สำเร็จ' });
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : tr('บันทึกไม่สำเร็จ', 'Could not save') });
     } finally {
       setBusy(null);
     }
   };
 
   const remove = async () => {
-    const warning = CASCADE_WARNING[table] ? `\n\n⚠️ ${CASCADE_WARNING[table]}` : '';
-    if (!confirm(`ลบ ${table} / ${id} ถาวร?${warning}\n\nย้อนกลับไม่ได้`)) return;
+    const cascade = CASCADE_WARNING[table];
+    const warning = cascade ? `\n\n⚠️ ${tr(cascade[0], cascade[1])}` : '';
+    if (!confirm(tr(`ลบ ${table} / ${id} ถาวร?${warning}\n\nย้อนกลับไม่ได้`, `Delete ${table} / ${id} permanently?${warning}\n\nThis cannot be undone.`))) return;
     setBusy('delete');
     setMessage(null);
     try {
@@ -119,11 +122,11 @@ export function AdminRecordEditor({
         body: JSON.stringify({ table, id }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || 'ลบไม่สำเร็จ');
+      if (!res.ok) throw new Error(json.error || tr('ลบไม่สำเร็จ', 'Could not delete'));
       router.push(`/admin/${table}`);
       router.refresh();
     } catch (error) {
-      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'ลบไม่สำเร็จ' });
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : tr('ลบไม่สำเร็จ', 'Could not delete') });
       setBusy(null);
     }
   };
@@ -134,7 +137,7 @@ export function AdminRecordEditor({
   return (
     <section className="space-y-4">
       <p className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-xs text-amber-900 dark:text-amber-200">
-        แก้ไขข้อมูลดิบในฐานข้อมูลโดยตรง ไม่ผ่านการตรวจสอบของระบบ — ตรวจค่าให้ถูกต้องก่อนบันทึก
+        {tr('แก้ไขข้อมูลดิบในฐานข้อมูลโดยตรง ไม่ผ่านการตรวจสอบของระบบ — ตรวจค่าให้ถูกต้องก่อนบันทึก', "You are editing raw database rows, bypassing the app's checks — double-check values before saving")}
       </p>
 
       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
@@ -149,12 +152,12 @@ export function AdminRecordEditor({
               <div className="min-w-0">
                 <p className="font-mono text-xs font-bold break-all">{column}</p>
                 <p className="text-[10px] text-slate-400">
-                  {locked ? 'อ่านอย่างเดียว' : kind}
+                  {locked ? tr('อ่านอย่างเดียว', 'read-only') : kind}
                   {links[column] && record[column] && (
                     <>
                       {' • '}
                       <Link href={`/admin/${links[column]}/${encodeURIComponent(String(record[column]))}`} className="text-sky-600 dark:text-sky-400 hover:underline">
-                        เปิด {links[column]}
+                        {tr('เปิด', 'Open')} {links[column]}
                       </Link>
                     </>
                   )}
@@ -222,7 +225,7 @@ export function AdminRecordEditor({
           disabled={!changed.length || busy !== null}
           className="h-10 px-5 rounded-xl bg-amber-500 text-slate-950 text-sm font-bold disabled:opacity-40 cursor-pointer"
         >
-          {busy === 'save' ? 'กำลังบันทึก…' : `บันทึก${changed.length ? ` (${changed.length})` : ''}`}
+          {busy === 'save' ? tr('กำลังบันทึก…', 'Saving…') : `${tr('บันทึก', 'Save')}${changed.length ? ` (${changed.length})` : ''}`}
         </button>
         <button
           type="button"
@@ -233,7 +236,7 @@ export function AdminRecordEditor({
           disabled={!changed.length || busy !== null}
           className="h-10 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-bold disabled:opacity-40 cursor-pointer"
         >
-          ยกเลิกการแก้ไข
+          {tr('ยกเลิกการแก้ไข', 'Discard changes')}
         </button>
         <button
           type="button"
@@ -241,7 +244,7 @@ export function AdminRecordEditor({
           disabled={busy !== null}
           className="ml-auto h-10 px-4 rounded-xl border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm font-bold hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-40 cursor-pointer"
         >
-          {busy === 'delete' ? 'กำลังลบ…' : 'ลบแถวนี้'}
+          {busy === 'delete' ? tr('กำลังลบ…', 'Deleting…') : tr('ลบแถวนี้', 'Delete row')}
         </button>
         {message && (
           <p role="status" className={`w-full text-xs font-bold ${message.tone === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
