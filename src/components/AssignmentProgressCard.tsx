@@ -117,7 +117,7 @@ export function AssignmentProgressCard({
         </div>
 
         <div className="flex items-start gap-2">
-          <h3 className="flex-1 min-w-0 text-base font-black text-slate-900 dark:text-white leading-snug line-clamp-2 break-words">{assignment.title}</h3>
+          <h3 className="flex-1 min-w-0 text-base font-black text-slate-900 dark:text-white leading-snug line-clamp-2 wrap-break-word">{assignment.title}</h3>
           {(editHref || onDelete) && (
             <div className="flex items-center gap-1 shrink-0">
               {editHref && (

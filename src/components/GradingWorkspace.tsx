@@ -740,7 +740,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                                 }`}>
                                   {isKey ? '✓' : q.type === 'true_false' ? '' : String.fromCharCode(65 + optIdx)}
                                 </span>
-                                <span className="flex-1 min-w-0 break-words">{opt}</span>
+                                <span className="flex-1 min-w-0 wrap-break-word">{opt}</span>
                                 {picked && (
                                   <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${
                                     isKey ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'

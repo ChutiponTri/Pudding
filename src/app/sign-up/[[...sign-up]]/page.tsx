@@ -40,7 +40,7 @@ export default function SignUpPage() {
               headerTitle: "text-slate-900 dark:text-white font-black text-xl",
               headerSubtitle: "text-slate-500 dark:text-slate-400 text-xs",
               formButtonPrimary:
-                "bg-gradient-to-r from-amber-600 via-orange-500 to-yellow-500 hover:from-amber-700 hover:to-orange-600 text-slate-950 font-bold rounded-xl shadow-md shadow-amber-500/20",
+                "bg-linear-to-r from-amber-600 via-orange-500 to-yellow-500 hover:from-amber-700 hover:to-orange-600 text-slate-950 font-bold rounded-xl shadow-md shadow-amber-500/20",
               socialButtonsBlockButton:
                 "border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-xs",
               footerActionLink: "text-amber-600 dark:text-amber-400 font-bold hover:underline",

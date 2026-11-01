@@ -752,7 +752,7 @@ Handing in again clears the current score and comments for regrading (their on-t
               {assignment && <ReferenceWorkLink assignment={assignment} className="max-w-full sm:max-w-xs py-0.5" />}
             </div>
             <div className="flex items-start justify-between gap-3">
-              <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white leading-snug min-w-0 break-words">
+              <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white leading-snug min-w-0 wrap-break-word">
                 {assignment?.title || t('grading.title')}
               </h1>
               {assignment && grader && (
@@ -999,7 +999,7 @@ Handing in again clears the current score and comments for regrading (their on-t
                 {overrideStatus === 'force_closed' && <Lock className="w-4 h-4 text-rose-600 shrink-0" />}
                 {overrideStatus === 'extended' && <Unlock className="w-4 h-4 text-amber-600 shrink-0" />}
                 {overrideStatus === 'auto' && <Clock className="w-4 h-4 text-emerald-600 shrink-0" />}
-                <span className="min-w-0 break-words leading-relaxed">
+                <span className="min-w-0 wrap-break-word leading-relaxed">
                   {overrideStatus === 'force_closed'
                     ? t('submission_control.status_banner_closed')
                     : overrideStatus === 'extended'
@@ -1260,7 +1260,7 @@ Handing in again clears the current score and comments for regrading (their on-t
 
         {/* Table Content */}
         <div className="hidden sm:block overflow-x-auto">
-          <table className="w-full min-w-[46rem] text-left text-xs">
+          <table className="w-full min-w-184 text-left text-xs">
             <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 tracking-wide font-semibold border-b border-slate-100 dark:border-slate-800">
               <tr>
                 <th className="py-3.5 px-4 sm:px-6">{t('grading.table.student_name')}</th>

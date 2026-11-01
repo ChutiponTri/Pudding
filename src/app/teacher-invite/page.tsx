@@ -162,7 +162,7 @@ function TeacherInviteContent() {
     <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
       <div className="max-w-lg w-full bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         {/* Banner */}
-        <div className="bg-gradient-to-br from-amber-500 via-amber-600 to-orange-600 p-6 sm:p-8 text-white relative overflow-hidden">
+        <div className="bg-linear-to-br from-amber-500 via-amber-600 to-orange-600 p-6 sm:p-8 text-white relative overflow-hidden">
           <div className="absolute top-0 right-0 p-8 opacity-10">
             <FlaskConical className="w-36 h-36" />
           </div>

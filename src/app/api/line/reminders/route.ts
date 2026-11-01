@@ -61,7 +61,7 @@ async function runReminders(request: NextRequest) {
     .select('*')
     .gt('reminder_offset_minutes', 0)
     .or(`due_date.gt.${now.toISOString()},extended_until.gt.${now.toISOString()}`)
-    .returns<ReminderRow[]>();
+    .overrideTypes<ReminderRow[], { merge: false }>();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   const announced = await announceScheduledPosts(supabase, now);
   const expiredDrafts = await deleteExpiredAssignmentDrafts(supabase, now);

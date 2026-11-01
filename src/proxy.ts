@@ -1,5 +1,5 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
+import { NextResponse, type NextRequest } from "next/server";
 import {
   TEACHER_OK_COOKIE,
   TEACHER_OK_TTL_SECONDS,
@@ -10,30 +10,61 @@ import {
 
 const PENDING_APPROVAL_PATH = "/pending-approval";
 
-const isPublicRoute = createRouteMatcher([
+/**
+ * Route list: `{ prefix }` matches any path starting with it, `{ exact }` matches
+ * that path with or without a trailing slash. Case-insensitive.
+ */
+type RouteRule = { prefix: string } | { exact: string };
+
+/**
+ * Replaces Clerk's deprecated `createRouteMatcher` with the same matching rules:
+ * the path is decoded with `decodeURI` (so `%2F` stays encoded) and repeated
+ * slashes are collapsed, so `//api` or `/%61pi` cannot slip past a rule.
+ * A malformed path throws an error named `MalformedURLError`, which
+ * `clerkMiddleware` turns into a 400 response, as it did before.
+ */
+function routeMatcher(rules: RouteRule[]) {
+  const prefixes = rules.flatMap((r) => ("prefix" in r ? [r.prefix.toLowerCase()] : []));
+  const exacts = rules.flatMap((r) => ("exact" in r ? [r.exact.toLowerCase()] : []));
+  return (request: NextRequest): boolean => {
+    let pathname: string;
+    try {
+      pathname = decodeURI(request.nextUrl.pathname);
+    } catch (cause) {
+      const error = new Error(`Malformed encoding in URL path: ${request.nextUrl.pathname}`, { cause });
+      error.name = "MalformedURLError";
+      throw error;
+    }
+    pathname = pathname.replace(/\/\/+/g, "/").toLowerCase();
+    const trimmed = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+    return prefixes.some((p) => pathname.startsWith(p)) || exacts.includes(trimmed);
+  };
+}
+
+const isPublicRoute = routeMatcher([
   // Logged-out landing page (signed-in teachers get the dashboard here)
-  "/",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
+  { exact: "/" },
+  { prefix: "/sign-in" },
+  { prefix: "/sign-up" },
   // Student portal inside LINE: students use LIFF, not Clerk
-  "/liff(.*)",
+  { prefix: "/liff" },
   // API routes authorize each request themselves (Clerk teacher or LIFF student)
-  "/api(.*)",
-  "/__clerk(.*)",
+  { prefix: "/api" },
+  { prefix: "/__clerk" },
 ]);
 
 /**
  * Pages a signed-in teacher may open before the admin approves them (or that
  * are not teacher pages at all). Everything else is checked below.
  */
-const skipsTeacherGate = createRouteMatcher([
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/liff(.*)",
-  "/api(.*)",
-  "/__clerk(.*)",
-  "/admin(.*)",
-  "/pending-approval",
+const skipsTeacherGate = routeMatcher([
+  { prefix: "/sign-in" },
+  { prefix: "/sign-up" },
+  { prefix: "/liff" },
+  { prefix: "/api" },
+  { prefix: "/__clerk" },
+  { prefix: "/admin" },
+  { exact: "/pending-approval" },
 ]);
 
 export default clerkMiddleware(async (auth, request) => {

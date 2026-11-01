@@ -1623,7 +1623,7 @@ export default function ClassroomWorkspacePage() {
             </div>
 
             {/* One compact row on mobile so the sticky header stays short. */}
-            <div className="lg:shrink-0 grid grid-cols-[1fr_1fr_1.2fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 [&>*]:shrink-0">
+            <div className="lg:shrink-0 grid grid-cols-[1fr_1fr_1.2fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 *:shrink-0">
               {/* Secondary: Invite Students Modal Trigger */}
               <button
                 type="button"
@@ -1713,7 +1713,7 @@ export default function ClassroomWorkspacePage() {
           {/* Toast Notification Notice */}
           {notice && (
             <div role="status" className="mb-5 sm:mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 animate-in fade-in">
-              <span className="min-w-0 break-words">{notice}</span>
+              <span className="min-w-0 wrap-break-word">{notice}</span>
               <button onClick={() => setNotice('')} aria-label={tr('ปิด', 'Close')} className="text-amber-600 hover:text-amber-800 p-1 shrink-0">
                 <X className="w-4 h-4" />
               </button>
@@ -2167,10 +2167,10 @@ export default function ClassroomWorkspacePage() {
                           >
                             {/* Insertion line: where the dragged card will land */}
                             {lineAt(itemIndex) && (
-                              <span aria-hidden className="pointer-events-none absolute -top-[9px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
+                              <span aria-hidden className="pointer-events-none absolute top-[-9px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
                             )}
                             {itemIndex === items.length - 1 && lineAt(items.length) && (
-                              <span aria-hidden className="pointer-events-none absolute -bottom-[9px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
+                              <span aria-hidden className="pointer-events-none absolute bottom-[-9px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
                             )}
                             <AssignmentProgressCard
                               className="flex-1 min-w-0 hover:border-amber-400"
@@ -3013,7 +3013,7 @@ export default function ClassroomWorkspacePage() {
                         className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs"
                       >
                         <div className="min-w-0">
-                          <p className="font-bold text-slate-900 dark:text-white break-words">
+                          <p className="font-bold text-slate-900 dark:text-white wrap-break-word">
                             {p.first_name} {p.last_name}
                           </p>
                           <p className="text-[10px] text-slate-400 font-mono break-all">
@@ -3055,7 +3055,7 @@ export default function ClassroomWorkspacePage() {
         const otherSchool = admit ? pending.filter((p) => isOtherSchool(p.institution)) : [];
         return (
           <div
-            className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+            className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
             onClick={() => !bulkPendingBusy && setBulkPendingAction(null)}
           >
             <div

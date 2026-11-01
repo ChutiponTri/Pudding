@@ -63,7 +63,7 @@ export function TermDatesSettings({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <ModalSheet onClose={onClose} size="sm:max-w-md" zIndex="z-[60]" labelledBy="term-dates-title">
+    <ModalSheet onClose={onClose} size="sm:max-w-md" zIndex="z-60" labelledBy="term-dates-title">
       <ModalSheetHeader>
         <div className="flex items-center gap-2 min-w-0">
           <CalendarCog className="w-5 h-5 text-amber-500 shrink-0" />

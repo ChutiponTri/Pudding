@@ -663,7 +663,7 @@ export function TeacherWorkspace({
     setCourseCreationStep(2);
   };
 
-  const handleSaveCourse = async (e: React.FormEvent) => {
+  const handleSaveCourse = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     // Pressing Enter in a step-1 field submits the form: treat it as "Next".
     if (courseCreationStep === 1) {
@@ -791,7 +791,7 @@ export function TeacherWorkspace({
   };
 
   // Save Classroom (Create or Edit)
-  const handleSaveClassroom = async (e: React.FormEvent) => {
+  const handleSaveClassroom = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedCourseForClass) {
       alert(language === 'th' ? 'กรุณาเลือกรายวิชาสำหรับห้องเรียนนี้ก่อนบันทึก' : 'Please select a course for this classroom');
@@ -1266,7 +1266,7 @@ export function TeacherWorkspace({
             <span className="text-sm">🍮</span>
             <span>Pudding Learning Intelligence</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-950 break-words">
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-950 wrap-break-word">
             {t('dashboard.welcome')}, <br className="md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || (loading ? tr('กำลังโหลด...', 'Loading...') : '')}
           </h1>
           <p className="text-slate-900/90 text-sm max-w-xl font-medium">
@@ -1591,7 +1591,7 @@ export function TeacherWorkspace({
                     <span className="font-mono text-xs font-bold tracking-wide text-amber-700 dark:text-amber-400 leading-none">
                       {course.code}
                     </span>
-                    <h3 className="text-lg sm:text-xl font-black leading-tight tracking-tight text-slate-900 dark:text-white break-words">
+                    <h3 className="text-lg sm:text-xl font-black leading-tight tracking-tight text-slate-900 dark:text-white wrap-break-word">
                       {course.name}
                     </h3>
                   </div>
@@ -1702,7 +1702,7 @@ export function TeacherWorkspace({
                           <div className="space-y-3">
                             <div className="flex items-start justify-between gap-2">
                               <Link href={`/classrooms/${cls.id}`} className="min-w-0 flex-1 cursor-pointer">
-                                <h4 className="text-lg font-black leading-snug text-slate-900 dark:text-white break-words group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
+                                <h4 className="text-lg font-black leading-snug text-slate-900 dark:text-white wrap-break-word group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
                                   {cls.name}
                                 </h4>
                                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -3824,7 +3824,7 @@ export function TeacherWorkspace({
                             href={teacherLineLink.addFriendUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="shrink-0 px-3 py-1.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-[11px] font-black"
+                            className="shrink-0 px-3 py-1.5 rounded-xl bg-line hover:bg-line-dark text-white text-[11px] font-black"
                           >
                             {tr('+ เพิ่มเพื่อน Pudding Bot', '+ Add Pudding Bot as a friend')}
                           </a>

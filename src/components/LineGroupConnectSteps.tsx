@@ -17,7 +17,7 @@ export const LineGroupConnectSteps: React.FC<{
 }> = ({ status, botFriend, addFriendUrl }) => {
   const { tr } = useLanguage();
   const botLink = (
-    <a href={addFriendUrl} target="_blank" rel="noreferrer" className="font-bold text-[#06C755] underline">
+    <a href={addFriendUrl} target="_blank" rel="noreferrer" className="font-bold text-line underline">
       Pudding Bot
     </a>
   );

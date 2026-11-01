@@ -119,7 +119,7 @@ const courseCacheTimestamp = () => Date.now();
 const isFreshCourseCache = (fetchedAt: number) => courseCacheTimestamp() - fetchedAt < COURSE_CACHE_FRESH_MS;
 
 const FRAME = "max-w-md md:max-w-2xl lg:max-w-3xl";
-const CARD = "rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/70 dark:ring-slate-800 shadow-sm shadow-slate-900/[0.03]";
+const CARD = "rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/70 dark:ring-slate-800 shadow-sm shadow-slate-900/3";
 const INPUT = "w-full h-12 px-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-line focus:bg-white dark:focus:bg-slate-900 outline-none transition-all";
 
 type Tone = "emerald" | "amber" | "rose" | "sky" | "violet" | "slate";
@@ -250,11 +250,11 @@ function ReferenceWork({ assignment }: { assignment: Assignment }) {
         </span>
         <div className="min-w-0">
           <p className="text-[11px] font-semibold text-slate-400">ตัวอย่างจากคุณครู</p>
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white break-words">{title || "ตัวอย่างงาน"}</h2>
+          <h2 className="text-sm font-bold text-slate-900 dark:text-white wrap-break-word">{title || "ตัวอย่างงาน"}</h2>
         </div>
       </div>
       {description && (
-        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap break-words">{description}</p>
+        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap wrap-break-word">{description}</p>
       )}
       {url && isImage && (
         <a href={url} target="_blank" rel="noopener noreferrer" className="block rounded-2xl overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800">
@@ -1641,7 +1641,7 @@ export default function LiffStudentPage() {
       <div className="flex-1 flex flex-col justify-between gap-8 px-6 pt-[max(env(safe-area-inset-top),2.5rem)] pb-[max(env(safe-area-inset-bottom),1.5rem)] min-h-dvh bg-radial-[at_50%_0%] from-emerald-500/15 via-transparent to-transparent">
         <div className="text-center space-y-5 pt-6">
           <div className="relative inline-block">
-            <div className="w-24 h-24 rounded-[2rem] bg-linear-to-br from-amber-300 to-amber-500 flex items-center justify-center text-5xl shadow-2xl shadow-amber-500/30 mx-auto">
+            <div className="w-24 h-24 rounded-4xl bg-linear-to-br from-amber-300 to-amber-500 flex items-center justify-center text-5xl shadow-2xl shadow-amber-500/30 mx-auto">
               🍮
             </div>
             <span className="absolute -bottom-2 -right-2 px-2.5 py-0.5 rounded-full bg-line text-white text-[11px] font-bold shadow-md ring-2 ring-white dark:ring-slate-950">
@@ -2308,7 +2308,7 @@ export default function LiffStudentPage() {
                               {new Date(item.created_at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })}
                             </time>
                           </div>
-                          <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed break-words">{item.body}</p>
+                          <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed wrap-break-word">{item.body}</p>
                         </div>
                       </li>
                     ))}
@@ -2767,7 +2767,7 @@ export default function LiffStudentPage() {
                                 : <span className="ml-1.5 text-slate-400">• ไม่บังคับ</span>
                             )}
                           </span>
-                          <p className="text-base font-semibold text-slate-900 dark:text-white leading-relaxed whitespace-pre-wrap break-words">{q.question_text}</p>
+                          <p className="text-base font-semibold text-slate-900 dark:text-white leading-relaxed whitespace-pre-wrap wrap-break-word">{q.question_text}</p>
                         </div>
                       </div>
 
@@ -2800,7 +2800,7 @@ export default function LiffStudentPage() {
                                 >
                                   {String.fromCharCode(65 + optIdx)}
                                 </span>
-                                <span className="flex-1 break-words">{opt}</span>
+                                <span className="flex-1 wrap-break-word">{opt}</span>
                               </button>
                             );
                           })}
@@ -3298,7 +3298,7 @@ export default function LiffStudentPage() {
               return (
                 <div key={q.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200/80 dark:ring-slate-700/70 space-y-2.5">
                   <div className="flex items-start justify-between gap-3">
-                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 min-w-0 break-words">
+                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 min-w-0 wrap-break-word">
                       <span className="text-slate-400">ข้อ {i + 1}.</span> {q.question_text}
                     </p>
                     {score != null ? (
@@ -3309,7 +3309,7 @@ export default function LiffStudentPage() {
                       <span className="shrink-0"><Pill tone="sky">รอตรวจ</Pill></span>
                     )}
                   </div>
-                  <div className="p-3 rounded-xl bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-300 break-words">
+                  <div className="p-3 rounded-xl bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-300 wrap-break-word">
                     <span className="text-xs font-semibold text-slate-400 block mb-0.5">คำตอบของคุณ</span>
                     {ans?.text_answer || "(ไม่มีข้อความ)"}
                     {ans?.file_url && (

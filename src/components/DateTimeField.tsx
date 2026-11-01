@@ -256,7 +256,7 @@ export function DateTimeField({
       {/* Re-keyed per value so a chip, the date box or the hour/minute dropdowns visibly update the summary. */}
       <p
         key={value}
-        className={`text-[11px] font-semibold break-words animate-in fade-in slide-in-from-top-1 [--tw-duration:260ms] ${isPast ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}
+        className={`text-[11px] font-semibold wrap-break-word animate-in fade-in slide-in-from-top-1 [--tw-duration:260ms] ${isPast ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}
       >
         {value ? (
           <>

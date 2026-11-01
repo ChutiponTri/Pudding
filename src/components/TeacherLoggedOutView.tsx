@@ -24,7 +24,7 @@ const LineMark: React.FC<{ className?: string }> = ({ className = "w-5 h-5" }) =
 const SignInButton: React.FC<{ th: boolean; className?: string }> = ({ th, className = "" }) => (
   <Link
     href="/sign-in"
-    className={`h-13 px-6 rounded-2xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-base shadow-lg shadow-emerald-600/25 transition-all hover:-translate-y-0.5 active:scale-[0.98] inline-flex items-center justify-center gap-2.5 ${className}`}
+    className={`h-13 px-6 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-base shadow-lg shadow-emerald-600/25 transition-all hover:-translate-y-0.5 active:scale-[0.98] inline-flex items-center justify-center gap-2.5 ${className}`}
   >
     <LineMark className="w-5 h-5" />
     <span>{th ? "เข้าสู่ระบบด้วย LINE" : "Sign in with LINE"}</span>
@@ -83,7 +83,7 @@ export const TeacherLoggedOutView: React.FC = () => {
   return (
     <div className="space-y-10 sm:space-y-16 pb-6 sm:pb-10">
       {/* HERO */}
-      <section className="relative overflow-hidden rounded-[2rem] bg-linear-to-br from-amber-300 via-amber-400 to-orange-400 px-5 py-8 sm:p-10 lg:p-14 text-slate-950 shadow-xl shadow-amber-500/20">
+      <section className="relative overflow-hidden rounded-4xl bg-linear-to-br from-amber-300 via-amber-400 to-orange-400 px-5 py-8 sm:p-10 lg:p-14 text-slate-950 shadow-xl shadow-amber-500/20">
         <div aria-hidden className="pointer-events-none absolute -top-24 -right-16 w-80 h-80 rounded-full bg-white/25 blur-3xl" />
         <div aria-hidden className="pointer-events-none absolute -bottom-24 -left-10 w-72 h-72 rounded-full bg-orange-500/30 blur-3xl" />
 
@@ -231,7 +231,7 @@ export const TeacherLoggedOutView: React.FC = () => {
       </section>
 
       {/* FINAL CTA */}
-      <section className="rounded-[2rem] bg-slate-900 dark:bg-slate-900 ring-1 ring-slate-800 px-5 py-8 sm:p-10 text-center space-y-5">
+      <section className="rounded-4xl bg-slate-900 dark:bg-slate-900 ring-1 ring-slate-800 px-5 py-8 sm:p-10 text-center space-y-5">
         <div className="space-y-2">
           <h2 className="text-xl sm:text-3xl font-black tracking-tight text-white">
             {th ? "เริ่มใช้พุดดิ้งกับห้องเรียนของคุณ" : "Start using Pudding in your classroom"}

@@ -65,7 +65,7 @@ const GuestSidebarContent: React.FC<{ onNavigate: () => void }> = ({ onNavigate 
           <Link
             href="/sign-in"
             onClick={onNavigate}
-            className="w-full h-11 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white text-sm font-bold flex items-center justify-center gap-2 shadow-sm shadow-emerald-700/25 transition-all active:scale-[0.98]"
+            className="w-full h-11 rounded-xl bg-line hover:bg-line-dark text-white text-sm font-bold flex items-center justify-center gap-2 shadow-sm shadow-emerald-700/25 transition-all active:scale-[0.98]"
           >
             {th ? 'เข้าสู่ระบบด้วย LINE' : 'Sign in with LINE'}
           </Link>
