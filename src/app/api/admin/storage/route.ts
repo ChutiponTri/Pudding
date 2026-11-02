@@ -5,6 +5,8 @@ import { fetchAll, getAdmin } from '@/lib/server/admin';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 import { isR2Configured, keyFromPublicUrl, r2Client, R2_BUCKET_NAME, R2_PUBLIC_URL } from '@/lib/storage/r2Client';
 import { isMissingTable, removeFiles, STORED_FILES, sweepExpiredDrafts, type StoredFile } from '@/lib/storage/files';
+import { assignmentAttachmentUrls } from '@/lib/utils/referenceWork';
+import type { Assignment } from '@/types/database';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -64,10 +66,11 @@ async function syncWithBucket(supabase: Supabase) {
   const [rows, answers, assignments] = await Promise.all([
     fetchAll(supabase, STORED_FILES, 'key, status'),
     fetchAll(supabase, 'submission_answers', 'file_url'),
-    fetchAll(supabase, 'assignments', 'sample_work_url'),
+    // '*': databases without the attachments column yet still answer.
+    fetchAll(supabase, 'assignments', '*'),
   ]);
   const referenced = new Set(
-    [...answers.map((a) => a.file_url), ...assignments.map((a) => a.sample_work_url)].map(keyFromPublicUrl).filter(Boolean) as string[]
+    [...answers.map((a) => a.file_url), ...(assignments as Assignment[]).flatMap(assignmentAttachmentUrls)].map(keyFromPublicUrl).filter(Boolean) as string[]
   );
   const inBucket = new Set(objects.map((o) => o.key));
   const tracked = new Map(rows.map((r) => [r.key as string, r.status as string]));

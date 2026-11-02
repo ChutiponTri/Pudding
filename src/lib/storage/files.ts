@@ -2,6 +2,8 @@ import 'server-only';
 import { DeleteObjectsCommand } from '@aws-sdk/client-s3';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isR2Configured, keyFromPublicUrl, r2Client, R2_BUCKET_NAME } from '@/lib/storage/r2Client';
+import { assignmentAttachmentUrls } from '@/lib/utils/referenceWork';
+import type { Assignment } from '@/types/database';
 
 /**
  * Bookkeeping for objects in R2 (table stored_files, see
@@ -106,12 +108,12 @@ export async function assignmentFileKeys(supabase: Supabase, assignmentIds: stri
   for (const part of chunks(assignmentIds, IN_CHUNK)) {
     const [tracked, assignments, submissions] = await Promise.all([
       supabase.from(STORED_FILES).select('key').in('assignment_id', part).neq('status', 'deleted'),
-      supabase.from('assignments').select('sample_work_url').in('id', part),
+      supabase.from('assignments').select('*').in('id', part),
       supabase.from('submissions').select('id').in('assignment_id', part),
     ]);
     if (tracked.error) isMissingTable(tracked.error);
     for (const row of tracked.data || []) keys.add(row.key);
-    for (const key of keysFromUrls((assignments.data || []).map((a) => a.sample_work_url))) keys.add(key);
+    for (const key of keysFromUrls(((assignments.data || []) as Assignment[]).flatMap(assignmentAttachmentUrls))) keys.add(key);
     const submissionIds = (submissions.data || []).map((s) => s.id as string);
     for (const subPart of chunks(submissionIds, IN_CHUNK)) {
       const { data } = await supabase.from('submission_answers').select('file_url').in('submission_id', subPart).not('file_url', 'is', null);

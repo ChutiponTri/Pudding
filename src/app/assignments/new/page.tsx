@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import { cachedCall, readCache, TEACHER_DASHBOARD_CACHE_KEY } from '@/lib/cache/sessionCache';
-import { Assignment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
+import { Assignment, AssignmentAttachment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
 import { Collapse } from '@/components/Collapse';
@@ -14,7 +14,9 @@ import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndic
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
 import { DRAFT_PUBLISH_AT, DRAFT_RETENTION_DAYS, draftExpiresAt, isAssignmentDraft, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { optimizeImage, UploadError, uploadToStorage } from '@/lib/storage/uploadClient';
-import { uploadRejection } from '@/lib/storage/uploadRules';
+import { normalizeLink, uploadRejection } from '@/lib/storage/uploadRules';
+import { assignmentAttachments, googleAppName, isGoogleDriveUrl, linkDisplayName, MAX_ASSIGNMENT_ATTACHMENTS } from '@/lib/utils/referenceWork';
+import { AttachmentCard, GoogleDriveMark } from '@/components/AssignmentAttachments';
 import { MobileText } from '@/components/MobileText';
 import {
   PlusCircle,
@@ -33,15 +35,17 @@ import {
   Check,
   ChevronDown,
   Paperclip,
-  FileText,
+  Link2,
   UploadCloud,
   Loader2,
   CheckCircle2,
-  ExternalLink,
   Lock,
   ArrowRight,
   ArrowLeft,
 } from 'lucide-react';
+
+/** An attachment in the form; `file` = picked but not uploaded yet (url is a blob preview). */
+type AttachmentDraft = AssignmentAttachment & { uid: string; file?: File };
 
 interface QuestionDraft {
   /** Client-only React key, so cards keep their identity (and exit animation) when one is removed. */
@@ -148,29 +152,81 @@ function NewAssignmentContent() {
   // Already visible to students: the release time can no longer be changed.
   const editIsPublished = !!editingAssignment && (!editingAssignment.publish_at || new Date(editingAssignment.publish_at).getTime() <= clock);
 
-  // Conditional Sample Work / Guidelines (Assignment Mode only)
-  const [sampleWorkTitle, setSampleWorkTitle] = useState("");
-  const [sampleWorkUrl, setSampleWorkUrl] = useState("");
-  const [sampleWorkFile, setSampleWorkFile] = useState<File | null>(null);
-  const [sampleWorkPreviewUrl, setSampleWorkPreviewUrl] = useState("");
-  const [sampleWorkDescription, setSampleWorkDescription] = useState("");
+  // Homework attachments (links, Google Drive, images / PDFs). Picked files
+  // stay in the browser (blob preview) until the assignment is saved.
+  const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
+  const [linkDialog, setLinkDialog] = useState<null | 'link' | 'drive'>(null);
+  const [linkInput, setLinkInput] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [isUploadingSample, setIsUploadingSample] = useState(false);
   const [sampleUploadError, setSampleUploadError] = useState<string | null>(null);
+  const attachmentSlots = MAX_ASSIGNMENT_ATTACHMENTS - attachments.length;
 
-  const handleSampleFileSelect = async (picked: File) => {
+  const removeAttachment = (uid: string) => {
+    setAttachments((list) => {
+      const gone = list.find((a) => a.uid === uid);
+      if (gone?.file) URL.revokeObjectURL(gone.url);
+      return list.filter((a) => a.uid !== uid);
+    });
     setSampleUploadError(null);
+  };
+
+  const handleAttachmentFiles = async (picked: File[]) => {
+    setSampleUploadError(null);
+    const room = MAX_ASSIGNMENT_ATTACHMENTS - attachments.length;
+    if (picked.length > room) {
+      setSampleUploadError(tr(`แนบได้สูงสุด ${MAX_ASSIGNMENT_ATTACHMENTS} รายการ — เพิ่มได้อีก ${room} รายการ`, `Up to ${MAX_ASSIGNMENT_ATTACHMENTS} attachments — ${room} more allowed`));
+    }
     // Large photos are shrunk without visible loss; anything still over the limit should be a link.
     setIsUploadingSample(true);
-    const file = await optimizeImage(picked).finally(() => setIsUploadingSample(false));
-    const rejection = uploadRejection(file, language);
-    if (rejection) {
-      setSampleUploadError(rejection);
+    const added: AttachmentDraft[] = [];
+    try {
+      for (const original of picked.slice(0, Math.max(room, 0))) {
+        const file = await optimizeImage(original);
+        const rejection = uploadRejection(file, language);
+        if (rejection) {
+          setSampleUploadError(`${original.name}: ${rejection}`);
+          continue;
+        }
+        added.push({
+          uid: newQuestionUid(),
+          kind: file.type === 'application/pdf' ? 'file' : 'image',
+          url: URL.createObjectURL(file),
+          name: original.name,
+          file,
+        });
+      }
+    } finally {
+      setIsUploadingSample(false);
+    }
+    if (added.length) setAttachments((list) => [...list, ...added].slice(0, MAX_ASSIGNMENT_ATTACHMENTS));
+  };
+
+  const openLinkDialog = (kind: 'link' | 'drive') => {
+    setLinkInput("");
+    setLinkError(null);
+    setLinkDialog(kind);
+  };
+
+  const submitLinkDialog = () => {
+    const url = normalizeLink(linkInput);
+    if (!url) {
+      setLinkError(tr('ลิงก์ไม่ถูกต้อง กรุณาวางลิงก์ที่ขึ้นต้นด้วย https://', 'That is not a valid link — paste one starting with https://'));
       return;
     }
-    setSampleWorkFile(file);
-    setSampleWorkUrl("");
-    setSampleWorkPreviewUrl(URL.createObjectURL(file));
-    if (!sampleWorkTitle.trim()) setSampleWorkTitle(file.name.replace(/\.[^/.]+$/, ""));
+    const drive = isGoogleDriveUrl(url);
+    if (linkDialog === 'drive' && !drive) {
+      setLinkError(tr('ลิงก์นี้ไม่ใช่ Google Drive — ใช้ปุ่ม "ลิงก์" สำหรับเว็บไซต์อื่น', 'This is not a Google Drive link — use "Link" for other websites'));
+      return;
+    }
+    if (attachments.some((a) => a.url === url)) {
+      setLinkError(tr('แนบลิงก์นี้ไว้แล้ว', 'This link is already attached'));
+      return;
+    }
+    setAttachments((list) =>
+      [...list, { uid: newQuestionUid(), kind: drive ? 'drive' as const : 'link' as const, url, name: drive ? googleAppName(url) : linkDisplayName(url) }].slice(0, MAX_ASSIGNMENT_ATTACHMENTS)
+    );
+    setLinkDialog(null);
   };
 
   // Dynamic Questions
@@ -288,9 +344,12 @@ function NewAssignmentContent() {
           setReminderOffset(assignment.reminder_offsets_minutes?.length
             ? Math.max(...assignment.reminder_offsets_minutes)
             : assignment.reminder_offset_minutes || null);
-          setSampleWorkTitle(assignment.sample_work_title || '');
-          setSampleWorkUrl(assignment.sample_work_url || '');
-          setSampleWorkDescription(assignment.sample_work_description || '');
+          setAttachments(assignmentAttachments(assignment).map((a) => ({ ...a, uid: newQuestionUid() })));
+          // Older homework kept a separate note about its reference; it now lives in the instructions.
+          const legacyNote = assignment.sample_work_description?.trim();
+          if (legacyNote && !(assignment.description || '').includes(legacyNote)) {
+            setDescription([assignment.description?.trim(), legacyNote].filter(Boolean).join('\n\n'));
+          }
           originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
           if (savedQuestions.length) {
             setQuestions(savedQuestions.map((q) => ({
@@ -573,31 +632,41 @@ function NewAssignmentContent() {
         max_score: Number(q.max_score) || defaultMaxScore(q.type),
         is_required: isExam ? true : q.is_required,
       }));
-      // Upload the reference file first: if it fails, nothing is saved and the
-      // teacher sees why (it used to fail silently after the work was created).
-      let uploadedSampleUrl: string | undefined;
-      if (!isExam && sampleWorkFile) {
-        setIsUploadingSample(true);
-        try {
-          // Straight to storage; a failed earlier save already stored this file, so reuse it.
-          const uploaded = await uploadToStorage(sampleWorkFile, {
-            assignmentId: editingAssignment?.id || "draft",
-            // Already shrunk when the teacher picked it.
-            optimized: true,
-            onDuplicate: () => "reuse",
-          });
-          uploadedSampleUrl = uploaded.url;
-        } catch (uploadError) {
-          console.error("Sample work upload error:", uploadError);
-          const message = uploadError instanceof UploadError ? uploadError.message : tr('อัปโหลดไฟล์ตัวอย่างไม่สำเร็จ', 'Could not upload the sample file');
-          setSampleUploadError(message);
-          alert(`${message}\n\n${tr('ยังไม่ได้บันทึกงาน กรุณาแก้ไฟล์แล้วกดบันทึกอีกครั้ง', 'The assignment was not saved. Fix the file and save again.')}`);
-          return;
-        } finally {
-          setIsUploadingSample(false);
+      // Upload picked files first: if one fails, nothing is saved and the
+      // teacher sees why. Uploaded ones keep their URL, so a retry skips them.
+      let savedAttachments: AssignmentAttachment[] = [];
+      if (!isExam) {
+        const ready: AttachmentDraft[] = [];
+        for (const draft of attachments) {
+          if (!draft.file) {
+            ready.push(draft);
+            continue;
+          }
+          setIsUploadingSample(true);
+          try {
+            // Straight to storage; a failed earlier save may already have stored this file, so reuse it.
+            const uploaded = await uploadToStorage(draft.file, {
+              assignmentId: editingAssignment?.id || "draft",
+              // Already shrunk when the teacher picked it.
+              optimized: true,
+              onDuplicate: () => "reuse",
+            });
+            URL.revokeObjectURL(draft.url);
+            const done: AttachmentDraft = { uid: draft.uid, kind: draft.kind, url: uploaded.url, name: draft.name };
+            ready.push(done);
+            setAttachments((list) => list.map((a) => (a.uid === draft.uid ? done : a)));
+          } catch (uploadError) {
+            console.error("Attachment upload error:", uploadError);
+            const message = uploadError instanceof UploadError ? uploadError.message : tr('อัปโหลดไฟล์แนบไม่สำเร็จ', 'Could not upload the attachment');
+            setSampleUploadError(`${draft.name}: ${message}`);
+            alert(`${draft.name}: ${message}\n\n${tr('ยังไม่ได้บันทึกงาน กรุณาแก้ไฟล์แล้วกดบันทึกอีกครั้ง', 'The assignment was not saved. Fix the file and save again.')}`);
+            return;
+          } finally {
+            setIsUploadingSample(false);
+          }
         }
+        savedAttachments = ready.map(({ kind, url, name }) => ({ kind, url, name }));
       }
-      const sampleUrl = isExam ? '' : uploadedSampleUrl || sampleWorkUrl.trim();
 
       if (editingAssignment) {
         const keptIds = new Set(questions.map((q) => q.id).filter(Boolean));
@@ -631,9 +700,7 @@ function NewAssignmentContent() {
           reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
           reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
           total_points: totalPoints,
-          sample_work_title: isExam ? '' : sampleWorkTitle.trim(),
-          sample_work_url: sampleUrl,
-          sample_work_description: isExam ? '' : sampleWorkDescription.trim(),
+          attachments: savedAttachments,
         });
         await dataService.replaceAssignmentQuestions(id, questionRows.map((row, index) => ({ ...row, id: questions[index].id })));
         // Was scheduled or a draft, teacher switched to "publish now".
@@ -665,9 +732,7 @@ function NewAssignmentContent() {
             reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
             total_points: totalPoints,
             status_override: 'auto',
-            sample_work_title: !isExam ? sampleWorkTitle : undefined,
-            sample_work_url: sampleUrl || undefined,
-            sample_work_description: !isExam ? sampleWorkDescription : undefined,
+            attachments: savedAttachments,
           },
           questionRows
         );
@@ -951,6 +1016,91 @@ function NewAssignmentContent() {
               />
             </div>
 
+            {/* Attachments: links, Google Drive, images / PDFs (homework only) */}
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5 text-amber-500" />
+                  <span>{tr('ไฟล์แนบ', 'Attachments')}</span>
+                  {!isExam && <span className="font-semibold text-slate-400">({attachments.length}/{MAX_ASSIGNMENT_ATTACHMENTS})</span>}
+                </label>
+                {!isExam && (
+                  <span className="hidden sm:inline text-[11px] text-slate-400">
+                    {tr('ตัวอย่างผลงาน ใบงาน หรือสื่อประกอบ ให้นักเรียนเปิดดูได้', 'Examples, worksheets or materials students can open')}
+                  </span>
+                )}
+              </div>
+              {isExam ? (
+                <p className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-[11px] text-slate-500 dark:text-slate-400">
+                  <Lock className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                  <span>{t('assignment_creator.sample_work.exam_disabled_notice')}</span>
+                </p>
+              ) : (
+                <>
+                  {attachments.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {attachments.map((a) => (
+                        <AttachmentCard
+                          key={a.uid}
+                          attachment={a}
+                          size="sm"
+                          busy={!!a.file && isUploadingSample}
+                          note={a.file ? tr('จะอัปโหลดเมื่อบันทึกงาน', 'Uploads when you save') : undefined}
+                          onRemove={isUploadingSample ? undefined : () => removeAttachment(a.uid)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {attachmentSlots > 0 && (
+                    <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => openLinkDialog('link')}
+                        className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors active:scale-95"
+                      >
+                        <Link2 className="w-4 h-4 text-sky-600" />
+                        <span>{tr('ลิงก์', 'Link')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openLinkDialog('drive')}
+                        className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors active:scale-95"
+                      >
+                        <GoogleDriveMark className="w-4 h-4" />
+                        <span>Google Drive</span>
+                      </button>
+                      <label
+                        className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 transition-colors active:scale-95 ${
+                          isUploadingSample ? 'opacity-60 cursor-wait' : 'cursor-pointer'
+                        }`}
+                      >
+                        {isUploadingSample ? <Loader2 className="w-4 h-4 animate-spin text-amber-600" /> : <UploadCloud className="w-4 h-4 text-amber-600" />}
+                        <span><MobileText short={tr('อัปโหลด', 'Upload')} full={tr('อัปโหลดรูป / PDF', 'Upload image / PDF')} /></span>
+                        <input
+                          type="file"
+                          multiple
+                          accept="application/pdf,image/*"
+                          disabled={isUploadingSample}
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || []);
+                            e.target.value = "";
+                            if (files.length) void handleAttachmentFiles(files);
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+                  {sampleUploadError && <p className="text-[11px] text-rose-500 font-semibold">{sampleUploadError}</p>}
+                  <p className="text-[11px] text-slate-400">
+                    {attachmentSlots > 0
+                      ? tr(`แนบได้สูงสุด ${MAX_ASSIGNMENT_ATTACHMENTS} รายการ • รูปภาพไม่เกิน 5MB, PDF ไม่เกิน 10MB — ไฟล์ใหญ่กว่านี้ให้แชร์ผ่าน Google Drive`, `Up to ${MAX_ASSIGNMENT_ATTACHMENTS} items • images up to 5MB, PDFs up to 10MB — share bigger files via Google Drive`)
+                      : tr(`แนบครบ ${MAX_ASSIGNMENT_ATTACHMENTS} รายการแล้ว — นำออกเพื่อเพิ่มรายการใหม่`, `All ${MAX_ASSIGNMENT_ATTACHMENTS} slots used — remove one to add another`)}
+                  </p>
+                </>
+              )}
+            </div>
+
             {/* Release: now, scheduled, or saved as a draft */}
             <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -1168,155 +1318,59 @@ function NewAssignmentContent() {
           </div>
         </div>
 
-        {/* CONDITIONAL ATTACHMENT COMPONENT: Sample Work / Guidelines */}
-        {!isExam ? (
-          /* Assignment Mode: Active Sample Work Section */
-          <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]">
-            <div className="flex flex-col items-start gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-0 pb-3 border-b border-slate-100 dark:border-slate-800">
+        {linkDialog && (
+          <div className="fixed inset-0 z-70 bg-slate-950/60 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-6 animate-in fade-in" onClick={() => setLinkDialog(null)}>
+            {/* A div, not a form: it sits inside the assignment form. */}
+            <div
+              role="dialog"
+              aria-modal="true"
+              onClick={(e) => e.stopPropagation()}
+              className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-900 p-5 sm:p-6 pb-[max(env(safe-area-inset-bottom),1.25rem)] shadow-2xl space-y-4 animate-in slide-in-from-bottom-5"
+            >
               <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400">
-                  <Paperclip className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                    {t('assignment_creator.sample_work.title')}
+                <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${linkDialog === 'drive' ? 'bg-slate-100 dark:bg-slate-800' : 'bg-sky-100 dark:bg-sky-950 text-sky-600'}`}>
+                  {linkDialog === 'drive' ? <GoogleDriveMark className="w-5 h-5" /> : <Link2 className="w-5 h-5" />}
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                    {linkDialog === 'drive' ? tr('แนบจาก Google Drive', 'Attach from Google Drive') : tr('แนบลิงก์', 'Attach a link')}
                   </h3>
-                  <p className="hidden sm:block text-xs text-slate-500 dark:text-slate-400">
-                    {t('assignment_creator.sample_work.subtitle')}
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {linkDialog === 'drive'
+                      ? tr('คัดลอกลิงก์จากปุ่ม "แชร์" ใน Drive แล้ววางที่นี่ — ตั้งค่าเป็น "ทุกคนที่มีลิงก์"', 'Copy the link from "Share" in Drive and paste it here — set it to "Anyone with the link"')
+                      : tr('วางลิงก์เว็บไซต์ วิดีโอ หรือเอกสารออนไลน์', 'Paste a website, video or online document link')}
                   </p>
                 </div>
               </div>
-              <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl sm:rounded-full leading-relaxed bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                <span className="sm:hidden">
-                  {language === 'th' ? 'แนบไฟล์ ลิงก์ หรือคำแนะนำให้นักเรียนดูได้' : 'Attach a file, link or tips for students'}
-                </span>
-                <span className="hidden sm:inline">{language === 'th' ? 'เปิดใช้งานสำหรับโหมดการบ้าน' : 'Active for Assignment'}</span>
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  {t('assignment_creator.sample_work.work_title_label')}
-                </label>
-                <input
-                  type="text"
-                  value={sampleWorkTitle}
-                  onChange={(e) => setSampleWorkTitle(e.target.value)}
-                  placeholder={t('assignment_creator.sample_work.work_title_placeholder')}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
-                />
+              <input
+                type="url"
+                inputMode="url"
+                autoFocus
+                value={linkInput}
+                onChange={(e) => {
+                  setLinkInput(e.target.value);
+                  setLinkError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitLinkDialog();
+                  } else if (e.key === 'Escape') {
+                    setLinkDialog(null);
+                  }
+                }}
+                placeholder={linkDialog === 'drive' ? 'https://drive.google.com/...' : 'https://...'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-sky-500"
+              />
+              {linkError && <p className="text-[11px] text-rose-500 font-semibold -mt-2">{linkError}</p>}
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setLinkDialog(null)} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">
+                  {tr('ยกเลิก', 'Cancel')}
+                </button>
+                <button type="button" onClick={submitLinkDialog} disabled={!linkInput.trim()} className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-xs font-bold cursor-pointer">
+                  {tr('แนบ', 'Attach')}
+                </button>
               </div>
-
-              <div className="space-y-1.5 md:col-span-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    <MobileText short={language === 'th' ? 'ลิงก์หรือไฟล์ตัวอย่าง' : 'Link or file'} full={<>{t('assignment_creator.sample_work.work_url_label')} {tr('(หรือแนบไฟล์ไว้ชั่วคราว)', '(or attach a file for now)')}</>} />
-                  </label>
-                  {(sampleWorkPreviewUrl || sampleWorkUrl) && (
-                    <a
-                      href={sampleWorkPreviewUrl || sampleWorkUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      <span><MobileText short={tr('เปิดดู', 'Open')} full={tr('เปิดดูไฟล์ตัวอย่าง', 'Open the sample file')} /></span>
-                    </a>
-                  )}
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <input
-                    type="text"
-                    value={sampleWorkUrl}
-                    onChange={(e) => setSampleWorkUrl(e.target.value)}
-                    placeholder={t('assignment_creator.sample_work.work_url_placeholder')}
-                    className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500"
-                  />
-
-                  {/* Keep the file in browser memory until the assignment is confirmed. */}
-                  <label className="shrink-0 cursor-pointer px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95">
-                    {isUploadingSample ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>{tr('กำลังเตรียมไฟล์...', 'Preparing file...')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <UploadCloud className="w-4 h-4" />
-                        <span>{tr('เลือกไฟล์ตัวอย่าง', 'Choose sample file')}</span>
-                      </>
-                    )}
-                    <input
-                      type="file"
-                      accept="application/pdf,image/*"
-                      disabled={isUploadingSample}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        e.target.value = "";
-                        if (file) void handleSampleFileSelect(file);
-                      }}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-
-                {sampleUploadError && (
-                  <p className="text-[11px] text-rose-500 font-semibold">{sampleUploadError}</p>
-                )}
-
-                {sampleWorkFile && (
-                  <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5 font-medium truncate">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span className="truncate"><MobileText short={tr('แนบไฟล์แล้ว (อัปโหลดตอนบันทึก)', 'Attached (uploads on save)')} full={tr('แนบไฟล์ไว้ชั่วคราว — จะอัปโหลดหลังกดบันทึกงาน', 'File attached for now — it uploads when you save the assignment')} /></span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSampleWorkFile(null);
-                        setSampleWorkUrl("");
-                        setSampleWorkPreviewUrl("");
-                      }}
-                      className="text-slate-400 hover:text-rose-500 text-xs px-1"
-                    >
-                      {tr('ลบ', 'Remove')}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-1.5 md:col-span-2">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  <MobileText short={language === 'th' ? 'คำแนะนำ' : 'Tips'} full={t('assignment_creator.sample_work.work_desc_label')} />
-                </label>
-                <textarea
-                  rows={2}
-                  value={sampleWorkDescription}
-                  onChange={(e) => setSampleWorkDescription(e.target.value)}
-                  placeholder={t('assignment_creator.sample_work.work_desc_placeholder')}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-emerald-500 leading-relaxed"
-                />
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* Exam Mode: Strictly Disabled Notice */
-          <div className="bg-slate-50 dark:bg-slate-900/50 p-5 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 flex items-center gap-3.5 animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]">
-            <div className="p-2.5 rounded-2xl bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 shrink-0">
-              <Lock className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                <MobileText
-                  short={language === 'th' ? 'ข้อสอบแนบตัวอย่างผลงานไม่ได้' : 'No sample work in quizzes'}
-                  full={language === 'th' ? 'ปิดการใช้งานตัวอย่างผลงานในโหมดข้อสอบ' : 'Sample Works Disabled in Exam Mode'}
-                />
-              </h4>
-              <p className="hidden sm:block text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {t('assignment_creator.sample_work.exam_disabled_notice')}
-              </p>
             </div>
           </div>
         )}

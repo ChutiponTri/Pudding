@@ -32,8 +32,6 @@ import {
   UserCog,
   Users,
   Paperclip,
-  ExternalLink,
-  FileText,
   Smartphone,
   Link2,
   Trash2,
@@ -52,7 +50,8 @@ import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignme
 import { formatDateTime } from "@/lib/utils/datetime";
 import { canEditSubmission, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
-import { isImageUrl, isPdfUrl, referenceWorkUrl } from "@/lib/utils/referenceWork";
+import { assignmentAttachments } from "@/lib/utils/referenceWork";
+import { AttachmentList } from "@/components/AssignmentAttachments";
 import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploadClient";
 import { formatMegabytes, IMAGE_MAX_BYTES, normalizeLink, PDF_MAX_BYTES } from "@/lib/storage/uploadRules";
 import { classroomTitle, roomLabel, subjectCode, subjectName } from "@/lib/utils/classroomLabel";
@@ -233,14 +232,12 @@ function Sheet({ children, onClose, size = "md" }: { children: React.ReactNode; 
   );
 }
 
-/** Teacher's reference work for homework: a link, or a file (image / PDF) stored in R2. */
+/** Teacher's attachments for homework: links, Google Drive links, images and PDFs. */
 function ReferenceWork({ assignment }: { assignment: Assignment }) {
-  const url = referenceWorkUrl(assignment.sample_work_url);
-  const title = assignment.sample_work_title?.trim();
+  const attachments = assignmentAttachments(assignment);
+  // Older homework kept a separate note about its single reference.
   const description = assignment.sample_work_description?.trim();
-  if (!url && !title && !description) return null;
-  const isImage = isImageUrl(url);
-  const isPdf = isPdfUrl(url);
+  if (!attachments.length && !description) return null;
 
   return (
     <section className={`${CARD} p-4 sm:p-5 space-y-3`}>
@@ -248,31 +245,14 @@ function ReferenceWork({ assignment }: { assignment: Assignment }) {
         <span className="w-8 h-8 rounded-xl bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
           <Paperclip className="w-4 h-4" />
         </span>
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold text-slate-400">ตัวอย่างจากคุณครู</p>
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white wrap-break-word">{title || "ตัวอย่างงาน"}</h2>
-        </div>
+        <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+          ไฟล์แนบจากคุณครู{attachments.length > 1 && <span className="ml-1 font-semibold text-slate-400">({attachments.length})</span>}
+        </h2>
       </div>
       {description && (
         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap wrap-break-word">{description}</p>
       )}
-      {url && isImage && (
-        <a href={url} target="_blank" rel="noopener noreferrer" className="block rounded-2xl overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={url} alt={title || "ตัวอย่างงาน"} loading="lazy" className="w-full max-h-80 object-contain" />
-        </a>
-      )}
-      {url && (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center gap-2 min-h-11 px-4 rounded-2xl bg-sky-50 dark:bg-sky-950/50 ring-1 ring-sky-200 dark:ring-sky-900 text-sky-800 dark:text-sky-300 text-sm font-semibold hover:bg-sky-100 dark:hover:bg-sky-950 transition-colors"
-        >
-          {isPdf ? <FileText className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
-          <span>{isImage ? "เปิดรูปขนาดเต็ม" : isPdf ? "เปิดไฟล์ PDF" : "เปิดลิงก์ตัวอย่าง"}</span>
-        </a>
-      )}
+      <AttachmentList attachments={attachments} />
     </section>
   );
 }
@@ -2366,7 +2346,7 @@ export default function LiffStudentPage() {
                               <div className="min-w-0">
                                 <span className="text-[11px] font-semibold text-slate-400">
                                   {assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม {assignment.total_points || 20} คะแนน
-                                  {!assignment.is_exam && (assignment.sample_work_url || assignment.sample_work_title) && ' • 📎 มีตัวอย่าง'}
+                                  {!assignment.is_exam && assignmentAttachments(assignment).length > 0 && ` • 📎 ไฟล์แนบ ${assignmentAttachments(assignment).length}`}
                                 </span>
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
                               </div>

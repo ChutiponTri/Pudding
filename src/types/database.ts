@@ -106,6 +106,15 @@ export interface LearningIndicator {
 
 export type SubmissionOverrideStatus = 'auto' | 'force_closed' | 'extended';
 
+export type AttachmentKind = 'link' | 'drive' | 'image' | 'file';
+
+/** One item a teacher attached to homework: a web link, a Google Drive link, or an uploaded image / PDF. */
+export interface AssignmentAttachment {
+  kind: AttachmentKind;
+  url: string;
+  name: string;
+}
+
 export interface Assignment {
   id: string;
   course_id?: string;
@@ -127,6 +136,8 @@ export interface Assignment {
   sample_work_url?: string;
   sample_work_title?: string;
   sample_work_description?: string;
+  /** Teacher attachments (homework only), at most MAX_ASSIGNMENT_ATTACHMENTS. Missing = older work: see sample_work_url. */
+  attachments?: AssignmentAttachment[] | null;
   created_at?: string;
   /** Scheduled release: students see and can submit only from this time. Missing = published on creation. */
   publish_at?: string;

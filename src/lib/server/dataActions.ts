@@ -14,6 +14,7 @@ import { TEACHER_NAME_PLACEHOLDER, isTeacherProfileComplete, teacherAccessOf } f
 import { rememberTeacherAccess } from '@/lib/server/teacherProfileGuard';
 import { notifyAdminNewTeacher } from '@/lib/server/adminNotify';
 import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
+import { assignmentAttachmentUrls, cleanAttachments } from '@/lib/utils/referenceWork';
 import {
   classroomForStudent,
   classroomRole,
@@ -64,7 +65,31 @@ const USER_FIELDS = 'id, first_name, last_name, student_id, institution, avatar_
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
 const IN_CHUNK = 150;
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
-const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes', 'publish_at'] as const;
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes', 'publish_at', 'attachments'] as const;
+const ATTACHMENTS_MIGRATION_MESSAGE =
+  'ฐานข้อมูลยังไม่รองรับการแนบหลายไฟล์ (ยังไม่มีคอลัมน์ attachments) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือแนบเพียง 1 รายการ';
+
+/**
+ * Attachments are checked here (kinds, URLs, at most 3) and mirrored into
+ * sample_work_url / sample_work_title, so older code and databases without
+ * the attachments column still see the first one. Quizzes have none.
+ */
+function withCleanAttachments<T extends Partial<Assignment>>(data: T, isExam: boolean): T {
+  if (data.attachments === undefined) return data;
+  const attachments = isExam ? [] : cleanAttachments(data.attachments);
+  return {
+    ...data,
+    attachments,
+    sample_work_url: attachments[0]?.url || '',
+    sample_work_title: attachments[0]?.name || '',
+    sample_work_description: '',
+  };
+}
+
+/** A database without the attachments column keeps only the mirrored first one; refuse rather than drop the rest. */
+function assertAttachmentsFit(row: Partial<Assignment>) {
+  if ((row.attachments?.length || 0) > 1) throw new Error(ATTACHMENTS_MIGRATION_MESSAGE);
+}
 const PUBLISH_AT_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการตั้งเวลาเผยแพร่ (ยังไม่มีคอลัมน์ publish_at) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือเลือก "เผยแพร่ทันที"';
 
@@ -1226,7 +1251,7 @@ export const dataActions = {
     const stamp = Date.now();
     const id = `assign-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
     const newAssignment: Assignment = {
-      ...assignmentData,
+      ...withCleanAttachments(assignmentData, !!assignmentData.is_exam),
       id,
       status_override: assignmentData.status_override || 'auto',
       created_at: new Date().toISOString(),
@@ -1240,6 +1265,7 @@ export const dataActions = {
       if (!error?.message?.includes(column)) continue;
       // Dropping a requested publish time would release the work right away; refuse instead.
       if (column === 'publish_at' && row.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
+      if (column === 'attachments') assertAttachmentsFit(row);
       const { [column]: _unused, ...rest } = row;
       row = rest;
       ({ error } = await supabase.from('assignments').insert(row));
@@ -1256,8 +1282,8 @@ export const dataActions = {
         throw toDatabaseError(qError, 'questions');
       }
     }
-    // The reference file was uploaded before the assignment existed; it now belongs to it.
-    await attachFiles(supabase, [newAssignment.sample_work_url], id, [me.userId]);
+    // The attached files were uploaded before the assignment existed; they now belong to it.
+    await attachFiles(supabase, assignmentAttachmentUrls(newAssignment), id, [me.userId]);
 
     // Timeline post + LINE notification; best effort so creation is not blocked.
     // A draft gets its post when the teacher publishes it.
@@ -1281,7 +1307,7 @@ export const dataActions = {
     const { assignment: previous } = await requireTeacherOfAssignment(supabase, actor, id);
     // Moving work to another classroom is not an edit.
     const { classroom_id: _cls, ...rest } = data as Partial<Assignment>;
-    let patch: Partial<Assignment> = rest;
+    let patch: Partial<Assignment> = withCleanAttachments(rest, rest.is_exam ?? previous.is_exam);
 
     const due = new Date(patch.due_date ?? previous.due_date).getTime();
     const publishAt = patch.publish_at ?? previous.publish_at;
@@ -1294,17 +1320,20 @@ export const dataActions = {
     for (const column of OPTIONAL_ASSIGNMENT_COLUMNS) {
       if (!error?.message?.includes(column)) continue;
       if (column === 'publish_at' && patch.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
+      if (column === 'attachments') assertAttachmentsFit(patch);
       const { [column]: _unused, ...others } = patch;
       patch = others;
       ({ data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle());
     }
     if (error) throw toDatabaseError(error, 'assignments');
 
-    // A new reference file replaces the old one in storage.
-    if (patch.sample_work_url !== undefined && patch.sample_work_url !== previous.sample_work_url) {
-      await attachFiles(supabase, [patch.sample_work_url], id, [requireTeacher(actor).userId]);
-      const oldKeys = keysFromUrls([previous.sample_work_url]);
-      after(() => removeFiles(supabase, oldKeys));
+    // Newly attached files belong to this assignment; removed ones leave storage.
+    if (patch.attachments !== undefined || patch.sample_work_url !== undefined) {
+      const nextUrls = assignmentAttachmentUrls({ ...previous, ...patch });
+      await attachFiles(supabase, nextUrls, id, [requireTeacher(actor).userId]);
+      const kept = new Set(keysFromUrls(nextUrls));
+      const oldKeys = keysFromUrls(assignmentAttachmentUrls(previous)).filter((key) => !kept.has(key));
+      if (oldKeys.length) after(() => removeFiles(supabase, oldKeys));
     }
 
     const next = (updated as Assignment) || { ...previous, ...patch };

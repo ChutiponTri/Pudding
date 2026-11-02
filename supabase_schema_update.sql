@@ -317,3 +317,13 @@ SET is_line_connected = TRUE,
 WHERE role = 'teacher'
   AND teacher_line_uid IS NOT NULL
   AND (is_line_connected IS DISTINCT FROM TRUE OR line_link_status IS DISTINCT FROM 'connected');
+
+-- ==========================================
+-- Assignment attachments (up to 3)
+-- ==========================================
+-- [{ "kind": "link" | "drive" | "image" | "file", "url": "...", "name": "..." }]
+-- sample_work_url keeps the first attachment for older code.
+ALTER TABLE public.assignments
+ADD COLUMN IF NOT EXISTS attachments JSONB;
+
+NOTIFY pgrst, 'reload schema';

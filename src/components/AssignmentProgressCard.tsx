@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { Calendar, CheckCircle2, ChevronDown, ChevronRight, Clock, Edit2, Inbox, Lock, Rocket, ShieldAlert, Trash2, Unlock } from 'lucide-react';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { ReferenceWorkLink } from '@/components/ReferenceWorkLink';
+import { AttachmentList } from '@/components/AssignmentAttachments';
+import { assignmentAttachments } from '@/lib/utils/referenceWork';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
 import type { GradingCounts } from '@/lib/utils/gradingStatus';
@@ -64,7 +65,7 @@ export function AssignmentProgressCard({
   const StatusIcon = status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : Clock;
   const deadline = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), language) : null;
   const done = pending === 0 && graded > 0;
-  const hasReference = !!(assignment.sample_work_url || assignment.sample_work_title);
+  const attachments = assignment.is_exam ? [] : assignmentAttachments(assignment);
 
   const statusBadgeClass = `ml-auto px-2 py-0.5 rounded-full border text-[11px] font-bold inline-flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
   const statusContent = (
@@ -187,8 +188,8 @@ export function AssignmentProgressCard({
         )}
       </div>
 
-      {/* Teacher's reference work (link or uploaded file) */}
-      {hasReference && <ReferenceWorkLink assignment={assignment} preview />}
+      {/* Teacher's attachments (links, Drive, images, PDFs) */}
+      <AttachmentList attachments={attachments} size="sm" />
 
       {/* Grading state, in words */}
       <div

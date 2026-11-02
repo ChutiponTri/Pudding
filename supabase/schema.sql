@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   sample_work_url TEXT,                       -- Reference material (active in assignment, disabled in exam)
   sample_work_title TEXT,
   sample_work_description TEXT,
+  attachments JSONB,                          -- Up to 3 {kind, url, name}; sample_work_url mirrors the first
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

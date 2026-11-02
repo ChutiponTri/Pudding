@@ -181,14 +181,6 @@
       "cron_hint": "Cron format e.g. 0 18 * * * (daily at 6 PM)"
     },
     "sample_work": {
-      "title": "Sample Work / Guidelines (Student Reference)",
-      "subtitle": "For Assignment mode: Attach reference examples, templates, or rubrics for student guidance",
-      "work_title_label": "Reference Title",
-      "work_title_placeholder": "e.g., Sample 3-Set Venn Diagram Template with Shading",
-      "work_url_label": "Reference File URL / Document",
-      "work_url_placeholder": "https://... or sample document link",
-      "work_desc_label": "Guidelines for Students",
-      "work_desc_placeholder": "Detail key observations or formatting standards required...",
       "exam_disabled_notice": "Sample work attachment is disabled in Exam Mode to uphold academic integrity in closed-book assessments."
     },
     "questions_builder": {

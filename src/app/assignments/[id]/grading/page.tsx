@@ -23,7 +23,8 @@ import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
 import { AntiCheatingBadge } from '@/components/AntiCheatingBadge';
 import { IntegrityAuditModal } from '@/components/IntegrityAuditModal';
 import { GradingWorkspace } from '@/components/GradingWorkspace';
-import { ReferenceWorkLink } from '@/components/ReferenceWorkLink';
+import { AttachmentList } from '@/components/AssignmentAttachments';
+import { assignmentAttachments } from '@/lib/utils/referenceWork';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import {
   Search,
@@ -749,7 +750,6 @@ Handing in again clears the current score and comments for regrading (their on-t
                   {classroom?.name || assignment?.classroom_name}
                 </span>
               )}
-              {assignment && <ReferenceWorkLink assignment={assignment} className="max-w-full sm:max-w-xs py-0.5" />}
             </div>
             <div className="flex items-start justify-between gap-3">
               <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white leading-snug min-w-0 wrap-break-word">
@@ -766,6 +766,9 @@ Handing in again clears the current score and comments for regrading (their on-t
             </div>
             {assignment?.description && (
               <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">{assignment.description}</p>
+            )}
+            {assignment && !assignment.is_exam && (
+              <AttachmentList attachments={assignmentAttachments(assignment)} size="sm" className="pt-1 sm:grid-cols-2 lg:grid-cols-3 max-w-4xl" />
             )}
           </div>
 
