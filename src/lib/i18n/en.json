@@ -180,9 +180,6 @@
       "reminder_preset_custom": "Custom Cron",
       "cron_hint": "Cron format e.g. 0 18 * * * (daily at 6 PM)"
     },
-    "sample_work": {
-      "exam_disabled_notice": "Sample work attachment is disabled in Exam Mode to uphold academic integrity in closed-book assessments."
-    },
     "questions_builder": {
       "title": "Questions & Assessment Criteria",
       "add_question": "+ Add Next Question",

@@ -27,7 +27,8 @@ export function GoogleDriveMark({ className = 'w-5 h-5' }: { className?: string 
   );
 }
 
-const opensPreview = (a: AssignmentAttachment) => a.kind === 'image' || (a.kind === 'file' && (isPdfUrl(a.url) || a.url.startsWith('blob:')));
+/** Images and PDFs open in a dialog on this page; links open a new tab. */
+export const opensPreview = (a: AssignmentAttachment) => a.kind === 'image' || (a.kind === 'file' && (isPdfUrl(a.url) || a.url.startsWith('blob:')));
 
 function hostOf(url: string) {
   try {

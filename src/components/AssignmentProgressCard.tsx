@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { Calendar, CheckCircle2, ChevronDown, ChevronRight, Clock, Edit2, Inbox, Lock, Rocket, ShieldAlert, Trash2, Unlock } from 'lucide-react';
+import { Calendar, CheckCircle2, ChevronDown, ChevronRight, Clock, Copy, Edit2, Inbox, Lock, Rocket, ShieldAlert, Trash2, Unlock } from 'lucide-react';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { AttachmentList } from '@/components/AssignmentAttachments';
@@ -33,6 +33,7 @@ export function AssignmentProgressCard({
   gradingHref,
   classroomName,
   editHref,
+  copyHref,
   onStatusClick,
   onDelete,
   onPublishNow,
@@ -46,6 +47,8 @@ export function AssignmentProgressCard({
   /** Shown as a chip when the list mixes classrooms. */
   classroomName?: string;
   editHref?: string;
+  /** Opens the editor with this work filled in, to create it in other classrooms. */
+  copyHref?: string;
   /** Makes the status badge a button that opens the "accept work" settings. */
   onStatusClick?: () => void;
   onDelete?: () => void;
@@ -65,7 +68,7 @@ export function AssignmentProgressCard({
   const StatusIcon = status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : Clock;
   const deadline = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), language) : null;
   const done = pending === 0 && graded > 0;
-  const attachments = assignment.is_exam ? [] : assignmentAttachments(assignment);
+  const attachments = assignmentAttachments(assignment);
 
   const statusBadgeClass = `ml-auto px-2 py-0.5 rounded-full border text-[11px] font-bold inline-flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
   const statusContent = (
@@ -119,7 +122,7 @@ export function AssignmentProgressCard({
 
         <div className="flex items-start gap-2">
           <h3 className="flex-1 min-w-0 text-base font-black text-slate-900 dark:text-white leading-snug line-clamp-2 wrap-break-word">{assignment.title}</h3>
-          {(editHref || onDelete) && (
+          {(editHref || copyHref || onDelete) && (
             <div className="flex items-center gap-1 shrink-0">
               {editHref && (
                 <Link
@@ -130,6 +133,17 @@ export function AssignmentProgressCard({
                   aria-label={th ? 'แก้ไขงาน/ข้อสอบ' : 'Edit'}
                 >
                   <Edit2 className="w-3.5 h-3.5" />
+                </Link>
+              )}
+              {copyHref && (
+                <Link
+                  href={copyHref}
+                  draggable={false}
+                  className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-600 hover:border-sky-400 transition-colors"
+                  title={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
+                  aria-label={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
+                >
+                  <Copy className="w-3.5 h-3.5" />
                 </Link>
               )}
               {onDelete && (

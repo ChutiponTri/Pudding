@@ -180,9 +180,6 @@
       "reminder_preset_custom": "กำหนดรูปแบบ Cron เอง",
       "cron_hint": "รูปแบบ Cron เช่น 0 18 * * * (ส่งเตือนทุกวันเวลา 18:00 น.)"
     },
-    "sample_work": {
-      "exam_disabled_notice": "โหมดข้อสอบแนบตัวอย่างผลงานไม่ได้ เพื่อความโปร่งใสในการสอบ"
-    },
     "questions_builder": {
       "title": "ชุดคำถามและการวัดผล",
       "add_question": "เพิ่มคำถามข้อถัดไป",

@@ -222,6 +222,7 @@ function GradingHubContent() {
         classroomName={classroom.name}
         gradingHref={`/assignments/${assignment.id}/grading?from=grading&courseId=${encodeURIComponent(selectedCourse?.id || '')}`}
         editHref={`/assignments/new?edit=${assignment.id}&classroomId=${classroom.id}&from=grading&returnTo=${encodeURIComponent(currentHref)}`}
+        copyHref={`/assignments/new?copy=${assignment.id}&classroomId=${classroom.id}&from=grading&returnTo=${encodeURIComponent(currentHref)}`}
         onStatusClick={() => setStatusAssignment(assignment)}
         onDelete={() => handleDeleteAssignment(assignment)}
         onPublishNow={win.isScheduled || win.isDraft ? () => handlePublishNow(assignment) : undefined}

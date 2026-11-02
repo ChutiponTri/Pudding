@@ -98,13 +98,44 @@ export const keysFromUrls = (urls: Array<string | null | undefined>) =>
   [...new Set(urls.map(keyFromPublicUrl).filter((key): key is string => !!key))];
 
 /**
+ * Teacher attachments are shared, not duplicated, when work is created for
+ * several classrooms or copied to another one. Returns the R2 keys among these
+ * URLs that an assignment outside `excludeIds` still shows (those must stay),
+ * and points their tracking row at that assignment.
+ */
+export async function attachmentKeysInUse(supabase: Supabase, urls: Array<string | null | undefined>, excludeIds: string[]): Promise<Set<string>> {
+  const wanted = [...new Set(urls.filter((u): u is string => !!u && !!keyFromPublicUrl(u)))];
+  const inUse = new Set<string>();
+  if (!wanted.length) return inUse;
+  const excluded = new Set(excludeIds);
+  await Promise.all(
+    wanted.map(async (url) => {
+      const [byList, byLegacy] = await Promise.all([
+        // Fails on databases without the attachments column; the legacy mirror below still answers.
+        supabase.from('assignments').select('id').contains('attachments', JSON.stringify([{ url }])).limit(20),
+        supabase.from('assignments').select('id').eq('sample_work_url', url).limit(20),
+      ]);
+      const holder = [...(byList.data || []), ...(byLegacy.data || [])].find((row) => !excluded.has(row.id as string));
+      if (!holder) return;
+      const key = keyFromPublicUrl(url)!;
+      inUse.add(key);
+      const { error } = await supabase.from(STORED_FILES).update({ assignment_id: holder.id }).eq('key', key).in('assignment_id', excludeIds);
+      if (error && !isMissingTable(error)) console.warn('[storage] reassign failed:', error.message);
+    })
+  );
+  return inUse;
+}
+
+/**
  * Every R2 key belonging to these assignments: tracked uploads, files in
  * students' answers (also older, untracked ones) and the reference work.
- * Collect them before deleting the rows, then pass them to removeFiles.
+ * Attachments another assignment (a copy in another classroom) still shows are
+ * left out. Collect them before deleting the rows, then pass them to removeFiles.
  */
 export async function assignmentFileKeys(supabase: Supabase, assignmentIds: string[]): Promise<string[]> {
   if (!assignmentIds.length) return [];
   const keys = new Set<string>();
+  const attachmentUrls: string[] = [];
   for (const part of chunks(assignmentIds, IN_CHUNK)) {
     const [tracked, assignments, submissions] = await Promise.all([
       supabase.from(STORED_FILES).select('key').in('assignment_id', part).neq('status', 'deleted'),
@@ -113,13 +144,16 @@ export async function assignmentFileKeys(supabase: Supabase, assignmentIds: stri
     ]);
     if (tracked.error) isMissingTable(tracked.error);
     for (const row of tracked.data || []) keys.add(row.key);
-    for (const key of keysFromUrls(((assignments.data || []) as Assignment[]).flatMap(assignmentAttachmentUrls))) keys.add(key);
+    const urls = ((assignments.data || []) as Assignment[]).flatMap(assignmentAttachmentUrls);
+    attachmentUrls.push(...urls);
+    for (const key of keysFromUrls(urls)) keys.add(key);
     const submissionIds = (submissions.data || []).map((s) => s.id as string);
     for (const subPart of chunks(submissionIds, IN_CHUNK)) {
       const { data } = await supabase.from('submission_answers').select('file_url').in('submission_id', subPart).not('file_url', 'is', null);
       for (const key of keysFromUrls((data || []).map((a) => a.file_url))) keys.add(key);
     }
   }
+  for (const key of await attachmentKeysInUse(supabase, attachmentUrls, assignmentIds)) keys.delete(key);
   return [...keys];
 }
 

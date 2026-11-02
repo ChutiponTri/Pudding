@@ -2179,6 +2179,7 @@ export default function ClassroomWorkspacePage() {
                               counts={classworkCounts.get(item.id) || gradingCounts([], classroom.students?.length || 0, item.is_exam)}
                               gradingHref={`/assignments/${item.id}/grading?from=classroom&classroomId=${classroomId}`}
                               editHref={`/assignments/new?edit=${item.id}&classroomId=${classroomId}&from=classroom`}
+                              copyHref={`/assignments/new?copy=${item.id}&classroomId=${classroomId}&from=classroom`}
                               onStatusClick={() => setStatusAssignment(item)}
                               onDelete={() => handleDeleteAssignment(item.id)}
                               onPublishNow={itemWindow.isScheduled || itemWindow.isDraft ? () => handlePublishAssignmentNow(item) : undefined}

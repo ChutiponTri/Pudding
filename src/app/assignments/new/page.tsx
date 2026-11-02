@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '@clerk/nextjs';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
@@ -39,9 +40,9 @@ import {
   UploadCloud,
   Loader2,
   CheckCircle2,
-  Lock,
   ArrowRight,
   ArrowLeft,
+  Copy,
 } from 'lucide-react';
 
 /** An attachment in the form; `file` = picked but not uploaded yet (url is a blob preview). */
@@ -69,8 +70,8 @@ function ModeHint({ isExam, language }: { isExam: boolean; language: string }) {
       <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" />
       <span>
         {language === 'th'
-          ? 'โหมดข้อสอบ: บันทึกทุกครั้งที่ออกจากหน้าจอ'
-          : 'Exam Mode: every screen exit is logged • no photos or file uploads'}
+          ? 'โหมดข้อสอบ: บันทึกทุกครั้งที่ออกจากหน้าจอ • นักเรียนส่งรูป/ไฟล์ไม่ได้'
+          : 'Exam Mode: every screen exit is logged • students cannot upload photos or files'}
       </span>
     </span>
   ) : (
@@ -78,8 +79,8 @@ function ModeHint({ isExam, language }: { isExam: boolean; language: string }) {
       <Paperclip className="w-3.5 h-3.5 mt-0.5 shrink-0" />
       <span>
         {language === 'th'
-          ? 'โหมดการบ้าน: สามารถแนบตัวอย่างและแนวทางการตอบให้นักเรียนได้'
-          : 'Assignment Mode: Sample work attachments allowed'}
+          ? 'โหมดการบ้าน: นักเรียนส่งรูปหรือไฟล์ได้'
+          : 'Assignment Mode: students can upload photos or files'}
       </span>
     </span>
   );
@@ -109,6 +110,8 @@ function NewAssignmentContent() {
   const returnTo = urlFrom === 'grading' && searchParams.get('returnTo')?.startsWith('/grading') ? searchParams.get('returnTo') : null;
   // ?edit=<assignmentId>: the same form, filled with a saved assignment or quiz.
   const editId = searchParams.get('edit');
+  // ?copy=<assignmentId>: a new assignment filled from saved work (any state), for other classrooms.
+  const copyId = editId ? null : searchParams.get('copy');
   const { user: clerkUser } = useUser();
   const { t, tr, language } = useLanguage();
 
@@ -122,6 +125,7 @@ function NewAssignmentContent() {
   const [courseIndicators, setCourseIndicators] = useState<CourseLearningIndicator[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
+  const [copySource, setCopySource] = useState<Assignment | null>(null);
   const [editSubmissionCount, setEditSubmissionCount] = useState(0);
   const originalQuestionIdsRef = useRef<string[]>([]);
 
@@ -309,10 +313,11 @@ function NewAssignmentContent() {
           setSelectedClassroomIds([urlClassroomId || cls[0].id]);
         }
 
-        if (editId) {
+        const sourceId = editId || copyId;
+        if (sourceId) {
           const [{ assignment, questions: savedQuestions }, subs] = await Promise.all([
-            dataService.getAssignmentById(editId),
-            dataService.getSubmissionsByAssignmentIds([editId], { includeStudents: false }),
+            dataService.getAssignmentById(sourceId),
+            editId ? dataService.getSubmissionsByAssignmentIds([editId], { includeStudents: false }) : Promise.resolve([]),
           ]);
           if (!assignment) {
             alert(language === 'th' ? 'ไม่พบงานนี้ อาจถูกลบไปแล้ว' : 'This assignment no longer exists');
@@ -321,24 +326,42 @@ function NewAssignmentContent() {
           }
           const ownClassroom = cls.find((c) => c.id === assignment.classroom_id);
           const courseId = assignment.course_id || ownClassroom?.course_id || '';
-          setEditingAssignment(assignment);
-          setEditSubmissionCount(subs.filter((sub) => sub.status !== 'pending').length);
+          // Edit → "copy" stays on this page, so the other mode's state is cleared here.
+          if (editId) {
+            setEditingAssignment(assignment);
+            setEditSubmissionCount(subs.filter((sub) => sub.status !== 'pending').length);
+            setCopySource(null);
+          } else {
+            setEditingAssignment(null);
+            setEditSubmissionCount(0);
+            originalQuestionIdsRef.current = [];
+            setCopySource(assignment);
+          }
           if (courseId) {
             setSelectedCourseId(courseId);
             setCourseIndicators(crs.find((c) => c.id === courseId)?.indicators || []);
           }
-          setSelectedClassroomIds([assignment.classroom_id]);
+          if (editId) {
+            setSelectedClassroomIds([assignment.classroom_id]);
+          } else {
+            // A copy goes to another classroom of the same course by default (the teacher can pick several).
+            const other = cls.find((c) => c.id !== assignment.classroom_id && (!courseId || c.course_id === courseId));
+            setSelectedClassroomIds([other?.id || assignment.classroom_id]);
+          }
           setIsExam(!!assignment.is_exam);
           setTitle(assignment.title || '');
           setGroupName(assignment.group_name || '');
           setDescription(assignment.description || '');
-          setDueDate(assignment.due_date || daysFromNowAt(7, 23, 59));
+          // A copy can't start with a deadline that has already passed.
+          const dueMs = assignment.due_date ? new Date(assignment.due_date).getTime() : NaN;
+          setDueDate(assignment.due_date && (editId || dueMs > Date.now()) ? assignment.due_date : daysFromNowAt(7, 23, 59));
           const publishMs = assignment.publish_at ? new Date(assignment.publish_at).getTime() : NaN;
           if (isAssignmentDraft(assignment)) {
             setReleaseMode('draft');
           } else {
+            // A copy of work students already see is released right away too; scheduled work keeps its time.
             setReleaseMode(!Number.isNaN(publishMs) && publishMs > Date.now() ? 'schedule' : 'now');
-            if (assignment.publish_at) setPublishAt(assignment.publish_at);
+            if (assignment.publish_at && (editId || publishMs > Date.now())) setPublishAt(assignment.publish_at);
           }
           // Work saved with several reminders keeps the earliest one.
           setReminderOffset(assignment.reminder_offsets_minutes?.length
@@ -350,11 +373,12 @@ function NewAssignmentContent() {
           if (legacyNote && !(assignment.description || '').includes(legacyNote)) {
             setDescription([assignment.description?.trim(), legacyNote].filter(Boolean).join('\n\n'));
           }
-          originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
+          if (editId) originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
           if (savedQuestions.length) {
             setQuestions(savedQuestions.map((q) => ({
               uid: newQuestionUid(),
-              id: q.id,
+              // A copy gets new questions of its own.
+              id: editId ? q.id : undefined,
               indicator_id: q.indicator_id || '',
               type: q.type,
               question_text: q.question_text || '',
@@ -376,7 +400,7 @@ function NewAssignmentContent() {
     }
     init(teacherId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per teacher / target
-  }, [urlClassroomId, editId, clerkUser?.id]);
+  }, [urlClassroomId, editId, copyId, clerkUser?.id]);
 
   // Groups already used in the selected classrooms, offered as one-tap choices.
   const selectedClassroomKey = selectedClassroomIds.join(',');
@@ -634,39 +658,36 @@ function NewAssignmentContent() {
       }));
       // Upload picked files first: if one fails, nothing is saved and the
       // teacher sees why. Uploaded ones keep their URL, so a retry skips them.
-      let savedAttachments: AssignmentAttachment[] = [];
-      if (!isExam) {
-        const ready: AttachmentDraft[] = [];
-        for (const draft of attachments) {
-          if (!draft.file) {
-            ready.push(draft);
-            continue;
-          }
-          setIsUploadingSample(true);
-          try {
-            // Straight to storage; a failed earlier save may already have stored this file, so reuse it.
-            const uploaded = await uploadToStorage(draft.file, {
-              assignmentId: editingAssignment?.id || "draft",
-              // Already shrunk when the teacher picked it.
-              optimized: true,
-              onDuplicate: () => "reuse",
-            });
-            URL.revokeObjectURL(draft.url);
-            const done: AttachmentDraft = { uid: draft.uid, kind: draft.kind, url: uploaded.url, name: draft.name };
-            ready.push(done);
-            setAttachments((list) => list.map((a) => (a.uid === draft.uid ? done : a)));
-          } catch (uploadError) {
-            console.error("Attachment upload error:", uploadError);
-            const message = uploadError instanceof UploadError ? uploadError.message : tr('อัปโหลดไฟล์แนบไม่สำเร็จ', 'Could not upload the attachment');
-            setSampleUploadError(`${draft.name}: ${message}`);
-            alert(`${draft.name}: ${message}\n\n${tr('ยังไม่ได้บันทึกงาน กรุณาแก้ไฟล์แล้วกดบันทึกอีกครั้ง', 'The assignment was not saved. Fix the file and save again.')}`);
-            return;
-          } finally {
-            setIsUploadingSample(false);
-          }
+      const ready: AttachmentDraft[] = [];
+      for (const draft of attachments) {
+        if (!draft.file) {
+          ready.push(draft);
+          continue;
         }
-        savedAttachments = ready.map(({ kind, url, name }) => ({ kind, url, name }));
+        setIsUploadingSample(true);
+        try {
+          // Straight to storage; a failed earlier save may already have stored this file, so reuse it.
+          const uploaded = await uploadToStorage(draft.file, {
+            assignmentId: editingAssignment?.id || "draft",
+            // Already shrunk when the teacher picked it.
+            optimized: true,
+            onDuplicate: () => "reuse",
+          });
+          URL.revokeObjectURL(draft.url);
+          const done: AttachmentDraft = { uid: draft.uid, kind: draft.kind, url: uploaded.url, name: draft.name };
+          ready.push(done);
+          setAttachments((list) => list.map((a) => (a.uid === draft.uid ? done : a)));
+        } catch (uploadError) {
+          console.error("Attachment upload error:", uploadError);
+          const message = uploadError instanceof UploadError ? uploadError.message : tr('อัปโหลดไฟล์แนบไม่สำเร็จ', 'Could not upload the attachment');
+          setSampleUploadError(`${draft.name}: ${message}`);
+          alert(`${draft.name}: ${message}\n\n${tr('ยังไม่ได้บันทึกงาน กรุณาแก้ไฟล์แล้วกดบันทึกอีกครั้ง', 'The assignment was not saved. Fix the file and save again.')}`);
+          return;
+        } finally {
+          setIsUploadingSample(false);
+        }
       }
+      const savedAttachments: AssignmentAttachment[] = ready.map(({ kind, url, name }) => ({ kind, url, name }));
 
       if (editingAssignment) {
         const keptIds = new Set(questions.map((q) => q.id).filter(Boolean));
@@ -739,8 +760,11 @@ function NewAssignmentContent() {
         createdIds.push(created.assignment.id);
       }
 
+      const copiedTo = copySource
+        ? tr('คัดลอกไปยัง: ', 'Copied to: ') + targetClassIds.map((id) => classrooms.find((c) => c.id === id)?.name || id).join(', ') + '\n\n'
+        : '';
       alert(
-        saveAsDraft
+        copiedTo + (saveAsDraft
           ? language === 'th'
             ? `บันทึกฉบับร่าง${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว\nนักเรียนจะยังไม่เห็นงานนี้ จนกว่าคุณครูจะกด "เผยแพร่ตอนนี้" ในหน้างานของห้องเรียน\nฉบับร่างที่ไม่ได้เผยแพร่ภายใน ${DRAFT_RETENTION_DAYS} วันจะถูกลบอัตโนมัติ`
             : `Draft saved. Students won't see it until you press "Publish now" in the classwork list.\nDrafts not published within ${DRAFT_RETENTION_DAYS} days are deleted automatically.`
@@ -754,11 +778,14 @@ function NewAssignmentContent() {
           ? (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')
           : language === 'th'
           ? 'สร้างการบ้านสำเร็จ! ตั้งเวลาเตือนส่งงานผ่าน LINE เรียบร้อย'
-          : 'Assignment created successfully! LINE reminder scheduled.'
+          : 'Assignment created successfully! LINE reminder scheduled.')
       );
 
       const targetClassId = primaryClassId || urlClassroomId || selectedClassroomIds[0];
-      if (targetClassId) {
+      if (copySource) {
+        // Back to where the copy was started (the source classroom or the grading hub).
+        router.push(returnTo || `/classrooms/${urlClassroomId || targetClassId}?tab=classwork`);
+      } else if (targetClassId) {
         router.push(`/classrooms/${targetClassId}?tab=classwork`);
       } else {
         router.push('/dashboard');
@@ -815,8 +842,23 @@ function NewAssignmentContent() {
           <span>{isExam ? '🛡️ ' + t('assignment_creator.mode_exam') : '📚 ' + t('assignment_creator.mode_assignment')}</span>
         </div>
         <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-          {editId ? (language === 'th' ? 'แก้ไขงาน / ข้อสอบ' : 'Edit assignment / quiz') : t('assignment_creator.title')}
+          {editId
+            ? (language === 'th' ? 'แก้ไขงาน / ข้อสอบ' : 'Edit assignment / quiz')
+            : copyId
+            ? tr('คัดลอกงาน / ข้อสอบไปห้องอื่น', 'Copy assignment / quiz to other classrooms')
+            : t('assignment_creator.title')}
         </h1>
+        {copySource && (
+          <p role="status" className="mt-3 p-3 rounded-2xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-900 text-xs font-semibold text-sky-900 dark:text-sky-200 flex items-start gap-2">
+            <Copy className="w-4 h-4 shrink-0 mt-px" />
+            <span>
+              {tr(
+                `คัดลอกจาก “${copySource.title}” (${classrooms.find((c) => c.id === copySource.classroom_id)?.name || copySource.classroom_name || 'ห้องเดิม'}) — เลือกห้องที่ต้องการ ตรวจกำหนดส่งและการเผยแพร่ แล้วกดบันทึก งานต้นฉบับไม่เปลี่ยนแปลง`,
+                `Copied from “${copySource.title}” (${classrooms.find((c) => c.id === copySource.classroom_id)?.name || copySource.classroom_name || 'original classroom'}). Pick the classrooms, check the due date and release, then save. The original is not changed.`
+              )}
+            </span>
+          </p>
+        )}
         {editingAssignment && editSubmissionCount > 0 && (
           <p role="status" className="mt-3 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-xs font-semibold text-amber-900 dark:text-amber-200">
             <MobileText
@@ -927,6 +969,11 @@ function NewAssignmentContent() {
                   {language === 'th' ? 'งานที่สร้างแล้วย้ายห้องไม่ได้ (แก้ไขเฉพาะห้องนี้)' : 'Saved work stays in its classroom.'}
                 </p>
               )}
+              {copySource && (
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {tr('เลือกได้หลายห้อง — แต่ละห้องได้งานแยกกัน', 'Pick one or more — each classroom gets its own copy')}
+                </p>
+              )}
               <div className="flex flex-wrap gap-2 pt-0.5">
                 {(editingAssignment ? currentCourseClassrooms.filter((c) => c.id === editingAssignment.classroom_id) : currentCourseClassrooms).map((cls) => {
                   const isSelected = selectedClassroomIds.includes(cls.id);
@@ -943,10 +990,22 @@ function NewAssignmentContent() {
                     >
                       {isSelected && <Check className="w-3.5 h-3.5" />}
                       <span>{cls.name}</span>
+                      {copySource?.classroom_id === cls.id && (
+                        <span className="text-[10px] font-semibold opacity-70">{tr('(ต้นฉบับ)', '(original)')}</span>
+                      )}
                     </button>
                   );
                 })}
               </div>
+              {editingAssignment && (
+                <Link
+                  href={`/assignments/new?copy=${editingAssignment.id}&classroomId=${editingAssignment.classroom_id}&from=${returnTo ? 'grading' : isFromDashboard ? 'dashboard' : 'classroom'}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ''}`}
+                  className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 rounded-xl text-[11px] font-bold border border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 hover:border-sky-400 transition-colors"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{tr('คัดลอกไปห้องอื่น (ฉบับที่บันทึกไว้)', 'Copy to other classrooms (saved version)')}</span>
+                </Link>
+              )}
             </div>
 
             {/* Title */}
@@ -1016,27 +1075,24 @@ function NewAssignmentContent() {
               />
             </div>
 
-            {/* Attachments: links, Google Drive, images / PDFs (homework only) */}
+            {/* Attachments: links, Google Drive, images / PDFs (homework and quizzes) */}
             <div className="space-y-2 md:col-span-2">
               <div className="flex items-center justify-between gap-2">
                 <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                   <Paperclip className="w-3.5 h-3.5 text-amber-500" />
                   <span>{tr('ไฟล์แนบ', 'Attachments')}</span>
-                  {!isExam && <span className="font-semibold text-slate-400">({attachments.length}/{MAX_ASSIGNMENT_ATTACHMENTS})</span>}
+                  <span className="font-semibold text-slate-400">({attachments.length}/{MAX_ASSIGNMENT_ATTACHMENTS})</span>
                 </label>
-                {!isExam && (
-                  <span className="hidden sm:inline text-[11px] text-slate-400">
-                    {tr('ตัวอย่างผลงาน ใบงาน หรือสื่อประกอบ ให้นักเรียนเปิดดูได้', 'Examples, worksheets or materials students can open')}
-                  </span>
-                )}
+                <span className="hidden sm:inline text-[11px] text-slate-400">
+                  {tr('ตัวอย่างผลงาน ใบงาน หรือสื่อประกอบ ให้นักเรียนเปิดดูได้', 'Examples, worksheets or materials students can open')}
+                </span>
               </div>
-              {isExam ? (
-                <p className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-[11px] text-slate-500 dark:text-slate-400">
-                  <Lock className="w-3.5 h-3.5 text-purple-500 shrink-0" />
-                  <span>{t('assignment_creator.sample_work.exam_disabled_notice')}</span>
+              {isExam && (
+                <p className="text-[11px] text-purple-600 dark:text-purple-300">
+                  {tr('รูปภาพและ PDF นักเรียนเปิดดูในหน้าข้อสอบได้ • การเปิดลิงก์จะนับเป็นการออกจากหน้าจอ', 'Students view images and PDFs inside the quiz • opening a link counts as leaving the screen')}
                 </p>
-              ) : (
-                <>
+              )}
+              <>
                   {attachments.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                       {attachments.map((a) => (
@@ -1097,8 +1153,7 @@ function NewAssignmentContent() {
                       ? tr(`แนบได้สูงสุด ${MAX_ASSIGNMENT_ATTACHMENTS} รายการ • รูปภาพไม่เกิน 5MB, PDF ไม่เกิน 10MB — ไฟล์ใหญ่กว่านี้ให้แชร์ผ่าน Google Drive`, `Up to ${MAX_ASSIGNMENT_ATTACHMENTS} items • images up to 5MB, PDFs up to 10MB — share bigger files via Google Drive`)
                       : tr(`แนบครบ ${MAX_ASSIGNMENT_ATTACHMENTS} รายการแล้ว — นำออกเพื่อเพิ่มรายการใหม่`, `All ${MAX_ASSIGNMENT_ATTACHMENTS} slots used — remove one to add another`)}
                   </p>
-                </>
-              )}
+              </>
             </div>
 
             {/* Release: now, scheduled, or saved as a draft */}

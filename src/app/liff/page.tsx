@@ -54,7 +54,7 @@ import { formatDateTime } from "@/lib/utils/datetime";
 import { canEditSubmission, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { assignmentAttachments } from "@/lib/utils/referenceWork";
-import { AttachmentList } from "@/components/AssignmentAttachments";
+import { AttachmentList, opensPreview } from "@/components/AssignmentAttachments";
 import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploadClient";
 import { formatMegabytes, IMAGE_MAX_BYTES, normalizeLink, PDF_MAX_BYTES } from "@/lib/storage/uploadRules";
 import { classroomTitle, roomLabel, subjectCode, subjectName } from "@/lib/utils/classroomLabel";
@@ -235,7 +235,7 @@ function Sheet({ children, onClose, size = "md" }: { children: React.ReactNode; 
   );
 }
 
-/** Teacher's attachments for homework: links, Google Drive links, images and PDFs. */
+/** Teacher's attachments (homework and quizzes): links, Google Drive links, images and PDFs. */
 function ReferenceWork({ assignment }: { assignment: Assignment }) {
   const attachments = assignmentAttachments(assignment);
   // Older homework kept a separate note about its single reference.
@@ -256,6 +256,11 @@ function ReferenceWork({ assignment }: { assignment: Assignment }) {
         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap wrap-break-word">{description}</p>
       )}
       <AttachmentList attachments={attachments} />
+      {assignment.is_exam && attachments.some((a) => !opensPreview(a)) && (
+        <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+          รูปภาพและ PDF เปิดดูในหน้านี้ได้ • การเปิดลิงก์จะออกจากหน้าข้อสอบและถูกบันทึกให้คุณครูทราบ
+        </p>
+      )}
     </section>
   );
 }
@@ -2371,7 +2376,7 @@ export default function LiffStudentPage() {
                               <div className="min-w-0">
                                 <span className="text-[11px] font-semibold text-slate-400">
                                   {assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม {assignment.total_points || 20} คะแนน
-                                  {!assignment.is_exam && assignmentAttachments(assignment).length > 0 && ` • 📎 ไฟล์แนบ ${assignmentAttachments(assignment).length}`}
+                                  {assignmentAttachments(assignment).length > 0 && ` • 📎 ไฟล์แนบ ${assignmentAttachments(assignment).length}`}
                                 </span>
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
                               </div>
@@ -2727,7 +2732,7 @@ export default function LiffStudentPage() {
                 </div>
               )}
 
-              {!activeAssignment.is_exam && <ReferenceWork assignment={activeAssignment} />}
+              <ReferenceWork assignment={activeAssignment} />
 
               {isTrackingAway && (
                 <div role="note" className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-amber-900 dark:text-amber-200 text-xs leading-relaxed">

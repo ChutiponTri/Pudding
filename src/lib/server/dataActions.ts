@@ -13,7 +13,7 @@ import { pushTeacherProfileToClerk, readClerkTeacherProfile } from '@/lib/server
 import { TEACHER_NAME_PLACEHOLDER, isTeacherProfileComplete, teacherAccessOf } from '@/lib/utils/teacherProfile';
 import { rememberTeacherAccess } from '@/lib/server/teacherProfileGuard';
 import { notifyAdminNewTeacher } from '@/lib/server/adminNotify';
-import { assignmentFileKeys, attachFiles, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
+import { assignmentFileKeys, attachFiles, attachmentKeysInUse, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
 import { assignmentAttachmentUrls, cleanAttachments } from '@/lib/utils/referenceWork';
 import {
   classroomForStudent,
@@ -72,11 +72,12 @@ const ATTACHMENTS_MIGRATION_MESSAGE =
 /**
  * Attachments are checked here (kinds, URLs, at most 3) and mirrored into
  * sample_work_url / sample_work_title, so older code and databases without
- * the attachments column still see the first one. Quizzes have none.
+ * the attachments column still see the first one. Homework and quizzes both
+ * may carry them (students still cannot upload files in a quiz).
  */
-function withCleanAttachments<T extends Partial<Assignment>>(data: T, isExam: boolean): T {
+function withCleanAttachments<T extends Partial<Assignment>>(data: T): T {
   if (data.attachments === undefined) return data;
-  const attachments = isExam ? [] : cleanAttachments(data.attachments);
+  const attachments = cleanAttachments(data.attachments);
   return {
     ...data,
     attachments,
@@ -1251,7 +1252,7 @@ export const dataActions = {
     const stamp = Date.now();
     const id = `assign-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
     const newAssignment: Assignment = {
-      ...withCleanAttachments(assignmentData, !!assignmentData.is_exam),
+      ...withCleanAttachments(assignmentData),
       id,
       status_override: assignmentData.status_override || 'auto',
       created_at: new Date().toISOString(),
@@ -1307,7 +1308,7 @@ export const dataActions = {
     const { assignment: previous } = await requireTeacherOfAssignment(supabase, actor, id);
     // Moving work to another classroom is not an edit.
     const { classroom_id: _cls, ...rest } = data as Partial<Assignment>;
-    let patch: Partial<Assignment> = withCleanAttachments(rest, rest.is_exam ?? previous.is_exam);
+    let patch: Partial<Assignment> = withCleanAttachments(rest);
 
     const due = new Date(patch.due_date ?? previous.due_date).getTime();
     const publishAt = patch.publish_at ?? previous.publish_at;
@@ -1332,8 +1333,13 @@ export const dataActions = {
       const nextUrls = assignmentAttachmentUrls({ ...previous, ...patch });
       await attachFiles(supabase, nextUrls, id, [requireTeacher(actor).userId]);
       const kept = new Set(keysFromUrls(nextUrls));
-      const oldKeys = keysFromUrls(assignmentAttachmentUrls(previous)).filter((key) => !kept.has(key));
-      if (oldKeys.length) after(() => removeFiles(supabase, oldKeys));
+      const removedUrls = assignmentAttachmentUrls(previous).filter((url) => { const [key] = keysFromUrls([url]); return key && !kept.has(key); });
+      if (removedUrls.length) {
+        // Copies in other classrooms share the same files; those stay.
+        const shared = await attachmentKeysInUse(supabase, removedUrls, [id]);
+        const oldKeys = keysFromUrls(removedUrls).filter((key) => !shared.has(key));
+        if (oldKeys.length) after(() => removeFiles(supabase, oldKeys));
+      }
     }
 
     const next = (updated as Assignment) || { ...previous, ...patch };

@@ -756,18 +756,27 @@ Handing in again clears the current score and comments for regrading (their on-t
                 {assignment?.title || t('grading.title')}
               </h1>
               {assignment && grader && (
-                <Link
-                  href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
-                  className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
-                >
-                  ✏️ <span className="hidden sm:inline">{th ? 'แก้ไขงาน' : 'Edit'}</span>
-                </Link>
+                <div className="shrink-0 flex items-center gap-1.5">
+                  <Link
+                    href={`/assignments/new?copy=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
+                    title={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-sky-600 hover:border-sky-400 transition-colors"
+                  >
+                    📋 <span className="hidden sm:inline">{th ? 'คัดลอก' : 'Copy'}</span>
+                  </Link>
+                  <Link
+                    href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
+                  >
+                    ✏️ <span className="hidden sm:inline">{th ? 'แก้ไขงาน' : 'Edit'}</span>
+                  </Link>
+                </div>
               )}
             </div>
             {assignment?.description && (
               <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">{assignment.description}</p>
             )}
-            {assignment && !assignment.is_exam && (
+            {assignment && (
               <AttachmentList attachments={assignmentAttachments(assignment)} size="sm" className="pt-1 sm:grid-cols-2 lg:grid-cols-3 max-w-4xl" />
             )}
           </div>
