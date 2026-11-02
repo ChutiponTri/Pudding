@@ -14,6 +14,8 @@ import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { AssignmentProgressCard } from '@/components/AssignmentProgressCard';
+import { AssignmentGroupHeader, teacherGroupChips } from '@/components/AssignmentGroupHeader';
+import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { gradingCounts, isGraded, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { roomLabel } from '@/lib/utils/classroomLabel';
@@ -42,7 +44,6 @@ import {
   Filter,
   FolderPlus,
   GripVertical,
-  Layers,
   Megaphone,
   MessageSquare,
   Pencil,
@@ -994,6 +995,10 @@ export default function ClassroomWorkspacePage() {
     return !!c && classworkFilterOf(c) === classworkFilter;
   };
 
+  // Collapsed categories, remembered per classroom. Default groups use a language-independent key.
+  const { isOpen: isClassworkGroupOpen, toggle: toggleClassworkGroup } = useCollapsedGroups(`classwork:${classroomId}`);
+  const classworkFoldKey = (group: string) =>
+    group === tr('ข้อสอบ', 'Exam') ? '__exam' : group === tr('งานทั่วไป', 'General') ? '__general' : group;
   const groupKeyOf = (item: Assignment) => item.group_name || (item.is_exam ? tr('ข้อสอบ', 'Exam') : tr('งานทั่วไป', 'General'));
   // Dragged order first (new work without a position on top), then newest first.
   const byClassworkOrder = (a: Assignment, b: Assignment) =>
@@ -2103,23 +2108,19 @@ export default function ClassroomWorkspacePage() {
                         : 'border-transparent bg-slate-100/60 dark:bg-slate-900/40'
                     }`}
                   >
-                    <div className="flex items-center gap-2 px-1">
-                      <span className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-600">
-                        <Layers className="w-4 h-4" />
-                      </span>
-                      <h3 className="font-black text-sm text-slate-900 dark:text-white">
-                        {group} <span className="text-slate-400 font-normal">({items.length})</span>
-                      </h3>
-                      {(() => {
-                        const left = items.reduce((sum, a) => sum + (classworkCounts.get(a.id)?.pending || 0), 0);
-                        return left > 0 ? (
-                          <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-bold">
-                            {tr('รอตรวจ', 'To grade')} {left}
-                          </span>
-                        ) : null;
-                      })()}
-                    </div>
+                    <AssignmentGroupHeader
+                      title={group}
+                      count={items.length}
+                      open={isClassworkGroupOpen(classworkFoldKey(group))}
+                      onToggle={() => toggleClassworkGroup(classworkFoldKey(group))}
+                      chips={teacherGroupChips(
+                        items.map((a) => ({ assignment: a, counts: classworkCounts.get(a.id) || gradingCounts([], classroom.students?.length || 0, a.is_exam) })),
+                        language === 'th'
+                      )}
+                    />
 
+                    <Collapse open={isClassworkGroupOpen(classworkFoldKey(group))}>
+                    <div className="space-y-3 pt-1">
                     {items.length === 0 && (
                       <div className="py-6 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-center text-[11px] text-slate-400">
                         {tr('ลากงานมาวางที่นี่ หรือกด “ย้ายกลุ่ม” ที่งาน', 'Drag work here, or use “Move group” on an item')}
@@ -2206,6 +2207,8 @@ export default function ClassroomWorkspacePage() {
                         );
                       })}
                     </div>
+                    </div>
+                    </Collapse>
                   </div>
                 ))}
               </div>

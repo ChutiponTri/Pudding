@@ -83,6 +83,8 @@ import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semeste
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader, MODAL_SHEET_FORM } from '@/components/ModalSheet';
 import { Collapse } from '@/components/Collapse';
+import { AssignmentGroupHeader, assignmentGroupKey, assignmentGroupLabel, teacherGroupChips } from '@/components/AssignmentGroupHeader';
+import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { MobileText } from '@/components/MobileText';
 
 /**
@@ -580,8 +582,8 @@ export function TeacherWorkspace({
       assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSize.get(a.classroom_id) || 0, a.is_exam)])
     );
   }, [filteredSubmissions, assignments, classrooms]);
-  // Course cards: the "still to grade" group starts open; the teacher can fold it per course.
-  const [foldedToGradeCourses, setFoldedToGradeCourses] = useState<Record<string, boolean>>({});
+  // Course cards: the "still to grade" group and its categories start open; folds are remembered.
+  const { isOpen: isFoldOpen, toggle: toggleFold } = useCollapsedGroups('dashboard');
   const assignmentsToGradeCount = useMemo(
     () => [...gradingByAssignment.values()].filter((g) => g.pending > 0).length,
     [gradingByAssignment]
@@ -1829,7 +1831,15 @@ export function TeacherWorkspace({
                 if (toGrade.length === 0 && unpublished.length === 0) return null;
                 const pendingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).pending, 0);
                 const missingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).notSubmitted, 0);
-                const open = !foldedToGradeCourses[course.id];
+                const open = isFoldOpen(course.id);
+                const categories = (() => {
+                  const groups = new Map<string, Assignment[]>();
+                  for (const asg of [...toGrade, ...unpublished]) {
+                    const key = assignmentGroupKey(asg);
+                    groups.set(key, [...(groups.get(key) || []), asg]);
+                  }
+                  return [...groups.entries()];
+                })();
                 const row = (asg: Assignment) => {
                   const c = countsOf(asg);
                   const pending = c.pending > 0;
@@ -1918,7 +1928,7 @@ export function TeacherWorkspace({
                     <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 ring-1 ring-amber-200 dark:ring-amber-900/50 overflow-hidden">
                       <button
                         type="button"
-                        onClick={() => setFoldedToGradeCourses((prev) => ({ ...prev, [course.id]: open }))}
+                        onClick={() => toggleFold(course.id)}
                         aria-expanded={open}
                         className="group/tograde w-full flex items-center gap-2.5 p-3 text-left hover:bg-amber-100/50 dark:hover:bg-amber-900/20 transition-colors cursor-pointer"
                       >
@@ -1939,17 +1949,30 @@ export function TeacherWorkspace({
                       </button>
                       <Collapse open={open}>
                         <div className="px-3 pb-3 space-y-3">
-                          {toGrade.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{toGrade.map(row)}</div>}
-                          {unpublished.length > 0 && (
-                            <div className="space-y-2">
-                              {toGrade.length > 0 && (
-                                <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                                  {language === 'th' ? `ยังไม่เผยแพร่ (${unpublished.length})` : `Not published yet (${unpublished.length})`}
-                                </p>
-                              )}
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{unpublished.map(unpublishedRow)}</div>
-                            </div>
-                          )}
+                          {/* By classwork category; each fold is remembered per course. */}
+                          {categories.map(([key, items]) => {
+                            const foldKey = `${course.id}:${key}`;
+                            const groupOpen = isFoldOpen(foldKey);
+                            const graded = items.filter(isAssignmentPublished);
+                            const drafts = items.filter((asg) => !isAssignmentPublished(asg));
+                            return (
+                              <div key={key} className="rounded-2xl bg-white/60 dark:bg-slate-900/40 ring-1 ring-amber-200/70 dark:ring-amber-900/40 p-2 space-y-2">
+                                <AssignmentGroupHeader
+                                  title={assignmentGroupLabel(key, language === 'th')}
+                                  count={items.length}
+                                  open={groupOpen}
+                                  onToggle={() => toggleFold(foldKey)}
+                                  chips={teacherGroupChips(items.map((asg) => ({ assignment: asg, counts: countsOf(asg) })), language === 'th')}
+                                />
+                                <Collapse open={groupOpen}>
+                                  <div className="space-y-2.5 pt-0.5">
+                                    {graded.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{graded.map(row)}</div>}
+                                    {drafts.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{drafts.map(unpublishedRow)}</div>}
+                                  </div>
+                                </Collapse>
+                              </div>
+                            );
+                          })}
                         </div>
                       </Collapse>
                     </div>

@@ -9,6 +9,9 @@ import { Assignment, Classroom, Course } from '@/types/database';
 import { dataService } from '@/lib/supabase/dataService';
 import { AssignmentProgressCard, GradingBar } from '@/components/AssignmentProgressCard';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
+import { AssignmentGroupHeader, assignmentGroupKey, assignmentGroupLabel, teacherGroupChips } from '@/components/AssignmentGroupHeader';
+import { Collapse } from '@/components/Collapse';
+import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { BookOpen, FileCheck, ChevronRight, ArrowLeft, ShieldAlert, Clock, CheckCircle2, Check, School } from 'lucide-react';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
@@ -53,6 +56,9 @@ function GradingHubContent() {
       `/assignments/${legacyAssignmentId}/grading?from=grading${selectedCourseId ? `&courseId=${encodeURIComponent(selectedCourseId)}` : ''}`
     );
   }, [legacyAssignmentId, router, selectedCourseId]);
+
+  // Collapsed categories, remembered per course.
+  const { isOpen: isGroupOpen, toggle: toggleGroup } = useCollapsedGroups(`grading:${selectedCourseId || ''}`);
 
   const courses = useMemo(() => data?.courses || [], [data]);
   const classrooms = useMemo(() => data?.classrooms || [], [data]);
@@ -174,8 +180,23 @@ function GradingHubContent() {
 
   const visibleTasks = classroomFilter ? courseTasks.filter((item) => item.classroom.id === classroomFilter) : courseTasks;
   // Same split as the dashboard course cards: work left to grade, then everything else.
-  const toGradeTasks = visibleTasks.filter((i) => i.pending > 0);
-  const gradedTasks = visibleTasks.filter((i) => i.pending === 0);
+  // Grouped by the classwork category, the categories with work left to grade first;
+  // inside a category, work left to grade comes first.
+  const taskGroups = (() => {
+    const groups = new Map<string, TaskItem[]>();
+    for (const item of visibleTasks) {
+      const key = assignmentGroupKey(item.assignment);
+      groups.set(key, [...(groups.get(key) || []), item]);
+    }
+    return [...groups.entries()]
+      .map(([key, items]) => [key, [...items].sort((a, b) => Number(b.pending > 0) - Number(a.pending > 0))] as const)
+      .sort(([ka, a], [kb, b]) => {
+        const pa = a.some((i) => i.pending > 0);
+        const pb = b.some((i) => i.pending > 0);
+        if (pa !== pb) return Number(pb) - Number(pa);
+        return assignmentGroupLabel(ka, th).localeCompare(assignmentGroupLabel(kb, th), 'th');
+      });
+  })();
   const currentHref = `/grading${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
   const coursePending = courseTasks.reduce((sum, i) => sum + i.pending, 0);
   const courseCheckable = courseTasks.reduce((sum, i) => sum + i.checkable, 0);
@@ -458,35 +479,31 @@ function GradingHubContent() {
               </Link>
             </div>
           ) : (
-            <div className="space-y-6">
-              {/* ต้องตรวจ */}
-              <section className="space-y-3">
-                <h2 className="px-1 flex items-center gap-2 text-sm font-black text-amber-700 dark:text-amber-400">
-                  <Clock className="w-4 h-4" />
-                  <span>{th ? 'ต้องตรวจ' : 'To grade'}</span>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px]">{toGradeTasks.length}</span>
-                </h2>
-                {toGradeTasks.length === 0 ? (
-                  <div className="p-6 rounded-3xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-center">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-                    <p className="mt-2 text-sm font-bold text-emerald-700 dark:text-emerald-300">{th ? 'ตรวจครบทุกงานแล้ว 🎉' : 'Nothing left to grade 🎉'}</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">{toGradeTasks.map(renderTask)}</div>
-                )}
-              </section>
-
-              {/* ตรวจครบแล้ว */}
-              {gradedTasks.length > 0 && (
-                <section className="space-y-3">
-                  <h2 className="px-1 flex items-center gap-2 text-sm font-black text-emerald-700 dark:text-emerald-400">
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>{th ? 'ตรวจครบแล้ว' : 'Graded'}</span>
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[11px]">{gradedTasks.length}</span>
-                  </h2>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">{gradedTasks.map(renderTask)}</div>
-                </section>
+            <div className="space-y-4">
+              {coursePending === 0 && (
+                <div className="p-4 rounded-3xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                  <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{th ? 'ตรวจครบทุกงานแล้ว 🎉' : 'Nothing left to grade 🎉'}</p>
+                </div>
               )}
+              {/* One collapsible section per category; the fold is remembered per course. */}
+              {taskGroups.map(([key, items]) => {
+                const open = isGroupOpen(key);
+                return (
+                  <section key={key} className="rounded-3xl p-3 sm:p-4 space-y-3 bg-slate-100/60 dark:bg-slate-900/40">
+                    <AssignmentGroupHeader
+                      title={assignmentGroupLabel(key, th)}
+                      count={items.length}
+                      open={open}
+                      onToggle={() => toggleGroup(key)}
+                      chips={teacherGroupChips(items.map(({ assignment, ...counts }) => ({ assignment, counts })), th)}
+                    />
+                    <Collapse open={open}>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 pt-1">{items.map(renderTask)}</div>
+                    </Collapse>
+                  </section>
+                );
+              })}
             </div>
           )}
         </div>

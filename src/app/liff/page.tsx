@@ -2,6 +2,9 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Avatar } from '@/components/Avatar';
+import { AssignmentGroupHeader, assignmentGroupKey, assignmentGroupLabel, type GroupChip } from '@/components/AssignmentGroupHeader';
+import { Collapse } from '@/components/Collapse';
+import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import {
   CheckCircle2,
   Clock,
@@ -1565,6 +1568,9 @@ export default function LiffStudentPage() {
   // ==========================================
   // VIEW: 1. Loading State
   // ==========================================
+  // Collapsed work categories, remembered per classroom on this device.
+  const { isOpen: isWorkGroupOpen, toggle: toggleWorkGroup } = useCollapsedGroups('liff-work');
+
   if (authStatus === "loading") {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-6 text-center gap-5 min-h-dvh">
@@ -2304,14 +2310,33 @@ export default function LiffStudentPage() {
               <section className="space-y-4">
                 {Object.entries(
                   pendingAssignments.concat(completedAssignments).reduce<Record<string, Assignment[]>>((groups, item) => {
-                    const key = item.group_name || (item.is_exam ? 'ข้อสอบ' : 'งานทั่วไป');
+                    const key = assignmentGroupKey(item);
                     (groups[key] ||= []).push(item);
                     return groups;
                   }, {})
-                ).map(([group, items]) => (
+                ).map(([group, items]) => {
+                  const foldKey = `${selectedClassroom?.id || 'all'}:${group}`;
+                  const groupOpen = isWorkGroupOpen(foldKey);
+                  // What is still open in this category, so a folded one still says it.
+                  const notDone = items.filter((a) => !submissions[a.id] && getAssignmentWindow(a).acceptsSubmissions).length;
+                  const waiting = items.filter((a) => submissions[a.id] && submissions[a.id].status !== 'pending' && !gradedSubmissionIds.has(submissions[a.id].id)).length;
+                  const chips: GroupChip[] = [
+                    ...(notDone > 0 ? [{ tone: 'amber' as const, label: `ยังไม่ส่ง ${notDone} งาน` }] : []),
+                    ...(waiting > 0 ? [{ tone: 'sky' as const, label: `รอครูตรวจ ${waiting} งาน` }] : []),
+                  ];
+                  if (chips.length === 0) chips.push({ tone: 'emerald', label: 'ส่งครบแล้ว' });
+                  return (
                   <div key={group} className={`${CARD} p-4 sm:p-5 space-y-3`}>
-                    <SectionTitle icon={<Layers className="w-4 h-4 text-line" />} title={group} count={items.length} />
-                    <div className="grid gap-2.5 md:grid-cols-2">
+                    <AssignmentGroupHeader
+                      title={assignmentGroupLabel(group, true)}
+                      count={items.length}
+                      open={groupOpen}
+                      onToggle={() => toggleWorkGroup(foldKey)}
+                      chips={chips}
+                      icon={<Layers className="w-4 h-4 text-line" />}
+                    />
+                    <Collapse open={groupOpen}>
+                    <div className="grid gap-2.5 md:grid-cols-2 pt-1">
                       {items.map((assignment) => {
                         const submission = submissions[assignment.id];
                         const isSubmitted = Boolean(submission);
@@ -2401,8 +2426,10 @@ export default function LiffStudentPage() {
                         );
                       })}
                     </div>
+                    </Collapse>
                   </div>
-                ))}
+                  );
+                })}
 
                 {!pendingAssignments.length && !completedAssignments.length && (
                   <div className={CARD}>
