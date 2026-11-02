@@ -13,13 +13,14 @@ import {
   Sparkles,
   Users,
   ListChecks,
-  UserPlus,
+  LogIn,
   Home,
   ChevronDown,
   GripVertical,
   CalendarCog,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { studentLoginUrl } from '@/lib/line/liffLink';
 import { dataService, CLASSROOMS_CHANGED_EVENT } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
 import { useSidebar } from '@/components/SidebarContext';
@@ -59,7 +60,7 @@ const GuestSidebarContent: React.FC<{ onNavigate: () => void }> = ({ onNavigate 
           <div className="space-y-1">
             <p className="text-sm font-black">{th ? 'ยินดีต้อนรับสู่พุดดิ้ง' : 'Welcome to Pudding'}</p>
             <p className="text-xs font-medium text-slate-950/75 leading-relaxed">
-              {th ? 'เข้าสู่ระบบเพื่อดูห้องเรียน รายวิชา และงานของคุณครู' : 'Sign in to see your classes, courses and work.'}
+              {th ? 'คุณครูเข้าสู่ระบบด้วย LINE ครั้งแรกระบบสร้างบัญชีให้อัตโนมัติ' : 'Teachers sign in with LINE; first sign-in creates your account.'}
             </p>
           </div>
           <Link
@@ -67,16 +68,18 @@ const GuestSidebarContent: React.FC<{ onNavigate: () => void }> = ({ onNavigate 
             onClick={onNavigate}
             className="w-full h-11 rounded-xl bg-line hover:bg-line-dark text-white text-sm font-bold flex items-center justify-center gap-2 shadow-sm shadow-emerald-700/25 transition-all active:scale-[0.98]"
           >
-            {th ? 'เข้าสู่ระบบด้วย LINE' : 'Sign in with LINE'}
+            <LogIn className="w-4 h-4" />
+            {th ? 'เข้าสู่ระบบครู' : 'Teacher login'}
           </Link>
-          <Link
-            href="/sign-up"
+          {/* Students skip Clerk: the LIFF app signs them in with LINE */}
+          <a
+            href={studentLoginUrl()}
             onClick={onNavigate}
-            className="w-full h-10 rounded-xl bg-white/80 hover:bg-white text-slate-950 text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]"
+            className="w-full h-11 rounded-xl bg-white/80 hover:bg-white text-slate-950 text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
           >
-            <UserPlus className="w-3.5 h-3.5" />
-            {th ? 'ครูใหม่? สมัครใช้งาน' : 'New teacher? Sign up'}
-          </Link>
+            <GraduationCap className="w-4 h-4" />
+            {th ? 'เข้าสู่ระบบนักเรียน' : 'Student login'}
+          </a>
         </div>
 
         {/* Page sections */}
@@ -104,8 +107,8 @@ const GuestSidebarContent: React.FC<{ onNavigate: () => void }> = ({ onNavigate 
           </p>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
             {th
-              ? 'นักเรียนไม่ต้องเข้าสู่ระบบที่นี่ ใช้ลิงก์ LINE ที่คุณครูส่งให้ในกลุ่มห้องเรียน'
-              : "Students don't sign in here. Use the LINE link your teacher shared in the class group."}
+              ? 'กด "เข้าสู่ระบบนักเรียน" เพื่อเปิดพุดดิ้งใน LINE หรือใช้ลิงก์ที่คุณครูส่งในกลุ่มห้องเรียน'
+              : 'Tap "Student login" to open Pudding in LINE, or use the link your teacher shared in the class group.'}
           </p>
         </div>
     </div>

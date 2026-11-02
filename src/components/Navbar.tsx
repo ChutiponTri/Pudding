@@ -11,9 +11,11 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 import { ThemeToggle } from './ThemeToggle';
 import {
   Bell,
+  GraduationCap,
   LogIn,
   Menu,
 } from 'lucide-react';
+import { studentLoginUrl } from '@/lib/line/liffLink';
 
 const noopSubscribe = () => () => {};
 
@@ -234,14 +236,24 @@ export const Navbar: React.FC = () => {
           </Show>
 
           <Show when={"signed-out"}>
-            <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
+            {/* Phones show just "ครู" / "นักเรียน"; the login icon carries the meaning */}
+            <div className="flex items-center gap-1.5 sm:gap-2 pl-1.5 sm:pl-2 border-l border-slate-200 dark:border-slate-800">
               <Link
                 href="/sign-in"
-                className="px-3.5 py-2 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-sm shadow-amber-500/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-[0.98]"
+                className="h-8 px-3 sm:px-3.5 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-sm shadow-amber-500/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-[0.98] whitespace-nowrap"
               >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>{language === "th" ? "เข้าสู่ระบบ" : "Sign In"}</span>
+                <LogIn className="w-3.5 h-3.5 shrink-0" />
+                <span className="sm:hidden">{language === "th" ? "ครู" : "Teacher"}</span>
+                <span className="hidden sm:inline">{language === "th" ? "เข้าสู่ระบบครู" : "Teacher login"}</span>
               </Link>
+              <a
+                href={studentLoginUrl()}
+                className="h-8 px-3 sm:px-3.5 rounded-full bg-line hover:bg-line-dark text-white font-bold text-xs shadow-sm shadow-emerald-600/25 transition-all flex items-center gap-1.5 cursor-pointer active:scale-[0.98] whitespace-nowrap"
+              >
+                <GraduationCap className="w-3.5 h-3.5 shrink-0" />
+                <span className="sm:hidden">{language === "th" ? "นักเรียน" : "Student"}</span>
+                <span className="hidden sm:inline">{language === "th" ? "เข้าสู่ระบบนักเรียน" : "Student login"}</span>
+              </a>
             </div>
           </Show>
         </div>

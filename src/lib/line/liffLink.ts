@@ -30,3 +30,12 @@ export function withLiffLink(message: string, label: string, options: Parameters
   const url = buildLiffUrl(options);
   return url ? `${message}\n\n👉 ${label}\n${url}` : message;
 }
+
+/**
+ * Where the "student login" buttons on the public site point: the LIFF app
+ * (opens LINE on phones, LINE Login on desktop), or the in-app /liff route
+ * when no LIFF id is configured.
+ */
+export function studentLoginUrl(): string {
+  return buildLiffUrl() ?? '/liff';
+}

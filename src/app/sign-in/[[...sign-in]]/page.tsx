@@ -48,7 +48,8 @@ export default function SignInPage() {
           }}
           routing="path"
           path="/sign-in"
-          signUpUrl="/sign-up"
+          // Sign-in-or-up: a first-time LINE teacher gets an account here; no separate sign-up page.
+          withSignUp
           fallbackRedirectUrl="/dashboard"
         />
       </div>

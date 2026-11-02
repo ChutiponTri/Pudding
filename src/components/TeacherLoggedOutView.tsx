@@ -10,9 +10,10 @@ import {
   BookOpen,
   Send,
   CheckCircle2,
-  ArrowRight,
+  GraduationCap,
 } from "lucide-react";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { studentLoginUrl } from "@/lib/line/liffLink";
 
 /** LINE's logo mark: a speech bubble with "LINE" knocked out. */
 const LineMark: React.FC<{ className?: string }> = ({ className = "w-5 h-5" }) => (
@@ -21,14 +22,25 @@ const LineMark: React.FC<{ className?: string }> = ({ className = "w-5 h-5" }) =
   </svg>
 );
 
-const SignInButton: React.FC<{ th: boolean; className?: string }> = ({ th, className = "" }) => (
+const TeacherLoginButton: React.FC<{ th: boolean; className?: string }> = ({ th, className = "" }) => (
   <Link
     href="/sign-in"
     className={`h-13 px-6 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-base shadow-lg shadow-emerald-600/25 transition-all hover:-translate-y-0.5 active:scale-[0.98] inline-flex items-center justify-center gap-2.5 ${className}`}
   >
     <LineMark className="w-5 h-5" />
-    <span>{th ? "เข้าสู่ระบบด้วย LINE" : "Sign in with LINE"}</span>
+    <span>{th ? "เข้าสู่ระบบครู" : "Teacher login"}</span>
   </Link>
+);
+
+/** Students never use Clerk: this opens the LIFF student app (LINE Login on desktop). */
+const StudentLoginButton: React.FC<{ th: boolean; className?: string }> = ({ th, className = "" }) => (
+  <a
+    href={studentLoginUrl()}
+    className={`h-13 px-6 rounded-2xl font-bold text-base transition-all hover:-translate-y-0.5 active:scale-[0.98] inline-flex items-center justify-center gap-2.5 ${className}`}
+  >
+    <GraduationCap className="w-5 h-5" />
+    <span>{th ? "เข้าสู่ระบบนักเรียน" : "Student login"}</span>
+  </a>
 );
 
 export const TeacherLoggedOutView: React.FC = () => {
@@ -39,7 +51,7 @@ export const TeacherLoggedOutView: React.FC = () => {
     {
       icon: <LineMark className="w-5 h-5" />,
       title: th ? "เข้าสู่ระบบด้วย LINE" : "Sign in with LINE",
-      body: th ? "ไม่ต้องจำรหัสผ่าน บัญชี LINE ของคุณครูเชื่อมกับ Pudding Bot ให้อัตโนมัติ" : "No password. Your LINE account is linked to Pudding Bot automatically.",
+      body: th ? "ครั้งแรกระบบสร้างบัญชีให้เลย ไม่ต้องจำรหัสผ่าน บัญชี LINE ของคุณครูเชื่อมกับ Pudding Bot ให้อัตโนมัติ" : "First sign-in creates your account. No password; your LINE account is linked to Pudding Bot automatically.",
     },
     {
       icon: <BookOpen className="w-5 h-5" />,
@@ -116,14 +128,11 @@ export const TeacherLoggedOutView: React.FC = () => {
             </p>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 pt-1">
-              <SignInButton th={th} className="w-full sm:w-auto" />
-              <Link
-                href="/sign-up"
-                className="h-13 px-6 rounded-2xl bg-white/80 hover:bg-white text-slate-950 font-bold text-sm transition-all active:scale-[0.98] inline-flex items-center justify-center gap-1.5 ring-1 ring-white/70"
-              >
-                {th ? "ครูใหม่? สมัครใช้งาน" : "New teacher? Sign up"}
-                <ArrowRight className="w-4 h-4" />
-              </Link>
+              <TeacherLoginButton th={th} className="w-full sm:w-auto" />
+              <StudentLoginButton
+                th={th}
+                className="w-full sm:w-auto bg-white/80 hover:bg-white text-slate-950 ring-1 ring-white/70"
+              />
             </div>
 
             <p className="text-xs text-slate-950/65 flex items-center justify-center lg:justify-start gap-1.5">
@@ -238,11 +247,14 @@ export const TeacherLoggedOutView: React.FC = () => {
           </h2>
           <p className="text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
             {th
-              ? "นักเรียนไม่ต้องสมัครที่หน้านี้ เมื่อคุณครูสร้างห้องเรียนแล้ว ระบบจะมีลิงก์ LINE ให้ส่งต่อให้นักเรียน"
-              : "Students don't sign up here. Once you create a class, you'll get a LINE link to share with them."}
+              ? "คุณครูเข้าสู่ระบบด้วย LINE ครั้งแรกระบบจะสร้างบัญชีให้อัตโนมัติ ส่วนนักเรียนเข้าใช้งานผ่าน LINE ได้ทันทีโดยไม่ต้องสมัคร"
+              : "Teachers sign in with LINE; your account is created on first sign-in. Students go straight in through LINE, no sign-up needed."}
           </p>
         </div>
-        <SignInButton th={th} className="w-full sm:w-auto" />
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3">
+          <TeacherLoginButton th={th} className="w-full sm:w-auto" />
+          <StudentLoginButton th={th} className="w-full sm:w-auto bg-white/10 hover:bg-white/15 text-white ring-1 ring-white/20" />
+        </div>
       </section>
     </div>
   );

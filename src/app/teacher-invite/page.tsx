@@ -126,7 +126,7 @@ function TeacherInviteContent() {
           </div>
           <h2 className="text-xl font-black text-slate-900 dark:text-white">{tr('คำเชิญเข้าร่วมสอน', 'Teaching invitation')}</h2>
           <p className="text-xs text-slate-500 dark:text-slate-400">{tr('เข้าสู่ระบบด้วยบัญชีครูเพื่อดูและยืนยันคำเชิญ', 'Sign in with your teacher account to view and accept the invite')}</p>
-          <SignInButton mode="modal">
+          <SignInButton mode="modal" withSignUp>
             <button type="button" className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm cursor-pointer">
               {tr('เข้าสู่ระบบเพื่อดูคำเชิญ', 'Sign in to view the invite')}
             </button>
@@ -296,7 +296,7 @@ function TeacherInviteContent() {
               <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
                 {tr('เข้าสู่ระบบด้วยบัญชีครูเพื่อยืนยันคำเชิญ', 'Sign in with your teacher account to accept the invite')}
               </p>
-              <SignInButton mode="modal">
+              <SignInButton mode="modal" withSignUp>
                 <button
                   type="button"
                   className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
