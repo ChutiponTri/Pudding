@@ -33,7 +33,7 @@ export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className =
       <button
         type="button"
         onClick={() => setLanguage('th')}
-        className={`px-2.5 py-1 rounded-full transition-all duration-200 flex items-center gap-1 ${
+        className={`px-2.5 py-1 rounded-full transition-all duration-200 flex items-center gap-1 cursor-pointer ${
           language === 'th'
             ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 font-bold shadow-xs'
             : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -46,7 +46,7 @@ export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className =
       <button
         type="button"
         onClick={() => setLanguage('en')}
-        className={`px-2.5 py-1 rounded-full transition-all duration-200 flex items-center gap-1 ${
+        className={`px-2.5 py-1 rounded-full transition-all duration-200 flex items-center gap-1 cursor-pointer ${
           language === 'en'
             ? 'bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-400 font-bold shadow-xs'
             : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'

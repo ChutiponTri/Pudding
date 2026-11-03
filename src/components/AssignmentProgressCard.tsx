@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { Calendar, CheckCircle2, ChevronDown, ChevronRight, Clock, Copy, Edit2, Inbox, Lock, Rocket, ShieldAlert, Trash2, Unlock } from 'lucide-react';
+import { Calendar, CalendarClock, CheckCircle2, ChevronDown, ChevronRight, Clock, Copy, Edit2, FilePen, Inbox, Lock, Rocket, ShieldAlert, Trash2, Unlock } from 'lucide-react';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { AttachmentList } from '@/components/AssignmentAttachments';
@@ -10,6 +10,25 @@ import { assignmentAttachments } from '@/lib/utils/referenceWork';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
 import type { GradingCounts } from '@/lib/utils/gradingStatus';
+import type { AssignmentStatusTone } from '@/lib/utils/assignmentWindow';
+
+/** Colour stripe across the top of the card, so the status reads at a glance. */
+const STATUS_STRIPE: Record<AssignmentStatusTone, string> = {
+  draft: 'bg-[repeating-linear-gradient(135deg,#cbd5e1_0_8px,transparent_8px_16px)] dark:bg-[repeating-linear-gradient(135deg,#475569_0_8px,transparent_8px_16px)]',
+  scheduled: 'bg-sky-500',
+  open: 'bg-emerald-500',
+  late: 'bg-amber-500',
+  closed: 'bg-rose-500',
+};
+
+/** Dot inside the status badge; it pulses while the work is taking submissions. */
+const STATUS_DOT: Record<AssignmentStatusTone, string> = {
+  draft: 'bg-slate-400',
+  scheduled: 'bg-sky-500',
+  open: 'bg-emerald-500',
+  late: 'bg-amber-500',
+  closed: 'bg-rose-500',
+};
 
 /** Graded / waiting for the teacher / not handed in, as one bar. */
 export function GradingBar({ graded, pending, notSubmitted }: { graded: number; pending: number; notSubmitted: number }) {
@@ -65,25 +84,33 @@ export function AssignmentProgressCard({
   const { totalStudents, handedIn, graded, scoredMissing, pending, checkable, notSubmitted, flagged } = counts;
   const win = getAssignmentWindow(assignment);
   const status = getAssignmentStatus(win, assignment.is_exam, language);
-  const StatusIcon = status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : Clock;
+  const StatusIcon =
+    status.tone === 'closed' ? Lock : status.tone === 'late' ? Unlock : status.tone === 'draft' ? FilePen : status.tone === 'scheduled' ? CalendarClock : Clock;
   const deadline = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), language) : null;
   const done = pending === 0 && graded > 0;
   const attachments = assignmentAttachments(assignment);
 
-  const statusBadgeClass = `ml-auto px-2 py-0.5 rounded-full border text-[11px] font-bold inline-flex items-center gap-1 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
+  const statusBadgeClass = `ml-auto px-2.5 py-1 rounded-full border text-xs font-black inline-flex items-center gap-1.5 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
   const statusContent = (
     <>
-      <StatusIcon className="w-3 h-3" />
+      <span className="relative flex w-2 h-2">
+        {status.tone === 'open' && <span className="absolute inset-0 rounded-full bg-emerald-400 opacity-75 animate-ping" />}
+        <span className={`relative w-2 h-2 rounded-full ${STATUS_DOT[status.tone]}`} />
+      </span>
+      <StatusIcon className="w-3.5 h-3.5" />
       {status.label}
     </>
   );
 
   return (
     <div
-      className={`bg-white dark:bg-slate-900 rounded-3xl border p-4 sm:p-5 flex flex-col gap-4 shadow-xs transition-colors ${
+      className={`relative overflow-hidden rounded-3xl border p-4 pt-5 sm:p-5 sm:pt-6 flex flex-col gap-4 shadow-xs transition-colors ${
+        status.tone === 'draft' ? 'bg-slate-50 dark:bg-slate-900/60' : 'bg-white dark:bg-slate-900'
+      } ${
         pending > 0 ? 'border-amber-300 dark:border-amber-800/70' : status.tone === 'draft' ? 'border-dashed border-slate-300 dark:border-slate-700' : 'border-slate-200 dark:border-slate-800'
       } ${className}`}
     >
+      <div aria-hidden className={`absolute inset-x-0 top-0 h-1.5 ${STATUS_STRIPE[status.tone]}`} />
       {/* Where it belongs, what it is, and whether it still takes work */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">

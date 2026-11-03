@@ -141,6 +141,33 @@ video {
   --tw-enter-translate-x: -100%;
 }
 
+/* Student LIFF: the "waiting for the teacher" dash on the join-approval ring
+   (JoinApprovalRing) runs along the last segment; the check pops in on approval. */
+@keyframes join-ring {
+  0% {
+    stroke-dashoffset: var(--seg-start);
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: var(--seg-end);
+    opacity: 0.4;
+  }
+}
+@keyframes join-pop {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-[join-ring"] {
+    animation: none;
+  }
+}
+
 /* Modals: every centered dialog pops in and every bottom sheet rises, matched by
    the shared overlay classes so new dialogs get it without extra markup.
    Unlayered on purpose: it supersedes any animate-* utility left on these

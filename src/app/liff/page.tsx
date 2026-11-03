@@ -59,6 +59,7 @@ import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploa
 import { formatMegabytes, IMAGE_MAX_BYTES, normalizeLink, PDF_MAX_BYTES } from "@/lib/storage/uploadRules";
 import { classroomTitle, roomLabel, subjectCode, subjectName } from "@/lib/utils/classroomLabel";
 import { personNameError, studentProfileError } from "@/lib/utils/studentName";
+import { JoinApprovalRing, type JoinApprovalState } from "@/components/liff/JoinApprovalRing";
 
 /** Older questions marked file answers with these flags instead of type 'file_upload'. */
 type LegacyUploadQuestion = Question & { allow_upload?: boolean; requires_file?: boolean };
@@ -483,6 +484,13 @@ export default function LiffStudentPage() {
     }
   };
 
+  /** Asked to join this classroom and the teacher has not accepted yet. */
+  const isAwaitingApproval = (cls: Classroom | null | undefined) => {
+    if (!cls || !currentStudent) return false;
+    const mine = (s: { id?: string; line_uid?: string }) => s.id === currentStudent.id || s.line_uid === currentStudent.line_uid;
+    return Boolean(cls.pending_students?.some(mine) && !cls.students?.some(mine));
+  };
+
   // Classroom Admission Security: Check if student is pending approval in selected classroom
   const isSelectedClassroomPending = useMemo(() => {
     if (!selectedClassroom || !currentStudent) return false;
@@ -623,7 +631,14 @@ export default function LiffStudentPage() {
   const processedEnrollRef = useRef<string | null>(null);
   // Deep link from a LINE message (?assignmentId=…, ?view=attendance), applied
   // once the student's classrooms, work and submissions have loaded.
-  const pendingDeepLinkRef = useRef<{ assignmentId?: string; view?: "timeline" | "work" | "attendance" } | null>(null);
+  const pendingDeepLinkRef = useRef<{ classroomId?: string; assignmentId?: string; view?: "timeline" | "work" | "attendance" } | null>(null);
+  // A LINE link into a classroom the teacher has not admitted this student to
+  // yet: the progress ring shows until they are accepted, then the link opens.
+  const [joinWait, setJoinWait] = useState<{
+    classroomId: string;
+    assignmentId?: string;
+    view?: "timeline" | "work" | "attendance";
+  } | null>(null);
 
   // Graded Detail Modal
   // questions is null while the sheet loads; loadFailed shows a retry instead.
@@ -903,7 +918,9 @@ export default function LiffStudentPage() {
           const assignmentParam = params.get("assignmentId") || undefined;
           const viewParam = params.get("view");
           const view = viewParam === "attendance" || viewParam === "work" || viewParam === "timeline" ? viewParam : undefined;
-          if (assignmentParam || view) pendingDeepLinkRef.current = { assignmentId: assignmentParam, view };
+          if (assignmentParam || view || linkedClass || classIdParam) {
+            pendingDeepLinkRef.current = { classroomId: linkedClass?.id || classIdParam || undefined, assignmentId: assignmentParam, view };
+          }
         }
 
         let home = firstHome;
@@ -1556,6 +1573,13 @@ export default function LiffStudentPage() {
     const link = pendingDeepLinkRef.current;
     if (!link || isLoadingData || !currentStudent) return;
     pendingDeepLinkRef.current = null;
+    // Still waiting for the teacher: show the ring and open the link once admitted.
+    const targetClassroomId = link.classroomId || assignments.find((item) => item.id === link.assignmentId)?.classroom_id;
+    const targetClassroom = classrooms.find((c) => c.id === targetClassroomId);
+    if (targetClassroom && isAwaitingApproval(targetClassroom)) {
+      setJoinWait({ classroomId: targetClassroom.id, assignmentId: link.assignmentId, view: link.view });
+      return;
+    }
     if (link.assignmentId) {
       const assignment = assignments.find((item) => item.id === link.assignmentId);
       if (!assignment) return;
@@ -1569,6 +1593,34 @@ export default function LiffStudentPage() {
       setCourseTab(link.view);
     }
   }, [isLoadingData, assignments, classrooms, submissions]);
+
+  // The teacher's answer to the join request (classrooms reload when it changes):
+  // admitted → the ring fills, then what the link pointed at opens.
+  const joinWaitClassroom = joinWait ? classrooms.find((c) => c.id === joinWait.classroomId) : undefined;
+  const joinWaitState: JoinApprovalState | null = !joinWait
+    ? null
+    : isAwaitingApproval(joinWaitClassroom)
+    ? "waiting"
+    : joinWaitClassroom?.students?.some((s) => s.id === currentStudent?.id || s.line_uid === currentStudent?.line_uid)
+    ? "approved"
+    : "rejected";
+
+  useEffect(() => {
+    if (!joinWait || joinWaitState !== "approved") return;
+    const timer = setTimeout(() => {
+      setJoinWait(null);
+      const cls = classrooms.find((c) => c.id === joinWait.classroomId);
+      if (!cls) return;
+      setSelectedClassroom(cls);
+      setCourseTab(joinWait.view || (joinWait.assignmentId ? "work" : "timeline"));
+      const assignment = joinWait.assignmentId ? assignments.find((a) => a.id === joinWait.assignmentId) : undefined;
+      if (!assignment) return;
+      const submission = submissions[assignment.id];
+      if (submission) handleOpenGradedDetail(assignment, submission);
+      else handleOpenAssignment(assignment);
+    }, 1400);
+    return () => clearTimeout(timer);
+  }, [joinWaitState]);
 
   // ==========================================
   // VIEW: 1. Loading State
@@ -2274,9 +2326,8 @@ export default function LiffStudentPage() {
             </div>
 
             {isSelectedClassroomPending && (
-              <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-sm text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
-                <Clock className="w-4 h-4 mt-0.5 shrink-0" />
-                <span>รอคุณครูอนุมัติ แล้วจะทำงานได้ทันที</span>
+              <div className="p-4 rounded-2xl bg-amber-50/60 dark:bg-amber-950/30 ring-1 ring-amber-200 dark:ring-amber-900">
+                <JoinApprovalRing compact state="waiting" classroomName={classroomTitle(selectedClassroom)} />
               </div>
             )}
 
@@ -3203,6 +3254,33 @@ export default function LiffStudentPage() {
       )}
 
       {/* JOIN CLASSROOM MODAL */}
+      {/* Opened a LINE link into a classroom the teacher has not admitted us to yet */}
+      {joinWait && (() => {
+        const cls = joinWaitClassroom;
+        const assignment = joinWait.assignmentId ? assignments.find((a) => a.id === joinWait.assignmentId) : undefined;
+        const target = assignment
+          ? `${assignment.is_exam ? "ข้อสอบ" : "งาน"} “${assignment.title}”`
+          : joinWait.view === "attendance"
+          ? "หน้าเช็คชื่อ"
+          : undefined;
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-sm flex items-center justify-center p-6 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))] animate-fade">
+            <div className={`${CARD} w-full max-w-sm p-6 space-y-6`} role="status" aria-live="polite">
+              <JoinApprovalRing state={joinWaitState || "waiting"} classroomName={cls ? classroomTitle(cls) : "ห้องเรียน"} target={target} />
+              {joinWaitState !== "approved" && (
+                <button
+                  type="button"
+                  onClick={() => setJoinWait(null)}
+                  className="w-full h-11 rounded-2xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                >
+                  {joinWaitState === "rejected" ? "กลับหน้าหลัก" : "ไปหน้าหลักก่อน"}
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {isJoinModalOpen && (
         <Sheet onClose={() => setIsJoinModalOpen(false)} size="sm">
           <div className="space-y-1.5">
