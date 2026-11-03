@@ -30,7 +30,8 @@ import {
   UNAUTHORIZED,
 } from '@/lib/server/access';
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
-import { DRAFT_RETENTION_MS, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
+import { DRAFT_RETENTION_MS, canRecordNoSubmission, getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
+import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
 import { recomputeSubmissionTotals, regradeObjectiveQuestions } from '@/lib/server/grading';
 import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
@@ -1630,13 +1631,14 @@ export const dataActions = {
     if (!Array.isArray(grades) || grades.length === 0) return;
     const { data, error } = await supabase
       .from('submissions')
-      .select('id, assignment_id, submission_answers(*), assignment:assignments(id, classroom:classrooms(id, teacher_id, teachers), questions(id, max_score))')
+      .select('id, assignment_id, status, submission_answers(*), assignment:assignments(id, classroom:classrooms(id, teacher_id, teachers), questions(id, max_score))')
       .eq('id', submissionId)
       .maybeSingle();
     if (error) throw toDatabaseError(error, 'submissions');
     if (!data) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
     type Row = {
       assignment_id: string;
+      status: Submission['status'];
       submission_answers: SubmissionAnswer[] | null;
       assignment: { classroom: Pick<Classroom, 'id' | 'teacher_id' | 'teachers'> | null; questions: Pick<Question, 'id' | 'max_score'>[] | null } | null;
     };
@@ -1644,6 +1646,10 @@ export const dataActions = {
     const classroom = row.assignment?.classroom;
     if (!classroom) throw new HttpError(404, 'ไม่พบห้องเรียน');
     if (!isTeacherOf(classroom, me.userId)) throw FORBIDDEN();
+    // Only work the student handed in is graded. A student who handed in
+    // nothing gets "no submission" (an official 0) from recordMissingSubmissions,
+    // which also checks the deadline; any other score would grade work that does not exist.
+    if (!isHandedIn(row)) throw new HttpError(409, 'นักเรียนยังไม่ได้ส่งงาน จึงให้คะแนนไม่ได้ — หลังกำหนดส่งหรือปิดรับงาน ใช้ "บันทึกว่าไม่ส่ง" เพื่อให้ 0 คะแนน');
     // The grading role comes from the classroom, not from the browser.
     const teacherRole: TeacherRole = classroom.teacher_id === me.userId
       ? 'primary'
@@ -1725,18 +1731,19 @@ export const dataActions = {
   },
 
   /**
-   * Records work a student never handed in so the teacher can grade it, e.g. a
-   * zero once submissions are closed. The row stays 'pending' (not handed in),
-   * so the student may still hand in over it while the assignment accepts work.
-   * With `zero`, every question gets an official 0. Roster entries may carry
-   * users.id or the LINE id; students who already have a row are left alone.
-   * Returns the rows created.
+   * Records that students handed in nothing: a 'pending' row (not handed in)
+   * with an official 0 on every question. Allowed only once the deadline has
+   * passed or the work is closed (canRecordNoSubmission), so it never scores
+   * work a student could still hand in. While homework still takes late work,
+   * a student handing in replaces the 0 with their work. Roster entries may
+   * carry users.id or the LINE id. Students who handed in are left alone;
+   * rows already recorded are set to 0 again (e.g. after questions were added).
+   * Returns the rows recorded.
    */
   async recordMissingSubmissions(
     { supabase, actor }: Ctx,
     assignmentId: string,
     rosterIds: string[],
-    zero: boolean,
     teacherName: string
   ) {
     const me = requireTeacher(actor);
@@ -1745,6 +1752,9 @@ export const dataActions = {
       ? 'primary'
       : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role || 'assistant';
     if (teacherRole === 'researcher') throw new HttpError(403, 'ผู้วิจัยให้คะแนนจริงแทนคุณครูไม่ได้');
+    if (!canRecordNoSubmission(getAssignmentWindow(assignment))) {
+      throw new HttpError(409, 'บันทึกว่าไม่ส่งงานได้หลังเลยกำหนดส่งหรือปิดรับงานแล้วเท่านั้น');
+    }
 
     const wanted = new Set((Array.isArray(rosterIds) ? rosterIds : []).filter((id): id is string => typeof id === 'string' && !!id));
     const roster = (classroom.students || []).filter((s) => s && wanted.has(s.id));
@@ -1768,51 +1778,72 @@ export const dataActions = {
     ];
     if (!userIds.length) return [];
 
-    const existing = new Set<string>();
+    // Handed-in work is never touched; rows already recorded as not handed in are re-zeroed.
+    const handedIn = new Set<string>();
+    const recorded: Array<{ id: string; student_id: string }> = [];
     for (const part of chunk(userIds)) {
-      const { data, error } = await supabase.from('submissions').select('student_id').eq('assignment_id', assignmentId).in('student_id', part);
+      const { data, error } = await supabase.from('submissions').select('id, student_id, status').eq('assignment_id', assignmentId).in('student_id', part);
       if (error) throw toDatabaseError(error, 'submissions');
-      for (const row of data || []) existing.add(row.student_id as string);
+      for (const row of (data || []) as Array<{ id: string; student_id: string; status: Submission['status'] }>) {
+        if (isHandedIn(row)) handedIn.add(row.student_id);
+        else recorded.push(row);
+      }
     }
-    const missing = userIds.filter((id) => !existing.has(id));
-    if (!missing.length) return [];
+    const recordedIds = new Set(recorded.map((r) => r.student_id));
+    const missing = userIds.filter((id) => !handedIn.has(id) && !recordedIds.has(id));
 
     const { data: questions, error: qError } = await supabase.from('questions').select('id, max_score').eq('assignment_id', assignmentId);
     if (qError) throw toDatabaseError(qError, 'questions');
     const qs = (questions || []) as Pick<Question, 'id' | 'max_score'>[];
     const maxTotal = qs.reduce((sum, q) => sum + Number(q.max_score || 0), 0) || assignment.total_points || 20;
     const now = new Date().toISOString();
-    const rows = missing.map((studentId) => ({
-      id: `sub-${assignmentId}-${studentId}`,
-      assignment_id: assignmentId,
-      student_id: studentId,
-      status: 'pending',
-      started_at: now,
-      submitted_at: null,
-      time_spent_seconds: 0,
-      tab_switch_count: 0,
-      total_time_away_seconds: 0,
-      is_flagged_suspicious: false,
-      total_score: zero ? 0 : null,
-      max_total_score: maxTotal,
-    }));
-    // A student handing in at this very moment wins; their row is not replaced.
-    const { data: created, error: insertError } = await supabase
-      .from('submissions')
-      .upsert(rows, { onConflict: 'assignment_id,student_id', ignoreDuplicates: true })
-      .select('*');
-    if (insertError) throw toDatabaseError(insertError, 'submissions');
-    const createdRows = (created || []) as Array<{ id: string }>;
+    let createdRows: Array<{ id: string }> = [];
+    if (missing.length) {
+      const rows = missing.map((studentId) => ({
+        id: `sub-${assignmentId}-${studentId}`,
+        assignment_id: assignmentId,
+        student_id: studentId,
+        status: 'pending',
+        started_at: now,
+        submitted_at: null,
+        time_spent_seconds: 0,
+        tab_switch_count: 0,
+        total_time_away_seconds: 0,
+        is_flagged_suspicious: false,
+        total_score: 0,
+        max_total_score: maxTotal,
+      }));
+      // A student handing in at this very moment wins; their row is not replaced.
+      const { data: created, error: insertError } = await supabase
+        .from('submissions')
+        .upsert(rows, { onConflict: 'assignment_id,student_id', ignoreDuplicates: true })
+        .select('*');
+      if (insertError) throw toDatabaseError(insertError, 'submissions');
+      createdRows = (created || []) as Array<{ id: string }>;
+    }
+    if (recorded.length) {
+      for (const part of chunk(recorded.map((r) => r.id))) {
+        // Still guarded by status: work handed in meanwhile keeps its own score.
+        const { error } = await supabase
+          .from('submissions')
+          .update({ total_score: 0, max_total_score: maxTotal })
+          .in('id', part)
+          .eq('status', 'pending');
+        if (error) throw toDatabaseError(error, 'submissions');
+      }
+    }
 
-    if (zero && qs.length && createdRows.length) {
+    const zeroed = [...createdRows.map((r) => r.id), ...recorded.map((r) => r.id)];
+    if (qs.length && zeroed.length) {
       const record: TeacherGradeRecord = { teacher_id: me.userId, teacher_name: teacherName, teacher_role: teacherRole, score: 0, comment: '', graded_at: now };
-      const answers = createdRows.flatMap((sub) =>
+      const answers = zeroed.flatMap((subId) =>
         qs.map((q) => ({
-          id: `ans-${sub.id}-${q.id}`,
-          submission_id: sub.id,
+          id: `ans-${subId}-${q.id}`,
+          submission_id: subId,
           question_id: q.id,
           text_answer: '',
           teacher_score: 0,
+          teacher_comment: '',
           co_grades: { [me.userId]: record },
           graded_at: now,
           updated_at: now,
@@ -1824,7 +1855,29 @@ export const dataActions = {
       }
     }
     after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
-    return createdRows;
+    return [...createdRows, ...recorded];
+  },
+
+  /**
+   * Takes back "handed in nothing" for one student: removes the recorded row
+   * and its 0s, so the student counts as missing again. Handed-in work is never removed here.
+   */
+  async clearMissingSubmission({ supabase, actor }: Ctx, submissionId: string) {
+    const { classroom } = await requireTeacherOfSubmission(supabase, actor, submissionId);
+    const me = requireTeacher(actor);
+    const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
+    if (role === 'researcher') throw FORBIDDEN();
+    const { data: sub, error: readError } = await supabase.from('submissions').select('id, assignment_id, status').eq('id', submissionId).maybeSingle();
+    if (readError) throw toDatabaseError(readError, 'submissions');
+    if (!sub) return;
+    if (isHandedIn(sub as Pick<Submission, 'status'>)) throw new HttpError(409, 'นักเรียนส่งงานแล้ว จึงยกเลิกไม่ได้');
+    const { error: answersError } = await supabase.from('submission_answers').delete().eq('submission_id', submissionId);
+    if (answersError) throw toDatabaseError(answersError, 'submission_answers');
+    // Only while still not handed in: a student handing in at this moment keeps their work.
+    const { error } = await supabase.from('submissions').delete().eq('id', submissionId).eq('status', 'pending');
+    if (error) throw toDatabaseError(error, 'submissions');
+    const assignmentId = sub.assignment_id as string;
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
   },
 };
 

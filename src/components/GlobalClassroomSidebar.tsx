@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import {
@@ -386,14 +387,13 @@ export const GlobalClassroomSidebar: React.FC = () => {
             <LayoutDashboard className="w-3.5 h-3.5 text-amber-600 shrink-0" />
             <span className="truncate">{tr('แดชบอร์ด', 'Dashboard')}</span>
           </Link>
-          <Link
-            href="/assignments/new"
-            onClick={handleItemClick}
+          <CreateWorkMenu
+            onNavigate={handleItemClick}
             className="px-3 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-amber-500/30 active:scale-[0.98] truncate"
           >
             <Plus className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate">{tr('สร้างงาน/สอบ', 'New assignment/exam')}</span>
-          </Link>
+          </CreateWorkMenu>
         </div>
 
         {/* Term filter (same options and rule as the dashboard) and counts */}

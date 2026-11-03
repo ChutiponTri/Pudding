@@ -48,8 +48,10 @@ import {
   Layers,
   Rocket,
   PencilLine,
+  Ban,
+  Undo2,
 } from 'lucide-react';
-import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
+import { ASSIGNMENT_STATUS_CLASSES, canRecordNoSubmission, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
 import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
@@ -402,22 +404,22 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   };
 
 
-  // Students who never handed in: record a row so the teacher can grade them
-  // (zero = an official 0 on every question). Works after submissions close too.
+  // Students who handed in nothing: once the deadline has passed (or the work
+  // is closed) the teacher marks them "no submission", an official 0. Before
+  // that nothing can be scored; the server enforces the same rule.
   const [recordingKeys, setRecordingKeys] = useState<Set<string>>(new Set());
-  const recordMissing = async (rows: RosterRow[], zero: boolean) => {
+  const recordMissing = async (rows: RosterRow[]) => {
     const targets = rows.filter((row) => row.rosterId && !recordingKeys.has(row.key));
     if (!targets.length || !grader) return [];
     setRecordingKeys((prev) => new Set([...prev, ...targets.map((row) => row.key)]));
     try {
-      const created = await dataService.recordMissingSubmissions(
+      const recorded = await dataService.recordMissingSubmissions(
         assignmentId,
         targets.map((row) => row.rosterId as string),
-        zero,
         grader.name
       );
       await refreshSubmissions();
-      return created;
+      return recorded;
     } catch (err) {
       console.error(err);
       alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
@@ -431,25 +433,41 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     }
   };
 
-  const handleGiveZero = async (row: RosterRow) => {
-    const created = await recordMissing([row], true);
-    if (created.length) showToast(th ? 'ให้ 0 คะแนนแล้ว (ยังส่งงานได้ถ้างานเปิดรับอยู่)' : 'Gave 0 (the student can still hand in while it is open)');
+  const lateStillAccepted = () => !!assignmentWindow?.acceptsSubmissions;
+
+  const handleMarkNoSubmission = async (row: RosterRow) => {
+    const recorded = await recordMissing([row]);
+    if (recorded.length) {
+      showToast(lateStillAccepted()
+        ? (th ? 'บันทึกว่าไม่ส่งงาน (0 คะแนน) • หากนักเรียนส่งช้าภายหลัง งานที่ส่งจะแทนที่ 0' : 'Marked as no submission (0) • late work handed in later replaces it')
+        : (th ? 'บันทึกว่าไม่ส่งงาน (0 คะแนน) แล้ว' : 'Marked as no submission (0)'));
+    }
   };
 
-  const handleGiveZeroToAll = async () => {
+  const handleMarkAllNoSubmission = async () => {
     if (!unrecordedRows.length) return;
-    const stillOpen = assignmentWindow?.acceptsSubmissions;
     const message = th
-      ? `ให้ 0 คะแนนนักเรียนที่ยังไม่ส่ง ${unrecordedRows.length} คน?${stillOpen ? '\nงานนี้ยังเปิดรับอยู่ หากนักเรียนส่งงานภายหลัง คะแนน 0 จะถูกแทนที่ด้วยงานที่ส่งมา' : ''}`
-      : `Give 0 to ${unrecordedRows.length} students who have not submitted?${stillOpen ? '\nThis is still open; work handed in later replaces the 0.' : ''}`;
+      ? `บันทึกว่า "ไม่ส่งงาน" (0 คะแนน) ให้นักเรียน ${unrecordedRows.length} คนที่ยังไม่ส่ง?${lateStillAccepted() ? '\nงานนี้ยังรับงานส่งช้าอยู่ หากนักเรียนส่งภายหลัง งานที่ส่งจะแทนที่ 0' : ''}`
+      : `Mark ${unrecordedRows.length} students as "no submission" (0)?${lateStillAccepted() ? '\nLate work is still accepted; work handed in later replaces the 0.' : ''}`;
     if (!confirm(message)) return;
-    const created = await recordMissing(unrecordedRows, true);
-    if (created.length) showToast(th ? `ให้ 0 คะแนนแล้ว ${created.length} คน` : `Gave 0 to ${created.length} students`);
+    const recorded = await recordMissing(unrecordedRows);
+    if (recorded.length) showToast(th ? `บันทึกว่าไม่ส่งงานแล้ว ${recorded.length} คน` : `Marked ${recorded.length} students as no submission`);
   };
 
-  const handleGradeMissing = async (row: RosterRow) => {
-    const [created] = await recordMissing([row], false);
-    if (created) handleOpenGrading({ ...created, student: (created.student || row.student) as User });
+  const [clearingId, setClearingId] = useState<string | null>(null);
+  const handleClearNoSubmission = async (sub: Submission) => {
+    const name = sub.student?.first_name || (th ? 'นักเรียน' : 'the student');
+    if (!confirm(th ? `ยกเลิก "ไม่ส่งงาน" ของ ${name}?\nนักเรียนจะกลับไปเป็น "ยังไม่ส่ง" และคะแนน 0 จะถูกลบ` : `Undo "no submission" for ${name}?\nThey go back to "not submitted" and the 0 is removed.`)) return;
+    setClearingId(sub.id);
+    try {
+      await dataService.clearMissingSubmission(sub.id);
+      await refreshSubmissions();
+      showToast(th ? 'ยกเลิกแล้ว' : 'Undone');
+    } catch (err) {
+      alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
+    } finally {
+      setClearingId(null);
+    }
   };
 
   // Homework only: let one student edit handed-in work again (after grading or
@@ -514,34 +532,55 @@ Handing in again clears the current score and comments for regrading (their on-t
     );
   };
 
-  // Actions on a student with nothing handed in: grade by hand, or a quick 0.
+  // A student with nothing handed in: no grading, only "no submission" (0) once the deadline has passed.
   const missingActions = (row: RosterRow) => {
     if (!row.rosterId || !grader || grader.role === 'researcher') {
       return <span className="text-[11px] text-slate-400 italic">{th ? 'รอนักเรียนส่งงาน' : 'Awaiting student'}</span>;
     }
+    if (!canMarkNoSubmission) {
+      return (
+        <span
+          className="text-[11px] text-slate-400 italic text-right"
+          title={th ? 'ให้คะแนนได้เฉพาะงานที่นักเรียนส่งแล้ว' : 'Only handed-in work can be graded'}
+        >
+          {th ? 'รอส่ง • บันทึกว่าไม่ส่งได้หลังกำหนดส่ง' : 'Awaiting work • mark as no submission after the due date'}
+        </span>
+      );
+    }
     const busy = recordingKeys.has(row.key);
     return (
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => handleGiveZero(row)}
-          disabled={busy}
-          className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
-        >
-          {th ? 'ให้ 0' : 'Give 0'}
-        </button>
-        <button
-          type="button"
-          onClick={() => handleGradeMissing(row)}
-          disabled={busy}
-          className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 cursor-pointer disabled:opacity-50 inline-flex items-center gap-0.5"
-        >
-          {th ? 'ให้คะแนน' : 'Grade'}
-          <ChevronRight className="w-3 h-3" />
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => handleMarkNoSubmission(row)}
+        disabled={busy}
+        title={th ? 'นักเรียนไม่ได้ส่งงาน: บันทึกว่าตรวจแล้ว ได้ 0 คะแนน' : 'Nothing was handed in: record it as checked with 0'}
+        className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:ring-rose-300 hover:text-rose-700 dark:hover:text-rose-300 cursor-pointer disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap"
+      >
+        <Ban className="w-3 h-3" />
+        {th ? 'ไม่ส่งงาน · ให้ 0' : 'No submission · 0'}
+      </button>
     );
   };
+
+  // A student marked "no submission": 0, with an undo.
+  const noSubmissionBadge = (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 whitespace-nowrap">
+      <Ban className="w-3 h-3" />
+      {language === 'th' ? 'ไม่ส่งงาน' : 'No submission'}
+    </span>
+  );
+  const clearNoSubmissionControl = (sub: Submission) =>
+    !grader || grader.role === 'researcher' ? null : (
+      <button
+        type="button"
+        onClick={() => handleClearNoSubmission(sub)}
+        disabled={clearingId === sub.id}
+        className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-slate-500 dark:text-slate-400 ring-1 ring-slate-200 dark:ring-slate-700 hover:text-slate-800 dark:hover:text-slate-200 hover:ring-slate-400 cursor-pointer disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap"
+      >
+        <Undo2 className="w-3 h-3" />
+        {th ? 'ยกเลิก' : 'Undo'}
+      </button>
+    );
 
   // Every enrolled student, with their submission if any, then submissions from
   // students no longer on the roster. Roster entries may carry users.id, the
@@ -562,8 +601,8 @@ Handing in again clears the current score and comments for regrading (their on-t
     return rows;
   })();
 
-  // Grading order: roster order, students with a submission only.
-  const gradingOrder = rosterRows.flatMap((row) => (row.submission ? [row.submission] : []));
+  // Grading order: roster order, handed-in work only (nothing to grade otherwise).
+  const gradingOrder = rosterRows.flatMap((row) => (row.submission && isHandedIn(row.submission) ? [row.submission] : []));
   const gradingIndex = gradingSubmission ? gradingOrder.findIndex((s) => s.id === gradingSubmission.id) : -1;
 
   // The signed-in teacher grades with their role in this classroom.
@@ -609,10 +648,11 @@ Handing in again clears the current score and comments for regrading (their on-t
   const checkableTotal = gradedTotal + toGradeTotal;
   // Still missing: no row, or a recorded row the teacher has not scored yet.
   const missingTotal = rosterRows.filter((row) => isMissing(row.submission)).length;
-  // Students with nothing recorded yet, who "give 0 to everyone missing" applies to.
-  const unrecordedRows = rosterRows.filter((row) => !row.submission && row.rosterId);
+  // Students still missing, who "mark everyone missing as no submission" applies to.
+  const unrecordedRows = rosterRows.filter((row) => row.rosterId && isMissing(row.submission));
 
   const assignmentWindow = assignment ? getAssignmentWindow(assignment) : null;
+  const canMarkNoSubmission = !!assignmentWindow && canRecordNoSubmission(assignmentWindow);
   const assignmentStatus = assignment && assignmentWindow ? getAssignmentStatus(assignmentWindow, assignment.is_exam, language) : null;
   const deadlineLabel = formatDateTime(
     assignmentWindow?.deadline != null ? new Date(assignmentWindow.deadline).toISOString() : assignment?.due_date,
@@ -868,14 +908,15 @@ Handing in again clears the current score and comments for regrading (their on-t
             ))}
           </div>
 
-          {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && (
+          {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && canMarkNoSubmission && (
             <button
               type="button"
-              onClick={handleGiveZeroToAll}
+              onClick={handleMarkAllNoSubmission}
               disabled={recordingKeys.size > 0}
-              className="w-full sm:w-auto px-3 py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
+              className="w-full sm:w-auto px-3 py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
             >
-              {th ? `ให้ 0 คะแนนทุกคนที่ยังไม่ส่ง (${unrecordedRows.length})` : `Give 0 to all missing (${unrecordedRows.length})`}
+              <Ban className="w-3.5 h-3.5" />
+              {th ? `บันทึกว่าไม่ส่งงาน (0 คะแนน) ทุกคนที่ยังไม่ส่ง (${unrecordedRows.length})` : `Mark all missing as no submission · 0 (${unrecordedRows.length})`}
             </button>
           )}
 
@@ -1178,7 +1219,7 @@ Handing in again clears the current score and comments for regrading (their on-t
                         {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ไม่มีรหัสนักเรียน' : 'No student ID')}
                       </p>
                     </div>
-                    {sub && (isGraded ? (
+                    {sub && (isGraded || isHandedIn(sub)) && (isGraded ? (
                       <span className="shrink-0 inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
                         <span className="text-sm tabular-nums">{sub.total_score}</span>
                         <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
@@ -1190,7 +1231,12 @@ Handing in again clears the current score and comments for regrading (their on-t
                     ))}
                   </div>
 
-                  {!sub ? (
+                  {sub && !isHandedIn(sub) && isGraded ? (
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      {noSubmissionBadge}
+                      {clearNoSubmissionControl(sub)}
+                    </div>
+                  ) : !sub || !isHandedIn(sub) ? (
                     <div className="flex items-center justify-between gap-2 text-[11px]">
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
@@ -1319,7 +1365,27 @@ Handing in again clears the current score and comments for regrading (their on-t
                       </td>
                   );
 
-                  if (!sub) {
+                  if (sub && !isHandedIn(sub) && isGraded) {
+                    return (
+                      <tr key={key} className="bg-slate-50/40 dark:bg-slate-900/40">
+                        {studentCell}
+                        <td className="py-3.5 px-4 sm:px-6 whitespace-nowrap">{noSubmissionBadge}</td>
+                        <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
+                        <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
+                        <td className="py-3.5 px-4 sm:px-6 text-center whitespace-nowrap">
+                          <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-black">
+                            <span className="text-sm tabular-nums">{sub.total_score}</span>
+                            <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
+                          <div className="inline-flex">{clearNoSubmissionControl(sub)}</div>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  if (!sub || !isHandedIn(sub)) {
                     return (
                       <tr key={key} className="bg-slate-50/40 dark:bg-slate-900/40">
                         {studentCell}

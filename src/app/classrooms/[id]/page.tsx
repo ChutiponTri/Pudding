@@ -2,6 +2,7 @@
 
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
+import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -1672,15 +1673,16 @@ export default function ClassroomWorkspacePage() {
               </button>
 
               {/* Primary: Create Assignment or Exam */}
-              <Link
-                href={`/assignments/new?classroomId=${classroom.id}&from=classroom`}
-                className="min-w-0 h-9 sm:h-auto px-2 sm:px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] sm:text-xs inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-sm transition-all"
+              <CreateWorkMenu
+                classroomId={classroom.id}
+                from="classroom"
+                className="min-w-0 h-9 sm:h-auto px-2 sm:px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] sm:text-xs inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-sm transition-all cursor-pointer"
               >
                 <Plus className="w-4 h-4 shrink-0" />
                 <span className="truncate">
                   {tr(<>สร้างงาน<span className="hidden sm:inline"> / ข้อสอบ</span></>, <>New<span className="hidden sm:inline"> assignment / exam</span></>)}
                 </span>
-              </Link>
+              </CreateWorkMenu>
             </div>
           </div>
 
@@ -1980,13 +1982,14 @@ export default function ClassroomWorkspacePage() {
                     <FolderPlus className="w-3.5 h-3.5 text-amber-500" />
                     <span>{tr('+ สร้างกลุ่มหมวดหมู่ใหม่', '+ New group')}</span>
                   </button>
-                  <Link
-                    href={`/assignments/new?classroomId=${classroom.id}&from=classroom`}
+                  <CreateWorkMenu
+                    classroomId={classroom.id}
+                    from="classroom"
                     className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
                   >
                     <Plus className="w-4 h-4" />
                     <span>{tr('สร้างงาน / ข้อสอบ', 'New assignment / exam')}</span>
-                  </Link>
+                  </CreateWorkMenu>
                 </div>
               </div>
 

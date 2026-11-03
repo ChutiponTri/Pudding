@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '@clerk/nextjs';
-import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
@@ -43,6 +42,7 @@ import {
   ArrowRight,
   ArrowLeft,
   Copy,
+  PencilLine,
 } from 'lucide-react';
 
 /** An attachment in the form; `file` = picked but not uploaded yet (url is a blob preview). */
@@ -100,6 +100,67 @@ const RELEASE_PILL = {
   now: 'bg-amber-500',
 } as const;
 
+/**
+ * The same indicator (or lesson plan) in another course: kept when that course
+ * has it, else the one at the same position, else the course's first. Used
+ * when work moves to a classroom of another course (reuse, course change).
+ */
+function remapIndicatorId(id: string, from: Course | undefined, to: Course | undefined): string {
+  if (!to) return id;
+  const toIndicators = to.indicators || [];
+  const toPlans = to.lesson_plans || [];
+  if (id && (toIndicators.some((i) => i.id === id) || toPlans.some((p) => p.id === id))) return id;
+  const indicatorIndex = from?.indicators?.findIndex((i) => i.id === id) ?? -1;
+  if (indicatorIndex >= 0 && toIndicators[indicatorIndex]) return toIndicators[indicatorIndex].id;
+  const planIndex = from?.lesson_plans?.findIndex((p) => p.id === id) ?? -1;
+  if (planIndex >= 0 && toPlans[planIndex]) return toPlans[planIndex].id;
+  const preferred = to.indicator_mode === 'competency' ? toPlans : toIndicators;
+  return preferred[0]?.id || toIndicators[0]?.id || id;
+}
+
+/**
+ * One context line above the form, same layout for every mode: a coloured
+ * edge and icon, what is happening (kicker), which work, and where it comes
+ * from. Quiet enough not to compete with the form.
+ */
+function WorkContextBanner({
+  tone,
+  icon,
+  kicker,
+  title,
+  meta,
+  action,
+  children,
+}: {
+  tone: 'copy' | 'edit';
+  icon: React.ReactNode;
+  kicker: string;
+  title: string;
+  meta?: string;
+  action?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  const accent = tone === 'copy'
+    ? { edge: 'border-l-sky-500', tile: 'bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400', kicker: 'text-sky-700 dark:text-sky-300' }
+    : { edge: 'border-l-amber-500', tile: 'bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400', kicker: 'text-amber-700 dark:text-amber-300' };
+  return (
+    <div role="status" className={`mt-3 rounded-2xl border border-slate-200 dark:border-slate-800 border-l-4 ${accent.edge} bg-white dark:bg-slate-900 shadow-xs`}>
+      <div className="p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          <span className={`w-9 h-9 shrink-0 rounded-xl flex items-center justify-center ${accent.tile}`}>{icon}</span>
+          <div className="min-w-0">
+            <p className={`text-[11px] font-black ${accent.kicker}`}>{kicker}</p>
+            <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{title}</p>
+            {meta && <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{meta}</p>}
+          </div>
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
+      </div>
+      {children && <div className="px-3 pb-3 -mt-1">{children}</div>}
+    </div>
+  );
+}
+
 function NewAssignmentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -112,6 +173,11 @@ function NewAssignmentContent() {
   const editId = searchParams.get('edit');
   // ?copy=<assignmentId>: a new assignment filled from saved work (any state), for other classrooms.
   const copyId = editId ? null : searchParams.get('copy');
+  // ?reuse=1 (with copy): "reuse earlier work" from the create menu — the new
+  // work goes to ?classroomId (the classroom it was started from), not "another classroom".
+  const isReuse = !!copyId && searchParams.get('reuse') === '1';
+  // ?mode=quiz|homework: the type chosen in the create menu (new work only).
+  const urlMode = searchParams.get('mode');
   const { user: clerkUser } = useUser();
   const { t, tr, language } = useLanguage();
 
@@ -126,11 +192,13 @@ function NewAssignmentContent() {
   const [loading, setLoading] = useState(true);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
   const [copySource, setCopySource] = useState<Assignment | null>(null);
+  // Typed into the form since it loaded (asked before leaving an edit for a copy).
+  const [formTouched, setFormTouched] = useState(false);
   const [editSubmissionCount, setEditSubmissionCount] = useState(0);
   const originalQuestionIdsRef = useRef<string[]>([]);
 
   // Form fields
-  const [isExam, setIsExam] = useState(false);
+  const [isExam, setIsExam] = useState(() => !editId && !copyId && urlMode === 'quiz');
   const [trackModeToggle, modeIndicator] = useSlidingIndicator(isExam);
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
@@ -337,12 +405,21 @@ function NewAssignmentContent() {
             originalQuestionIdsRef.current = [];
             setCopySource(assignment);
           }
-          if (courseId) {
-            setSelectedCourseId(courseId);
-            setCourseIndicators(crs.find((c) => c.id === courseId)?.indicators || []);
+          setFormTouched(false);
+          // Reuse: into the classroom it was started from, whose course may differ
+          // (e.g. work from last term); indicators then move to that course's.
+          const reuseTarget = isReuse && urlClassroomId ? cls.find((c) => c.id === urlClassroomId) : undefined;
+          const targetCourseId = reuseTarget?.course_id || courseId;
+          const sourceCourse = crs.find((c) => c.id === courseId);
+          const targetCourse = crs.find((c) => c.id === targetCourseId);
+          if (targetCourseId) {
+            setSelectedCourseId(targetCourseId);
+            setCourseIndicators(targetCourse?.indicators || []);
           }
           if (editId) {
             setSelectedClassroomIds([assignment.classroom_id]);
+          } else if (reuseTarget) {
+            setSelectedClassroomIds([reuseTarget.id]);
           } else {
             // A copy goes to another classroom of the same course by default (the teacher can pick several).
             const other = cls.find((c) => c.id !== assignment.classroom_id && (!courseId || c.course_id === courseId));
@@ -379,7 +456,7 @@ function NewAssignmentContent() {
               uid: newQuestionUid(),
               // A copy gets new questions of its own.
               id: editId ? q.id : undefined,
-              indicator_id: q.indicator_id || '',
+              indicator_id: targetCourseId !== courseId ? remapIndicatorId(q.indicator_id || '', sourceCourse, targetCourse) : q.indicator_id || '',
               type: q.type,
               question_text: q.question_text || '',
               options: q.type === 'multiple_choice'
@@ -400,7 +477,7 @@ function NewAssignmentContent() {
     }
     init(teacherId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per teacher / target
-  }, [urlClassroomId, editId, copyId, clerkUser?.id]);
+  }, [urlClassroomId, editId, copyId, isReuse, clerkUser?.id]);
 
   // Groups already used in the selected classrooms, offered as one-tap choices.
   const selectedClassroomKey = selectedClassroomIds.join(',');
@@ -429,12 +506,12 @@ function NewAssignmentContent() {
       setSelectedClassroomIds([matchingClasses[0].id]);
     }
     // Update available indicators for the newly-selected course
+    const previous = courses.find((c) => c.id === selectedCourseId);
     const course = courses.find((c) => c.id === courseId);
-    const indList = course?.indicators || [];
-    setCourseIndicators(indList);
-    // Reset all question indicator_ids to the first available
-    if (indList.length > 0) {
-      setQuestions((prev) => prev.map((q) => ({ ...q, indicator_id: indList[0].id })));
+    setCourseIndicators(course?.indicators || []);
+    // Each question keeps the same indicator where the new course has it, else the one at the same position.
+    if (course && ((course.indicators || []).length > 0 || (course.lesson_plans || []).length > 0)) {
+      setQuestions((prev) => prev.map((q) => ({ ...q, indicator_id: remapIndicatorId(q.indicator_id, previous, course) })));
     }
   };
 
@@ -844,39 +921,83 @@ function NewAssignmentContent() {
         <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
           {editId
             ? (language === 'th' ? 'แก้ไขงาน / ข้อสอบ' : 'Edit assignment / quiz')
+            : isReuse
+            ? tr('สร้างงานใหม่จากงานเดิม', 'New work from earlier work')
             : copyId
             ? tr('คัดลอกงาน / ข้อสอบไปห้องอื่น', 'Copy assignment / quiz to other classrooms')
             : t('assignment_creator.title')}
         </h1>
-        {copySource && (
-          <p role="status" className="mt-3 p-3 rounded-2xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-900 text-xs font-semibold text-sky-900 dark:text-sky-200 flex items-start gap-2">
-            <Copy className="w-4 h-4 shrink-0 mt-px" />
-            <span>
-              {tr(
-                `คัดลอกจาก “${copySource.title}” (${classrooms.find((c) => c.id === copySource.classroom_id)?.name || copySource.classroom_name || 'ห้องเดิม'}) — เลือกห้องที่ต้องการ ตรวจกำหนดส่งและการเผยแพร่ แล้วกดบันทึก งานต้นฉบับไม่เปลี่ยนแปลง`,
-                `Copied from “${copySource.title}” (${classrooms.find((c) => c.id === copySource.classroom_id)?.name || copySource.classroom_name || 'original classroom'}). Pick the classrooms, check the due date and release, then save. The original is not changed.`
+        {copySource && (() => {
+          const from = classrooms.find((c) => c.id === copySource.classroom_id)?.name || copySource.classroom_name || tr('ห้องเดิม', 'original classroom');
+          return (
+            <WorkContextBanner
+              tone="copy"
+              icon={<Copy className="w-4 h-4" />}
+              kicker={tr('กำลังสร้างสำเนาใหม่ · งานต้นฉบับไม่ถูกแก้ไข', 'Creating a new copy · the original stays unchanged')}
+              title={copySource.title || tr('(ไม่มีชื่อ)', '(untitled)')}
+              meta={tr(
+                `ต้นฉบับจาก ${from} • ตรวจห้อง กำหนดส่ง และการเผยแพร่ก่อนบันทึก`,
+                `Original from ${from} • check classrooms, due date and release before saving`
               )}
-            </span>
-          </p>
-        )}
-        {editingAssignment && editSubmissionCount > 0 && (
-          <p role="status" className="mt-3 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-xs font-semibold text-amber-900 dark:text-amber-200">
-            <MobileText
-              short={language === 'th'
-                ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — ลบคำถามแล้วคำตอบข้อนั้นจะหายไป`
-                : `${editSubmissionCount} submitted — removing a question deletes its answers.`}
-              full={language === 'th'
-                ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — แก้ไขได้ทุกส่วน แต่ถ้าลบคำถาม คำตอบของข้อนั้นจะหายไป และคะแนนที่ตรวจแล้วจะไม่คำนวณใหม่`
-                : `${editSubmissionCount} students have submitted. Removing a question deletes its answers, and existing scores are not recalculated.`}
             />
-          </p>
-        )}
+          );
+        })()}
+        {editingAssignment && (() => {
+          const where = classrooms.find((c) => c.id === editingAssignment.classroom_id)?.name || editingAssignment.classroom_name || '';
+          const copyHref = `/assignments/new?copy=${editingAssignment.id}&classroomId=${editingAssignment.classroom_id}&from=${returnTo ? 'grading' : isFromDashboard ? 'dashboard' : 'classroom'}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ''}`;
+          return (
+            <WorkContextBanner
+              tone="edit"
+              icon={<PencilLine className="w-4 h-4" />}
+              kicker={editIsPublished
+                ? tr('กำลังแก้ไขงานเดิม · นักเรียนเห็นการเปลี่ยนแปลงทันทีที่บันทึก', 'Editing saved work · students see changes once you save')
+                : tr('กำลังแก้ไขงานเดิม (ยังไม่เผยแพร่)', 'Editing saved work (not released yet)')}
+              title={editingAssignment.title || tr('(ไม่มีชื่อ)', '(untitled)')}
+              meta={where ? tr(`ในห้อง ${where}`, `In ${where}`) : undefined}
+              action={
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (formTouched && !confirm(tr(
+                      'การแก้ไขที่ยังไม่บันทึกจะไม่ถูกนำไปด้วย — สำเนาใช้ฉบับที่บันทึกไว้ล่าสุด\nไปหน้าสร้างสำเนาเลยหรือไม่?',
+                      'Unsaved changes are not included — the copy uses the last saved version.\nGo to the copy page?'
+                    ))) return;
+                    router.push(copyHref);
+                  }}
+                  className="group w-full sm:w-auto flex items-center gap-2.5 pl-2 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/60 hover:bg-white dark:hover:bg-slate-800 hover:border-sky-300 dark:hover:border-sky-700 text-left cursor-pointer transition-colors"
+                >
+                  <span className="w-7 h-7 shrink-0 rounded-lg bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-700 text-sky-600 dark:text-sky-400 flex items-center justify-center group-hover:ring-sky-300 dark:group-hover:ring-sky-700 transition-colors">
+                    <Copy className="w-3.5 h-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-bold text-slate-800 dark:text-slate-100">{tr('ทำสำเนาไปห้องอื่น', 'Copy to other classrooms')}</span>
+                    <span className="block text-[10px] text-slate-500 dark:text-slate-400">{tr('ใช้ฉบับที่บันทึกล่าสุด', 'Uses the last saved version')}</span>
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5 shrink-0 text-slate-400 group-hover:text-sky-600 group-hover:translate-x-0.5 transition-all" />
+                </button>
+              }
+            >
+              {editSubmissionCount > 0 && (
+                <p className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                  <MobileText
+                    short={language === 'th'
+                      ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — ลบคำถามแล้วคำตอบข้อนั้นจะหายไป`
+                      : `${editSubmissionCount} submitted — removing a question deletes its answers.`}
+                    full={language === 'th'
+                      ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — แก้ไขได้ทุกส่วน แต่ถ้าลบคำถาม คำตอบของข้อนั้นจะหายไป และคะแนนที่ตรวจแล้วจะไม่คำนวณใหม่`
+                      : `${editSubmissionCount} students have submitted. Removing a question deletes its answers, and existing scores are not recalculated.`}
+                  />
+                </p>
+              )}
+            </WorkContextBanner>
+          );
+        })()}
         <p className="hidden sm:block text-slate-500 dark:text-slate-400 text-sm mt-1">
           {t('assignment_creator.subtitle')}
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-8">
+      <form onSubmit={handleSubmit} onInputCapture={() => setFormTouched(true)} className="space-y-8">
         {/* Mode Selector Toggle: Assignment vs Exam. Sticky under the navbar so the mode can be
             switched from anywhere on a long form; the highlight slides between the two buttons. */}
         <div className="sticky top-[calc(4rem+env(safe-area-inset-top)+0.5rem)] z-20 p-2 sm:p-2.5 rounded-3xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-between gap-4">
@@ -927,6 +1048,19 @@ function NewAssignmentContent() {
           <span key={`hint-${isExam}`} className="hidden lg:inline-flex animate-in fade-in slide-in-from-top-1">
             <ModeHint isExam={isExam} language={language} />
           </span>
+          {(copySource || editingAssignment) && (
+            <span
+              title={copySource ? tr('กำลังสร้างสำเนาใหม่ งานต้นฉบับไม่ถูกแก้ไข', 'Creating a new copy; the original is not changed') : tr('กำลังแก้ไขงานที่บันทึกไว้', 'Editing saved work')}
+              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-bold ring-1 ${
+                copySource
+                  ? 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 ring-sky-200 dark:ring-sky-900'
+                  : 'bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 ring-amber-200 dark:ring-amber-900'
+              }`}
+            >
+              {copySource ? <Copy className="w-3.5 h-3.5" /> : <PencilLine className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{copySource ? tr('สำเนาใหม่', 'New copy') : tr('แก้ไขงานเดิม', 'Editing')}</span>
+            </span>
+          )}
         </div>
         <div key={`hint-${isExam}`} className="hidden sm:block lg:hidden -mt-5 animate-in fade-in slide-in-from-top-1">
           <ModeHint isExam={isExam} language={language} />
@@ -997,15 +1131,6 @@ function NewAssignmentContent() {
                   );
                 })}
               </div>
-              {editingAssignment && (
-                <Link
-                  href={`/assignments/new?copy=${editingAssignment.id}&classroomId=${editingAssignment.classroom_id}&from=${returnTo ? 'grading' : isFromDashboard ? 'dashboard' : 'classroom'}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ''}`}
-                  className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 rounded-xl text-[11px] font-bold border border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 hover:border-sky-400 transition-colors"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>{tr('คัดลอกไปห้องอื่น (ฉบับที่บันทึกไว้)', 'Copy to other classrooms (saved version)')}</span>
-                </Link>
-              )}
             </div>
 
             {/* Title */}

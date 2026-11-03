@@ -95,7 +95,19 @@ export function getAssignmentWindow(
   };
 }
 
-export type AssignmentStatusTone = 'draft' | 'scheduled' | 'open' | 'late' | 'closed';
+/**
+ * Whether the teacher may record "handed in nothing" (an official 0) for a
+ * student: only for released work whose deadline has passed or that no
+ * longer accepts work. Before that the student may still hand in, so a score
+ * would grade work that does not exist yet. Shared by the grading page and
+ * the server (recordMissingSubmissions).
+ */
+export function canRecordNoSubmission(window: ReturnType<typeof getAssignmentWindow>) {
+  if (window.isDraft || window.isScheduled) return false;
+  return window.isPastDeadline || !window.acceptsSubmissions;
+}
+
+export type AssignmentStatusTone ='draft' | 'scheduled' | 'open' | 'late' | 'closed';
 
 /**
  * Teacher-facing acceptance state, kept to three short labels:

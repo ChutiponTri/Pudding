@@ -2,6 +2,7 @@
 import { useUser } from '@clerk/nextjs';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
+import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Avatar } from '@/components/Avatar';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
@@ -1333,8 +1334,8 @@ export function TeacherWorkspace({
           </button>
 
           {/* 3. Create Assignment / Exam CTA */}
-          <Link
-            href="/assignments/new?from=dashboard"
+          <CreateWorkMenu
+            from="dashboard"
             className="px-2 py-3 sm:px-3 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-xs leading-tight sm:text-sm sm:leading-normal text-center sm:text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex flex-col sm:flex-row items-center gap-2 sm:gap-3 cursor-pointer ring-1 ring-white/60"
           >
             <div className="w-10 h-10 shrink-0 rounded-xl bg-linear-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
@@ -1345,7 +1346,7 @@ export function TeacherWorkspace({
                 {t('dashboard.quick_actions.create_assignment')}
               </span>
             </div>
-          </Link>
+          </CreateWorkMenu>
         </div>
       </div>
 

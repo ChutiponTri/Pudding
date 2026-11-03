@@ -733,16 +733,21 @@ export const dataService = {
     await call('saveTeacherGrade', submissionId, questionId, teacherScore, teacherComment, teacherId, teacherName);
   },
 
-  /**
-   * Records roster students who never handed in, so they can be graded (with
-   * zero: an official 0 on every question). Returns the created submissions.
-   */
   /** Lets a student edit handed-in homework again (open), or takes that back. */
   async setSubmissionReopened(submissionId: string, open: boolean): Promise<{ reopened_at: string | null }> {
     return call<{ reopened_at: string | null }>('setSubmissionReopened', submissionId, open);
   },
 
-  async recordMissingSubmissions(assignmentId: string, rosterIds: string[], zero: boolean, teacherName: string): Promise<Submission[]> {
-    return call<Submission[]>('recordMissingSubmissions', assignmentId, rosterIds, zero, teacherName);
+  /**
+   * Records that roster students handed in nothing (an official 0 on every
+   * question). The server allows it only after the deadline or once closed.
+   */
+  async recordMissingSubmissions(assignmentId: string, rosterIds: string[], teacherName: string): Promise<Array<Pick<Submission, 'id'>>> {
+    return call<Array<Pick<Submission, 'id'>>>('recordMissingSubmissions', assignmentId, rosterIds, teacherName);
+  },
+
+  /** Takes back "handed in nothing" for one student (they count as missing again). */
+  async clearMissingSubmission(submissionId: string): Promise<void> {
+    await call('clearMissingSubmission', submissionId);
   },
 };
