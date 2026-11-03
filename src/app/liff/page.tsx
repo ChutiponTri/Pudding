@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Avatar } from '@/components/Avatar';
 import { AssignmentGroupHeader, assignmentGroupKey, assignmentGroupLabel, type GroupChip } from '@/components/AssignmentGroupHeader';
 import { Collapse } from '@/components/Collapse';
+import { CountUp } from '@/components/CountUp';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import {
   CheckCircle2,
@@ -182,7 +183,7 @@ function SectionTitle({ icon, title, count, action }: { icon: React.ReactNode; t
 function EmptyState({ icon, text }: { icon: string; text: string }) {
   return (
     <div className="py-10 px-6 text-center space-y-2">
-      <div className="text-3xl">{icon}</div>
+      <div className="text-3xl"><span className="liff-float">{icon}</span></div>
       <p className="text-sm text-slate-500">{text}</p>
     </div>
   );
@@ -314,7 +315,8 @@ export default function LiffStudentPage() {
   // Submissions whose every answer has a teacher score (grading finished).
   const [gradedSubmissionIds, setGradedSubmissionIds] = useState<Set<string>>(new Set());
   // Submissions a teacher has scored at all (even partly): homework stops being editable.
-  const [teacherGradedIds, setTeacherGradedIds] = useState<Set<string>>(new Set());
+  // Kept in the saved home screen format; editing no longer depends on it (handed-in work is locked until the teacher reopens it).
+  const [, setTeacherGradedIds] = useState<Set<string>>(new Set());
   // Results the student has already opened: submission id -> score they saw.
   // Kept per device; a re-grade with a new score is announced again.
   const [seenScores, setSeenScores] = useState<Record<string, number>>({});
@@ -651,6 +653,9 @@ export default function LiffStudentPage() {
   } | null>(null);
   // Result sheets already loaded this session: reopening shows them at once while a fresh copy loads.
   const gradedDetailCacheRef = useRef(new Map<string, { questions: Question[]; answers: Record<string, SubmissionAnswer> }>());
+  // First open without a saved home screen: the home request starts as soon as
+  // LINE gives a token, alongside the profile sync, instead of after it.
+  const homePrefetchRef = useRef<{ at: number; promise: Promise<Awaited<ReturnType<typeof dataService.getStudentHome>> | null> } | null>(null);
 
   /** Shows a saved home screen (see liffSnapshot) until fresh data replaces it. */
   const applySnapshot = (snapshot: LiffSnapshot) => {
@@ -725,6 +730,9 @@ export default function LiffStudentPage() {
         // profile sync and fresh data load in parallel. Only this LINE account's
         // copy is read (the id comes from LINE's signed ID token).
         const snapshot = readLiffSnapshot(liff.getDecodedIDToken()?.sub);
+        if (!snapshot) {
+          homePrefetchRef.current = { at: Date.now(), promise: dataService.getStudentHome().catch(() => null) };
+        }
         if (snapshot && isMounted) {
           applySnapshot(snapshot);
           setCurrentStudent(snapshot.student);
@@ -902,9 +910,19 @@ export default function LiffStudentPage() {
 
         // Classrooms, work, submissions and scores in one request; an invite
         // link adds the one classroom it points to.
-        const [firstHome, institutions, linkedClass] = await Promise.all([
-          dataService.getStudentHome(),
-          isInitial ? dataService.getRegisteredInstitutions() : Promise.resolve(null),
+        // School names are only for the profile form: never hold the home screen for them.
+        if (isInitial) {
+          dataService.getRegisteredInstitutions().then(setRegisteredInstitutions).catch(() => {});
+        }
+        const prefetch = isInitial && homePrefetchRef.current && Date.now() - homePrefetchRef.current.at < 20000 ? homePrefetchRef.current.promise : null;
+        homePrefetchRef.current = null;
+        const loadHome = async () => {
+          // A prefetched home made before the account existed could be empty or partial: then read it again.
+          const early = prefetch ? await prefetch : null;
+          return early && early.classrooms.length > 0 ? early : dataService.getStudentHome();
+        };
+        const [firstHome, linkedClass] = await Promise.all([
+          loadHome(),
           // The invite code identifies the classroom for students who have not joined yet;
           // classId alone only opens a classroom the student already belongs to.
           codeParam
@@ -913,7 +931,6 @@ export default function LiffStudentPage() {
             ? dataService.getClassroomById(classIdParam)
             : Promise.resolve(null),
         ]);
-        if (institutions) setRegisteredInstitutions(institutions);
         if (isInitial) {
           const assignmentParam = params.get("assignmentId") || undefined;
           const viewParam = params.get("view");
@@ -1108,9 +1125,21 @@ export default function LiffStudentPage() {
       signalKey = key;
       unsubscribeSignals();
       unsubscribeSignals = dataService.subscribeToClassroomSignals(ids, (classroomId, signal) => {
-        if (signal?.type === "submission") return; // the student's own work; nothing new to show
+        // Scores: the teacher graded, re-scored after fixing the work, or recorded
+        // "no submission". A teacher grading quickly sends many: at most one reload
+        // every few seconds (the timer is not pushed back by later signals).
+        if (signal?.type === "submission") {
+          if (!signalTimer) signalTimer = setTimeout(() => {
+            signalTimer = null;
+            reloadClassroom(classroomId);
+          }, 3000);
+          return;
+        }
         if (signalTimer) clearTimeout(signalTimer);
-        signalTimer = setTimeout(() => reloadClassroom(classroomId), 300);
+        signalTimer = setTimeout(() => {
+          signalTimer = null;
+          reloadClassroom(classroomId);
+        }, 300);
       });
     };
     const schedulePublishReload = (all: Assignment[]) => {
@@ -1774,6 +1803,9 @@ export default function LiffStudentPage() {
   const pendingHomework = openPendingAssignments.filter((a) => !a.is_exam);
   // Handed in by the student; a "no submission" 0 recorded by the teacher is not.
   const completedAssignments = filteredAssignments.filter((a) => Boolean(submissions[a.id]) && isHandedIn(submissions[a.id]));
+  // Every assignment in the work tab exactly once: to-do first, then anything with a record
+  // (handed in, or recorded by the teacher as "no submission").
+  const workListAssignments = pendingAssignments.concat(filteredAssignments.filter((a) => Boolean(submissions[a.id])));
   // Fully graded results the student has not opened yet (or that were re-graded).
   const newResults = completedAssignments.filter((a) => {
     const submission = submissions[a.id];
@@ -2065,7 +2097,7 @@ export default function LiffStudentPage() {
           /* ============================================================ */
           /* 1. OVERVIEW */
           /* ============================================================ */
-          <div className="p-4 sm:p-6 space-y-5 pb-[max(env(safe-area-inset-bottom),2.5rem)]">
+          <div className="liff-view p-4 sm:p-6 space-y-5 pb-[max(env(safe-area-inset-bottom),2.5rem)]">
             {/* Greeting + summary */}
             <section className="space-y-3">
               <div>
@@ -2074,19 +2106,19 @@ export default function LiffStudentPage() {
                   {currentStudent.first_name || currentStudent.name}
                 </h1>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 liff-stagger">
                 <button
                   type="button"
                   onClick={() => setIsHomeworkListOpen((prev) => !prev)}
                   className="text-left p-4 rounded-3xl bg-linear-to-br from-amber-400 to-orange-500 text-white shadow-lg shadow-orange-500/20 cursor-pointer active:scale-[0.98] transition-transform"
                 >
                   <p className="text-xs font-semibold text-amber-50">งานที่ต้องทำ</p>
-                  <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : openPendingAssignments.length}</p>
+                  <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : <CountUp value={openPendingAssignments.length} />}</p>
                   <p className="text-[11px] text-amber-50/90 mt-0.5">{isHomeworkListOpen ? 'แตะเพื่อซ่อนรายการ' : 'แตะเพื่อดูรายการ'}</p>
                 </button>
                 <div className="p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20">
                   <p className="text-xs font-semibold text-emerald-50">ส่งแล้ว</p>
-                  <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : completedAssignments.length}</p>
+                  <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : <CountUp value={completedAssignments.length} />}</p>
                   <p className="text-[11px] text-emerald-50/90 mt-0.5">ตรวจแล้ว / รอผล</p>
                 </div>
               </div>
@@ -2103,7 +2135,7 @@ export default function LiffStudentPage() {
             {newResults.length > 0 && (
               <section className="space-y-2.5">
                 <SectionTitle icon={<Sparkles className="w-4 h-4 text-emerald-600" />} title="ประกาศคะแนนใหม่" count={newResults.length} />
-                <div className="grid gap-2.5 md:grid-cols-2">
+                <div className="grid gap-2.5 md:grid-cols-2 liff-stagger">
                   {newResults.map((assignment) => {
                     const submission = submissions[assignment.id];
                     const resultClass = classrooms.find((c) => c.id === assignment.classroom_id);
@@ -2113,14 +2145,14 @@ export default function LiffStudentPage() {
                         key={assignment.id}
                         type="button"
                         onClick={() => handleOpenGradedDetail(assignment, submission)}
-                        className="w-full text-left p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20 flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-transform"
+                        className="liff-sheen w-full text-left p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20 flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-transform"
                       >
                         <div className="min-w-0">
                           <p className="text-[11px] font-semibold text-emerald-50/90">🎉 คุณครูตรวจแล้ว • {resultClass ? subjectName(resultClass) : "รายวิชา"}</p>
                           <p className="text-sm font-bold truncate">{assignment.title}</p>
                           <p className="text-[11px] text-emerald-50/90 mt-0.5">แตะเพื่อดูคะแนนและความเห็นรายข้อ</p>
                         </div>
-                        <span className="shrink-0 px-3 py-1.5 rounded-2xl bg-white/20 font-black tabular-nums">
+                        <span className="liff-pop shrink-0 px-3 py-1.5 rounded-2xl bg-white/20 font-black tabular-nums">
                           <span className="text-xl">{submission.total_score}</span>
                           <span className="text-xs font-bold">/{total}</span>
                         </span>
@@ -2133,7 +2165,7 @@ export default function LiffStudentPage() {
 
             {/* Open attendance sessions (1-tap check-in) */}
             {activeAttendanceList.length > 0 && (
-              <section className="space-y-2.5">
+              <section className="space-y-2.5 liff-stagger">
                 {activeAttendanceList.map((item) => (
                   <div
                     key={item.session.id}
@@ -2170,7 +2202,7 @@ export default function LiffStudentPage() {
             {pendingExams.length > 0 && (
               <section className={`${CARD} p-4 sm:p-5 space-y-3`}>
                 <SectionTitle icon={<Sparkles className="w-4 h-4 text-violet-600" />} title="ข้อสอบที่ต้องทำ" count={pendingExams.length} />
-                <div className="grid gap-2.5 md:grid-cols-2">
+                <div className="grid gap-2.5 md:grid-cols-2 liff-stagger">
                   {pendingExams.map((exam) => {
                     const examClass = classrooms.find((c) => c.id === exam.classroom_id);
                     return (
@@ -2205,7 +2237,7 @@ export default function LiffStudentPage() {
                     </button>
                   }
                 />
-                <div className="grid gap-2.5 md:grid-cols-2">
+                <div className="grid gap-2.5 md:grid-cols-2 liff-stagger">
                   {pendingHomework.map((hw) => {
                     const hwClass = classrooms.find((c) => c.id === hw.classroom_id);
                     const hwWindow = getAssignmentWindow(hw);
@@ -2247,7 +2279,7 @@ export default function LiffStudentPage() {
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 liff-stagger">
                   {classrooms.map((cls) => {
                     const classPending = assignments.filter(
                       (a) => a.classroom_id === cls.id && !submissions[a.id] && getAssignmentWindow(a).acceptsSubmissions
@@ -2297,8 +2329,8 @@ export default function LiffStudentPage() {
           /* ============================================================ */
           /* 2. COURSE DETAIL (bottom tab bar) */
           /* ============================================================ */
-          <div className="p-4 sm:p-6 space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom))]">
-            <div className={`${CARD} p-4 flex items-center gap-3`}>
+          <div key={selectedClassroom.id} className="liff-view p-4 sm:p-6 space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom))]">
+            <div className={`${CARD} p-4 flex items-center gap-3 liff-rise`}>
               <button
                 onClick={() => setSelectedClassroom(null)}
                 aria-label="กลับสู่ภาพรวม"
@@ -2337,10 +2369,10 @@ export default function LiffStudentPage() {
 
             {/* TAB: TIMELINE */}
             {courseTab === 'timeline' && (
-              <section className={`${CARD} p-4 sm:p-5 space-y-4`}>
+              <section className={`${CARD} p-4 sm:p-5 space-y-4 liff-rise`}>
                 <SectionTitle icon={<Megaphone className="w-4 h-4 text-amber-500" />} title="ไทม์ไลน์ของวิชา" count={studentTimeline.length} />
                 {studentTimeline.length > 0 ? (
-                  <ol className="relative space-y-1">
+                  <ol className="relative space-y-1 liff-stagger">
                     {studentTimeline.map((item, idx) => (
                       <li key={item.id} className="relative pl-7 pb-4 last:pb-0">
                         {idx < studentTimeline.length - 1 && (
@@ -2367,9 +2399,9 @@ export default function LiffStudentPage() {
 
             {/* TAB: WORK & EXAMS */}
             {courseTab === 'work' && (
-              <section className="space-y-4">
+              <section className="space-y-4 liff-stagger">
                 {Object.entries(
-                  pendingAssignments.concat(completedAssignments).reduce<Record<string, Assignment[]>>((groups, item) => {
+                  workListAssignments.reduce<Record<string, Assignment[]>>((groups, item) => {
                     const key = assignmentGroupKey(item);
                     (groups[key] ||= []).push(item);
                     return groups;
@@ -2396,7 +2428,7 @@ export default function LiffStudentPage() {
                       icon={<Layers className="w-4 h-4 text-line" />}
                     />
                     <Collapse open={groupOpen}>
-                    <div className="grid gap-2.5 md:grid-cols-2 pt-1">
+                    <div className="grid gap-2.5 md:grid-cols-2 pt-1 liff-stagger">
                       {items.map((assignment) => {
                         const submission = submissions[assignment.id];
                         const isSubmitted = Boolean(submission);
@@ -2491,7 +2523,7 @@ export default function LiffStudentPage() {
                   );
                 })}
 
-                {!pendingAssignments.length && !completedAssignments.length && (
+                {!workListAssignments.length && (
                   <div className={CARD}>
                     <EmptyState icon="🗂️" text="ยังไม่มีงานหรือข้อสอบในวิชานี้" />
                   </div>
@@ -2501,7 +2533,7 @@ export default function LiffStudentPage() {
 
             {/* TAB: ATTENDANCE */}
             {courseTab === 'attendance' && (
-              <section className="space-y-4">
+              <section className="space-y-4 liff-stagger">
                 {(() => {
                   // Same order as the teacher view: open sessions the student hasn't
                   // checked into come first (newest first); everything else (checked
@@ -2616,8 +2648,8 @@ export default function LiffStudentPage() {
                         isActive ? 'text-line' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
                       }`}
                     >
-                      <span className={`px-4 py-1 rounded-full transition-colors ${isActive ? 'bg-emerald-50 dark:bg-emerald-950/60' : ''}`}>
-                        <Icon className="w-5 h-5" />
+                      <span className={`px-4 py-1 rounded-full transition-colors duration-300 ${isActive ? 'bg-emerald-50 dark:bg-emerald-950/60' : ''}`}>
+                        <Icon key={isActive ? 'on' : 'off'} className={`w-5 h-5 ${isActive ? 'liff-nudge' : ''}`} />
                       </span>
                       <span>{label}</span>
                     </button>
@@ -2630,7 +2662,7 @@ export default function LiffStudentPage() {
       ) : (
 
         /* ACTIVE TAKING EXAM/ASSIGNMENT VIEW */
-        <div className="p-4 sm:p-6 space-y-4 pb-[calc(7rem+env(safe-area-inset-bottom))]">
+        <div className="liff-view p-4 sm:p-6 space-y-4 pb-[calc(7rem+env(safe-area-inset-bottom))]">
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={() => {
@@ -2678,7 +2710,7 @@ export default function LiffStudentPage() {
             </div>
           ) : submissionSuccess ? (
             <div className={`${CARD} text-center space-y-5 p-6 sm:p-8 mt-6 animate-in fade-in zoom-in-95`}>
-              <div className="w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-950 text-line mx-auto flex items-center justify-center">
+              <div className="liff-pop w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-950 text-line mx-auto flex! items-center justify-center">
                 <CheckCircle2 className="w-10 h-10" />
               </div>
               <div className="space-y-1.5">
@@ -2688,10 +2720,10 @@ export default function LiffStudentPage() {
                 </p>
               </div>
               {submittedResult && submittedResult.total !== null ? (
-                <div className="p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white space-y-1">
+                <div className="liff-sheen liff-rise p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white space-y-1">
                   <p className="text-xs font-semibold text-emerald-50">คะแนนของคุณ (ตรวจอัตโนมัติ)</p>
                   <p className="text-4xl font-black tabular-nums">
-                    {submittedResult.total}
+                    <CountUp value={submittedResult.total} />
                     <span className="text-xl font-bold text-emerald-100"> / {submittedResult.max}</span>
                   </p>
                 </div>
@@ -3344,9 +3376,9 @@ export default function LiffStudentPage() {
           </div>
 
           {gradedSubmissionIds.has(viewingGradedSub.submission.id) && viewingGradedSub.submission.total_score != null ? (
-            <div className="p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white text-center space-y-1">
+            <div className="liff-sheen p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white text-center space-y-1">
               <p className="text-4xl font-black tabular-nums">
-                {viewingGradedSub.submission.total_score}
+                <CountUp value={Number(viewingGradedSub.submission.total_score)} />
                 <span className="text-xl font-bold text-emerald-100"> / {viewingGradedSub.assignment.total_points || 20}</span>
               </p>
               <p className="text-sm font-semibold text-emerald-50">

@@ -248,6 +248,87 @@ async function hydrateClassrooms(supabase: Supabase, rows: Classroom[]): Promise
   });
 }
 
+/**
+ * hydrateClassrooms for one student's own screen: same rules for the
+ * student's own roster entry (active / waiting for approval), without loading
+ * every classmate's account, which a student never receives (classroomForStudent
+ * keeps only their own entry). `links` are the student's own enrollment rows
+ * and `ownUsers` their account(s), both loaded alongside the classrooms.
+ */
+async function hydrateClassroomsForStudent(
+  supabase: Supabase,
+  rows: Classroom[],
+  keys: string[],
+  links: EnrollmentLink[],
+  ownUsers: Map<string, User>
+): Promise<Classroom[]> {
+  const keySet = new Set(keys);
+  const ownIds = new Set<string>(keys);
+  const ownSchoolNumbers = new Set<string>();
+  for (const u of ownUsers.values()) {
+    ownIds.add(u.id);
+    if (u.line_uid) ownIds.add(u.line_uid);
+    if (u.student_id) ownSchoolNumbers.add(u.student_id);
+  }
+  // A roster entry that only shares the school number is the student's unless its id belongs to someone else.
+  const bySchoolNumberOnly = (s: User) =>
+    !!s.student_id && ownSchoolNumbers.has(s.student_id) && !ownIds.has(s.id) && !(s.line_uid && ownIds.has(s.line_uid));
+  const candidates = rows.flatMap((cls) => [...(cls.students || []), ...(cls.pending_students || [])] as User[]).filter(bySchoolNumberOnly);
+  const others = candidates.length ? await fetchUsersByKeys(supabase, candidates.flatMap((s) => [s.id, s.line_uid])) : new Map<string, User>();
+  const ownUser = [...ownUsers.values()][0];
+  const resolve = (s: User): User | undefined => {
+    if (ownIds.has(s.id) || (s.line_uid && ownIds.has(s.line_uid))) return ownUsers.get(s.id) || (s.line_uid ? ownUsers.get(s.line_uid) : undefined) || ownUser;
+    if (bySchoolNumberOnly(s)) {
+      const other = others.get(s.id) || (s.line_uid ? others.get(s.line_uid) : undefined);
+      return other && !ownIds.has(other.id) ? undefined : ownUser;
+    }
+    return undefined;
+  };
+  return rows.map((cls) => {
+    const active: User[] = [];
+    const pending: User[] = [];
+    const seen = new Set<string>();
+    for (const s of (cls.students || []) as User[]) {
+      const db = resolve(s);
+      if (!db && !keySet.has(s.id)) continue;
+      const merged = mergeStudent(s, db, 'active');
+      if (!seen.has(merged.id)) {
+        seen.add(merged.id);
+        active.push(merged);
+      }
+    }
+    for (const s of (cls.pending_students || []) as User[]) {
+      const db = resolve(s);
+      if (!db && !keySet.has(s.id)) continue;
+      const merged = mergeStudent(s, db, 'pending_approval');
+      if (!seen.has(merged.id) && !pending.some((p) => p.id === merged.id)) pending.push(merged);
+    }
+    for (const link of links.filter((l) => l.classroom_id === cls.id)) {
+      const u = ownUsers.get(link.student_id);
+      if (!u) continue;
+      if (link.status === 'pending_approval') {
+        if (!seen.has(u.id) && !pending.some((p) => p.id === u.id)) pending.push({ ...u, enrollment_status: 'pending_approval' });
+      } else if (!seen.has(u.id)) {
+        seen.add(u.id);
+        const idx = pending.findIndex((p) => p.id === u.id);
+        if (idx >= 0) pending.splice(idx, 1);
+        active.push({ ...u, enrollment_status: 'active' });
+      }
+    }
+    let semester = cls.semester;
+    let yearCe = cls.year_ce;
+    if (!semester || !yearCe) {
+      const parsed = parseAcademicPeriod(cls.academic_year);
+      if (parsed) {
+        semester = semester ?? parsed.semester;
+        yearCe = yearCe ?? parsed.yearCE;
+      }
+    }
+    // Class size from the roster as stored (not shown to students; no classmate lookups).
+    return { ...cls, semester, year_ce: yearCe, students: active, pending_students: pending, student_count: (cls.students || []).length };
+  });
+}
+
 /** Make sure a teacher row exists before inserting rows that reference it. */
 async function ensureTeacherUser(
   supabase: Supabase,
@@ -1174,33 +1255,37 @@ export const dataActions = {
    */
   async getStudentHome({ supabase, actor }: Ctx) {
     const me = requireStudent(actor);
-    const [fromRoster, links] = await Promise.all([
+    // One round for everything that only needs the student's ids: their
+    // classrooms, enrollment rows, own account and own submissions (with score rows).
+    const [fromRoster, links, ownUsers, submissionResult] = await Promise.all([
       findClassroomsContainingStudent(supabase, me.keys),
-      supabase.from('classroom_students').select('classroom_id').in('student_id', me.keys),
-    ]);
-    const known = new Set(fromRoster.map((c) => c.id));
-    const extraIds = [...new Set((links.data || []).map((l: { classroom_id: string }) => l.classroom_id))].filter((id) => !known.has(id));
-    let extra: Classroom[] = [];
-    if (extraIds.length) {
-      const { data } = await supabase.from('classrooms').select('*').in('id', extraIds);
-      extra = (data || []) as Classroom[];
-    }
-    const rows = [...fromRoster, ...extra].sort(byCreatedDesc);
-    const classroomIds = rows.map((c) => c.id);
-
-    // Rosters, work and the student's own submissions (with score rows) at once.
-    const [hydrated, assignments, submissionResult] = await Promise.all([
-      hydrateClassrooms(supabase, rows),
-      loadAssignments(supabase, classroomIds, false),
-      classroomIds.length
-        ? supabase
-            .from('submissions')
-            .select('*, submission_answers(id, submission_id, question_id, teacher_score, teacher_comment, graded_at)')
-            .in('student_id', me.keys)
-        : Promise.resolve({ data: [], error: null }),
+      supabase.from('classroom_students').select('classroom_id, student_id, status').in('student_id', me.keys),
+      fetchUsersByKeys(supabase, me.keys),
+      supabase
+        .from('submissions')
+        .select('*, submission_answers(id, submission_id, question_id, teacher_score, teacher_comment, graded_at)')
+        .in('student_id', me.keys),
     ]);
     if (submissionResult.error) throw toDatabaseError(submissionResult.error, 'submissions');
-    const assignmentIds = new Set(assignments.map((a) => a.id));
+    const ownLinks = (links.data || []) as EnrollmentLink[];
+    const known = new Set(fromRoster.map((c) => c.id));
+    const extraIds = [...new Set(ownLinks.map((l) => l.classroom_id))].filter((id) => !known.has(id));
+    const rows = [...fromRoster];
+    const classroomIds = [...known, ...extraIds];
+    // Classrooms known only from an enrollment row, and the work of every classroom, at once.
+    const [extra, assignments] = await Promise.all([
+      extraIds.length
+        ? supabase.from('classrooms').select('*').in('id', extraIds).then(({ data }) => (data || []) as Classroom[])
+        : Promise.resolve([] as Classroom[]),
+      loadAssignments(supabase, classroomIds, false),
+    ]);
+    rows.push(...extra);
+    rows.sort(byCreatedDesc);
+    const hydrated = await hydrateClassroomsForStudent(supabase, rows, me.keys, ownLinks, ownUsers);
+    // Work of a classroom id that no longer exists is dropped with it.
+    const existing = new Set(rows.map((c) => c.id));
+    const visibleAssignments = assignments.filter((a) => existing.has(a.classroom_id));
+    const assignmentIds = new Set(visibleAssignments.map((a) => a.id));
     const submissions: Submission[] = [];
     const answers: SubmissionAnswer[] = [];
     for (const row of (submissionResult.data || []) as Array<Submission & { submission_answers?: SubmissionAnswer[] }>) {
@@ -1209,7 +1294,7 @@ export const dataActions = {
       submissions.push(submission as Submission);
       answers.push(...(rowAnswers || []));
     }
-    return { classrooms: hydrated.map((c) => classroomForStudent(c, me)), assignments, submissions, answers };
+    return { classrooms: hydrated.map((c) => classroomForStudent(c, me)), assignments: visibleAssignments, submissions, answers };
   },
 
   async getAssignmentsByClassroomId(ctx: Ctx, classroomId: string) {
