@@ -738,6 +738,11 @@ export const dataService = {
     return call<{ reopened_at: string | null }>('setSubmissionReopened', submissionId, open);
   },
 
+  /** "Allow edit" for everyone who handed in this homework, or takes it back from everyone. */
+  async setAllSubmissionsReopened(assignmentId: string, open: boolean): Promise<{ changed: number }> {
+    return call<{ changed: number }>('setAllSubmissionsReopened', assignmentId, open);
+  },
+
   /**
    * Records that roster students handed in nothing (an official 0 on every
    * question). The server allows it only after the deadline or once closed.

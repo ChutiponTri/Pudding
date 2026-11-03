@@ -450,7 +450,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             type="button"
             onClick={handleClose}
             title={th ? 'ปิด (Esc)' : 'Close (Esc)'}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
+            aria-label={th ? 'ปิด' : 'Close'}
+            className="p-2.5 sm:p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
@@ -512,6 +513,34 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             {runningTotal}/{maxTotal}
           </span>
         </div>
+
+        {/* Phones: jump to a question (the desktop list sits in the side panel) */}
+        {questions.length > 1 && (
+          <nav aria-label={th ? 'ไปที่ข้อ' : 'Go to question'} className="md:hidden flex gap-1.5 overflow-x-auto scrollbar-none px-3 pb-2.5">
+            {questions.map((q, idx) => {
+              const g = grades[q.id];
+              const dirty = isDirty(g);
+              const saved = g?.savedScore !== '';
+              return (
+                <button
+                  key={q.id}
+                  type="button"
+                  onClick={() => document.getElementById(`question-card-${q.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  className={`shrink-0 h-9 min-w-11 px-2.5 rounded-xl text-[11px] font-bold inline-flex items-center justify-center gap-1.5 ring-1 cursor-pointer ${
+                    dirty
+                      ? 'bg-amber-50 dark:bg-amber-950/40 ring-amber-300 dark:ring-amber-800 text-amber-800 dark:text-amber-300'
+                      : saved
+                      ? 'bg-emerald-50 dark:bg-emerald-950/40 ring-emerald-200 dark:ring-emerald-900 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-white dark:bg-slate-900 ring-slate-200 dark:ring-slate-700 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  {th ? 'ข้อ' : 'Q'} {idx + 1}
+                  <span className="font-mono font-semibold opacity-70 tabular-nums">{g?.score !== '' ? g?.score : '–'}</span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
 
         {isResearcher && (
           <div className="px-3 sm:px-6 py-2 bg-purple-50 dark:bg-purple-950/40 border-t border-purple-200 dark:border-purple-900/50 text-xs text-purple-900 dark:text-purple-200 flex items-center gap-2">
@@ -580,6 +609,26 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
         {/* ── Questions ── */}
         <main className="flex-1 overflow-y-auto p-3 sm:p-6">
           <div className="max-w-3xl mx-auto space-y-5 pb-6">
+            {/* Phones: what the desktop side panel shows (integrity, other graders) */}
+            {(isIntegrityFlagged(submission, tracksAway) || agreement.pairs > 0) && (
+              <div className="md:hidden space-y-2 text-[11px]">
+                {isIntegrityFlagged(submission, tracksAway) && (
+                  <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-px" />
+                    <span>
+                      <span className="font-bold block">{th ? 'พฤติกรรมน่าสงสัย' : 'Integrity alert'}</span>
+                      {th ? `สลับแท็บ ${submission.tab_switch_count} ครั้ง (${submission.total_time_away_seconds} วินาที)` : `${submission.tab_switch_count} tab switches (${submission.total_time_away_seconds}s)`}
+                    </span>
+                  </div>
+                )}
+                {agreement.pairs > 0 && (
+                  <p className="px-3 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300">
+                    <span className="font-bold">{th ? 'เทียบกับผู้ตรวจอื่น' : 'vs. other graders'}:</span>{' '}
+                    Δ {agreement.avg} · {agreement.high ? t('grading.workspace.irr_agreement_high') : t('grading.workspace.irr_agreement_moderate')}
+                  </p>
+                )}
+              </div>
+            )}
             {questions.map((q, idx) => {
               const ans = answers[q.id];
               const g = grades[q.id];
@@ -839,7 +888,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                         {isResearcher ? (th ? 'คะแนนวิจัย' : 'Research score') : t('grading.workspace.teacher_score_label')}
                       </span>
                       <div className="flex items-center rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 overflow-hidden">
-                        <button type="button" onClick={() => stepScore(q, -0.5)} className="px-2.5 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="-0.5">
+                        <button type="button" onClick={() => stepScore(q, -0.5)} className="w-11 h-11 sm:w-auto sm:h-auto sm:px-2.5 sm:py-2 flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="-0.5">
                           <Minus className="w-4 h-4" />
                         </button>
                         {/* Text box (not type=number): the browser cannot slip in "e", "-" or a scroll-wheel change, and every keystroke is checked. */}
@@ -865,7 +914,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                           placeholder="–"
                           className={`w-16 py-1.5 bg-transparent text-center font-mono font-black text-lg focus:outline-hidden ${scoreInvalid ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}
                         />
-                        <button type="button" onClick={() => stepScore(q, 0.5)} className="px-2.5 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="+0.5">
+                        <button type="button" onClick={() => stepScore(q, 0.5)} className="w-11 h-11 sm:w-auto sm:h-auto sm:px-2.5 sm:py-2 flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="+0.5">
                           <Plus className="w-4 h-4" />
                         </button>
                       </div>
@@ -880,7 +929,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                             key={chip.label}
                             type="button"
                             onClick={() => setScore(q, chip.value)}
-                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer hover:opacity-80 ${chip.cls}`}
+                            className={`min-w-11 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-lg text-xs font-bold cursor-pointer hover:opacity-80 ${chip.cls}`}
                           >
                             {chip.label}
                           </button>
@@ -963,7 +1012,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             type="button"
             onClick={handlePrev}
             disabled={isSavingAll}
-            className="px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center gap-1 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+            aria-label={th ? 'คนก่อนหน้า' : 'Previous'}
+            className="min-h-11 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center gap-1 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
           >
             <ChevronLeft className="w-4 h-4" />
             <span className="hidden sm:inline">{th ? 'คนก่อนหน้า' : 'Previous'}</span>
@@ -985,7 +1035,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           type="button"
           onClick={saveAll}
           disabled={isSavingAll || dirtyQuestions.length === 0}
-          className="shrink-0 px-3 sm:px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label={th ? 'บันทึก' : 'Save'}
+          className="shrink-0 min-h-11 px-3 sm:px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {isSavingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           <span className="hidden sm:inline">{th ? 'บันทึก' : 'Save'}</span>
@@ -994,7 +1045,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           type="button"
           onClick={handleSaveAndNext}
           disabled={isSavingAll}
-          className="shrink-0 px-3 sm:px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+          className="shrink-0 min-h-11 px-3 sm:px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
         >
           {isLast ? <Check className="w-4 h-4" /> : null}
           <span className="hidden sm:inline">

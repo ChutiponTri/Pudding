@@ -51,7 +51,7 @@ import { canonicalInstitution, institutionLabel } from "@/lib/data/thaiInstituti
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
 import { formatDateTime } from "@/lib/utils/datetime";
-import { canEditSubmission, isTeacherGraded } from "@/lib/utils/gradingStatus";
+import { canEditSubmission, isHandedIn, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { assignmentAttachments } from "@/lib/utils/referenceWork";
 import { AttachmentList, opensPreview } from "@/components/AssignmentAttachments";
@@ -1013,6 +1013,8 @@ export default function LiffStudentPage() {
           // to-do while the work is still open; handing in replaces it.
           const recordedAssignment = submission.status === 'pending' ? assignmentsById.get(submission.assignment_id) : undefined;
           if (recordedAssignment && getAssignmentWindow(recordedAssignment).acceptsSubmissions) continue;
+          // An unscored row recorded by older versions means nothing to the student: same as not handed in.
+          if (submission.status === 'pending' && submission.total_score == null) continue;
           const found =
             submission.student_id === currentStudent.id ||
             submission.student_id === currentStudent.line_uid ||
@@ -1154,9 +1156,10 @@ export default function LiffStudentPage() {
     if (currentStudent?.line_uid) loadClassroomPosts(selectedClassroom, currentStudent.line_uid);
   }, [selectedClassroom?.id, currentStudent?.line_uid]);
 
-  /** Homework the student may still change: before grading and closing, or reopened by the teacher. Quizzes never. */
-  const canEditWork = (a: Assignment, s?: Submission) =>
-    !!s && canEditSubmission(s, a.is_exam, { acceptsSubmissions: getAssignmentWindow(a).acceptsSubmissions, teacherGraded: teacherGradedIds.has(s.id) });
+  /** Handed-in work is view-only until the teacher allows an edit (homework only). */
+  const canEditWork = (a: Assignment, s?: Submission) => !!s && canEditSubmission(s, a.is_exam);
+  /** The teacher recorded "no submission", but the work still takes (late) work: the student may still hand in. */
+  const canHandInOverMissing = (a: Assignment, s?: Submission) => !!s && s.status === 'pending' && getAssignmentWindow(a).acceptsSubmissions;
 
   /** Handed-in answers back in the form: files we stored show as attached, anything else as a pasted link. */
   const answersToForm = (answers: Record<string, SubmissionAnswer>) =>
@@ -1769,7 +1772,8 @@ export default function LiffStudentPage() {
   const openPendingAssignments = pendingAssignments.filter((a) => getAssignmentWindow(a).acceptsSubmissions);
   const pendingExams = openPendingAssignments.filter((a) => a.is_exam);
   const pendingHomework = openPendingAssignments.filter((a) => !a.is_exam);
-  const completedAssignments = filteredAssignments.filter((a) => Boolean(submissions[a.id]));
+  // Handed in by the student; a "no submission" 0 recorded by the teacher is not.
+  const completedAssignments = filteredAssignments.filter((a) => Boolean(submissions[a.id]) && isHandedIn(submissions[a.id]));
   // Fully graded results the student has not opened yet (or that were re-graded).
   const newResults = completedAssignments.filter((a) => {
     const submission = submissions[a.id];
@@ -2473,7 +2477,7 @@ export default function LiffStudentPage() {
                               </span>
                               {!isClosed && (
                                 <span className="font-bold text-line shrink-0 flex items-center gap-0.5">
-                                  {isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : 'ดูผล') : 'เริ่มทำ'}
+                                  {isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : canHandInOverMissing(assignment, submission) ? 'ส่งงาน' : 'ดูผล') : 'เริ่มทำ'}
                                   <ChevronRight className="w-3.5 h-3.5" />
                                 </span>
                               )}
@@ -2778,7 +2782,7 @@ export default function LiffStudentPage() {
                   </span>
                   <div className="min-w-0 text-xs leading-relaxed">
                     <p className="text-sm font-bold">กำลังแก้ไขงานที่ส่งแล้ว</p>
-                    <p className="opacity-80">แก้แล้วกดส่งอีกครั้ง งานใหม่จะแทนที่งานเดิม{editingSubmission.reopened_at ? "" : " • แก้ได้จนกว่าคุณครูจะตรวจหรือปิดรับ"}</p>
+                    <p className="opacity-80">คุณครูเปิดให้แก้ไข • แก้แล้วกดส่งอีกครั้ง งานใหม่จะแทนที่งานเดิม</p>
                   </div>
                 </div>
               )}
@@ -3432,14 +3436,32 @@ export default function LiffStudentPage() {
                 แก้ไขงานที่ส่ง
               </button>
               <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
-                {viewingGradedSub.submission.reopened_at
-                  ? "คุณครูเปิดให้แก้ไขงานนี้ • ส่งใหม่แล้วคุณครูจะตรวจอีกครั้ง"
-                  : "แนบไฟล์ผิด? แก้ได้จนกว่าคุณครูจะตรวจหรือปิดรับ"}
+                คุณครูเปิดให้แก้ไขงานนี้ • ส่งใหม่แล้วคุณครูจะตรวจอีกครั้ง
               </p>
             </div>
-          ) : !viewingGradedSub.assignment.is_exam && viewingGradedSub.submission.status !== 'pending' ? (
+          ) : canHandInOverMissing(viewingGradedSub.assignment, viewingGradedSub.submission) ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const { assignment: a } = viewingGradedSub;
+                  setViewingGradedSub(null);
+                  handleOpenAssignment(a);
+                }}
+                className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform"
+              >
+                <PencilLine className="w-4 h-4" />
+                ส่งงานตอนนี้ (ส่งช้า)
+              </button>
+              <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
+                คุณครูบันทึกว่ายังไม่ส่ง • ส่งงานตอนนี้ งานที่ส่งจะแทนคะแนน 0
+              </p>
+            </div>
+          ) : viewingGradedSub.submission.status !== 'pending' ? (
             <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
-              {teacherGradedIds.has(viewingGradedSub.submission.id) ? "คุณครูตรวจงานนี้แล้ว" : "ปิดรับงานแล้ว"} จึงแก้ไขไม่ได้ — ติดต่อคุณครูหากต้องการแก้
+              🔒 {viewingGradedSub.assignment.is_exam
+                ? "ส่งข้อสอบแล้ว ดูคำตอบได้อย่างเดียว"
+                : "ส่งงานแล้ว ดูได้อย่างเดียว — หากต้องการแก้ไข ให้คุณครูกด “ให้แก้ไขงาน” ก่อน"}
             </p>
           ) : null}
 

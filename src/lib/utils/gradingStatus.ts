@@ -25,17 +25,18 @@ export const isTeacherGraded = (
 ) => isGraded(sub) || answers.some((a) => !!a.graded_at);
 
 /**
- * Whether the student may still change handed-in work. Quizzes: never.
- * Homework: while it still accepts work and no teacher has graded it, or at
- * any time once the teacher reopened it for them.
+ * Whether the student may change handed-in work. Handed-in work is view-only:
+ * the student opens it to see their answers and scores, but changes nothing
+ * (answers, files, the hand-in button) until the teacher allows it for them
+ * ("Allow edit" sets reopened_at). Quizzes are never reopened. The submissions
+ * API enforces the same rule.
  */
 export function canEditSubmission(
-  sub: Pick<Submission, 'status' | 'total_score' | 'reopened_at'>,
-  isExam: boolean | undefined,
-  { acceptsSubmissions, teacherGraded }: { acceptsSubmissions: boolean; teacherGraded: boolean }
+  sub: Pick<Submission, 'status' | 'reopened_at'>,
+  isExam: boolean | undefined
 ): boolean {
   if (isExam || !isHandedIn(sub)) return false;
-  return !!sub.reopened_at || (acceptsSubmissions && !teacherGraded);
+  return !!sub.reopened_at;
 }
 
 type IntegrityFields = Pick<Submission, 'status' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'>;

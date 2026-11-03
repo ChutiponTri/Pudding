@@ -8,7 +8,7 @@ import { getActor } from '@/lib/auth/actor';
 import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
 import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
 import { attachFiles, discardDrafts, keysFromUrls, removeFiles } from '@/lib/storage/files';
-import { isHandedIn, isTeacherGraded } from '@/lib/utils/gradingStatus';
+import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
 import type { Classroom, Question } from '@/types/database';
 
@@ -236,8 +236,8 @@ export async function POST(request: NextRequest) {
       ? await supabase.from('submission_answers').select('file_url, graded_at').eq('submission_id', existingSubmission.id)
       : { data: [] as Array<{ file_url: string | null; graded_at: string | null }> };
     // Handing in again replaces the answers and the teacher's scores. A quiz is
-    // never retaken; homework may be edited until it is graded or closes, or
-    // whenever the teacher reopened it for this student.
+    // never retaken; handed-in homework is view-only until the teacher reopens
+    // it for this student (canEditSubmission), even before the deadline.
     const isEdit = !!existingSubmission && isHandedIn(existingSubmission);
     const reopened = isEdit && !!existingSubmission.reopened_at;
     if (isEdit && assignment.is_exam) {
@@ -246,8 +246,8 @@ export async function POST(request: NextRequest) {
     if (closedError && !reopened) {
       return NextResponse.json({ error: isEdit ? `ปิดรับงาน “${assignment.title}” แล้ว จึงแก้ไขงานที่ส่งไม่ได้ — ติดต่อคุณครูหากต้องการแก้ไข` : closedError }, { status: 409 });
     }
-    if (isEdit && !reopened && isTeacherGraded(existingSubmission, previousAnswers || [])) {
-      return NextResponse.json({ error: 'คุณครูตรวจงานนี้แล้ว จึงแก้ไขไม่ได้ — ติดต่อคุณครูหากต้องการแก้ไขงาน' }, { status: 409 });
+    if (isEdit && !reopened) {
+      return NextResponse.json({ error: 'ส่งงานนี้แล้ว จึงแก้ไขหรือส่งซ้ำไม่ได้ — ติดต่อคุณครูให้กด "ให้แก้ไขงาน" ก่อน' }, { status: 409 });
     }
 
     if (!existingUser?.id) {

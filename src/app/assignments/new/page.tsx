@@ -981,11 +981,11 @@ function NewAssignmentContent() {
                 <p className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-[11px] font-semibold text-amber-900 dark:text-amber-200">
                   <MobileText
                     short={language === 'th'
-                      ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — ลบคำถามแล้วคำตอบข้อนั้นจะหายไป`
-                      : `${editSubmissionCount} submitted — removing a question deletes its answers.`}
+                      ? `ส่งแล้ว ${editSubmissionCount} คน — ข้อปรนัย/ถูกผิดตรวจใหม่อัตโนมัติ • ลบคำถามแล้วคำตอบข้อนั้นหาย`
+                      : `${editSubmissionCount} submitted — choice answers are re-scored • removing a question deletes its answers`}
                     full={language === 'th'
-                      ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — แก้ไขได้ทุกส่วน แต่ถ้าลบคำถาม คำตอบของข้อนั้นจะหายไป และคะแนนที่ตรวจแล้วจะไม่คำนวณใหม่`
-                      : `${editSubmissionCount} students have submitted. Removing a question deletes its answers, and existing scores are not recalculated.`}
+                      ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — เมื่อบันทึก ข้อปรนัยและข้อถูก/ผิดของทุกคนจะตรวจใหม่ตามเฉลยใหม่ (คะแนนที่ครูปรับเองคงไว้) • ข้อที่เปลี่ยนเป็นข้อเขียนจะกลับไปรอตรวจ • ลบคำถามแล้วคำตอบข้อนั้นหายไป • นักเรียนที่ส่งแล้วแก้งานไม่ได้ จนกว่าครูกด “ให้แก้ไขงาน” ในหน้าตรวจงาน`
+                      : `${editSubmissionCount} students have submitted. On save, everyone's choice and true/false answers are re-scored from the new key (scores you adjusted by hand stay) • questions changed to written go back to "to grade" • removing a question deletes its answers • students can't change handed-in work until you press "Allow edit" on the grading page.`}
                   />
                 </p>
               )}

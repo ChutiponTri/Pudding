@@ -502,6 +502,28 @@ Handing in again clears the current score and comments for regrading (their on-t
       setReopeningId(null);
     }
   };
+  // Homework only: let everyone who handed in edit again (e.g. after fixing a wrongly made assignment), or undo that.
+  const [bulkReopening, setBulkReopening] = useState(false);
+  const handleReopenAll = async (open: boolean, count: number) => {
+    if (!confirm(open
+      ? th
+        ? `ให้นักเรียนที่ส่งแล้ว ${count} คนแก้ไขงานได้?\nนักเรียนแก้และส่งใหม่ได้แม้ปิดรับแล้ว • เมื่อส่งใหม่ คะแนนและความเห็นเดิมของคนนั้นจะถูกล้างเพื่อตรวจใหม่`
+        : `Let ${count} students who handed in edit their work?\nThey can hand in again even if it is closed • handing in again clears that student's score and comments for regrading.`
+      : th
+      ? `ยกเลิกการให้แก้ไขงานของนักเรียน ${count} คน?`
+      : `Stop letting ${count} students edit their work?`)) return;
+    setBulkReopening(true);
+    try {
+      const { changed } = await dataService.setAllSubmissionsReopened(assignmentId, open);
+      await refreshSubmissions();
+      showToast(open ? (th ? `เปิดให้แก้ไขแล้ว ${changed} คน` : `${changed} students can edit now`) : th ? `ปิดการแก้ไขแล้ว ${changed} คน` : `Editing closed for ${changed}`);
+    } catch (err) {
+      alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
+    } finally {
+      setBulkReopening(false);
+    }
+  };
+
   const reopenControl = (sub: Submission) => {
     if (assignment?.is_exam || !isHandedIn(sub) || !grader || grader.role === 'researcher') return null;
     const busy = reopeningId === sub.id;
@@ -653,6 +675,10 @@ Handing in again clears the current score and comments for regrading (their on-t
 
   const assignmentWindow = assignment ? getAssignmentWindow(assignment) : null;
   const canMarkNoSubmission = !!assignmentWindow && canRecordNoSubmission(assignmentWindow);
+  // Handed-in homework is locked for students until the teacher allows edits.
+  const lockedCount = submissions.filter((sub) => isHandedIn(sub) && !sub.reopened_at).length;
+  const allReopened = handedInTotal > 0 && lockedCount === 0;
+  const canBulkReopen = !!grader && grader.role !== 'researcher' && !assignment?.is_exam && handedInTotal > 0;
   const assignmentStatus = assignment && assignmentWindow ? getAssignmentStatus(assignmentWindow, assignment.is_exam, language) : null;
   const deadlineLabel = formatDateTime(
     assignmentWindow?.deadline != null ? new Date(assignmentWindow.deadline).toISOString() : assignment?.due_date,
@@ -800,13 +826,15 @@ Handing in again clears the current score and comments for regrading (their on-t
                   <Link
                     href={`/assignments/new?copy=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
                     title={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-sky-600 hover:border-sky-400 transition-colors"
+                    aria-label={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
+                    className="inline-flex items-center gap-1 justify-center min-w-10 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-sky-600 hover:border-sky-400 transition-colors"
                   >
                     📋 <span className="hidden sm:inline">{th ? 'คัดลอก' : 'Copy'}</span>
                   </Link>
                   <Link
                     href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
+                    aria-label={th ? 'แก้ไขงาน' : 'Edit'}
+                    className="inline-flex items-center gap-1 justify-center min-w-10 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
                   >
                     ✏️ <span className="hidden sm:inline">{th ? 'แก้ไขงาน' : 'Edit'}</span>
                   </Link>
@@ -908,17 +936,34 @@ Handing in again clears the current score and comments for regrading (their on-t
             ))}
           </div>
 
-          {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && canMarkNoSubmission && (
-            <button
-              type="button"
-              onClick={handleMarkAllNoSubmission}
-              disabled={recordingKeys.size > 0}
-              className="w-full sm:w-auto px-3 py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
-            >
-              <Ban className="w-3.5 h-3.5" />
-              {th ? `บันทึกว่าไม่ส่งงาน (0 คะแนน) ทุกคนที่ยังไม่ส่ง (${unrecordedRows.length})` : `Mark all missing as no submission · 0 (${unrecordedRows.length})`}
-            </button>
-          )}
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 empty:hidden">
+            {canBulkReopen && (
+              <button
+                type="button"
+                onClick={() => handleReopenAll(!allReopened, allReopened ? handedInTotal : lockedCount)}
+                disabled={bulkReopening}
+                title={th ? 'งานที่ส่งแล้วนักเรียนแก้ไม่ได้ จนกว่าครูจะเปิดให้แก้' : 'Handed-in work is locked until you allow edits'}
+                className="w-full sm:w-auto px-3 py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+              >
+                <PencilLine className="w-3.5 h-3.5" />
+                {allReopened
+                  ? th ? `ยกเลิกการให้แก้ไขทั้งหมด (${handedInTotal})` : `Stop all edits (${handedInTotal})`
+                  : th ? `ให้ทุกคนที่ส่งแล้วแก้ไขงาน (${lockedCount})` : `Allow everyone who handed in to edit (${lockedCount})`}
+              </button>
+            )}
+
+            {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && canMarkNoSubmission && (
+              <button
+                type="button"
+                onClick={handleMarkAllNoSubmission}
+                disabled={recordingKeys.size > 0}
+                className="w-full sm:w-auto px-3 py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                {th ? `บันทึกว่าไม่ส่งงาน (0 คะแนน) ทุกคนที่ยังไม่ส่ง (${unrecordedRows.length})` : `Mark all missing as no submission · 0 (${unrecordedRows.length})`}
+              </button>
+            )}
+          </div>
 
           {/* Submission window controls, folded away until needed */}
           <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80">
@@ -1128,7 +1173,7 @@ Handing in again clears the current score and comments for regrading (their on-t
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder={t('grading.search_student')}
-              className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 font-medium"
+              className="w-full pl-9 pr-4 h-11 sm:h-auto sm:py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 font-medium"
             />
           </div>
 
@@ -1136,7 +1181,7 @@ Handing in again clears the current score and comments for regrading (their on-t
           <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
             <button
               onClick={() => setStatusFilter('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              className={`shrink-0 px-3 h-10 sm:h-auto sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                 statusFilter === 'all'
                   ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -1146,7 +1191,7 @@ Handing in again clears the current score and comments for regrading (their on-t
             </button>
             <button
               onClick={() => setStatusFilter('missing')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              className={`shrink-0 px-3 h-10 sm:h-auto sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                 statusFilter === 'missing'
                   ? 'bg-slate-600 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
@@ -1157,7 +1202,7 @@ Handing in again clears the current score and comments for regrading (their on-t
             {tracksAway && (
             <button
               onClick={() => setStatusFilter('suspicious')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer ${
+              className={`shrink-0 px-3 h-10 sm:h-auto sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer ${
                 statusFilter === 'suspicious'
                   ? 'bg-rose-600 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'
@@ -1169,7 +1214,7 @@ Handing in again clears the current score and comments for regrading (their on-t
             )}
             <button
               onClick={() => setStatusFilter('pending')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              className={`shrink-0 px-3 h-10 sm:h-auto sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                 statusFilter === 'pending'
                   ? 'bg-amber-500 text-slate-950 font-bold'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
@@ -1179,7 +1224,7 @@ Handing in again clears the current score and comments for regrading (their on-t
             </button>
             <button
               onClick={() => setStatusFilter('graded')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              className={`shrink-0 px-3 h-10 sm:h-auto sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                 statusFilter === 'graded'
                   ? 'bg-emerald-600 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'

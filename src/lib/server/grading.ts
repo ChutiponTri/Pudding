@@ -136,3 +136,74 @@ export async function regradeObjectiveQuestions(
   if (touched.size) await recomputeSubmissionTotals(supabase, assignmentId, [...touched]);
   return { rescored, keptManual };
 }
+
+/**
+ * A question that stopped being multiple choice / true-false (e.g. a teacher
+ * fixing the wrong question type after students handed in): the score the
+ * old answer key gave is removed, so the answer goes back to "to grade"
+ * instead of keeping a meaningless auto score. Scores a teacher set by hand,
+ * and the 0s of students recorded as "no submission", are kept.
+ * Returns how many answers were sent back to the teacher.
+ */
+export async function clearRetiredAutoScores(
+  supabase: SupabaseClient,
+  changes: Array<{ before: Question; after: Question }>
+) {
+  const relevant = changes.filter(({ before, after }) => isObjectiveQuestion(before) && !isObjectiveQuestion(after));
+  if (!relevant.length) return 0;
+  const beforeOf = new Map(relevant.map(({ before }) => [before.id, before]));
+  const answers = await answersFor(supabase, 'question_id', [...beforeOf.keys()]);
+  const subIds = [...new Set(answers.map((a) => a.submission_id))];
+  const handedIn = new Set<string>();
+  for (const part of chunk(subIds)) {
+    const { data, error } = await supabase.from('submissions').select('id').in('id', part).in('status', ['submitted', 'late']);
+    if (error) throw new Error(error.message);
+    for (const row of data || []) handedIn.add(row.id as string);
+  }
+  const ids = answers
+    .filter((a) => handedIn.has(a.submission_id) && a.teacher_score != null)
+    .filter((a) => Number(a.teacher_score) === scoreObjectiveAnswer(beforeOf.get(a.question_id)!, a.text_answer))
+    .map((a) => a.id);
+  const now = new Date().toISOString();
+  for (const part of chunk(ids)) {
+    const { error } = await supabase.from('submission_answers').update({ teacher_score: null, graded_at: null, updated_at: now }).in('id', part);
+    if (error) throw new Error(error.message);
+  }
+  return ids.length;
+}
+
+/**
+ * Students recorded as "no submission" keep a 0 on every question, also on
+ * questions added later (otherwise their total would turn back to missing).
+ */
+export async function zeroFillNoSubmissions(supabase: SupabaseClient, assignmentId: string, questionIds: string[]) {
+  if (!questionIds.length) return;
+  const { data, error } = await supabase
+    .from('submissions')
+    .select('id')
+    .eq('assignment_id', assignmentId)
+    .eq('status', 'pending')
+    .not('total_score', 'is', null);
+  if (error) throw new Error(error.message);
+  const subIds = (data || []).map((r) => r.id as string);
+  if (!subIds.length) return;
+  const now = new Date().toISOString();
+  const rows = subIds.flatMap((subId) =>
+    questionIds.map((qid) => ({
+      id: `ans-${subId}-${qid}`,
+      submission_id: subId,
+      question_id: qid,
+      text_answer: '',
+      teacher_score: 0,
+      graded_at: now,
+      updated_at: now,
+    }))
+  );
+  // Existing rows (already 0, or anything the teacher set) stay as they are.
+  for (const part of chunk(rows, 500)) {
+    const { error: upsertError } = await supabase
+      .from('submission_answers')
+      .upsert(part, { onConflict: 'submission_id,question_id', ignoreDuplicates: true });
+    if (upsertError) throw new Error(upsertError.message);
+  }
+}

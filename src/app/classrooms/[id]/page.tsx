@@ -17,7 +17,7 @@ import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { AssignmentProgressCard } from '@/components/AssignmentProgressCard';
 import { AssignmentGroupHeader, teacherGroupChips } from '@/components/AssignmentGroupHeader';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
-import { gradingCounts, isGraded, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
+import { gradingCounts, isGraded, isHandedIn, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { roomLabel } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
@@ -2130,7 +2130,7 @@ export default function ClassroomWorkspacePage() {
                       </div>
                     )}
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 items-start gap-3 sm:gap-4">
                       {items.map((item, itemIndex, all) => {
                         // Show the insertion line only where a drop would change something.
                         const draggedIndex = all.findIndex((a) => a.id === draggingAssignmentId);
@@ -2424,7 +2424,12 @@ export default function ClassroomWorkspacePage() {
                           const sub = findStudentSubmission(submissions, item.id, student);
                           return (
                             <td key={item.id} className="p-3 text-center font-bold">
-                              {sub && isGraded(sub) ? (
+                              {sub && isGraded(sub) && !isHandedIn(sub) ? (
+                                <span className="text-rose-600 dark:text-rose-400 font-black text-sm" title={tr('ไม่ส่งงาน', 'No submission')}>
+                                  {sub.total_score}
+                                  <span className="block text-[9px] font-bold opacity-80">{tr('ไม่ส่ง', 'none')}</span>
+                                </span>
+                              ) : sub && isGraded(sub) ? (
                                 <span className="text-emerald-600 dark:text-emerald-400 font-black text-sm">
                                   {sub.total_score}
                                 </span>

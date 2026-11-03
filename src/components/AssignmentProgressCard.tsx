@@ -1,8 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useId, useState } from 'react';
 import Link from 'next/link';
-import { Calendar, CalendarClock, CheckCircle2, ChevronDown, ChevronRight, Clock, Copy, Edit2, FilePen, Inbox, Lock, Rocket, ShieldAlert, Trash2, Unlock } from 'lucide-react';
+import { Calendar, CalendarClock, CheckCircle2, ChevronDown, ChevronRight, Clock, Copy, Edit2, FilePen, Lock, Rocket, ShieldAlert, Trash2, Unlock } from 'lucide-react';
+import { Collapse } from '@/components/Collapse';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { AttachmentList } from '@/components/AssignmentAttachments';
@@ -43,8 +44,10 @@ export function GradingBar({ graded, pending, notSubmitted }: { graded: number; 
 
 /**
  * One assignment with its submission and grading progress, shared by the
- * grading hub and the classroom classwork tab. Editing actions show only when
- * their handlers are given.
+ * grading hub and the classroom classwork tab. Compact by default (status,
+ * title, due date, progress and the grade button); "Details" unfolds the
+ * counts, attachments and editing actions, which show only when their
+ * handlers are given.
  */
 export function AssignmentProgressCard({
   assignment,
@@ -90,6 +93,9 @@ export function AssignmentProgressCard({
   const done = pending === 0 && graded > 0;
   const attachments = assignmentAttachments(assignment);
 
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
+
   const statusBadgeClass = `ml-auto px-2.5 py-1 rounded-full border text-xs font-black inline-flex items-center gap-1.5 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
   const statusContent = (
     <>
@@ -101,22 +107,24 @@ export function AssignmentProgressCard({
       {status.label}
     </>
   );
+  const actionClass = 'inline-flex items-center gap-1.5 px-2.5 h-9 sm:h-8 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 transition-colors';
 
   return (
     <div
-      className={`relative overflow-hidden rounded-3xl border p-4 pt-5 sm:p-5 sm:pt-6 flex flex-col gap-4 shadow-xs transition-colors ${
+      className={`relative overflow-hidden rounded-3xl border p-3.5 pt-4 sm:p-4 sm:pt-5 flex flex-col gap-3 shadow-xs transition-colors ${
         status.tone === 'draft' ? 'bg-slate-50 dark:bg-slate-900/60' : 'bg-white dark:bg-slate-900'
       } ${
         pending > 0 ? 'border-amber-300 dark:border-amber-800/70' : status.tone === 'draft' ? 'border-dashed border-slate-300 dark:border-slate-700' : 'border-slate-200 dark:border-slate-800'
       } ${className}`}
     >
       <div aria-hidden className={`absolute inset-x-0 top-0 h-1.5 ${STATUS_STRIPE[status.tone]}`} />
-      {/* Where it belongs, what it is, and whether it still takes work */}
+
+      {/* Always shown: where it belongs, what it is, whether it takes work, and how grading stands */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">
           {leading}
           {classroomName && (
-            <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[11px]">
+            <span className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[11px] max-w-40 truncate">
               {classroomName}
             </span>
           )}
@@ -147,167 +155,154 @@ export function AssignmentProgressCard({
           )}
         </div>
 
-        <div className="flex items-start gap-2">
-          <h3 className="flex-1 min-w-0 text-base font-black text-slate-900 dark:text-white leading-snug line-clamp-2 wrap-break-word">{assignment.title}</h3>
-          {(editHref || copyHref || onDelete) && (
-            <div className="flex items-center gap-1 shrink-0">
-              {editHref && (
-                <Link
-                  href={editHref}
-                  draggable={false}
-                  className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-colors"
-                  title={th ? 'แก้ไขงาน/ข้อสอบ (ทุกส่วน)' : 'Edit'}
-                  aria-label={th ? 'แก้ไขงาน/ข้อสอบ' : 'Edit'}
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                </Link>
-              )}
-              {copyHref && (
-                <Link
-                  href={copyHref}
-                  draggable={false}
-                  className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-600 hover:border-sky-400 transition-colors"
-                  title={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
-                  aria-label={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                </Link>
-              )}
-              {onDelete && (
-                <button
-                  type="button"
-                  draggable={false}
-                  onClick={onDelete}
-                  className="p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-rose-600 hover:border-rose-300 transition-colors cursor-pointer"
-                  title={th ? 'ลบงาน/ข้อสอบ' : 'Delete'}
-                  aria-label={th ? 'ลบงาน/ข้อสอบ' : 'Delete'}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+        <h3 className={`text-sm sm:text-base font-black text-slate-900 dark:text-white leading-snug wrap-break-word ${expanded ? 'line-clamp-3' : 'line-clamp-1'}`}>
+          {assignment.title}
+        </h3>
 
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
           {deadline && (
             <span className="flex items-center gap-1">
               <Calendar className="w-3 h-3" />
-              {assignment.is_exam ? (th ? 'ปิดรับ' : 'Closes') : th ? 'กำหนดส่ง' : 'Due'} {deadline}
+              {assignment.is_exam ? (th ? 'ปิดรับ' : 'Closes') : th ? 'ส่ง' : 'Due'} {deadline}
             </span>
           )}
-          <span>· {th ? 'เต็ม' : 'Max'} {assignment.total_points || 20} {th ? 'คะแนน' : 'pts'}</span>
+          <span>· {th ? 'ส่งแล้ว' : 'In'} {handedIn}/{totalStudents}</span>
+          {pending > 0 ? (
+            <span className="px-1.5 py-px rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold">
+              {th ? `รอตรวจ ${pending}` : `${pending} to grade`}
+            </span>
+          ) : done ? (
+            <span className="inline-flex items-center gap-0.5 font-bold text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="w-3 h-3" />
+              {th ? 'ตรวจครบ' : 'All graded'}
+            </span>
+          ) : null}
+          {flagged > 0 && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-md bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold">
+              <ShieldAlert className="w-3 h-3" />
+              {flagged}
+            </span>
+          )}
+          {onPublishNow && (
+            <button
+              type="button"
+              draggable={false}
+              onClick={onPublishNow}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-black cursor-pointer transition-colors"
+              title={th ? 'สอนถึงหัวข้อนี้แล้ว — เปิดให้นักเรียนทำได้ทันที' : 'Release it to students now'}
+            >
+              <Rocket className="w-3 h-3" />
+              {th ? 'เผยแพร่ตอนนี้' : 'Publish now'}
+            </button>
+          )}
         </div>
 
-        {(win.isScheduled || win.isDraft) && (
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
-            {win.isDraft ? (
-              <span className="font-bold text-slate-600 dark:text-slate-300">
-                {th ? 'ฉบับร่าง' : 'Draft'}
-                {draftExpiresAt(assignment) ? ` • ${th ? 'ลบอัตโนมัติ' : 'auto-deletes'} ${formatDateTime(draftExpiresAt(assignment), language)}` : ''}
+        {!win.isDraft && !win.isScheduled && <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />}
+      </div>
+
+      {/* Details: folded by default to keep long lists short */}
+      <Collapse open={expanded}>
+        <div id={detailsId} className="space-y-3 pt-1">
+          {(win.isScheduled || win.isDraft) && (
+            <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+              {win.isDraft
+                ? `${th ? 'ฉบับร่าง' : 'Draft'}${draftExpiresAt(assignment) ? ` • ${th ? 'ลบอัตโนมัติ' : 'auto-deletes'} ${formatDateTime(draftExpiresAt(assignment), language)}` : ''}`
+                : assignment.publish_at
+                ? `${th ? 'เผยแพร่' : 'Publishes'}: ${formatDateTime(assignment.publish_at, language)}`
+                : ''}
+            </p>
+          )}
+
+          {/* Teacher's attachments (links, Drive, images, PDFs) */}
+          <AttachmentList attachments={attachments} size="sm" />
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ส่งแล้ว' : 'Handed in'}</span>
+              <span className="text-sm font-black text-slate-900 dark:text-white">
+                {handedIn}
+                <span className="text-[10px] font-semibold text-slate-400">/{totalStudents}</span>
               </span>
-            ) : (
-              assignment.publish_at && (
-                <span className="font-bold text-slate-600 dark:text-slate-300">
-                  {th ? 'เผยแพร่' : 'Publishes'}: {formatDateTime(assignment.publish_at, language)}
-                </span>
-              )
-            )}
-            {onPublishNow && (
-              <button
-                type="button"
-                draggable={false}
-                onClick={onPublishNow}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-black cursor-pointer transition-colors"
-                title={th ? 'สอนถึงหัวข้อนี้แล้ว — เปิดให้นักเรียนทำได้ทันที' : 'Release it to students now'}
-              >
-                <Rocket className="w-3 h-3" />
-                {th ? 'เผยแพร่ตอนนี้' : 'Publish now'}
-              </button>
-            )}
+            </div>
+            <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ยังไม่ส่ง' : 'Missing'}</span>
+              <span className={`text-sm font-black ${notSubmitted > 0 ? 'text-slate-900 dark:text-white' : 'text-slate-400'}`}>{notSubmitted}</span>
+            </div>
+            <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ตรวจแล้ว' : 'Graded'}</span>
+              <span className={`text-sm font-black ${done ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'}`}>
+                {graded}
+                <span className="text-[10px] font-semibold text-slate-400">/{checkable}</span>
+              </span>
+            </div>
           </div>
-        )}
-      </div>
+          {scoredMissing > 0 && (
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {th ? `บันทึกว่าไม่ส่งงาน (0 คะแนน) ${scoredMissing} คน` : `${scoredMissing} marked as no submission (0)`}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{th ? 'ตรวจแล้ว' : 'Graded'}</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" />{th ? 'รอตรวจ' : 'To grade'}</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700" />{th ? 'ยังไม่ส่ง' : 'Missing'}</span>
+          </div>
 
-      {/* Teacher's attachments (links, Drive, images, PDFs) */}
-      <AttachmentList attachments={attachments} size="sm" />
-
-      {/* Grading state, in words */}
-      <div
-        className={`px-3 py-2.5 rounded-2xl flex items-center gap-2 text-xs font-bold ${
-          pending > 0
-            ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
-            : done
-            ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-            : 'bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400'
-        }`}
-      >
-        {pending > 0 ? <Clock className="w-4 h-4 shrink-0" /> : done ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <Inbox className="w-4 h-4 shrink-0" />}
-        <span className="min-w-0">
-          {pending > 0
-            ? th ? `รอตรวจ ${pending} คน` : `${pending} waiting to be graded`
-            : done
-            ? scoredMissing > 0
-              ? th ? `ตรวจครบแล้ว · ให้คะแนนคนไม่ส่ง ${scoredMissing} คน` : `All checked · ${scoredMissing} missing scored`
-              : th ? 'ตรวจครบทุกคนที่ส่งแล้ว' : 'Every submission is graded'
-            : th ? 'ยังไม่มีนักเรียนส่งงาน' : 'No one has handed in yet'}
-        </span>
-        {flagged > 0 && (
-          <span className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px]">
-            <ShieldAlert className="w-3 h-3" />
-            {th ? `สลับจอ ${flagged}` : `${flagged} flagged`}
-          </span>
-        )}
-      </div>
-
-      {/* Who handed in and who has been graded */}
-      <div className="space-y-2">
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ส่งแล้ว' : 'Handed in'}</span>
-            <span className="text-sm font-black text-slate-900 dark:text-white">
-              {handedIn}
-              <span className="text-[10px] font-semibold text-slate-400">/{totalStudents}</span>
-            </span>
-          </div>
-          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ยังไม่ส่ง' : 'Missing'}</span>
-            <span className={`text-sm font-black ${notSubmitted > 0 ? 'text-slate-900 dark:text-white' : 'text-slate-400'}`}>{notSubmitted}</span>
-          </div>
-          <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60">
-            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block">{th ? 'ตรวจแล้ว' : 'Graded'}</span>
-            <span className={`text-sm font-black ${done ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'}`}>
-              {graded}
-              <span className="text-[10px] font-semibold text-slate-400">/{checkable}</span>
-            </span>
-          </div>
+          {(editHref || copyHref || onDelete) && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {editHref && (
+                <Link href={editHref} draggable={false} className={`${actionClass} hover:text-amber-700 hover:border-amber-400`}>
+                  <Edit2 className="w-3.5 h-3.5" />
+                  {th ? 'แก้ไข' : 'Edit'}
+                </Link>
+              )}
+              {copyHref && (
+                <Link href={copyHref} draggable={false} className={`${actionClass} hover:text-sky-700 hover:border-sky-400`}>
+                  <Copy className="w-3.5 h-3.5" />
+                  {th ? 'คัดลอกไปห้องอื่น' : 'Copy to classrooms'}
+                </Link>
+              )}
+              {onDelete && (
+                <button type="button" draggable={false} onClick={onDelete} className={`${actionClass} ml-auto hover:text-rose-700 hover:border-rose-300 cursor-pointer`}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {th ? 'ลบ' : 'Delete'}
+                </button>
+              )}
+            </div>
+          )}
+          {footer}
         </div>
-        <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{th ? 'ตรวจแล้ว' : 'Graded'}</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" />{th ? 'รอตรวจ' : 'To grade'}</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-200 dark:bg-slate-700" />{th ? 'ยังไม่ส่ง' : 'Missing'}</span>
-        </div>
-      </div>
+      </Collapse>
 
-      <div className="mt-auto space-y-2">
+      <div className="flex items-center gap-2">
         <Link
           href={gradingHref}
           draggable={false}
-          className={`w-full py-3 rounded-2xl font-black text-xs flex items-center justify-center gap-2 transition-colors ${
+          className={`flex-1 min-w-0 h-10 rounded-2xl font-black text-xs flex items-center justify-center gap-1.5 transition-colors ${
             pending > 0
               ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-md shadow-amber-500/20'
               : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
           }`}
         >
-          <span>
+          <span className="truncate">
             {pending > 0
               ? th ? `ตรวจงาน (${pending} คน)` : `Grade (${pending})`
               : th ? 'ดูรายชื่อ & คะแนน' : 'View roster & scores'}
           </span>
-          <ChevronRight className="w-4 h-4" />
+          <ChevronRight className="w-4 h-4 shrink-0" />
         </Link>
-        {footer}
+        <button
+          type="button"
+          draggable={false}
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-controls={detailsId}
+          aria-label={expanded ? (th ? 'ย่อรายละเอียด' : 'Hide details') : th ? 'ดูรายละเอียด' : 'Show details'}
+          title={expanded ? (th ? 'ย่อรายละเอียด' : 'Hide details') : th ? 'ดูรายละเอียด แก้ไข คัดลอก' : 'Details, edit, copy'}
+          className="shrink-0 h-10 px-3 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-500 dark:text-slate-400 hover:text-amber-700 dark:hover:text-amber-300 hover:ring-amber-400 text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors"
+        >
+          <span className="hidden sm:inline">{expanded ? (th ? 'ย่อ' : 'Less') : th ? 'รายละเอียด' : 'Details'}</span>
+          <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`} />
+        </button>
       </div>
     </div>
   );

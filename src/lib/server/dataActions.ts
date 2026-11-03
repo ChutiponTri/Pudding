@@ -33,7 +33,7 @@ import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { DRAFT_RETENTION_MS, canRecordNoSubmission, getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
-import { recomputeSubmissionTotals, regradeObjectiveQuestions } from '@/lib/server/grading';
+import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, zeroFillNoSubmissions } from '@/lib/server/grading';
 import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
 import { personNameError, studentProfileError } from '@/lib/utils/studentName';
 import type {
@@ -1400,9 +1400,12 @@ export const dataActions = {
    * Replaces an assignment's questions with the edited set (full edit). Questions
    * keep their id, so students' answers stay attached; a question left out is
    * deleted together with its answers. total_points follows the new scores.
-   * Submitted choice / true-false answers are re-scored when their answer key,
-   * options or points changed (scores the teacher adjusted by hand are kept),
-   * and every submission's total follows the new set of questions.
+   * Every handed-in choice / true-false answer is re-scored from the new key
+   * (scores the teacher adjusted by hand are kept), answers to a question that
+   * is no longer a choice question go back to "to grade", and every
+   * submission's total follows the new set of questions. Students' handed-in
+   * work stays locked; the teacher reopens it per student when they should
+   * answer again.
    */
   async replaceAssignmentQuestions(
     { supabase, actor }: Ctx,
@@ -1442,16 +1445,20 @@ export const dataActions = {
     const totalPoints = rows.reduce((sum, q) => sum + Number(q.max_score || 0), 0);
     await supabase.from('assignments').update({ total_points: totalPoints }).eq('id', id);
 
-    const keyChanged = (before: Question | undefined, after: Question) =>
-      !before ||
-      before.type !== after.type ||
-      (before.ideal_answer || '') !== (after.ideal_answer || '') ||
-      Number(before.max_score) !== Number(after.max_score) ||
-      JSON.stringify(before.options || []) !== JSON.stringify(after.options || []);
-    const changed = rows
-      .filter((q) => isObjectiveQuestion(q) && previousById.has(q.id) && keyChanged(previousById.get(q.id), q))
-      .map((q) => ({ before: previousById.get(q.id) || null, after: q }));
-    await regradeObjectiveQuestions(supabase, id, changed);
+    // Every kept choice / true-false question is re-scored for everyone who
+    // handed in, not only the ones whose key visibly changed: a fixed key,
+    // options, points or type all reach every student. Unchanged questions
+    // re-score to the same value (nothing written); hand-adjusted scores stay.
+    const kept = rows.filter((q) => previousById.has(q.id));
+    await regradeObjectiveQuestions(
+      supabase,
+      id,
+      kept.filter((q) => isObjectiveQuestion(q)).map((q) => ({ before: previousById.get(q.id) || null, after: q }))
+    );
+    // A choice question turned into a written one goes back to the teacher.
+    await clearRetiredAutoScores(supabase, kept.map((q) => ({ before: previousById.get(q.id)!, after: q })));
+    // "No submission" students get 0 on questions added now too.
+    await zeroFillNoSubmissions(supabase, id, rows.filter((q) => !previousById.has(q.id)).map((q) => q.id));
     // Added / removed questions and new points change every total.
     await recomputeSubmissionTotals(supabase, id);
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: id }));
@@ -1731,6 +1738,32 @@ export const dataActions = {
   },
 
   /**
+   * "Allow edit" for every student who handed in this homework (e.g. after the
+   * teacher fixed a wrongly made assignment), or takes it back from everyone.
+   * Same rules as setSubmissionReopened. Returns how many rows changed.
+   */
+  async setAllSubmissionsReopened({ supabase, actor }: Ctx, assignmentId: string, open: boolean) {
+    const me = requireTeacher(actor);
+    const { assignment, classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
+    const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
+    if (role === 'researcher') throw FORBIDDEN();
+    if (assignment.is_exam) throw new HttpError(400, 'ข้อสอบส่งซ้ำหรือแก้ไขไม่ได้');
+    let query = supabase
+      .from('submissions')
+      .update({ reopened_at: open ? new Date().toISOString() : null })
+      .eq('assignment_id', assignmentId)
+      .in('status', ['submitted', 'late']);
+    query = open ? query.is('reopened_at', null) : query.not('reopened_at', 'is', null);
+    const { data, error } = await query.select('id');
+    if (error) {
+      if (error.message.includes('reopened_at')) throw new HttpError(503, 'ฐานข้อมูลยังไม่รองรับการเปิดให้แก้ไขงาน — รัน supabase_submission_reopen_update.sql ใน Supabase SQL Editor');
+      throw toDatabaseError(error, 'submissions');
+    }
+    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+    return { changed: (data || []).length };
+  },
+
+  /**
    * Records that students handed in nothing: a 'pending' row (not handed in)
    * with an official 0 on every question. Allowed only once the deadline has
    * passed or the work is closed (canRecordNoSubmission), so it never scores
@@ -1744,9 +1777,12 @@ export const dataActions = {
     { supabase, actor }: Ctx,
     assignmentId: string,
     rosterIds: string[],
-    teacherName: string
+    nameArg: unknown,
+    /** Tabs still running the previous page send (ids, zero, name); the name is then the 4th argument. */
+    legacyName?: unknown
   ) {
     const me = requireTeacher(actor);
+    const teacherName = typeof nameArg === 'string' ? nameArg : typeof legacyName === 'string' ? legacyName : 'คุณครู';
     const { assignment, classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
     const teacherRole: TeacherRole = classroom.teacher_id === me.userId
       ? 'primary'
