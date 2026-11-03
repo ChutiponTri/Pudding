@@ -2,9 +2,12 @@
 
 import { useState } from 'react';
 import { useClerk, useUser } from '@clerk/nextjs';
-import { Clock, Loader2, LogOut, RefreshCw, ShieldX } from 'lucide-react';
+import { Check, Clock, Copy, Loader2, LogOut, Mail, RefreshCw, ShieldX } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { recheckTeacherAccess, useTeacherAccess } from '@/lib/hooks/useTeacherAccess';
+
+/** Where teachers can write with questions about their approval. */
+const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'admin@pudding-p.com';
 
 /**
  * The only page a signed-in teacher sees until the admin approves the account
@@ -16,6 +19,7 @@ export default function PendingApprovalPage() {
   const { tr } = useLanguage();
   const { access, profile, userId } = useTeacherAccess();
   const [checking, setChecking] = useState(false);
+  const [copied, setCopied] = useState(false);
   const known = userId && userId === user?.id ? access : null;
 
   const checkAgain = () => {
@@ -23,6 +27,16 @@ export default function PendingApprovalPage() {
     recheckTeacherAccess();
     // The gate redirects on approval; this only stops the spinner otherwise.
     window.setTimeout(() => setChecking(false), 1500);
+  };
+
+  const copyEmail = async () => {
+    try {
+      await navigator.clipboard.writeText(SUPPORT_EMAIL);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Clipboard blocked (e.g. insecure context): the address is still visible and tappable.
+    }
   };
 
   const name = profile ? `${profile.first_name || ''} ${profile.last_name || ''}`.trim() : user?.fullName || '';
@@ -53,8 +67,8 @@ export default function PendingApprovalPage() {
               <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
                 {rejected
                   ? tr(
-                      'ผู้ดูแลระบบไม่อนุมัติให้บัญชีนี้ใช้งาน Pudding หากคิดว่าเป็นความผิดพลาด กรุณาติดต่อผู้ดูแลระบบ',
-                      'The administrator did not approve this account for Pudding. If you think this is a mistake, please contact the administrator.'
+                      'ผู้ดูแลระบบไม่อนุมัติให้บัญชีนี้ใช้งาน Pudding หากคิดว่าเป็นความผิดพลาด กรุณาติดต่อผู้ดูแลระบบทางอีเมลด้านล่าง',
+                      'The administrator did not approve this account for Pudding. If you think this is a mistake, please email the administrator below.'
                     )
                   : tr(
                       'ขอบคุณที่สมัครใช้งาน Pudding! ผู้ดูแลระบบจะตรวจสอบบัญชีครูของคุณ เมื่อได้รับการอนุมัติแล้วจะใช้งานได้ทันที',
@@ -70,6 +84,37 @@ export default function PendingApprovalPage() {
                 {profile?.email && <p className="text-slate-400">{profile.email}</p>}
               </div>
             )}
+
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 p-3 flex items-center gap-3 text-left">
+              <span className="w-10 h-10 shrink-0 rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400 flex items-center justify-center">
+                <Mail className="w-4.5 h-4.5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {tr('มีคำถาม? ติดต่อผู้ดูแลระบบได้ที่', 'Questions? Contact the administrator')}
+                </p>
+                <a
+                  href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(tr('สอบถามการอนุมัติบัญชีครู Pudding', 'Pudding teacher account approval'))}`}
+                  className="block truncate text-sm font-bold text-slate-900 dark:text-white hover:text-sky-600 dark:hover:text-sky-400 underline-offset-2 hover:underline"
+                >
+                  {SUPPORT_EMAIL}
+                </a>
+              </div>
+              <button
+                type="button"
+                onClick={copyEmail}
+                aria-label={copied ? tr('คัดลอกแล้ว', 'Copied') : tr('คัดลอกอีเมล', 'Copy email')}
+                title={copied ? tr('คัดลอกแล้ว', 'Copied') : tr('คัดลอกอีเมล', 'Copy email')}
+                className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center cursor-pointer transition-colors ${
+                  copied
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400'
+                    : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:text-slate-200 dark:hover:bg-slate-800'
+                }`}
+              >
+                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              </button>
+            </div>
+            <span className="sr-only" aria-live="polite">{copied ? tr('คัดลอกอีเมลแล้ว', 'Email copied') : ''}</span>
 
             <div className="flex flex-col gap-2">
               {!rejected && (
