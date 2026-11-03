@@ -51,6 +51,9 @@ const isPublicRoute = routeMatcher([
   // API routes authorize each request themselves (Clerk teacher or LIFF student)
   { prefix: "/api" },
   { prefix: "/__clerk" },
+  // Crawlers must read these without signing in (they used to 307 to /sign-in)
+  { exact: "/robots.txt" },
+  { exact: "/sitemap.xml" },
 ]);
 
 /**
