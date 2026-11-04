@@ -35,13 +35,11 @@ import {
   Users,
   School,
   FileCheck,
-  ShieldAlert,
   PlusCircle,
   ArrowLeft,
   ArrowRight,
   BookOpen,
   Sparkles,
-  Clock,
   UserPlus,
   Share2,
   Edit2,
@@ -71,12 +69,10 @@ import {
   Building2,
   Loader2,
   FileSpreadsheet,
+  ClipboardList,
 } from 'lucide-react';
 import { notificationManager } from '@/lib/utils/notificationManager';
-import { gradingCounts, isIntegrityFlagged, needsGrading } from '@/lib/utils/gradingStatus';
-import { ASSIGNMENT_STATUS_CLASSES, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
-import { formatDateTime } from '@/lib/utils/datetime';
-import { GradingBar } from '@/components/AssignmentProgressCard';
+import { gradingCounts, needsGrading } from '@/lib/utils/gradingStatus';
 import { TeacherProfileFields, announceTeacherProfile, profileFormValues } from '@/components/TeacherProfileGate';
 import { TEACHER_PROFILE_UPDATED_EVENT, isTeacherProfileComplete } from '@/lib/utils/teacherProfile';
 import { canonicalInstitution, institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
@@ -84,10 +80,8 @@ import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader, MODAL_SHEET_FORM } from '@/components/ModalSheet';
-import { Collapse } from '@/components/Collapse';
-import { AssignmentGroupHeader, assignmentGroupKey, assignmentGroupLabel, teacherGroupChips } from '@/components/AssignmentGroupHeader';
-import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { MobileText } from '@/components/MobileText';
+import { buildWorkGroups } from '@/lib/utils/workGroups';
 
 /**
  * Checks an assessment framework before saving. Returns a message naming the
@@ -604,18 +598,20 @@ export function TeacherWorkspace({
       assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSizeFor(a, rosterSize.get(a.classroom_id) || 0), a.is_exam)])
     );
   }, [filteredSubmissions, assignments, classrooms]);
-  // Course cards: the "still to grade" group and its categories start open; folds are remembered.
-  const { isOpen: isFoldOpen, toggle: toggleFold } = useCollapsedGroups('dashboard');
   const assignmentsToGradeCount = useMemo(
     () => [...gradingByAssignment.values()].filter((g) => g.pending > 0).length,
     [gradingByAssignment]
   );
 
-  // Leaving the screen is tracked during quizzes only.
-  const suspiciousAlertCount = useMemo(() => {
-    const examIds = new Set(filteredAssignments.filter((a) => a.is_exam).map((a) => a.id));
-    return filteredSubmissions.filter((s) => isIntegrityFlagged(s, examIds.has(s.assignment_id))).length;
-  }, [filteredSubmissions, filteredAssignments]);
+  // Dashboard card: the term's work, counted once across its classrooms (as on /works).
+  const workSummary = useMemo(() => {
+    const groups = buildWorkGroups(filteredAssignments, filteredClassrooms, courses, filteredSubmissions);
+    return {
+      total: groups.length,
+      open: groups.filter((g) => g.classes.some((c) => c.published && c.window.acceptsSubmissions)).length,
+      unpublished: groups.filter((g) => !g.published).length,
+    };
+  }, [filteredAssignments, filteredClassrooms, courses, filteredSubmissions]);
 
   // Course Creation & Deletion Handlers
   const handleOpenCreateCourseModal = () => {
@@ -1394,6 +1390,65 @@ export function TeacherWorkspace({
       {/* Top Metric Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         
+        {/* Assignments & quizzes of the term, across classrooms */}
+        <Link
+          href={`/works?term=${encodeURIComponent(selectedSemesterKey)}`}
+          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-violet-400 dark:hover:border-violet-500 transition-all block group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+              {tr('งานและข้อสอบ', 'Assignments & quizzes')}
+            </span>
+            <div className="w-9 h-9 rounded-xl shrink-0 bg-violet-50 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <ClipboardList className="w-5 h-5" />
+            </div>
+          </div>
+          <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+            {workSummary.total}
+          </p>
+          <span className="text-[11px] text-violet-600 dark:text-violet-400 font-semibold mt-1 flex items-center gap-1">
+            <span className="truncate">
+              {workSummary.open > 0
+                ? tr(`เปิดรับอยู่ ${workSummary.open}`, `${workSummary.open} open`)
+                : workSummary.unpublished > 0
+                ? tr(`ยังไม่เผยแพร่ ${workSummary.unpublished}`, `${workSummary.unpublished} unpublished`)
+                : tr('ดูทั้งหมด', 'View all')}
+            </span>
+            <ArrowRight className="w-3 h-3 shrink-0" />
+          </span>
+        </Link>
+
+        {/* Pending to Grade */}
+        <Link
+          href="/grading"
+          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-400 dark:hover:border-blue-500 transition-all block group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+              {t('dashboard.stats.pending_grading')}
+            </span>
+            <div className="w-9 h-9 rounded-xl shrink-0 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <FileCheck className="w-5 h-5" />
+            </div>
+          </div>
+          <p className={`text-3xl font-black mt-3 ${pendingGradingCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-white'}`}>
+            {pendingGradingCount}
+          </p>
+          {pendingGradingCount > 0 ? (
+            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-1 flex items-center gap-1">
+              <span className="truncate">
+                {language === 'th' ? `ใน ${assignmentsToGradeCount} งาน · ไปตรวจ` : `in ${assignmentsToGradeCount} tasks · grade now`}
+              </span>
+              <ArrowRight className="w-3 h-3 shrink-0" />
+            </span>
+          ) : (
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 shrink-0" />
+              <span className="truncate">{language === 'th' ? 'ตรวจครบทุกงานแล้ว' : 'All work graded'}</span>
+            </span>
+          )}
+        </Link>
+
         {/* Classrooms count -> every classroom of the selected term */}
         <Link
           href={`/classrooms?term=${encodeURIComponent(selectedSemesterKey)}`}
@@ -1442,58 +1497,6 @@ export function TeacherWorkspace({
           </span>
         </Link>
 
-        {/* Pending to Grade */}
-        <Link
-          href="/grading"
-          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-400 dark:hover:border-blue-500 transition-all block group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
-              {t('dashboard.stats.pending_grading')}
-            </span>
-            <div className="w-9 h-9 rounded-xl shrink-0 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <FileCheck className="w-5 h-5" />
-            </div>
-          </div>
-          <p className={`text-3xl font-black mt-3 ${pendingGradingCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-white'}`}>
-            {pendingGradingCount}
-          </p>
-          {pendingGradingCount > 0 ? (
-            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-1 flex items-center gap-1">
-              <span className="truncate">
-                {language === 'th' ? `ใน ${assignmentsToGradeCount} งาน · ไปตรวจ` : `in ${assignmentsToGradeCount} tasks · grade now`}
-              </span>
-              <ArrowRight className="w-3 h-3 shrink-0" />
-            </span>
-          ) : (
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1">
-              <CheckCircle2 className="w-3 h-3 shrink-0" />
-              <span className="truncate">{language === 'th' ? 'ตรวจครบทุกงานแล้ว' : 'All work graded'}</span>
-            </span>
-          )}
-        </Link>
-
-        {/* Anti-Cheating Alerts */}
-        <Link
-          href="/grading"
-          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-rose-200 dark:border-rose-900/50 shadow-xs hover:border-rose-400 transition-all block group"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">
-              {t('dashboard.stats.flagged_suspicious')}
-            </span>
-            <div className="w-9 h-9 rounded-xl shrink-0 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <ShieldAlert className="w-5 h-5 animate-pulse" />
-            </div>
-          </div>
-          <p className="text-3xl font-black text-rose-600 dark:text-rose-400 mt-3">
-            {suspiciousAlertCount}
-          </p>
-          <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold mt-1 flex items-center gap-1">
-            <span className="truncate"><MobileText short={language === 'th' ? 'ดูรายงาน' : 'View report'} full={language === 'th' ? 'ตรวจดูรายงานความเสี่ยง' : 'View Risk Audit'} /></span>
-            <ArrowRight className="w-3 h-3" />
-          </span>
-        </Link>
       </div>
         </>
       )}
@@ -1724,9 +1727,17 @@ export function TeacherWorkspace({
                     {language === 'th' ? 'ห้องเรียนในสังกัด' : 'Classrooms'}
                     <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-300 tabular-nums">{course.sections.length}</span>
                   </span>
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    {course.assignments.length} {language === 'th' ? 'ชิ้นงาน/ข้อสอบ' : 'Tasks'}
-                  </span>
+                  {course.assignments.length > 0 ? (
+                    <Link
+                      href={`/works?term=${encodeURIComponent(selectedSemesterKey)}&course=${encodeURIComponent(course.id)}`}
+                      className="text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 inline-flex items-center gap-1"
+                    >
+                      {tr('งานและข้อสอบ', 'Assignments & quizzes')}
+                      <ArrowRight className="w-3 h-3" />
+                    </Link>
+                  ) : (
+                    <span className="text-xs font-semibold text-slate-400">{tr('ยังไม่มีงาน', 'No work yet')}</span>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
@@ -1856,171 +1867,6 @@ export function TeacherWorkspace({
                 </div>
               </div>
 
-              {/* Course work the teacher still has to act on: published work not fully
-                  graded (every roster student needs a score, handed in or not), then
-                  drafts and scheduled work students cannot see yet. Finished work is not listed. */}
-              {course.assignments.length > 0 && (() => {
-                const countsOf = (asg: Assignment) => gradingByAssignment.get(asg.id) || gradingCounts([], 0, asg.is_exam);
-                const unpublished = course.assignments
-                  .filter((asg) => !isAssignmentPublished(asg))
-                  // Scheduled first (soonest on top), then drafts.
-                  .sort((a, b) => new Date(a.publish_at || 0).getTime() - new Date(b.publish_at || 0).getTime());
-                const toGrade = course.assignments.filter((asg) => {
-                  if (!isAssignmentPublished(asg)) return false;
-                  const c = countsOf(asg);
-                  return c.pending > 0 || c.notSubmitted > 0;
-                });
-                if (toGrade.length === 0 && unpublished.length === 0) return null;
-                const pendingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).pending, 0);
-                const missingTotal = toGrade.reduce((sum, asg) => sum + countsOf(asg).notSubmitted, 0);
-                const open = isFoldOpen(course.id);
-                const categories = (() => {
-                  const groups = new Map<string, Assignment[]>();
-                  for (const asg of [...toGrade, ...unpublished]) {
-                    const key = assignmentGroupKey(asg);
-                    groups.set(key, [...(groups.get(key) || []), asg]);
-                  }
-                  return [...groups.entries()];
-                })();
-                const row = (asg: Assignment) => {
-                  const c = countsOf(asg);
-                  const pending = c.pending > 0;
-                  return (
-                    <Link
-                      key={asg.id}
-                      href={`/assignments/${asg.id}/grading?from=dashboard`}
-                      className={`group p-3 rounded-2xl bg-white dark:bg-slate-900 border flex flex-col gap-2 shadow-xs transition-colors ${
-                        pending ? 'border-amber-300 dark:border-amber-800/70 hover:border-amber-500' : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
-                            asg.is_exam
-                              ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
-                              : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-                          }`}
-                        >
-                          {asg.is_exam ? t('assignment_creator.mode_exam') : t('assignment_creator.mode_assignment')}
-                        </span>
-                        <span className="text-[11px] text-slate-400 truncate">{asg.classroom_name}</span>
-                        {c.flagged > 0 && (
-                          <span className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
-                            <ShieldAlert className="w-3 h-3" />
-                            {c.flagged}
-                          </span>
-                        )}
-                      </div>
-                      <h5 className="font-bold text-xs text-slate-900 dark:text-white truncate">{asg.title}</h5>
-                      <GradingBar graded={c.graded} pending={c.pending} notSubmitted={c.notSubmitted} />
-                      <div className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="min-w-0 truncate text-slate-500 dark:text-slate-400">
-                          {language === 'th' ? `ส่งแล้ว ${c.handedIn}/${c.totalStudents} · ตรวจแล้ว ${c.graded}/${c.checkable}` : `${c.handedIn}/${c.totalStudents} in · ${c.graded}/${c.checkable} checked`}
-                        </span>
-                        <span
-                          className={`shrink-0 inline-flex items-center gap-0.5 font-bold ${
-                            pending ? 'text-amber-700 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-800 dark:group-hover:text-slate-200'
-                          }`}
-                        >
-                          {pending
-                            ? language === 'th' ? `ตรวจ ${c.pending} คน` : `Grade ${c.pending}`
-                            : language === 'th' ? `ไม่ส่ง ${c.notSubmitted} คน` : `${c.notSubmitted} missing`}
-                          <ArrowRight className="w-3 h-3" />
-                        </span>
-                      </div>
-                    </Link>
-                  );
-                };
-                const unpublishedRow = (asg: Assignment) => {
-                  const draft = isAssignmentDraft(asg);
-                  return (
-                    <Link
-                      key={asg.id}
-                      href={`/assignments/${asg.id}/grading?from=dashboard`}
-                      className="group p-3 rounded-2xl bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600 flex flex-col gap-2 shadow-xs transition-colors"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border shrink-0 ${ASSIGNMENT_STATUS_CLASSES[draft ? 'draft' : 'scheduled']}`}>
-                          {draft ? (language === 'th' ? 'ฉบับร่าง' : 'Draft') : language === 'th' ? 'ตั้งเวลา' : 'Scheduled'}
-                        </span>
-                        <span className="text-[11px] text-slate-400 truncate">{asg.classroom_name}</span>
-                      </div>
-                      <h5 className="font-bold text-xs text-slate-900 dark:text-white truncate">{asg.title}</h5>
-                      <div className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="min-w-0 truncate text-slate-500 dark:text-slate-400">
-                          {draft
-                            ? language === 'th' ? 'นักเรียนยังไม่เห็น' : 'Hidden from students'
-                            : `${language === 'th' ? 'เผยแพร่' : 'Publishes'} ${formatDateTime(asg.publish_at, language)}`}
-                        </span>
-                        <span className="shrink-0 inline-flex items-center gap-0.5 font-bold text-slate-500 dark:text-slate-400 group-hover:text-slate-800 dark:group-hover:text-slate-200">
-                          {language === 'th' ? 'เปิดดู' : 'Open'}
-                          <ArrowRight className="w-3 h-3" />
-                        </span>
-                      </div>
-                    </Link>
-                  );
-                };
-                const summary = [
-                  pendingTotal > 0 && (language === 'th' ? `รอตรวจ ${pendingTotal} ชิ้น` : `${pendingTotal} to grade`),
-                  missingTotal > 0 && (language === 'th' ? `ยังไม่มีคะแนน ${missingTotal} คน` : `${missingTotal} without a score`),
-                  unpublished.length > 0 && (language === 'th' ? `ยังไม่เผยแพร่ ${unpublished.length} งาน` : `${unpublished.length} unpublished`),
-                ].filter(Boolean).join(' · ');
-                return (
-                  <div className="pt-2">
-                    <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/20 ring-1 ring-amber-200 dark:ring-amber-900/50 overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => toggleFold(course.id)}
-                        aria-expanded={open}
-                        className="group/tograde w-full flex items-center gap-2.5 p-3 text-left hover:bg-amber-100/50 dark:hover:bg-amber-900/20 transition-colors cursor-pointer"
-                      >
-                        <span className="w-7 h-7 rounded-lg shrink-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-                          <Clock className="w-4 h-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-xs font-bold text-amber-800 dark:text-amber-300">
-                            {toGrade.length > 0
-                              ? language === 'th' ? `ยังตรวจไม่ครบ ${toGrade.length} งาน` : `${toGrade.length} tasks not fully graded`
-                              : language === 'th' ? `ยังไม่เผยแพร่ ${unpublished.length} งาน` : `${unpublished.length} unpublished tasks`}
-                          </span>
-                          <span className="block text-[11px] text-amber-700/70 dark:text-amber-400/70 truncate">{summary}</span>
-                        </span>
-                        <span className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-amber-600 dark:text-amber-400 bg-white/70 dark:bg-slate-900/60 ring-1 ring-amber-200/80 dark:ring-amber-900/60 group-hover/tograde:ring-amber-400 transition-colors">
-                          <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
-                        </span>
-                      </button>
-                      <Collapse open={open}>
-                        <div className="px-3 pb-3 space-y-3">
-                          {/* By classwork category; each fold is remembered per course. */}
-                          {categories.map(([key, items]) => {
-                            const foldKey = `${course.id}:${key}`;
-                            const groupOpen = isFoldOpen(foldKey);
-                            const graded = items.filter(isAssignmentPublished);
-                            const drafts = items.filter((asg) => !isAssignmentPublished(asg));
-                            return (
-                              <div key={key} className="rounded-2xl bg-white/60 dark:bg-slate-900/40 ring-1 ring-amber-200/70 dark:ring-amber-900/40 p-2 space-y-2">
-                                <AssignmentGroupHeader
-                                  title={assignmentGroupLabel(key, language === 'th')}
-                                  count={items.length}
-                                  open={groupOpen}
-                                  onToggle={() => toggleFold(foldKey)}
-                                  chips={teacherGroupChips(items.map((asg) => ({ assignment: asg, counts: countsOf(asg) })), language === 'th')}
-                                />
-                                <Collapse open={groupOpen}>
-                                  <div className="space-y-2.5 pt-0.5">
-                                    {graded.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{graded.map(row)}</div>}
-                                    {drafts.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">{drafts.map(unpublishedRow)}</div>}
-                                  </div>
-                                </Collapse>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </Collapse>
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
             ))
           )}

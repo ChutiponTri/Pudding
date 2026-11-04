@@ -5,7 +5,12 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { assignmentPostBody, assignmentPostMetadata, createClassroomPost } from '@/lib/server/classroomPosts';
-import { isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
+import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
+import { releaseLineTestSend, reserveLineTestSend } from '@/lib/server/lineTestQuota';
+import { pushLineGroupText } from '@/lib/line/messaging';
+import { withLiffLink } from '@/lib/line/liffLink';
+import { classroomTitle } from '@/lib/utils/classroomLabel';
+import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 
 export const runtime = 'nodejs';
@@ -35,7 +40,8 @@ export async function POST(request: NextRequest) {
   const status = body.status_override as SubmissionOverrideStatus;
   const extendedUntil = typeof body.extended_until === 'string' ? body.extended_until : undefined;
   const publishNow = body.action === 'publish_now';
-  if (!assignmentId || (!publishNow && !STATUSES.includes(status))) {
+  const reannounce = body.action === 'reannounce';
+  if (!assignmentId || (!publishNow && !reannounce && !STATUSES.includes(status))) {
     return NextResponse.json({ error: 'assignmentId and a valid status_override are required' }, { status: 400 });
   }
   const extendedMs = extendedUntil ? new Date(extendedUntil).getTime() : NaN;
@@ -56,6 +62,40 @@ export async function POST(request: NextRequest) {
     classroom?.teacher_id === userId ||
     (classroom?.teachers || []).some((teacher: { teacher_id?: string }) => teacher.teacher_id === userId);
   if (!classroom || !isTeacher) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  // Posts the work's link to the class LINE group again (rationed: billed per group member).
+  if (reannounce) {
+    if (!classroom.line_group_id) return NextResponse.json({ error: 'ห้องนี้ยังไม่ได้เชื่อม LINE Group' }, { status: 409 });
+    const win = getAssignmentWindow(previous);
+    if (win.isDraft || win.isScheduled) return NextResponse.json({ error: 'งานนี้ยังไม่เผยแพร่' }, { status: 409 });
+    if (!win.acceptsSubmissions) return NextResponse.json({ error: 'งานนี้ปิดรับแล้ว' }, { status: 409 });
+    const reservation = await reserveLineTestSend(supabase, { teacherId: userId, classroomId: classroom.id, source: 'reannounce' });
+    if (!reservation.ok) {
+      return NextResponse.json(
+        { error: reservation.message },
+        { status: 429, headers: reservation.retryAfterSeconds ? { 'Retry-After': String(reservation.retryAfterSeconds) } : undefined }
+      );
+    }
+    const due = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), 'th', SCHOOL_TIME_ZONE) : '';
+    const text =
+      `🔔 ${previous.is_exam ? 'อย่าลืมทำข้อสอบ' : 'อย่าลืมส่งงาน'}\n📘 ${classroomTitle(classroom)}\n\n${previous.title}` +
+      (due ? `\n${previous.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due}` : '');
+    try {
+      await pushLineGroupText(
+        classroom.line_group_id,
+        withLiffLink(text, previous.is_exam ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', {
+          classroomId: classroom.id,
+          inviteCode: classroom.invite_code,
+          assignmentId,
+        })
+      );
+    } catch (pushError) {
+      await releaseLineTestSend(supabase, reservation.id);
+      console.error('LINE re-announce failed:', pushError);
+      return NextResponse.json({ error: 'ส่งเข้า LINE ไม่สำเร็จ กรุณาตรวจว่าบอทยังอยู่ในกลุ่ม' }, { status: 502 });
+    }
+    return NextResponse.json({ assignment: previous });
+  }
 
   if (publishNow) {
     if (isAssignmentPublished(previous)) return NextResponse.json({ assignment: previous });

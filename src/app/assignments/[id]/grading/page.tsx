@@ -27,6 +27,7 @@ import { assignmentAttachments } from '@/lib/utils/referenceWork';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ReopenTimeDialog, reopenTimeSuggestion } from '@/components/ReopenTimeDialog';
 import { RetakePicker } from '@/components/RetakePicker';
+import { SiblingClassTabs } from '@/components/works/SiblingClassTabs';
 import { isRetake, rosterFor } from '@/lib/utils/retake';
 import {
   Search,
@@ -79,6 +80,9 @@ function GradingBackLink({ classroomId }: { classroomId?: string }) {
     target = { href: '/dashboard', label: th ? 'กลับไปแดชบอร์ด' : 'Back to dashboard' };
   } else if (from === 'grading') {
     target = { href: courseId ? `/grading?courseId=${encodeURIComponent(courseId)}` : '/grading', label: th ? 'กลับไปหน้าตรวจงาน' : 'Back to grading' };
+  } else if (from === 'works') {
+    const returnTo = search.get('returnTo');
+    target = { href: returnTo?.startsWith('/works') ? returnTo : '/works', label: th ? 'กลับไปรายการงาน' : 'Back to work list' };
   }
 
   if (target) {
@@ -784,6 +788,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       <div className="space-y-4">
         <Suspense fallback={<span className="block h-4" />}>
           <GradingBackLink classroomId={assignment?.classroom_id} />
+          <SiblingClassTabs assignmentId={assignmentId} />
         </Suspense>
 
         <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 sm:space-y-5">

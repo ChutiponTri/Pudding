@@ -593,6 +593,26 @@ export const dataService = {
     return (json.assignment as Assignment) || null;
   },
 
+  /** Posts the work's link to the class LINE group again. */
+  async reannounceAssignment(assignmentId: string): Promise<void> {
+    const res = await authFetch('/api/assignments/override', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignmentId, action: 'reannounce' }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+  },
+
+  /** Share token so other teachers can copy this work (see /assignments/new?template=). */
+  async getTemplateLink(assignmentId: string): Promise<string> {
+    return call<string>('getTemplateLink', assignmentId);
+  },
+
+  async getAssignmentTemplate(token: string): Promise<{ assignment: Assignment; questions: Question[] }> {
+    return call('getAssignmentTemplate', token);
+  },
+
   async updateAssignmentDeadlineOverride(
     assignmentId: string,
     override: { status_override: SubmissionOverrideStatus; extended_until?: string }

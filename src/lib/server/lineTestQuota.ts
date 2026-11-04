@@ -21,11 +21,26 @@ const intEnv = (name: string, fallback: number) => {
   const value = Number.parseInt(process.env[name] || '', 10);
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 };
-export const lineTestLimits = () => ({
-  perClassroom: intEnv('LINE_TEST_LIMIT_PER_CLASSROOM', 3),
-  perTeacher: intEnv('LINE_TEST_LIMIT_PER_TEACHER', 10),
-  cooldownSeconds: intEnv('LINE_TEST_COOLDOWN_SECONDS', 60),
-});
+/**
+ * 'test' = test messages; 'reannounce' = a teacher posting a work's link to
+ * the group again. Each kind has its own budget in the same table
+ * (re-announcements are stored with source 'reannounce').
+ */
+export type LinePushKind = 'test' | 'reannounce';
+const REANNOUNCE_SOURCE = 'reannounce';
+
+export const lineTestLimits = (kind: LinePushKind = 'test') =>
+  kind === 'reannounce'
+    ? {
+        perClassroom: intEnv('LINE_REANNOUNCE_LIMIT_PER_CLASSROOM', 5),
+        perTeacher: intEnv('LINE_REANNOUNCE_LIMIT_PER_TEACHER', 20),
+        cooldownSeconds: intEnv('LINE_REANNOUNCE_COOLDOWN_SECONDS', 60),
+      }
+    : {
+        perClassroom: intEnv('LINE_TEST_LIMIT_PER_CLASSROOM', 3),
+        perTeacher: intEnv('LINE_TEST_LIMIT_PER_TEACHER', 10),
+        cooldownSeconds: intEnv('LINE_TEST_COOLDOWN_SECONDS', 60),
+      };
 
 export interface LineTestQuota {
   /** Tests left for this classroom right now (the smaller of the two limits). */
@@ -41,20 +56,21 @@ type SendRow = { id: string; teacher_id: string; classroom_id: string; created_a
 
 export const lineTestWindowStart = () => new Date(Date.now() - LINE_TEST_WINDOW_DAYS * 86_400_000).toISOString();
 
-async function recentSends(supabase: Supabase, teacherId: string, classroomId: string) {
+async function recentSends(supabase: Supabase, teacherId: string, classroomId: string, kind: LinePushKind = 'test') {
   const since = lineTestWindowStart();
   const columns = 'id, teacher_id, classroom_id, created_at';
+  const op = kind === 'reannounce' ? 'eq' : 'neq';
   const [byTeacher, byClassroom] = await Promise.all([
-    supabase.from('line_test_sends').select(columns).eq('teacher_id', teacherId).gte('created_at', since),
-    supabase.from('line_test_sends').select(columns).eq('classroom_id', classroomId).gte('created_at', since),
+    supabase.from('line_test_sends').select(columns).eq('teacher_id', teacherId).gte('created_at', since)[op]('source', REANNOUNCE_SOURCE),
+    supabase.from('line_test_sends').select(columns).eq('classroom_id', classroomId).gte('created_at', since)[op]('source', REANNOUNCE_SOURCE),
   ]);
   const error = byTeacher.error || byClassroom.error;
   if (error) throw new Error(`line_test_sends: ${error.message}`);
   return { teacherRows: (byTeacher.data || []) as SendRow[], classroomRows: (byClassroom.data || []) as SendRow[] };
 }
 
-function quotaOf(teacherRows: SendRow[], classroomRows: SendRow[]): LineTestQuota {
-  const { perClassroom, perTeacher } = lineTestLimits();
+function quotaOf(teacherRows: SendRow[], classroomRows: SendRow[], kind: LinePushKind = 'test'): LineTestQuota {
+  const { perClassroom, perTeacher } = lineTestLimits(kind);
   const classroomLeft = Math.max(0, perClassroom - classroomRows.length);
   const teacherLeft = Math.max(0, perTeacher - teacherRows.length);
   const remaining = Math.min(classroomLeft, teacherLeft);
@@ -88,8 +104,10 @@ export type LineTestReservation =
 /** Claims one test send. On ok, call releaseLineTestSend(id) if the push then fails. */
 export async function reserveLineTestSend(
   supabase: Supabase,
-  input: { teacherId: string; classroomId: string; source: 'web' | 'line' }
+  input: { teacherId: string; classroomId: string; source: 'web' | 'line' | 'reannounce' }
 ): Promise<LineTestReservation> {
+  const kind: LinePushKind = input.source === REANNOUNCE_SOURCE ? 'reannounce' : 'test';
+  const what = kind === 'reannounce' ? 'ประกาศซ้ำ' : 'ทดสอบส่งข้อความ';
   const { data: inserted, error } = await supabase
     .from('line_test_sends')
     .insert({ teacher_id: input.teacherId, classroom_id: input.classroomId, source: input.source })
@@ -98,24 +116,24 @@ export async function reserveLineTestSend(
   if (error || !inserted) {
     // Fail closed: without the log there is no limit.
     console.error('LINE test quota unavailable (run supabase_teacher_approval_update.sql?):', error?.message);
-    return { ok: false, message: 'ระบบโควตาทดสอบส่งข้อความยังไม่พร้อม กรุณาติดต่อผู้ดูแลระบบ' };
+    return { ok: false, message: `ระบบโควตา${what}ยังไม่พร้อม กรุณาติดต่อผู้ดูแลระบบ` };
   }
 
   let rows: Awaited<ReturnType<typeof recentSends>>;
   try {
-    rows = await recentSends(supabase, input.teacherId, input.classroomId);
+    rows = await recentSends(supabase, input.teacherId, input.classroomId, kind);
   } catch (readError) {
     await releaseLineTestSend(supabase, inserted.id);
     console.error('LINE test quota read failed:', readError);
-    return { ok: false, message: 'ตรวจโควตาทดสอบส่งข้อความไม่สำเร็จ กรุณาลองใหม่' };
+    return { ok: false, message: `ตรวจโควตา${what}ไม่สำเร็จ กรุณาลองใหม่` };
   }
   const { teacherRows, classroomRows } = rows;
-  const { perClassroom, perTeacher, cooldownSeconds } = lineTestLimits();
+  const { perClassroom, perTeacher, cooldownSeconds } = lineTestLimits(kind);
   const mine = new Date(inserted.created_at).getTime();
   const others = (list: SendRow[]) => list.filter((r) => r.id !== inserted.id);
   const refuse = async (message: string, retryAfterSeconds?: number): Promise<LineTestReservation> => {
     await releaseLineTestSend(supabase, inserted.id);
-    return { ok: false, message, retryAfterSeconds, quota: quotaOf(others(teacherRows), others(classroomRows)) };
+    return { ok: false, message, retryAfterSeconds, quota: quotaOf(others(teacherRows), others(classroomRows), kind) };
   };
 
   const recentByMe = others(teacherRows)
@@ -123,24 +141,24 @@ export async function reserveLineTestSend(
     .filter((t) => Math.abs(mine - t) < cooldownSeconds * 1000);
   if (recentByMe.length) {
     const wait = Math.max(1, Math.ceil((Math.max(...recentByMe) + cooldownSeconds * 1000 - mine) / 1000));
-    return refuse(`เพิ่งทดสอบส่งข้อความไป กรุณารออีก ${wait} วินาที`, wait);
+    return refuse(`เพิ่ง${what}ไป กรุณารออีก ${wait} วินาที`, wait);
   }
   if (classroomRows.length > perClassroom) {
-    const quota = quotaOf(others(teacherRows), others(classroomRows));
+    const quota = quotaOf(others(teacherRows), others(classroomRows), kind);
     return refuse(
-      `ห้องนี้ทดสอบส่งข้อความครบ ${perClassroom} ครั้งใน ${LINE_TEST_WINDOW_DAYS} วันแล้ว` +
-        (quota.nextFreeAt ? ` ทดสอบได้อีกครั้ง ${formatThaiDate(quota.nextFreeAt)}` : '') +
-        ' (ข้อความทดสอบแต่ละครั้งใช้โควตา LINE ตามจำนวนสมาชิกในกลุ่ม)'
+      `ห้องนี้${what}ครบ ${perClassroom} ครั้งใน ${LINE_TEST_WINDOW_DAYS} วันแล้ว` +
+        (quota.nextFreeAt ? ` ทำได้อีกครั้ง ${formatThaiDate(quota.nextFreeAt)}` : '') +
+        ' (ข้อความแต่ละครั้งใช้โควตา LINE ตามจำนวนสมาชิกในกลุ่ม)'
     );
   }
   if (teacherRows.length > perTeacher) {
-    const quota = quotaOf(others(teacherRows), others(classroomRows));
+    const quota = quotaOf(others(teacherRows), others(classroomRows), kind);
     return refuse(
-      `คุณทดสอบส่งข้อความครบ ${perTeacher} ครั้งใน ${LINE_TEST_WINDOW_DAYS} วันแล้ว` +
-        (quota.nextFreeAt ? ` ทดสอบได้อีกครั้ง ${formatThaiDate(quota.nextFreeAt)}` : '')
+      `คุณ${what}ครบ ${perTeacher} ครั้งใน ${LINE_TEST_WINDOW_DAYS} วันแล้ว` +
+        (quota.nextFreeAt ? ` ทำได้อีกครั้ง ${formatThaiDate(quota.nextFreeAt)}` : '')
     );
   }
-  return { ok: true, id: inserted.id, quota: quotaOf(teacherRows, classroomRows) };
+  return { ok: true, id: inserted.id, quota: quotaOf(teacherRows, classroomRows, kind) };
 }
 
 /** Gives a claimed test back (the push failed, or the claim was over the limit). */

@@ -6,7 +6,7 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import type { ClassroomSignal } from '@/lib/realtime/signals';
 import { ASSIGNMENT_POST_PREFIX, assignmentPostBody, assignmentPostMetadata, createClassroomPost } from '@/lib/server/classroomPosts';
-import { newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
+import { assignmentIdFromTemplateToken, assignmentTemplateToken, newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
 import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 import { THAI_INSTITUTIONS, canonicalInstitution, sameInstitution } from '@/lib/data/thaiInstitutions';
 import { pushTeacherProfileToClerk, readClerkTeacherProfile } from '@/lib/server/clerkTeacherProfile';
@@ -1737,6 +1737,47 @@ export const dataActions = {
     if (failed) throw toDatabaseError(failed, 'assignments');
     after(() => signalClassroom(classroomId, { type: 'timeline' }));
     return true;
+  },
+
+  /** A share token for using this work as a template (see assignmentTemplateToken). Teachers of its classroom only. */
+  async getTemplateLink({ supabase, actor }: Ctx, id: string) {
+    await requireTeacherOfAssignment(supabase, actor, id);
+    return assignmentTemplateToken(id);
+  },
+
+  /**
+   * The work behind a template token, for any teacher to copy into their own
+   * classroom: content and questions only (no classroom, students, scores,
+   * retake list or indicator links, which belong to the owner's course).
+   */
+  async getAssignmentTemplate({ supabase, actor }: Ctx, token: string) {
+    requireTeacher(actor);
+    const id = assignmentIdFromTemplateToken(token);
+    if (!id) throw new HttpError(404, 'ลิงก์แม่แบบไม่ถูกต้อง');
+    const [assignmentResult, questionsResult] = await Promise.all([
+      supabase.from('assignments').select('*').eq('id', id).maybeSingle(),
+      supabase.from('questions').select('*').eq('assignment_id', id),
+    ]);
+    if (assignmentResult.error) throw toDatabaseError(assignmentResult.error, 'assignments');
+    const source = assignmentResult.data as Assignment | null;
+    if (!source) throw new HttpError(404, 'งานต้นแบบถูกลบไปแล้ว');
+    const assignment: Assignment = {
+      id: source.id,
+      classroom_id: '',
+      title: source.title,
+      description: source.description,
+      is_exam: !!source.is_exam,
+      due_date: source.due_date,
+      reminder_cron: source.reminder_cron,
+      total_points: source.total_points,
+      attachments: source.attachments,
+      sample_work_url: source.sample_work_url,
+      sample_work_title: source.sample_work_title,
+      sample_work_description: source.sample_work_description,
+      group_name: source.group_name,
+    };
+    const questions = ((questionsResult.data || []) as Question[]).map((q) => ({ ...q, indicator_id: undefined, indicator: undefined }));
+    return { assignment, questions };
   },
 
   async deleteAssignment({ supabase, actor }: Ctx, id: string) {

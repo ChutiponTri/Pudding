@@ -168,6 +168,9 @@ function WorkContextBanner({
   );
 }
 
+/** The clock, read in event handlers (kept outside the component: not render work). */
+const clockNow = () => Date.now();
+
 function NewAssignmentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -175,11 +178,18 @@ function NewAssignmentContent() {
   const urlFrom = searchParams.get('from');
   const isFromDashboard = urlFrom === 'dashboard' || (!urlClassroomId && urlFrom !== 'classroom');
   // Opened from the grading hub: go back to the same view (only /grading paths are accepted).
-  const returnTo = urlFrom === 'grading' && searchParams.get('returnTo')?.startsWith('/grading') ? searchParams.get('returnTo') : null;
+  // Opened from the work list: back to it (only /works paths are accepted).
+  const returnParam = searchParams.get('returnTo');
+  const returnTo =
+    (urlFrom === 'grading' && returnParam?.startsWith('/grading')) || (urlFrom === 'works' && returnParam?.startsWith('/works'))
+      ? returnParam
+      : null;
   // ?edit=<assignmentId>: the same form, filled with a saved assignment or quiz.
   const editId = searchParams.get('edit');
   // ?copy=<assignmentId>: a new assignment filled from saved work (any state), for other classrooms.
   const copyId = editId ? null : searchParams.get('copy');
+  // ?template=<token>: a new assignment filled from work another teacher shared.
+  const templateToken = editId || copyId ? null : searchParams.get('template');
   // ?reuse=1 (with copy): "reuse earlier work" from the create menu — the new
   // work goes to ?classroomId (the classroom it was started from), not "another classroom".
   const isReuse = !!copyId && searchParams.get('reuse') === '1';
@@ -208,7 +218,7 @@ function NewAssignmentContent() {
   // Retake quiz: the original quiz, the classroom roster and the chosen students.
   const [retake, setRetake] = useState<{ source: Assignment | null; roster: User[]; ids: string[] } | null>(null);
   const [retakeAdding, setRetakeAdding] = useState(false);
-  usePageTitle(editingAssignment ? `แก้ไข: ${editingAssignment.title}` : retake ? 'สร้างข้อสอบซ่อม' : copyId ? 'คัดลอกงาน' : null);
+  usePageTitle(editingAssignment ? `แก้ไข: ${editingAssignment.title}` : retake ? 'สร้างข้อสอบซ่อม' : copyId ? 'คัดลอกงาน' : templateToken ? 'สร้างจากแม่แบบ' : null);
   const originalQuestionIdsRef = useRef<string[]>([]);
 
   // Form fields
@@ -397,9 +407,14 @@ function NewAssignmentContent() {
 
         const sourceId = editId || copyId;
         let loadedAssignment: Assignment | null = null;
-        if (sourceId) {
+        if (sourceId || templateToken) {
           const [{ assignment, questions: savedQuestions }, subs] = await Promise.all([
-            dataService.getAssignmentById(sourceId),
+            templateToken
+              ? dataService.getAssignmentTemplate(templateToken).then((tpl) => ({
+                  ...tpl,
+                  assignment: tpl.assignment && { ...tpl.assignment, classroom_name: tr('งานที่แชร์มา', 'shared work') },
+                }), () => ({ assignment: null, questions: [] as Question[] }))
+              : dataService.getAssignmentById(sourceId!),
             editId ? dataService.getSubmissionsByAssignmentIds([editId], { includeStudents: false }) : Promise.resolve([]),
           ]);
           if (!assignment) {
@@ -466,13 +481,17 @@ function NewAssignmentContent() {
           if (legacyNote && !(assignment.description || '').includes(legacyNote)) {
             setDescription([assignment.description?.trim(), legacyNote].filter(Boolean).join('\n\n'));
           }
+          // Shared work comes without indicators: use the target course's first one.
+          const templateIndicatorId = (targetCourse?.indicators || crs[0]?.indicators || [])[0]?.id || '';
           if (editId) originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
           if (savedQuestions.length) {
             setQuestions(savedQuestions.map((q) => ({
               uid: newQuestionUid(),
               // A copy gets new questions of its own.
               id: editId ? q.id : undefined,
-              indicator_id: targetCourseId !== courseId ? remapIndicatorId(q.indicator_id || '', sourceCourse, targetCourse) : q.indicator_id || '',
+              indicator_id: templateToken
+                ? templateIndicatorId
+                : targetCourseId !== courseId ? remapIndicatorId(q.indicator_id || '', sourceCourse, targetCourse) : q.indicator_id || '',
               type: q.type,
               question_text: q.question_text || '',
               options: q.type === 'multiple_choice'
@@ -520,7 +539,7 @@ function NewAssignmentContent() {
     }
     init(teacherId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per teacher / target
-  }, [urlClassroomId, editId, copyId, isReuse, retakeOfParam, clerkUser?.id]);
+  }, [urlClassroomId, editId, copyId, templateToken, isReuse, retakeOfParam, clerkUser?.id]);
 
   // Groups already used in the selected classrooms, offered as one-tap choices.
   const selectedClassroomKey = selectedClassroomIds.join(',');
@@ -692,13 +711,13 @@ function NewAssignmentContent() {
     }
     // An edit may keep a deadline that has already passed; only a new one must be ahead.
     const dueChanged = !editingAssignment || new Date(dueDate).getTime() !== new Date(editingAssignment.due_date).getTime();
-    if (dueChanged && dueDate && new Date(dueDate).getTime() <= Date.now()) {
+    if (dueChanged && dueDate && new Date(dueDate).getTime() <= clockNow()) {
       alert(language === 'th' ? 'กำหนดส่งต้องเป็นเวลาในอนาคต' : 'The due date must be in the future');
       return;
     }
     if (schedulePublish && !editIsPublished) {
       const publishMs = new Date(publishAt).getTime();
-      if (!publishAt || Number.isNaN(publishMs) || publishMs <= Date.now()) {
+      if (!publishAt || Number.isNaN(publishMs) || publishMs <= clockNow()) {
         alert(language === 'th' ? 'เวลาเผยแพร่ต้องเป็นเวลาในอนาคต' : 'The publish time must be in the future');
         return;
       }
@@ -1026,8 +1045,8 @@ function NewAssignmentContent() {
           <ArrowLeft className="w-4 h-4" />
           <span className="truncate">
             <MobileText
-              short={returnTo ? tr('กลับไปตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับแดชบอร์ด', 'Dashboard') : tr('กลับไปห้องเรียน', 'Back to class')}
-              full={returnTo ? tr('กลับไปหน้าตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับสู่แดชบอร์ด (Dashboard)', 'Back to dashboard') : tr('กลับไปหน้าห้องเรียน (งานและเนื้อหา)', 'Back to classroom (Classwork)')}
+              short={returnTo?.startsWith('/works') ? tr('กลับไปรายการงาน', 'Back to work') : returnTo ? tr('กลับไปตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับแดชบอร์ด', 'Dashboard') : tr('กลับไปห้องเรียน', 'Back to class')}
+              full={returnTo?.startsWith('/works') ? tr('กลับไปรายการงานและข้อสอบ', 'Back to assignments & quizzes') : returnTo ? tr('กลับไปหน้าตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับสู่แดชบอร์ด (Dashboard)', 'Back to dashboard') : tr('กลับไปหน้าห้องเรียน (งานและเนื้อหา)', 'Back to classroom (Classwork)')}
             />
           </span>
         </button>
@@ -1045,6 +1064,8 @@ function NewAssignmentContent() {
             ? (language === 'th' ? 'แก้ไขงาน / ข้อสอบ' : 'Edit assignment / quiz')
             : isReuse
             ? tr('สร้างงานใหม่จากงานเดิม', 'New work from earlier work')
+            : templateToken
+            ? tr('สร้างงานจากแม่แบบ', 'New work from a template')
             : copyId
             ? tr('คัดลอกงาน / ข้อสอบไปห้องอื่น', 'Copy assignment / quiz to other classrooms')
             : t('assignment_creator.title')}
@@ -1067,7 +1088,7 @@ function NewAssignmentContent() {
         })()}
         {editingAssignment && (() => {
           const where = classrooms.find((c) => c.id === editingAssignment.classroom_id)?.name || editingAssignment.classroom_name || '';
-          const copyHref = `/assignments/new?copy=${editingAssignment.id}&classroomId=${editingAssignment.classroom_id}&from=${returnTo ? 'grading' : isFromDashboard ? 'dashboard' : 'classroom'}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ''}`;
+          const copyHref = `/assignments/new?copy=${editingAssignment.id}&classroomId=${editingAssignment.classroom_id}&from=${returnTo ? urlFrom : isFromDashboard ? 'dashboard' : 'classroom'}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ''}`;
           return (
             <WorkContextBanner
               tone="edit"
