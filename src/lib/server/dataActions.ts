@@ -493,6 +493,33 @@ async function checkedRetake<T extends Partial<Assignment>>(supabase: Supabase, 
 // ==============================================================================
 // ACTIONS (name → handler). Arguments mirror the browser dataService methods.
 // ==============================================================================
+/**
+ * One course per code per semester: copying a course to another semester (or
+ * creating/renaming one) must not land on a term that already has that code.
+ */
+async function assertCoursePeriodFree(
+  supabase: SupabaseClient,
+  ownerId: string,
+  code: string | null | undefined,
+  semester: number | null | undefined,
+  yearCe: number | null | undefined,
+  exceptId?: string
+) {
+  const normalized = (code || '').trim().toUpperCase();
+  if (!normalized || !semester || !yearCe) return;
+  const { data, error } = await supabase
+    .from('courses')
+    .select('id, code')
+    .eq('primary_teacher_id', ownerId)
+    .eq('semester', semester)
+    .eq('year_ce', yearCe);
+  if (error) throw toDatabaseError(error, 'courses');
+  const taken = (data || []).some((c) => c.id !== exceptId && (c.code || '').trim().toUpperCase() === normalized);
+  if (taken) {
+    throw new HttpError(409, `รายวิชา ${normalized} มีอยู่แล้วในภาคเรียน ${semester}/${yearCe + 543} กรุณาเลือกภาคเรียนอื่น`);
+  }
+}
+
 export const dataActions = {
   // ---------- USERS ----------
   async syncLineStudentUser({ supabase, actor }: Ctx, student: { name: string; first_name?: string; last_name?: string; avatar?: string | null; student_id?: string; institution?: string; email?: string | null }) {
@@ -810,6 +837,7 @@ export const dataActions = {
 
   async createCourse({ supabase, actor }: Ctx, data: Omit<Course, 'id' | 'created_at'>) {
     const me = requireTeacher(actor);
+    await assertCoursePeriodFree(supabase, me.userId, data.code, data.semester, data.year_ce);
     const newCourse: Course = { ...data, primary_teacher_id: me.userId, id: `course-${Date.now()}`, created_at: new Date().toISOString() };
     await ensureTeacherUser(supabase, newCourse.primary_teacher_id, newCourse.teachers);
     const { error } = await supabase.from('courses').insert(newCourse);
@@ -819,10 +847,20 @@ export const dataActions = {
 
   async updateCourse({ supabase, actor }: Ctx, id: string, data: Partial<Course>) {
     const me = requireTeacher(actor);
-    const { data: current } = await supabase.from('courses').select('id, primary_teacher_id, teachers, code, name').eq('id', id).maybeSingle();
+    const { data: current } = await supabase.from('courses').select('id, primary_teacher_id, teachers, code, name, semester, year_ce').eq('id', id).maybeSingle();
     if (!current) throw new HttpError(404, 'ไม่พบรายวิชา');
     if (!isTeacherOf(current, me.userId)) throw FORBIDDEN();
     const { id: _id, primary_teacher_id: _owner, ...patch } = data;
+    if (patch.code !== undefined || patch.semester !== undefined || patch.year_ce !== undefined) {
+      await assertCoursePeriodFree(
+        supabase,
+        current.primary_teacher_id || me.userId,
+        patch.code ?? current.code,
+        patch.semester ?? current.semester,
+        patch.year_ce ?? current.year_ce,
+        id
+      );
+    }
     if (patch.teachers) patch.teachers = await withRealTeacherEmails(supabase, patch.teachers);
     const { data: updated, error } = await supabase.from('courses').update(patch).eq('id', id).select().maybeSingle();
     if (error) throw toDatabaseError(error, 'courses');

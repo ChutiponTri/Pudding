@@ -251,6 +251,26 @@ export function TeacherWorkspace({
   const [isSavingCourse, setIsSavingCourse] = useState(false);
   const [isCourseCloneFlow, setIsCourseCloneFlow] = useState(false);
 
+  /** A course with this code already exists in that semester/year (copies must go to another term). */
+  const isCoursePeriodTaken = (code: string, semester: number, yearCE: number) => {
+    const normalized = code.trim().toUpperCase();
+    if (!normalized) return false;
+    return courses.some((c) => (c.code || '').trim().toUpperCase() === normalized && c.semester === semester && c.year_ce === yearCE);
+  };
+  /** First semester (this year, then later years) where the code is still free. */
+  const firstFreeCoursePeriod = (code: string, semester: number, yearCE: number) => {
+    for (let yr = yearCE; yr <= yearCE + 5; yr++) {
+      for (let sem = yr === yearCE ? semester : 1; sem <= 3; sem++) {
+        if (!isCoursePeriodTaken(code, sem, yr)) return { semester: sem, yearCE: yr };
+      }
+    }
+    return { semester, yearCE };
+  };
+  const coursePeriodTakenMessage = () =>
+    language === 'th'
+      ? `รายวิชา ${courseCodeInput.trim().toUpperCase()} มีอยู่แล้วใน${formatAcademicPeriod(courseSemesterInput, courseYearInput, language)} กรุณาเลือกภาคเรียนอื่น`
+      : `Course ${courseCodeInput.trim().toUpperCase()} already exists in ${formatAcademicPeriod(courseSemesterInput, courseYearInput, language)}. Please choose another semester.`;
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
@@ -622,8 +642,9 @@ export function TeacherWorkspace({
       course.semester === 3
         ? (course.year_ce || defaultPeriod.yearCE) + 1
         : course.year_ce || defaultPeriod.yearCE;
-    setCourseSemesterInput(nextSem);
-    setCourseYearInput(nextYr);
+    const free = firstFreeCoursePeriod(course.code, nextSem, nextYr);
+    setCourseSemesterInput(free.semester);
+    setCourseYearInput(free.yearCE);
     setCourseIndicatorsDraft(course.indicators || []);
     setCourseLessonPlanDraft(course.lesson_plans || []);
     setCourseCreationMode(course.indicator_mode || 'indicator');
@@ -664,6 +685,10 @@ export function TeacherWorkspace({
       alert(language === 'th' ? 'กรุณากรอกรหัสและชื่อรายวิชา' : 'Please enter course code and name');
       return;
     }
+    if (isCoursePeriodTaken(courseCodeInput, courseSemesterInput, courseYearInput)) {
+      alert(coursePeriodTakenMessage());
+      return;
+    }
     setCourseCreationStep(2);
   };
 
@@ -676,6 +701,11 @@ export function TeacherWorkspace({
     }
     if (isSavingCourse) return;
     if (!courseCodeInput.trim() || !courseNameInput.trim()) return;
+    if (isCoursePeriodTaken(courseCodeInput, courseSemesterInput, courseYearInput)) {
+      alert(coursePeriodTakenMessage());
+      setCourseCreationStep(1);
+      return;
+    }
 
     const academicYearStr = formatAcademicPeriod(courseSemesterInput, courseYearInput, language);
     const currentTeacherId = clerkUser?.id;
@@ -2984,6 +3014,9 @@ export function TeacherWorkspace({
                         setCourseCodeInput(sel.code);
                         setCourseNameInput(sel.name);
                         setCourseDescInput(sel.description || '');
+                        const free = firstFreeCoursePeriod(sel.code, courseSemesterInput, courseYearInput);
+                        setCourseSemesterInput(free.semester);
+                        setCourseYearInput(free.yearCE);
                         setCourseIndicatorsDraft(sel.indicators || []);
                         setCourseLessonPlanDraft(sel.lesson_plans || []);
                         setCourseCreationMode(sel.indicator_mode || 'indicator');
@@ -3176,9 +3209,15 @@ export function TeacherWorkspace({
                     onChange={(e) => setCourseSemesterInput(Number(e.target.value))}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                   >
-                    <option value={1}>{t('classroom_mgmt.fields.semester_1')}</option>
-                    <option value={2}>{t('classroom_mgmt.fields.semester_2')}</option>
-                    <option value={3}>{t('classroom_mgmt.fields.semester_3')}</option>
+                    {[1, 2, 3].map((sem) => {
+                      const taken = isCoursePeriodTaken(courseCodeInput, sem, courseYearInput);
+                      return (
+                        <option key={sem} value={sem} disabled={taken}>
+                          {t(`classroom_mgmt.fields.semester_${sem}`)}
+                          {taken ? (language === 'th' ? ' (มีวิชานี้แล้ว)' : ' (already exists)') : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
@@ -3188,7 +3227,15 @@ export function TeacherWorkspace({
                   </label>
                   <select
                     value={courseYearInput}
-                    onChange={(e) => setCourseYearInput(Number(e.target.value))}
+                    onChange={(e) => {
+                      // Keep the semester on a free term when the year moves onto a taken one.
+                      const yr = Number(e.target.value);
+                      const free = isCoursePeriodTaken(courseCodeInput, courseSemesterInput, yr)
+                        ? firstFreeCoursePeriod(courseCodeInput, 1, yr)
+                        : { semester: courseSemesterInput, yearCE: yr };
+                      setCourseSemesterInput(free.yearCE === yr ? free.semester : courseSemesterInput);
+                      setCourseYearInput(yr);
+                    }}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                   >
                     {yearOptions.map((yr) => (
