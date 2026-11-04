@@ -69,7 +69,6 @@ function GradingBackLink({ classroomId }: { classroomId?: string }) {
   const th = language === 'th';
   const from = search.get('from');
   const fromClassroomId = search.get('classroomId') || classroomId;
-  const courseId = search.get('courseId');
   const className =
     'inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-amber-600 transition-colors cursor-pointer';
 
@@ -79,7 +78,8 @@ function GradingBackLink({ classroomId }: { classroomId?: string }) {
   } else if (from === 'dashboard') {
     target = { href: '/dashboard', label: th ? 'กลับไปแดชบอร์ด' : 'Back to dashboard' };
   } else if (from === 'grading') {
-    target = { href: courseId ? `/grading?courseId=${encodeURIComponent(courseId)}` : '/grading', label: th ? 'กลับไปหน้าตรวจงาน' : 'Back to grading' };
+    // The old grading hub now lives in the work list.
+    target = { href: '/works', label: th ? 'กลับไปรายการงาน' : 'Back to work list' };
   } else if (from === 'works') {
     const returnTo = search.get('returnTo');
     target = { href: returnTo?.startsWith('/works') ? returnTo : '/works', label: th ? 'กลับไปรายการงาน' : 'Back to work list' };

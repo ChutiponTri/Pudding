@@ -1418,9 +1418,9 @@ export function TeacherWorkspace({
           </span>
         </Link>
 
-        {/* Pending to Grade */}
+        {/* Pending to Grade -> the work list of the same term (grading starts there) */}
         <Link
-          href="/grading"
+          href={`/works?term=${encodeURIComponent(selectedSemesterKey)}`}
           className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-400 dark:hover:border-blue-500 transition-all block group"
         >
           <div className="flex items-center justify-between">

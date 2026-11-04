@@ -61,7 +61,7 @@ export function combinedStatus(list: AcceptStatus[], unit: [string, string], th:
   return list[0];
 }
 
-/** The acceptance state as a pill: coloured dot, state, time hint, and a chevron when it can be changed. */
+/** The acceptance state as a pill: coloured dot, state, and a chevron when it can be changed (the time hint is in the tooltip). */
 export function StatusButton({ status, onClick }: { status: AcceptStatus; onClick?: () => void }) {
   const { tr } = useLanguage();
   const inner = (
@@ -70,8 +70,7 @@ export function StatusButton({ status, onClick }: { status: AcceptStatus; onClic
         {status.tone === 'open' && <span className="absolute inset-0 rounded-full bg-emerald-400 opacity-75 animate-ping" />}
         <span className={`relative w-2 h-2 rounded-full ${STATUS_DOT[status.tone]}`} />
       </span>
-      <span className="font-black whitespace-nowrap">{status.label}</span>
-      {status.hint && <span className="font-semibold opacity-75 truncate">· {status.hint}</span>}
+      <span className="font-black truncate">{status.label}</span>
       {onClick && <ChevronDown className="w-3 h-3 shrink-0 ml-auto opacity-60" />}
     </>
   );
@@ -81,13 +80,15 @@ export function StatusButton({ status, onClick }: { status: AcceptStatus; onClic
       type="button"
       draggable={false}
       onClick={onClick}
-      title={tr('เปลี่ยนสถานะการรับงาน', 'Change status')}
+      title={`${status.label}${status.hint ? ` · ${status.hint}` : ''} — ${tr('กดเพื่อเปลี่ยนสถานะ', 'tap to change')}`}
       className={`${cls} cursor-pointer hover:brightness-95 dark:hover:brightness-125 transition`}
     >
       {inner}
     </button>
   ) : (
-    <span className={cls}>{inner}</span>
+    <span className={cls} title={status.hint ? `${status.label} · ${status.hint}` : undefined}>
+      {inner}
+    </span>
   );
 }
 
