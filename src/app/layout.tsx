@@ -20,10 +20,9 @@ const promptFont = Prompt({
 
 const SITE_URL = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://www.pudding-p.com').replace(/\/+$/, '');
 const SITE_NAME = 'Pudding';
-const TITLE = 'Pudding | ตรวจการบ้านและควิซออนไลน์ผ่าน LINE สำหรับคุณครู';
+const TITLE = 'Pudding - แพลตฟอร์มอัจฉริยะเพื่อการเรียนรู้และจัดการการบ้านผ่าน LINE';
 const DESCRIPTION =
-  'Pudding แพลตฟอร์มอัจฉริยะเพื่อการเรียนรู้ สั่งการบ้าน ทำควิซ เช็คชื่อ และตรวจงานนักเรียนได้ง่ายๆ ผ่าน LINE โดยสถาบันเทคโนโลยีนานาชาติสิรินธร (SIIT) มธ.';
-
+  'แพลตฟอร์มช่วยคุณครูสั่งและตรวจการบ้านผ่านเว็บ พร้อมให้เด็กๆ ทำงานผ่าน LINE LIFF ได้ทันที มีบอทคอยทวงงานในไลน์กลุ่ม และเทคโนโลยี AI ช่วยตรวจ | SIIT มธ.';
 export const metadata: Metadata = {
   // Absolute URLs for og:image / canonical (Facebook and LINE need them).
   metadataBase: new URL(SITE_URL),
