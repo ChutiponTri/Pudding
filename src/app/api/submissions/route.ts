@@ -8,7 +8,7 @@ import { getActor } from '@/lib/auth/actor';
 import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
 import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
 import { attachFiles, discardDrafts, keysFromUrls, removeFiles } from '@/lib/storage/files';
-import { isHandedIn } from '@/lib/utils/gradingStatus';
+import { hasAnyAnswer, isHandedIn, isReopenActive, REOPEN_GRACE_MS } from '@/lib/utils/gradingStatus';
 import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
 import type { Classroom, Question } from '@/types/database';
 
@@ -238,16 +238,29 @@ export async function POST(request: NextRequest) {
     // Handing in again replaces the answers and the teacher's scores. A quiz is
     // never retaken; handed-in homework is view-only until the teacher reopens
     // it for this student (canEditSubmission), even before the deadline.
+    // The same per-student permission lets a student the teacher recorded as
+    // "no submission" (a 'pending' row) hand in after the work closed, quizzes
+    // too. It may carry a time limit (reopen_until).
     const isEdit = !!existingSubmission && isHandedIn(existingSubmission);
-    const reopened = isEdit && !!existingSubmission.reopened_at;
+    const reopened = !!existingSubmission && isReopenActive(existingSubmission, Date.now(), REOPEN_GRACE_MS);
+    const reopenExpired = !!existingSubmission?.reopened_at && !reopened;
     if (isEdit && assignment.is_exam) {
       return NextResponse.json({ error: 'ส่งข้อสอบนี้ไปแล้ว ไม่สามารถส่งซ้ำได้' }, { status: 409 });
     }
     if (closedError && !reopened) {
-      return NextResponse.json({ error: isEdit ? `ปิดรับงาน “${assignment.title}” แล้ว จึงแก้ไขงานที่ส่งไม่ได้ — ติดต่อคุณครูหากต้องการแก้ไข` : closedError }, { status: 409 });
+      const error = reopenExpired
+        ? `เวลาที่คุณครูเปิดให้ส่ง “${assignment.title}” หมดแล้ว — ติดต่อคุณครูหากต้องการเวลาเพิ่ม`
+        : isEdit
+        ? `ปิดรับงาน “${assignment.title}” แล้ว จึงแก้ไขงานที่ส่งไม่ได้ — ติดต่อคุณครูหากต้องการแก้ไข`
+        : closedError;
+      return NextResponse.json({ error }, { status: 409 });
     }
     if (isEdit && !reopened) {
-      return NextResponse.json({ error: 'ส่งงานนี้แล้ว จึงแก้ไขหรือส่งซ้ำไม่ได้ — ติดต่อคุณครูให้กด "ให้แก้ไขงาน" ก่อน' }, { status: 409 });
+      return NextResponse.json({
+        error: reopenExpired
+          ? 'เวลาที่คุณครูเปิดให้แก้ไขงานนี้หมดแล้ว — ติดต่อคุณครูหากต้องการเวลาเพิ่ม'
+          : 'ส่งงานนี้แล้ว จึงแก้ไขหรือส่งซ้ำไม่ได้ — ติดต่อคุณครูให้กด "ให้แก้ไขงาน" ก่อน',
+      }, { status: 409 });
     }
 
     if (!existingUser?.id) {
@@ -298,6 +311,22 @@ export async function POST(request: NextRequest) {
       .eq('assignment_id', assignment_id);
 
     const qsList = (questions || []) as Question[];
+
+    // A sheet with nothing on it is never saved: it would lock a quiz (or
+    // homework) with 0 points, e.g. after a stray tap on the hand-in button.
+    if (qsList.length > 0) {
+      const ownAnswers = ((answers as IncomingAnswer[]) || []).filter((a) => qsList.some((q) => q.id === a.question_id));
+      const usable = ownAnswers.map((a) => ({
+        answer_text: a.answer_text,
+        file_url: assignment.is_exam ? null : normalizeLink(a.file_url),
+      }));
+      if (!hasAnyAnswer(usable)) {
+        return NextResponse.json(
+          { error: 'ยังไม่ได้ตอบคำถามเลยสักข้อ จึงยังไม่ได้ส่ง — ตอบอย่างน้อย 1 ข้อแล้วกดส่งอีกครั้ง' },
+          { status: 400 }
+        );
+      }
+    }
 
     // Homework: required questions must be answered (quizzes may be handed in unfinished).
     if (!assignment.is_exam) {
@@ -360,7 +389,8 @@ export async function POST(request: NextRequest) {
       // Within the (possibly extended) deadline it is on time. Past it, work the
       // teacher reopened keeps its original on-time / late mark, so fixing a
       // wrong file after the deadline never turns on-time work late.
-      status: !assignmentWindow.isPastDeadline ? 'submitted' : reopened ? existingSubmission.status : 'late',
+      // Work recorded as missing and handed in now (the teacher allowed it) is late.
+      status: !assignmentWindow.isPastDeadline ? 'submitted' : reopened && isEdit ? existingSubmission.status : 'late',
       started_at: new Date(submittedAt.getTime() - (awaySeconds * 1000 + 120000)).toISOString(),
       submitted_at: submittedAt.toISOString(),
       time_spent_seconds: 120 + awaySeconds,
@@ -389,8 +419,9 @@ export async function POST(request: NextRequest) {
         max_total_score: assignmentMaxScore,
         // Only borrowed-phone work names a sender, so databases without the column are unaffected otherwise.
         ...(submissionRecord.submitted_by ? { submitted_by: submissionRecord.submitted_by } : {}),
-        // Handing in ends a reopen (only touched where the column exists).
+        // Handing in ends a reopen (only touched where the columns exist).
         ...(existingSubmission && 'reopened_at' in existingSubmission ? { reopened_at: null } : {}),
+        ...(existingSubmission && 'reopen_until' in existingSubmission ? { reopen_until: null } : {}),
       };
       let { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
       // Databases without submissions.submitted_by yet still save the work.

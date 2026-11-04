@@ -241,7 +241,8 @@ CREATE TABLE IF NOT EXISTS public.submissions (
   total_score NUMERIC,
   max_total_score NUMERIC DEFAULT 20,
   submitted_by TEXT REFERENCES public.users(id) ON DELETE SET NULL, -- Classmate whose phone sent it (NULL = own phone)
-  reopened_at TIMESTAMPTZ, -- Homework only: the teacher let the student edit it again (cleared when they hand in)
+  reopened_at TIMESTAMPTZ, -- The teacher let this student hand in again (cleared when they hand in)
+  reopen_until TIMESTAMPTZ, -- End of that permission (NULL = no time limit)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(assignment_id, student_id)

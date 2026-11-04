@@ -1671,11 +1671,11 @@ function NewAssignmentContent() {
                       }}
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                     >
-                      <option value="short_answer">
-                        {t('assignment_creator.questions_builder.type_short_answer')}
-                      </option>
                       <option value="multiple_choice">
                         {t('assignment_creator.questions_builder.type_multiple_choice')}
+                      </option>
+                      <option value="short_answer">
+                        {t('assignment_creator.questions_builder.type_short_answer')}
                       </option>
                       <option value="file_upload">
                         {t('assignment_creator.questions_builder.type_file_upload')}
@@ -1927,8 +1927,8 @@ function NewAssignmentContent() {
             {/* Phones: one row of four (icon above a short label); wider screens: the full labels in a wrapped row. */}
             <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-2.5">
               {([
-                { type: 'short_answer', th: ['ข้อความ', 'ข้อความสั้น'], en: ['Text', 'Short Answer'] },
                 { type: 'multiple_choice', th: ['ปรนัย', 'ปรนัย'], en: ['Choice', 'Multiple Choice'] },
+                { type: 'short_answer', th: ['ข้อความ', 'ข้อความสั้น'], en: ['Text', 'Short Answer'] },
                 { type: 'file_upload', th: ['ไฟล์', 'อัปโหลดไฟล์'], en: ['File', 'File Upload'] },
                 { type: 'true_false', th: ['ถูก/ผิด', 'ถูก/ผิด'], en: ['T/F', 'True/False'] },
               ] as const).map((option, i) => {

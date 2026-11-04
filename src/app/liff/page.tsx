@@ -52,7 +52,8 @@ import { canonicalInstitution, institutionLabel } from "@/lib/data/thaiInstituti
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
 import { formatDateTime } from "@/lib/utils/datetime";
-import { canEditSubmission, isHandedIn, isTeacherGraded } from "@/lib/utils/gradingStatus";
+import { SubmitConfirmSheet, type SubmitReview } from "@/components/liff/SubmitConfirmSheet";
+import { canEditSubmission, isHandInAllowed, isHandedIn, isReopenActive, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { assignmentAttachments } from "@/lib/utils/referenceWork";
 import { AttachmentList, opensPreview } from "@/components/AssignmentAttachments";
@@ -157,6 +158,12 @@ function formatTimeLeft(deadline: number | null): string {
   if (hours < 24) return `เหลือ ${hours} ชม. ${minutes % 60} นาที`;
   const days = Math.floor(hours / 24);
   return days < 14 ? `เหลือ ${days} วัน ${hours % 24} ชม.` : `ส่งภายใน ${new Date(deadline).toLocaleDateString("th-TH", { dateStyle: "medium" })}`;
+}
+
+/** Time left on the teacher's per-student "hand in / edit" permission. */
+function reopenLeftLabel(until?: string | null): string {
+  if (!until) return "ไม่จำกัดเวลา";
+  return formatTimeLeft(new Date(until).getTime()).replace("เลยกำหนดส่ง", "หมดเวลาแล้ว").replace("ส่งภายใน", "ถึง");
 }
 
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
@@ -512,6 +519,8 @@ export default function LiffStudentPage() {
   // file_url/file_key/file_name: a file uploaded to our storage; link: a pasted link (Google Drive, …) instead.
   const [studentAnswers, setStudentAnswers] = useState<Record<string, { text: string; file_url?: string; file_key?: string; file_name?: string; link?: string }>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // The hand-in review sheet (every hand-in is confirmed there first).
+  const [submitReview, setSubmitReview] = useState<SubmitReview | null>(null);
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
   // Handed-in homework being edited (its answers are loaded into the form); null = new work.
   const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
@@ -1187,8 +1196,25 @@ export default function LiffStudentPage() {
 
   /** Handed-in work is view-only until the teacher allows an edit (homework only). */
   const canEditWork = (a: Assignment, s?: Submission) => !!s && canEditSubmission(s, a.is_exam);
-  /** The teacher recorded "no submission", but the work still takes (late) work: the student may still hand in. */
-  const canHandInOverMissing = (a: Assignment, s?: Submission) => !!s && s.status === 'pending' && getAssignmentWindow(a).acceptsSubmissions;
+  /**
+   * The teacher recorded "no submission", but the student may still hand in:
+   * the work still takes (late) work, or the teacher opened hand-in for them.
+   */
+  const canHandInOverMissing = (a: Assignment, s?: Submission) =>
+    !!s && s.status === 'pending' && (getAssignmentWindow(a).acceptsSubmissions || isHandInAllowed(s));
+  /**
+   * Something to show as a result: handed in, or scored by the teacher (a
+   * "no submission" 0). A row the teacher made only to let the student hand
+   * in, or a 0 the student is now allowed to replace, is still to do.
+   */
+  const hasResult = (a: Assignment) => {
+    const s = submissions[a.id];
+    if (!s) return false;
+    if (isHandedIn(s)) return true;
+    return s.total_score != null && !isHandInAllowed(s);
+  };
+  /** The student can start (or hand in) this work now: it is open, or the teacher opened it for them. */
+  const canStartWork = (a: Assignment) => getAssignmentWindow(a).acceptsSubmissions || isHandInAllowed(submissions[a.id]);
 
   /** Handed-in answers back in the form: files we stored show as attached, anything else as a pasted link. */
   const answersToForm = (answers: Record<string, SubmissionAnswer>) =>
@@ -1226,8 +1252,9 @@ export default function LiffStudentPage() {
       return;
     }
     const openWindow = getAssignmentWindow(a);
-    // Work the teacher reopened for this student may be edited even after it closed.
-    if (!openWindow.acceptsSubmissions && !edit?.submission.reopened_at) {
+    // Work the teacher reopened for this student (to edit, or to hand in) may be done even after it closed.
+    const ownRow = edit?.submission || (forFriend ? undefined : submissions[a.id]);
+    if (!openWindow.acceptsSubmissions && !isReopenActive(ownRow)) {
       alert(openWindow.isQuizClosed
         ? `หมดเวลาทำข้อสอบ “${a.title}” แล้ว`
         : openWindow.isLateClosed
@@ -1236,6 +1263,7 @@ export default function LiffStudentPage() {
       return;
     }
     setStudentAnswers(edit ? answersToForm(edit.answers) : {});
+    setSubmitReview(null);
     setEditingSubmission(edit?.submission || null);
     setSubmissionSuccess(false);
     setSubmittedResult(null);
@@ -1385,36 +1413,81 @@ export default function LiffStudentPage() {
     }));
   };
 
-  // Submit Assignment with Real LINE Student Identity & Anti-Cheating Audit
-  const handleSubmitTask = async () => {
+  /**
+   * The hand-in button only opens a review: every hand-in is confirmed in
+   * SubmitConfirmSheet (not window.confirm, which LINE's in-app browser may
+   * skip), so a stray tap never sends empty work that then locks with 0.
+   * Work that cannot be sent yet (nothing answered, required questions, a bad
+   * link) is explained in the same sheet.
+   */
+  const handleSubmitTask = () => {
     if (!activeAssignment || !currentStudent) return;
-    if (activeProxy && !confirm(`ยืนยันส่งในนามของ ${activeProxy.first_name} ${activeProxy.last_name} (รหัส ${activeProxy.studentNumber})?\nงานนี้จะบันทึกเป็นของเพื่อน และคุณครูจะเห็นว่าส่งจากเครื่องของคุณ`)) return;
-
     const unanswered = activeQuestions
       .map((q, index) => ({ q, number: index + 1 }))
       .filter(({ q }) => !(studentAnswers[q.id]?.text || "").trim() && !studentAnswers[q.id]?.file_url && !studentAnswers[q.id]?.link?.trim());
     const numbers = (items: typeof unanswered) => items.map((item) => item.number).join(", ");
-    if (activeAssignment.is_exam) {
-      // Quizzes are short; let the student hand in what they have, but make sure they mean it.
-      if (unanswered.length && !confirm(`ยังไม่ได้ตอบ ${unanswered.length} ข้อ (ข้อ ${numbers(unanswered)})\n\nต้องการส่งคำตอบตอนนี้เลยหรือไม่? ส่งแล้วจะแก้ไขไม่ได้`)) return;
-    } else {
+    const total = activeQuestions.length;
+
+    if (total > 0 && unanswered.length === total) {
+      setSubmitReview({
+        kind: "blocked",
+        title: "ยังไม่ได้ตอบเลยสักข้อ",
+        message: "ตอบอย่างน้อย 1 ข้อก่อนส่ง\nส่งกระดาษเปล่าจะได้ 0 คะแนน และแก้ไขไม่ได้",
+        questionId: activeQuestions[0].id,
+      });
+      return;
+    }
+    if (!activeAssignment.is_exam) {
       const missingRequired = unanswered.filter(({ q }) => q.is_required !== false);
       if (missingRequired.length) {
-        alert(`กรุณาตอบคำถามที่จำเป็นให้ครบก่อนส่งงาน\nยังไม่ได้ตอบ: ข้อ ${numbers(missingRequired)}`);
-        document.getElementById(`question-${missingRequired[0].q.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        setSubmitReview({
+          kind: "blocked",
+          title: "ยังตอบข้อที่จำเป็นไม่ครบ",
+          message: `กรุณาตอบให้ครบก่อนส่งงาน\nยังไม่ได้ตอบ: ข้อ ${numbers(missingRequired)}`,
+          questionId: missingRequired[0].q.id,
+        });
         return;
       }
-      if (unanswered.length && !confirm(`ยังไม่ได้ตอบข้อที่ไม่บังคับ ${unanswered.length} ข้อ (ข้อ ${numbers(unanswered)})\n\nต้องการส่งงานเลยหรือไม่?`)) return;
-      if (editingSubmission && !confirm("ส่งงานที่แก้ไขแทนงานเดิม?\nงานเดิมจะถูกแทนที่ และคุณครูจะตรวจงานนี้ใหม่")) return;
     }
-
     const badLink = activeQuestions.findIndex((q) => !studentAnswers[q.id]?.file_url && studentAnswers[q.id]?.link?.trim() && !normalizeLink(studentAnswers[q.id]?.link));
     if (badLink >= 0) {
-      alert(`ข้อ ${badLink + 1}: ลิงก์ต้องขึ้นต้นด้วย https:// (เช่น ลิงก์แชร์ Google Drive)`);
-      document.getElementById(`question-${activeQuestions[badLink].id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setSubmitReview({
+        kind: "blocked",
+        title: `ลิงก์ในข้อ ${badLink + 1} ใช้ไม่ได้`,
+        message: "ลิงก์ต้องขึ้นต้นด้วย https:// (เช่น ลิงก์แชร์ Google Drive)",
+        questionId: activeQuestions[badLink].id,
+      });
       return;
     }
 
+    const notes: string[] = [];
+    if (activeProxy) {
+      notes.push(`📱 ส่งในนามของ ${activeProxy.first_name} ${activeProxy.last_name} (รหัส ${activeProxy.studentNumber})\nงานนี้จะบันทึกเป็นของเพื่อน และคุณครูจะเห็นว่าส่งจากเครื่องของคุณ`);
+    }
+    const window_ = getAssignmentWindow(activeAssignment);
+    if (!activeAssignment.is_exam && window_.isPastDeadline && !editingSubmission) notes.push("⏰ เลยกำหนดส่งแล้ว งานนี้จะถูกบันทึกว่าส่งช้า");
+    setSubmitReview({
+      kind: "confirm",
+      isExam: !!activeAssignment.is_exam,
+      isEdit: !!editingSubmission,
+      answered: total - unanswered.length,
+      total,
+      unanswered: unanswered.map((item) => item.number),
+      notes,
+    });
+  };
+
+  const closeSubmitReview = () => {
+    const review = submitReview;
+    setSubmitReview(null);
+    if (review?.kind === "blocked" && review.questionId) {
+      document.getElementById(`question-${review.questionId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  // Submit Assignment with Real LINE Student Identity & Anti-Cheating Audit (after the student confirmed)
+  const confirmSubmitTask = async () => {
+    if (!activeAssignment || !currentStudent || isSubmitting) return;
     setIsSubmitting(true);
     try {
       const currentAwaySeconds = awayStartRef.current ? secondsSince(awayStartRef.current) : 0;
@@ -1480,10 +1553,15 @@ export default function LiffStudentPage() {
           });
         }
       }
+      setSubmitReview(null);
       setSubmissionSuccess(true);
     } catch (err) {
       console.error("Submission failed:", err);
-      alert(err instanceof Error ? err.message : "ส่งไม่สำเร็จ ลองใหม่อีกครั้ง");
+      setSubmitReview({
+        kind: "blocked",
+        title: "ส่งไม่สำเร็จ",
+        message: err instanceof Error && err.message ? err.message : "ส่งไม่สำเร็จ ลองใหม่อีกครั้ง",
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -1619,7 +1697,7 @@ export default function LiffStudentPage() {
       if (assignmentClassroom) setSelectedClassroom(assignmentClassroom);
       setCourseTab("work");
       const submission = submissions[assignment.id];
-      if (submission) handleOpenGradedDetail(assignment, submission);
+      if (submission && hasResult(assignment)) handleOpenGradedDetail(assignment, submission);
       else handleOpenAssignment(assignment);
     } else if (link.view) {
       setCourseTab(link.view);
@@ -1648,7 +1726,7 @@ export default function LiffStudentPage() {
       const assignment = joinWait.assignmentId ? assignments.find((a) => a.id === joinWait.assignmentId) : undefined;
       if (!assignment) return;
       const submission = submissions[assignment.id];
-      if (submission) handleOpenGradedDetail(assignment, submission);
+      if (submission && hasResult(assignment)) handleOpenGradedDetail(assignment, submission);
       else handleOpenAssignment(assignment);
     }, 1400);
     return () => clearTimeout(timer);
@@ -1794,18 +1872,18 @@ export default function LiffStudentPage() {
   });
 
   const pendingAssignments = filteredAssignments
-    .filter((a) => !submissions[a.id])
+    .filter((a) => !hasResult(a))
     .sort((a, b) => Number(b.is_exam) - Number(a.is_exam) || (new Date(a.due_date || '').getTime() || 0) - (new Date(b.due_date || '').getTime() || 0));
   // Shortcut lists only show work the teacher still accepts (same rule as the
   // teacher portal's "ปิดรับงานแล้ว" override).
-  const openPendingAssignments = pendingAssignments.filter((a) => getAssignmentWindow(a).acceptsSubmissions);
+  const openPendingAssignments = pendingAssignments.filter(canStartWork);
   const pendingExams = openPendingAssignments.filter((a) => a.is_exam);
   const pendingHomework = openPendingAssignments.filter((a) => !a.is_exam);
   // Handed in by the student; a "no submission" 0 recorded by the teacher is not.
   const completedAssignments = filteredAssignments.filter((a) => Boolean(submissions[a.id]) && isHandedIn(submissions[a.id]));
   // Every assignment in the work tab exactly once: to-do first, then anything with a record
   // (handed in, or recorded by the teacher as "no submission").
-  const workListAssignments = pendingAssignments.concat(filteredAssignments.filter((a) => Boolean(submissions[a.id])));
+  const workListAssignments = pendingAssignments.concat(filteredAssignments.filter(hasResult));
   // Fully graded results the student has not opened yet (or that were re-graded).
   const newResults = completedAssignments.filter((a) => {
     const submission = submissions[a.id];
@@ -2282,7 +2360,7 @@ export default function LiffStudentPage() {
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 liff-stagger">
                   {classrooms.map((cls) => {
                     const classPending = assignments.filter(
-                      (a) => a.classroom_id === cls.id && !submissions[a.id] && getAssignmentWindow(a).acceptsSubmissions
+                      (a) => a.classroom_id === cls.id && !hasResult(a) && canStartWork(a)
                     );
                     const pendingApproval = isPendingIn(cls);
                     return (
@@ -2410,7 +2488,7 @@ export default function LiffStudentPage() {
                   const foldKey = `${selectedClassroom?.id || 'all'}:${group}`;
                   const groupOpen = isWorkGroupOpen(foldKey);
                   // What is still open in this category, so a folded one still says it.
-                  const notDone = items.filter((a) => !submissions[a.id] && getAssignmentWindow(a).acceptsSubmissions).length;
+                  const notDone = items.filter((a) => !hasResult(a) && canStartWork(a)).length;
                   const waiting = items.filter((a) => submissions[a.id] && submissions[a.id].status !== 'pending' && !gradedSubmissionIds.has(submissions[a.id].id)).length;
                   const chips: GroupChip[] = [
                     ...(notDone > 0 ? [{ tone: 'amber' as const, label: `ยังไม่ส่ง ${notDone} งาน` }] : []),
@@ -2431,16 +2509,18 @@ export default function LiffStudentPage() {
                     <div className="grid gap-2.5 md:grid-cols-2 pt-1 liff-stagger">
                       {items.map((assignment) => {
                         const submission = submissions[assignment.id];
-                        const isSubmitted = Boolean(submission);
-                        const isGraded = Boolean(submission && gradedSubmissionIds.has(submission.id));
+                        // A row only carrying the teacher's "hand in now" permission is still to do.
+                        const isSubmitted = hasResult(assignment);
+                        const handInAllowed = !isSubmitted && isHandInAllowed(submission);
+                        const isGraded = Boolean(isSubmitted && gradedSubmissionIds.has(submission.id));
                         const window_ = getAssignmentWindow(assignment);
                         // Students are never told a quiz sheet arrived late (only teachers see that).
                         const isLateSubmitted = isSubmitted && !assignment.is_exam && (
                           submission.status === 'late' ||
                           Boolean(submission.submitted_at && window_.deadline && new Date(submission.submitted_at).getTime() > window_.deadline)
                         );
-                        const isClosed = !isSubmitted && !window_.acceptsSubmissions;
-                        const isPastDue = !isSubmitted && !isClosed && window_.isPastDeadline;
+                        const isClosed = !isSubmitted && !window_.acceptsSubmissions && !handInAllowed;
+                        const isPastDue = !isSubmitted && !isClosed && !handInAllowed && window_.isPastDeadline;
 
                         return (
                           <button
@@ -2468,7 +2548,8 @@ export default function LiffStudentPage() {
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
                               </div>
                               <div className="shrink-0 flex flex-col items-end gap-1">
-                                {isSubmitted && !assignment.is_exam && submission.reopened_at && <Pill tone="violet">✏️ ครูเปิดให้แก้ไข</Pill>}
+                                {isSubmitted && !assignment.is_exam && isReopenActive(submission) && <Pill tone="violet">✏️ ครูเปิดให้แก้ไข</Pill>}
+                                {handInAllowed && <Pill tone="violet">✏️ ครูเปิดให้ส่ง</Pill>}
                                 {isGraded ? (
                                   <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 font-black">
                                     <span className="text-base tabular-nums">{submission.total_score}</span>
@@ -2497,6 +2578,8 @@ export default function LiffStudentPage() {
                                   ) : (
                                     <span className="font-semibold text-emerald-600">{assignment.is_exam ? 'ส่งแล้ว' : 'ส่งตรงเวลา'}</span>
                                   )
+                                ) : handInAllowed ? (
+                                  <span className="font-semibold text-violet-600 dark:text-violet-400 truncate">ครูเปิดให้ส่ง • {reopenLeftLabel(submission.reopen_until)}</span>
                                 ) : isClosed ? (
                                   <span className="font-semibold text-slate-500">{window_.isQuizClosed ? 'หมดเวลาทำข้อสอบ' : window_.isLateClosed ? 'หมดเวลาส่งงานช้าแล้ว' : 'คุณครูปิดรับงานแล้ว'}</span>
                                 ) : window_.isPastDeadline ? (
@@ -2509,7 +2592,7 @@ export default function LiffStudentPage() {
                               </span>
                               {!isClosed && (
                                 <span className="font-bold text-line shrink-0 flex items-center gap-0.5">
-                                  {isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : canHandInOverMissing(assignment, submission) ? 'ส่งงาน' : 'ดูผล') : 'เริ่มทำ'}
+                                  {isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : canHandInOverMissing(assignment, submission) ? 'ส่งงาน' : 'ดูผล') : handInAllowed ? 'ส่งงาน' : 'เริ่มทำ'}
                                   <ChevronRight className="w-3.5 h-3.5" />
                                 </span>
                               )}
@@ -2778,7 +2861,21 @@ export default function LiffStudentPage() {
                   </span>
                 </div>
                 <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white leading-snug">{activeAssignment.title}</h1>
-                {getAssignmentWindow(activeAssignment).isPastDeadline && !editingSubmission?.reopened_at && (
+                {(() => {
+                  // The teacher's per-student time (edit, or hand in after it closed) replaces the class deadline here.
+                  const own = editingSubmission || (activeProxy ? undefined : submissions[activeAssignment.id]);
+                  if (!own || !isReopenActive(own)) return null;
+                  return (
+                    <div role="status" className="flex items-start gap-2 p-3 rounded-2xl bg-violet-50 dark:bg-violet-950/50 ring-1 ring-violet-200 dark:ring-violet-900 text-violet-800 dark:text-violet-200 text-xs font-bold">
+                      <span aria-hidden>✏️</span>
+                      <span>
+                        คุณครูเปิดให้{isHandedIn(own) ? "แก้ไขงาน" : "ส่ง"}เฉพาะคุณ • {reopenLeftLabel(own.reopen_until)}
+                        {own.reopen_until && ` (ถึง ${formatDateTime(own.reopen_until, "th")})`}
+                      </span>
+                    </div>
+                  );
+                })()}
+                {getAssignmentWindow(activeAssignment).isPastDeadline && !isReopenActive(editingSubmission || (activeProxy ? undefined : submissions[activeAssignment.id])) && (
                   <div role="status" className="flex items-start gap-2 p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/50 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-700 dark:text-rose-300 text-xs font-bold">
                     <span aria-hidden>🔒</span>
                     <span>
@@ -3021,6 +3118,11 @@ export default function LiffStudentPage() {
             </>
           )}
         </div>
+      )}
+
+      {/* Hand-in review: every hand-in is confirmed here first */}
+      {activeAssignment && submitReview && (
+        <SubmitConfirmSheet review={submitReview} submitting={isSubmitting} onConfirm={confirmSubmitTask} onClose={closeSubmitReview} />
       )}
 
       {/* BORROWED PHONE: hand in work / check in for a classmate of the same school and classroom */}
@@ -3468,7 +3570,7 @@ export default function LiffStudentPage() {
                 แก้ไขงานที่ส่ง
               </button>
               <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
-                คุณครูเปิดให้แก้ไขงานนี้ • ส่งใหม่แล้วคุณครูจะตรวจอีกครั้ง
+                คุณครูเปิดให้แก้ไขงานนี้ ({reopenLeftLabel(viewingGradedSub.submission.reopen_until)}) • ส่งใหม่แล้วคุณครูจะตรวจอีกครั้ง
               </p>
             </div>
           ) : canHandInOverMissing(viewingGradedSub.assignment, viewingGradedSub.submission) ? (
@@ -3487,6 +3589,7 @@ export default function LiffStudentPage() {
               </button>
               <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
                 คุณครูบันทึกว่ายังไม่ส่ง • ส่งงานตอนนี้ งานที่ส่งจะแทนคะแนน 0
+                {isHandInAllowed(viewingGradedSub.submission) && ` • ครูเปิดให้ส่ง ${reopenLeftLabel(viewingGradedSub.submission.reopen_until)}`}
               </p>
             </div>
           ) : viewingGradedSub.submission.status !== 'pending' ? (

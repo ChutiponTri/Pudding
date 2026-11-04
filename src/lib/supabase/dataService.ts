@@ -733,9 +733,21 @@ export const dataService = {
     await call('saveTeacherGrade', submissionId, questionId, teacherScore, teacherComment, teacherId, teacherName);
   },
 
-  /** Lets a student edit handed-in homework again (open), or takes that back. */
-  async setSubmissionReopened(submissionId: string, open: boolean): Promise<{ reopened_at: string | null }> {
-    return call<{ reopened_at: string | null }>('setSubmissionReopened', submissionId, open);
+  /**
+   * Lets one student hand in again (edit handed-in homework, or hand in work
+   * recorded as missing), optionally until `until` (ISO); or takes that back.
+   */
+  async setSubmissionReopened(
+    submissionId: string,
+    open: boolean,
+    until: string | null = null
+  ): Promise<{ reopened_at: string | null; reopen_until: string | null }> {
+    return call<{ reopened_at: string | null; reopen_until: string | null }>('setSubmissionReopened', submissionId, open, until);
+  },
+
+  /** "Allow hand-in" for a roster student with no row for this work yet; returns the row that carries it. */
+  async allowStudentHandIn(assignmentId: string, rosterId: string, until: string | null = null): Promise<Submission> {
+    return call<Submission>('allowStudentHandIn', assignmentId, rosterId, until);
   },
 
   /** "Allow edit" for everyone who handed in this homework, or takes it back from everyone. */

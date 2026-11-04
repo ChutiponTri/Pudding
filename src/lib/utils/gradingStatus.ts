@@ -25,18 +25,58 @@ export const isTeacherGraded = (
 ) => isGraded(sub) || answers.some((a) => !!a.graded_at);
 
 /**
+ * A request already on its way when the teacher's per-student time runs out
+ * is still accepted. Server only (/api/submissions); screens show the real end.
+ */
+export const REOPEN_GRACE_MS = 2 * 60 * 1000;
+
+/**
+ * Whether the teacher's per-student permission ("Allow edit" / "Allow hand-in")
+ * is in force now: reopened_at is set and its time limit (reopen_until, if
+ * any) has not passed. Databases without reopen_until have no limit.
+ */
+export function isReopenActive(
+  sub: Pick<Submission, 'reopened_at' | 'reopen_until'> | null | undefined,
+  now: number = Date.now(),
+  graceMs = 0
+): boolean {
+  if (!sub?.reopened_at) return false;
+  if (!sub.reopen_until) return true;
+  const until = new Date(sub.reopen_until).getTime();
+  return Number.isNaN(until) || now <= until + graceMs;
+}
+
+/**
  * Whether the student may change handed-in work. Handed-in work is view-only:
  * the student opens it to see their answers and scores, but changes nothing
  * (answers, files, the hand-in button) until the teacher allows it for them
- * ("Allow edit" sets reopened_at). Quizzes are never reopened. The submissions
- * API enforces the same rule.
+ * ("Allow edit" sets reopened_at, optionally until reopen_until). Handed-in
+ * quizzes are never reopened. The submissions API enforces the same rule.
  */
 export function canEditSubmission(
-  sub: Pick<Submission, 'status' | 'reopened_at'>,
-  isExam: boolean | undefined
+  sub: Pick<Submission, 'status' | 'reopened_at' | 'reopen_until'>,
+  isExam: boolean | undefined,
+  now: number = Date.now()
 ): boolean {
   if (isExam || !isHandedIn(sub)) return false;
-  return !!sub.reopened_at;
+  return isReopenActive(sub, now);
+}
+
+/**
+ * Not handed in (the teacher recorded "no submission", or opened hand-in for
+ * the student) but the teacher let this student hand in now, even after the
+ * work closed. Homework and quizzes alike.
+ */
+export function isHandInAllowed(
+  sub: Pick<Submission, 'status' | 'reopened_at' | 'reopen_until'> | null | undefined,
+  now: number = Date.now()
+): boolean {
+  return !!sub && !isHandedIn(sub) && isReopenActive(sub, now);
+}
+
+/** Whether a student's answers carry anything at all (text, an uploaded file or a link). */
+export function hasAnyAnswer(answers: Array<{ answer_text?: string | null; file_url?: string | null }>): boolean {
+  return answers.some((a) => !!String(a.answer_text || '').trim() || !!String(a.file_url || '').trim());
 }
 
 type IntegrityFields = Pick<Submission, 'status' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'>;

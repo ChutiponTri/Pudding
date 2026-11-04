@@ -184,8 +184,14 @@ export interface Submission {
   submitted_by?: string | null;
   /** That classmate's name, attached for teachers. */
   submitted_by_name?: string;
-  /** Homework only: when the teacher let the student edit it again; cleared once they hand in. */
+  /**
+   * When the teacher let this one student hand in again: edit handed-in
+   * homework, or hand in work recorded as missing ('pending'), even after it
+   * closed. Cleared once they hand in.
+   */
   reopened_at?: string | null;
+  /** End of that permission; null = no time limit (until they hand in or the teacher closes the work). */
+  reopen_until?: string | null;
 }
 
 export interface TeacherGradeRecord {

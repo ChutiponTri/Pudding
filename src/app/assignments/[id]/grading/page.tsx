@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
-import { fetchCached, patchCache, readCache, watchClassrooms } from '@/lib/cache/sessionCache';
+import { fetchCached, patchCache, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
 import {
   Assignment,
   Classroom,
@@ -26,6 +26,7 @@ import { GradingWorkspace } from '@/components/GradingWorkspace';
 import { AttachmentList } from '@/components/AssignmentAttachments';
 import { assignmentAttachments } from '@/lib/utils/referenceWork';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
+import { ReopenTimeDialog, reopenTimeSuggestion } from '@/components/ReopenTimeDialog';
 import {
   Search,
   Filter,
@@ -50,9 +51,11 @@ import {
   PencilLine,
   Ban,
   Undo2,
+  Loader2,
+  Send,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, canRecordNoSubmission, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
-import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
+import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isReopenActive, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
  * Back button that returns to wherever the teacher came from. Links into this
@@ -110,6 +113,13 @@ const STATUS_CARD_CLASSES: Record<keyof typeof ASSIGNMENT_STATUS_CLASSES, string
   late: 'bg-orange-50 dark:bg-orange-950/30 border-orange-200 dark:border-orange-900/70 text-orange-800 dark:text-orange-200',
   closed: 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/70 text-rose-800 dark:text-rose-200',
 };
+
+/** ISO time `minutes` from now (outside the component: reading the clock is not render work). */
+const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60000).toISOString();
+
+/** "Edit grade" on graded work: a clear outlined amber button, apart from the solid "Grade" one. */
+const EDIT_GRADE_CLASSES =
+  'bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-300 ring-2 ring-amber-400 dark:ring-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 shadow-sm shadow-amber-500/10';
 
 type RosterRow = {
   key: string;
@@ -318,7 +328,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       return;
     }
     // "Close now" also cancels the per-student edit permissions (latest action wins).
-    const reopenedCount = submissions.filter((s) => s.reopened_at).length;
+    const reopenedCount = submissions.filter((s) => isReopenActive(s)).length;
     if (
       newStatus === 'force_closed' &&
       reopenedCount > 0 &&
@@ -341,7 +351,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         setOverrideStatus(newStatus);
       }
       if (newStatus === 'force_closed' && reopenedCount > 0) {
-        setSubmissions((prev) => prev.map((s) => (s.reopened_at ? { ...s, reopened_at: null } : s)));
+        setSubmissions((prev) => prev.map((s) => (s.reopened_at ? { ...s, reopened_at: null, reopen_until: null } : s)));
       }
 
       const name = (updated || assignment)?.title || '';
@@ -470,36 +480,86 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     }
   };
 
-  // Homework only: let one student edit handed-in work again (after grading or
-  // closing), e.g. a wrong file attached. Scores stay until they hand in again.
-  const [reopeningId, setReopeningId] = useState<string | null>(null);
-  const handleToggleReopen = async (sub: Submission) => {
-    const open = !sub.reopened_at;
-    const name = sub.student?.first_name || (th ? 'นักเรียน' : 'the student');
-    // Closed work: this permission is the per-student extension, no need to reopen the whole class.
-    const closedNow = !!assignment && !getAssignmentWindow(assignment).acceptsSubmissions;
-    const message = open
-      ? th
-        ? `เปิดให้ ${name} แก้ไขงานที่ส่งแล้ว?
-${closedNow ? 'งานนี้ปิดรับแล้ว แต่นักเรียนคนนี้จะแก้และส่งใหม่ได้ทันทีโดยไม่ต้องขยายเวลาทั้งห้อง' : 'นักเรียนแก้ได้แม้เลยกำหนดหรือปิดรับงานไปแล้วในภายหลัง'} • สิทธิ์นี้หมดเมื่อส่งใหม่ หรือเมื่อคุณกด "ปิดรับงานทันที"
-เมื่อส่งใหม่ คะแนนและความเห็นเดิมจะถูกล้างเพื่อตรวจใหม่ (สถานะส่งตรงเวลา/ส่งช้าเดิมยังคงอยู่)`
-        : `Let ${name} edit this work again?
-${closedNow ? 'This work is closed, but this student can fix and hand in again right away — no need to extend for the whole class.' : 'They can edit it even after the deadline or once it closes.'} The permission ends when they hand in again or when you choose "Close now".
-Handing in again clears the current score and comments for regrading (their on-time/late mark is kept).`
-      : th
-      ? `ยกเลิกการเปิดให้ ${name} แก้ไขงาน?`
-      : `Stop letting ${name} edit this work?`;
-    if (!confirm(message)) return;
-    setReopeningId(sub.id);
+  // Per student: "Allow edit" (handed-in homework, e.g. a wrong file attached)
+  // or "Allow hand-in" (nothing handed in, homework or quiz, e.g. they could not
+  // get in before it closed). Close to or after the deadline the teacher picks
+  // how long; with more than a day left it is granted straight away.
+  type ReopenTarget = { key: string; sub: Submission | null; rosterId?: string; name: string };
+  const [reopeningKey, setReopeningKey] = useState<string | null>(null);
+  const [reopenDialog, setReopenDialog] = useState<(ReopenTarget & { kind: 'edit' | 'handin'; minutes: number }) | null>(null);
+  // Re-renders now and then so a time-limited permission drops off when it runs out.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  /**
+   * Shows a saved change at once and stores it as this session's fresh copy:
+   * the server's answer is the row's new state, so no refetch round trip.
+   */
+  const applySubmissionChange = (update: (prev: Submission[]) => Submission[]) => {
+    submissionsSeqRef.current++;
+    setSubmissions((prev) => {
+      const next = update(prev);
+      const teacherId = clerkUser?.id;
+      const cached = teacherId ? readCache<{ subs: Submission[] }>(cacheKey, teacherId) : null;
+      if (teacherId && cached) writeCache(cacheKey, teacherId, { ...cached.value, subs: next });
+      return next;
+    });
+  };
+
+  const saveReopen = async (target: ReopenTarget, kind: 'edit' | 'handin', minutes: number | null) => {
+    const until = minutes ? minutesFromNow(minutes) : null;
+    setReopeningKey(target.key);
     try {
-      const { reopened_at } = await dataService.setSubmissionReopened(sub.id, open);
-      setSubmissions((prev) => prev.map((s) => (s.id === sub.id ? { ...s, reopened_at } : s)));
-      showToast(open ? (th ? 'เปิดให้นักเรียนแก้ไขงานแล้ว' : 'The student can edit it now') : th ? 'ปิดการแก้ไขแล้ว' : 'Editing closed');
-      void refreshSubmissions();
+      if (target.sub) {
+        const subId = target.sub.id;
+        const result = await dataService.setSubmissionReopened(subId, true, until);
+        applySubmissionChange((prev) => prev.map((s) => (s.id === subId ? { ...s, ...result } : s)));
+      } else if (target.rosterId) {
+        const row = await dataService.allowStudentHandIn(assignmentId, target.rosterId, until);
+        applySubmissionChange((prev) =>
+          prev.some((s) => s.id === row.id) ? prev.map((s) => (s.id === row.id ? { ...s, ...row } : s)) : [...prev, row]
+        );
+      }
+      setReopenDialog(null);
+      const when = until ? ` · ${th ? 'ถึง' : 'until'} ${formatDateTime(until, language)}` : '';
+      showToast(
+        kind === 'edit'
+          ? (th ? `เปิดให้ ${target.name} แก้ไขงานแล้ว` : `${target.name} can edit now`) + when
+          : (th ? `เปิดให้ ${target.name} ส่งงานแล้ว` : `${target.name} can hand in now`) + when
+      );
     } catch (err) {
       alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
     } finally {
-      setReopeningId(null);
+      setReopeningKey(null);
+    }
+  };
+
+  const requestReopen = (target: ReopenTarget, kind: 'edit' | 'handin') => {
+    if (!assignment) return;
+    const suggestion = reopenTimeSuggestion(getAssignmentWindow(assignment));
+    if (!suggestion.needsTime) {
+      void saveReopen(target, kind, null);
+      return;
+    }
+    setReopenDialog({ ...target, kind, minutes: suggestion.minutes });
+  };
+
+  const revokeReopen = async (sub: Submission, name: string, kind: 'edit' | 'handin') => {
+    if (!confirm(kind === 'edit'
+      ? th ? `ยกเลิกการเปิดให้ ${name} แก้ไขงาน?` : `Stop letting ${name} edit this work?`
+      : th ? `ยกเลิกการเปิดให้ ${name} ส่งงาน?` : `Stop letting ${name} hand in?`)) return;
+    setReopeningKey(sub.id);
+    try {
+      const result = await dataService.setSubmissionReopened(sub.id, false);
+      applySubmissionChange((prev) => prev.map((s) => (s.id === sub.id ? { ...s, ...result } : s)));
+      showToast(th ? 'ยกเลิกสิทธิ์แล้ว' : 'Permission removed');
+    } catch (err) {
+      alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
+    } finally {
+      setReopeningKey(null);
     }
   };
   // Homework only: let everyone who handed in edit again (e.g. after fixing a wrongly made assignment), or undo that.
@@ -524,34 +584,77 @@ Handing in again clears the current score and comments for regrading (their on-t
     }
   };
 
-  const reopenControl = (sub: Submission) => {
-    if (assignment?.is_exam || !isHandedIn(sub) || !grader || grader.role === 'researcher') return null;
-    const busy = reopeningId === sub.id;
-    return sub.reopened_at ? (
-      <span className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 ring-1 ring-amber-200 dark:ring-amber-900 text-[11px] font-bold whitespace-nowrap">
-        <PencilLine className="w-3 h-3" />
-        {th ? 'เปิดให้แก้ไขอยู่' : 'Editing allowed'}
-        <button
-          type="button"
-          onClick={() => handleToggleReopen(sub)}
-          disabled={busy}
-          className="ml-0.5 px-1.5 py-0.5 rounded-full bg-white/80 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 text-[10px] cursor-pointer disabled:opacity-50"
-        >
-          {th ? 'ยกเลิก' : 'Undo'}
-        </button>
+  const canReopen = () => !!grader && grader.role !== 'researcher';
+  const studentLabel = (sub: Submission | null, row?: RosterRow) =>
+    sub?.student?.first_name || row?.student?.first_name || (th ? 'นักเรียน' : 'the student');
+  /** Short "until" text: minutes/hours left, or the date when further away. */
+  const untilLabel = (until?: string | null) => {
+    if (!until) return th ? 'ไม่จำกัดเวลา' : 'no time limit';
+    const left = new Date(until).getTime() - nowTick;
+    if (left <= 0) return th ? 'หมดเวลา' : 'time up';
+    const min = Math.ceil(left / 60000);
+    if (min < 60) return th ? `เหลือ ${min} นาที` : `${min} min left`;
+    if (min < 24 * 60) return th ? `เหลือ ${Math.floor(min / 60)} ชม. ${min % 60} นาที` : `${Math.floor(min / 60)}h ${min % 60}m left`;
+    return `${th ? 'ถึง' : 'until'} ${formatDateTime(until, language)}`;
+  };
+  const reopenBadge = (sub: Submission, name: string, kind: 'edit' | 'handin') => (
+    <span
+      className="inline-flex items-center gap-1.5 pl-2.5 pr-1 h-9 sm:h-8 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200 ring-1 ring-orange-300 dark:ring-orange-800 text-[11px] font-bold whitespace-nowrap animate-in fade-in zoom-in-95"
+      title={sub.reopen_until ? formatDateTime(sub.reopen_until, language) : undefined}
+    >
+      <span className="relative flex w-2 h-2 shrink-0" aria-hidden>
+        <span className="absolute inset-0 rounded-full bg-orange-400 animate-ping opacity-60" />
+        <span className="relative w-2 h-2 rounded-full bg-orange-500" />
       </span>
-    ) : (
+      {kind === 'edit' ? (th ? 'เปิดให้แก้ไข' : 'Editing allowed') : th ? 'เปิดให้ส่ง' : 'Hand-in allowed'}
+      <span className="font-semibold opacity-75">· {untilLabel(sub.reopen_until)}</span>
       <button
         type="button"
-        onClick={() => handleToggleReopen(sub)}
-        disabled={busy}
-        title={th ? 'ให้นักเรียนแก้งานที่ส่งแล้ว (เช่น แนบไฟล์ผิด)' : 'Let the student fix and hand in again'}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap text-slate-600 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-700 hover:text-amber-700 hover:ring-amber-400 dark:hover:text-amber-300 dark:hover:ring-amber-700 cursor-pointer disabled:opacity-50 transition-colors"
+        onClick={() => revokeReopen(sub, name, kind)}
+        disabled={reopeningKey === sub.id}
+        className="ml-0.5 h-6 px-2 rounded-lg bg-white/90 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer disabled:opacity-50"
       >
-        <PencilLine className="w-3 h-3" />
-        {th ? 'ให้แก้ไขงาน' : 'Allow edit'}
+        {th ? 'ยกเลิก' : 'Undo'}
       </button>
-    );
+    </span>
+  );
+  const reopenButton = (target: ReopenTarget, kind: 'edit' | 'handin', className = '') => (
+    <button
+      type="button"
+      onClick={() => requestReopen(target, kind)}
+      disabled={reopeningKey === target.key}
+      title={kind === 'edit'
+        ? th ? 'ให้นักเรียนคนนี้แก้งานที่ส่งแล้ว (เช่น แนบไฟล์ผิด)' : 'Let this student fix and hand in again'
+        : th ? 'ให้นักเรียนคนนี้ส่งงานได้ แม้เลยกำหนดหรือปิดรับแล้ว' : 'Let this student hand in, even after it closed'}
+      className={`inline-flex items-center justify-center gap-1.5 h-9 sm:h-8 px-3 rounded-xl text-xs font-black whitespace-nowrap bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25 cursor-pointer active:scale-[0.97] transition-all disabled:opacity-50 ${className}`}
+    >
+      {reopeningKey === target.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : kind === 'edit' ? <PencilLine className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
+      {kind === 'edit' ? (th ? 'ให้แก้ไขงาน' : 'Allow edit') : th ? 'ให้ส่งงาน' : 'Allow hand-in'}
+    </button>
+  );
+
+  /** Handed-in homework: "Allow edit", or the running permission with its time left. */
+  const reopenControl = (sub: Submission, className = '') => {
+    if (assignment?.is_exam || !isHandedIn(sub) || !canReopen()) return null;
+    const name = studentLabel(sub);
+    if (isReopenActive(sub, nowTick)) return reopenBadge(sub, name, 'edit');
+    return reopenButton({ key: sub.id, sub, name }, 'edit', className);
+  };
+
+  /**
+   * Nothing handed in (no row, or recorded as missing): "Allow hand-in" once the
+   * student may soon be unable to hand in by themselves (deadline within a day,
+   * past, or closed). Homework and quizzes.
+   */
+  const handInControl = (row: RosterRow) => {
+    const sub = row.submission;
+    if (!canReopen() || !assignment || !assignmentWindow || (sub && isHandedIn(sub))) return null;
+    const name = studentLabel(sub, row);
+    if (sub && isReopenActive(sub, nowTick)) return reopenBadge(sub, name, 'handin');
+    if (!sub && !row.rosterId) return null;
+    if (assignmentWindow.isDraft || assignmentWindow.isScheduled) return null;
+    if (!reopenTimeSuggestion(assignmentWindow, nowTick).needsTime) return null;
+    return reopenButton({ key: sub?.id || row.key, sub, rosterId: row.rosterId, name }, 'handin');
   };
 
   // A student with nothing handed in: no grading, only "no submission" (0) once the deadline has passed.
@@ -676,7 +779,7 @@ Handing in again clears the current score and comments for regrading (their on-t
   const assignmentWindow = assignment ? getAssignmentWindow(assignment) : null;
   const canMarkNoSubmission = !!assignmentWindow && canRecordNoSubmission(assignmentWindow);
   // Handed-in homework is locked for students until the teacher allows edits.
-  const lockedCount = submissions.filter((sub) => isHandedIn(sub) && !sub.reopened_at).length;
+  const lockedCount = submissions.filter((sub) => isHandedIn(sub) && !isReopenActive(sub, nowTick)).length;
   const allReopened = handedInTotal > 0 && lockedCount === 0;
   const canBulkReopen = !!grader && grader.role !== 'researcher' && !assignment?.is_exam && handedInTotal > 0;
   const assignmentStatus = assignment && assignmentWindow ? getAssignmentStatus(assignmentWindow, assignment.is_exam, language) : null;
@@ -999,13 +1102,13 @@ Handing in again clears the current score and comments for regrading (their on-t
                       {th ? '— ทั้งห้องส่งได้ และแก้งานที่ครูยังไม่ได้ตรวจได้' : '— everyone can hand in, and edit work not graded yet'}
                     </li>
                     <li>
-                      <b className="text-amber-700 dark:text-amber-400">{th ? 'ให้แก้ไขงาน' : 'Allow edit'}</b>{' '}
+                      <b className="text-orange-600 dark:text-orange-400">{th ? 'ให้แก้ไขงาน / ให้ส่งงาน' : 'Allow edit / Allow hand-in'}</b>{' '}
                       {th
-                        ? '(ปุ่มในรายชื่อนักเรียน) — เปิดเฉพาะคน แม้ตรวจแล้วหรือปิดรับแล้ว ไม่ต้องขยายเวลา'
-                        : '(on a student row) — just that student, even after grading or closing; no extension needed'}
-                      {submissions.some((s) => s.reopened_at) && (
+                        ? '(ปุ่มสีส้มในรายชื่อนักเรียน) — เปิดเฉพาะคน แม้ตรวจแล้วหรือปิดรับแล้ว ใกล้/เลยกำหนดส่งเลือกได้ว่าให้กี่นาที'
+                        : '(orange button on a student row) — just that student, even after grading or closing; near or past the deadline you pick how many minutes'}
+                      {submissions.some((s) => isHandedIn(s) && isReopenActive(s, nowTick)) && (
                         <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold">
-                          {th ? `เปิดอยู่ ${submissions.filter((s) => s.reopened_at).length} คน` : `${submissions.filter((s) => s.reopened_at).length} open`}
+                          {th ? `เปิดอยู่ ${submissions.filter((s) => isHandedIn(s) && isReopenActive(s, nowTick)).length} คน` : `${submissions.filter((s) => isHandedIn(s) && isReopenActive(s, nowTick)).length} open`}
                         </span>
                       )}
                     </li>
@@ -1277,17 +1380,23 @@ Handing in again clears the current score and comments for regrading (their on-t
                   </div>
 
                   {sub && !isHandedIn(sub) && isGraded ? (
-                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                       {noSubmissionBadge}
-                      {clearNoSubmissionControl(sub)}
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {handInControl(row)}
+                        {clearNoSubmissionControl(sub)}
+                      </div>
                     </div>
                   ) : !sub || !isHandedIn(sub) ? (
-                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                         {language === 'th' ? 'ยังไม่ส่ง' : 'Not submitted'}
                       </span>
-                      {missingActions(row)}
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {handInControl(row)}
+                        {missingActions(row)}
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -1312,9 +1421,8 @@ Handing in again clears the current score and comments for regrading (their on-t
                         <span className="text-slate-400 font-mono">· {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}</span>
                       </div>
 
-                      {(tracksAway || sub.submitted_by || reopenControl(sub)) && (
+                      {(tracksAway || sub.submitted_by) && (
                         <div className="flex flex-wrap items-center gap-2">
-                          {reopenControl(sub)}
                           {tracksAway && (
                             <AntiCheatingBadge
                               isFlagged={sub.is_flagged_suspicious}
@@ -1340,19 +1448,21 @@ Handing in again clears the current score and comments for regrading (their on-t
                         </div>
                       )}
 
-                      <button
-                        type="button"
-                        disabled={!grader}
-                        onClick={() => handleOpenGrading(sub)}
-                        className={`w-full h-10 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-                          isGraded
-                            ? 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:bg-slate-50'
-                            : 'bg-amber-500 hover:bg-amber-600 text-slate-950'
-                        }`}
-                      >
-                        <span>{isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex flex-wrap items-stretch gap-2">
+                        {reopenControl(sub, 'h-10! flex-1')}
+                        <button
+                          type="button"
+                          disabled={!grader}
+                          onClick={() => handleOpenGrading(sub)}
+                          className={`flex-1 min-w-36 h-10 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed ${
+                            isGraded ? EDIT_GRADE_CLASSES : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-xs'
+                          }`}
+                        >
+                          {isGraded && <PencilLine className="w-3.5 h-3.5" />}
+                          <span>{isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </>
                   )}
                 </li>
@@ -1424,7 +1534,10 @@ Handing in again clears the current score and comments for regrading (their on-t
                           </span>
                         </td>
                         <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
-                          <div className="inline-flex">{clearNoSubmissionControl(sub)}</div>
+                          <div className="inline-flex items-center gap-2">
+                            {handInControl(row)}
+                            {clearNoSubmissionControl(sub)}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1444,7 +1557,10 @@ Handing in again clears the current score and comments for regrading (their on-t
                         <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
                         <td className="py-3.5 px-4 sm:px-6 text-center text-slate-400">-</td>
                         <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
-                          <div className="inline-flex">{missingActions(row)}</div>
+                          <div className="inline-flex items-center gap-2">
+                            {handInControl(row)}
+                            {missingActions(row)}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1493,7 +1609,7 @@ Handing in again clears the current score and comments for regrading (their on-t
                               totalTimeAwaySeconds={sub.total_time_away_seconds}
                             />
                           ) : (
-                            reopenControl(sub) || (!sub.submitted_by && <span className="text-slate-400">-</span>)
+                            !sub.submitted_by && <span className="text-slate-400">-</span>
                           )}
                           {sub.submitted_by && (
                             <span
@@ -1530,19 +1646,21 @@ Handing in again clears the current score and comments for regrading (their on-t
                       </td>
 
                       <td className="py-3.5 px-4 sm:px-6 text-right">
-                        <button
-                          type="button"
-                          disabled={!grader}
-                          onClick={() => handleOpenGrading(sub)}
-                          className={`px-3.5 py-1.5 rounded-xl font-bold transition-all shadow-xs flex items-center gap-1.5 ml-auto cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${
-                            isGraded
-                              ? 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:bg-slate-50'
-                              : 'bg-amber-500 hover:bg-amber-600 text-slate-950'
-                          }`}
-                        >
-                          <span>{isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          {reopenControl(sub)}
+                          <button
+                            type="button"
+                            disabled={!grader}
+                            onClick={() => handleOpenGrading(sub)}
+                            className={`h-8 px-3.5 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed ${
+                              isGraded ? EDIT_GRADE_CLASSES : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-xs'
+                            }`}
+                          >
+                            {isGraded && <PencilLine className="w-3.5 h-3.5" />}
+                            <span>{isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1552,6 +1670,19 @@ Handing in again clears the current score and comments for regrading (their on-t
           </table>
         </div>
       </div>
+
+      {/* Per-student time for "Allow edit" / "Allow hand-in" close to or after the deadline */}
+      {reopenDialog && (
+        <ReopenTimeDialog
+          studentName={reopenDialog.name}
+          kind={reopenDialog.kind}
+          deadline={assignmentWindow?.deadline ?? null}
+          defaultMinutes={reopenDialog.minutes}
+          busy={reopeningKey === reopenDialog.key}
+          onConfirm={(minutes) => saveReopen(reopenDialog, reopenDialog.kind, minutes)}
+          onClose={() => setReopenDialog(null)}
+        />
+      )}
 
       {/* Integrity Audit Modal */}
       {isAuditModalOpen && auditSubmission && (

@@ -1796,11 +1796,15 @@ export const dataActions = {
   },
 
   /**
-   * Lets a student edit handed-in homework again (after it was graded or
-   * closed), or takes that back. Scores stay until the student hands in the
-   * edited work, which replaces them. Quizzes are never reopened.
+   * Lets one student hand in again, or takes that back:
+   * - handed-in homework: edit it (after it was graded or closed); scores stay
+   *   until the student hands in the edited work, which replaces them;
+   * - work recorded as "no submission" (a 'pending' row, homework or quiz):
+   *   hand it in although it closed; the work replaces the 0.
+   * Handed-in quizzes are never reopened. `until` limits the permission to
+   * that time (ISO, in the future); null = no limit.
    */
-  async setSubmissionReopened({ supabase, actor }: Ctx, submissionId: string, open: boolean) {
+  async setSubmissionReopened({ supabase, actor }: Ctx, submissionId: string, open: boolean, until?: unknown) {
     const { classroom } = await requireTeacherOfSubmission(supabase, actor, submissionId);
     const me = requireTeacher(actor);
     const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
@@ -1809,17 +1813,78 @@ export const dataActions = {
     if (readError) throw toDatabaseError(readError, 'submissions');
     if (!sub) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
     const { data: assignment } = await supabase.from('assignments').select('id, is_exam').eq('id', sub.assignment_id).maybeSingle();
-    if (assignment?.is_exam) throw new HttpError(400, 'ข้อสอบส่งซ้ำหรือแก้ไขไม่ได้');
-    if (sub.status !== 'submitted' && sub.status !== 'late') throw new HttpError(400, 'นักเรียนยังไม่ได้ส่งงานนี้');
+    if (assignment?.is_exam && isHandedIn(sub as Pick<Submission, 'status'>)) throw new HttpError(400, 'ข้อสอบที่ส่งแล้วส่งซ้ำหรือแก้ไขไม่ได้');
+    const reopenUntil = open ? parseReopenUntil(until) : null;
     const reopenedAt = open ? new Date().toISOString() : null;
-    const { error } = await supabase.from('submissions').update({ reopened_at: reopenedAt }).eq('id', submissionId);
-    if (error) {
-      if (error.message.includes('reopened_at')) throw new HttpError(503, 'ฐานข้อมูลยังไม่รองรับการเปิดให้แก้ไขงาน — รัน supabase_submission_reopen_update.sql ใน Supabase SQL Editor');
-      throw toDatabaseError(error, 'submissions');
-    }
-    // The student's LIFF page reloads their work and shows the edit button.
+    await writeReopen(supabase, reopenedAt, reopenUntil, (query) => query.eq('id', submissionId));
+    // The student's LIFF page reloads their work and shows the edit / hand-in button.
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
-    return { reopened_at: reopenedAt };
+    return { reopened_at: reopenedAt, reopen_until: reopenUntil };
+  },
+
+  /**
+   * "Allow hand-in" for a roster student who has no row for this work yet
+   * (never handed in, never recorded): creates a 'pending' row, unscored, that
+   * carries the permission, so they can hand in after it closed. A student who
+   * already has a row is handled like setSubmissionReopened. Returns the row.
+   */
+  async allowStudentHandIn({ supabase, actor }: Ctx, assignmentId: string, rosterId: string, until?: unknown) {
+    const me = requireTeacher(actor);
+    const { classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
+    const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
+    if (role === 'researcher') throw FORBIDDEN();
+    const rosterEntry = (classroom.students || []).find((s) => s && s.id === rosterId);
+    if (!rosterEntry) throw new HttpError(404, 'ไม่พบนักเรียนคนนี้ในห้องเรียน');
+    const keys = [...new Set([rosterEntry.id, rosterEntry.line_uid].filter((k): k is string => !!k))];
+    const quoted = keys.map(pgValue).join(',');
+    const { data: users, error: userError } = await supabase.from('users').select('id, line_uid').or(`id.in.(${quoted}),line_uid.in.(${quoted})`);
+    if (userError) throw toDatabaseError(userError, 'users');
+    const user = (users || []).find((u) => u.id === rosterEntry.id) || (users || [])[0];
+    if (!user) throw new HttpError(404, 'นักเรียนคนนี้ยังไม่มีบัญชีในระบบ (ยังไม่เคยเข้าใช้ผ่าน LINE)');
+    const reopenUntil = parseReopenUntil(until);
+    const reopenedAt = new Date().toISOString();
+
+    const { data: existing, error: existingError } = await supabase
+      .from('submissions')
+      .select('*')
+      .eq('assignment_id', assignmentId)
+      .eq('student_id', user.id)
+      .maybeSingle();
+    if (existingError) throw toDatabaseError(existingError, 'submissions');
+    if (existing) {
+      if (isHandedIn(existing as Submission)) throw new HttpError(409, 'นักเรียนส่งงานนี้แล้ว — ใช้ "ให้แก้ไขงาน" แทน');
+      await writeReopen(supabase, reopenedAt, reopenUntil, (query) => query.eq('id', existing.id));
+      after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+      return { ...(existing as Submission), reopened_at: reopenedAt, reopen_until: reopenUntil } as Submission;
+    }
+
+    const row: Record<string, unknown> = {
+      id: `sub-${assignmentId}-${user.id}`,
+      assignment_id: assignmentId,
+      student_id: user.id,
+      status: 'pending',
+      started_at: reopenedAt,
+      submitted_at: null,
+      time_spent_seconds: 0,
+      tab_switch_count: 0,
+      total_time_away_seconds: 0,
+      is_flagged_suspicious: false,
+      total_score: null,
+      reopened_at: reopenedAt,
+      ...(reopenUntil ? { reopen_until: reopenUntil } : {}),
+    };
+    // A student handing in at this very moment wins; their row is not replaced.
+    const { data: created, error: insertError } = await supabase
+      .from('submissions')
+      .upsert(row, { onConflict: 'assignment_id,student_id', ignoreDuplicates: true })
+      .select('*')
+      .maybeSingle();
+    if (insertError) {
+      if (/reopen(ed_at|_until)/.test(insertError.message)) throw new HttpError(503, REOPEN_MIGRATION_MESSAGE);
+      throw toDatabaseError(insertError, 'submissions');
+    }
+    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+    return (created || row) as unknown as Submission;
   },
 
   /**
@@ -1833,6 +1898,7 @@ export const dataActions = {
     const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
     if (role === 'researcher') throw FORBIDDEN();
     if (assignment.is_exam) throw new HttpError(400, 'ข้อสอบส่งซ้ำหรือแก้ไขไม่ได้');
+    // Everyone who handed in, with no time limit. Students already allowed keep their own limit.
     let query = supabase
       .from('submissions')
       .update({ reopened_at: open ? new Date().toISOString() : null })
@@ -1841,7 +1907,7 @@ export const dataActions = {
     query = open ? query.is('reopened_at', null) : query.not('reopened_at', 'is', null);
     const { data, error } = await query.select('id');
     if (error) {
-      if (error.message.includes('reopened_at')) throw new HttpError(503, 'ฐานข้อมูลยังไม่รองรับการเปิดให้แก้ไขงาน — รัน supabase_submission_reopen_update.sql ใน Supabase SQL Editor');
+      if (error.message.includes('reopened_at')) throw new HttpError(503, REOPEN_MIGRATION_MESSAGE);
       throw toDatabaseError(error, 'submissions');
     }
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
@@ -2022,6 +2088,41 @@ async function submissionWithClassroom(supabase: Supabase, submissionId: string)
   const classroom = assignment?.classroom;
   if (!classroom) throw new HttpError(404, 'ไม่พบห้องเรียน');
   return { submission, classroom };
+}
+
+const REOPEN_MIGRATION_MESSAGE =
+  'ฐานข้อมูลยังไม่รองรับการเปิดให้แก้ไข/ส่งงานรายคน — รัน supabase_submission_reopen_until_update.sql ใน Supabase SQL Editor';
+/** Longest per-student window the teacher can give in one go. */
+const REOPEN_MAX_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** The teacher's per-student time limit: null (no limit) or an ISO time in the future. */
+function parseReopenUntil(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  const ms = typeof value === 'string' ? new Date(value).getTime() : NaN;
+  if (Number.isNaN(ms)) throw new HttpError(400, 'เวลาที่ให้ส่งไม่ถูกต้อง');
+  if (ms <= Date.now()) throw new HttpError(400, 'กรุณาเลือกเวลาที่อยู่ในอนาคต');
+  if (ms > Date.now() + REOPEN_MAX_MS) throw new HttpError(400, 'ให้เวลาได้ไม่เกิน 30 วัน');
+  return new Date(ms).toISOString();
+}
+
+/**
+ * Writes the per-student permission. Databases without reopen_until still take
+ * a permission with no limit; a time limit needs the column.
+ */
+async function writeReopen(
+  supabase: Supabase,
+  reopenedAt: string | null,
+  reopenUntil: string | null,
+  where: (query: ReturnType<ReturnType<Supabase['from']>['update']>) => PromiseLike<{ error: { message: string } | null }>
+) {
+  let { error } = await where(supabase.from('submissions').update({ reopened_at: reopenedAt, reopen_until: reopenUntil }));
+  if (error?.message.includes('reopen_until') && !reopenUntil) {
+    ({ error } = await where(supabase.from('submissions').update({ reopened_at: reopenedAt })));
+  }
+  if (error) {
+    if (/reopen(ed_at|_until)/.test(error.message)) throw new HttpError(503, REOPEN_MIGRATION_MESSAGE);
+    throw toDatabaseError(error, 'submissions');
+  }
 }
 
 async function requireTeacherOfSubmission(supabase: Supabase, actor: Actor | null, submissionId: string) {

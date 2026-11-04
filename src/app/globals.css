@@ -318,6 +318,39 @@ video {
   }
 }
 
+/* Student LIFF hand-in confirmation: the answered ring draws in, and the
+   confirm button fills while it arms (a double tap on "send" cannot confirm). */
+@keyframes submit-ring {
+  from {
+    stroke-dashoffset: var(--ring-from);
+  }
+}
+.submit-ring {
+  animation: submit-ring 900ms cubic-bezier(0.16, 1, 0.3, 1) 120ms backwards;
+}
+@keyframes submit-arm {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.submit-arm {
+  transform-origin: left;
+  animation: submit-arm var(--arm-ms, 700ms) linear both;
+}
+@keyframes submit-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+.submit-shake {
+  animation: submit-shake 420ms ease-in-out 200ms both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
