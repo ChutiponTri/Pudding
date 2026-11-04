@@ -843,8 +843,8 @@ function NewAssignmentContent() {
       alert(
         copiedTo + (saveAsDraft
           ? language === 'th'
-            ? `บันทึกฉบับร่าง${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว\nนักเรียนจะยังไม่เห็นงานนี้ จนกว่าคุณครูจะกด "เผยแพร่ตอนนี้" ในหน้างานของห้องเรียน\nฉบับร่างที่ไม่ได้เผยแพร่ภายใน ${DRAFT_RETENTION_DAYS} วันจะถูกลบอัตโนมัติ`
-            : `Draft saved. Students won't see it until you press "Publish now" in the classwork list.\nDrafts not published within ${DRAFT_RETENTION_DAYS} days are deleted automatically.`
+            ? `บันทึกฉบับร่างแล้ว • นักเรียนยังไม่เห็นจนกว่าจะกด "เผยแพร่ตอนนี้"\nลบอัตโนมัติถ้าไม่เผยแพร่ใน ${DRAFT_RETENTION_DAYS} วัน`
+            : `Draft saved • hidden until you press "Publish now"\nDeleted if not published within ${DRAFT_RETENTION_DAYS} days`
           : schedulePublish
           ? language === 'th'
             ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
@@ -984,8 +984,8 @@ function NewAssignmentContent() {
                       ? `ส่งแล้ว ${editSubmissionCount} คน — ข้อปรนัย/ถูกผิดตรวจใหม่อัตโนมัติ • ลบคำถามแล้วคำตอบข้อนั้นหาย`
                       : `${editSubmissionCount} submitted — choice answers are re-scored • removing a question deletes its answers`}
                     full={language === 'th'
-                      ? `มีนักเรียนส่งแล้ว ${editSubmissionCount} คน — เมื่อบันทึก ข้อปรนัยและข้อถูก/ผิดของทุกคนจะตรวจใหม่ตามเฉลยใหม่ (คะแนนที่ครูปรับเองคงไว้) • ข้อที่เปลี่ยนเป็นข้อเขียนจะกลับไปรอตรวจ • ลบคำถามแล้วคำตอบข้อนั้นหายไป • นักเรียนที่ส่งแล้วแก้งานไม่ได้ จนกว่าครูกด “ให้แก้ไขงาน” ในหน้าตรวจงาน`
-                      : `${editSubmissionCount} students have submitted. On save, everyone's choice and true/false answers are re-scored from the new key (scores you adjusted by hand stay) • questions changed to written go back to "to grade" • removing a question deletes its answers • students can't change handed-in work until you press "Allow edit" on the grading page.`}
+                      ? `ส่งแล้ว ${editSubmissionCount} คน • บันทึกแล้วข้อปรนัย/ถูก-ผิดตรวจใหม่ตามเฉลยใหม่ (คะแนนที่ปรับเองคงไว้) • ลบข้อ = คำตอบข้อนั้นหาย`
+                      : `${editSubmissionCount} handed in • choice/true-false re-scored on save (manual scores kept) • removing a question deletes its answers`}
                   />
                 </p>
               )}
@@ -1275,7 +1275,7 @@ function NewAssignmentContent() {
                   {sampleUploadError && <p className="text-[11px] text-rose-500 font-semibold">{sampleUploadError}</p>}
                   <p className="text-[11px] text-slate-400">
                     {attachmentSlots > 0
-                      ? tr(`แนบได้สูงสุด ${MAX_ASSIGNMENT_ATTACHMENTS} รายการ • รูปภาพไม่เกิน 5MB, PDF ไม่เกิน 10MB — ไฟล์ใหญ่กว่านี้ให้แชร์ผ่าน Google Drive`, `Up to ${MAX_ASSIGNMENT_ATTACHMENTS} items • images up to 5MB, PDFs up to 10MB — share bigger files via Google Drive`)
+                      ? tr(`สูงสุด ${MAX_ASSIGNMENT_ATTACHMENTS} รายการ • รูป ≤5MB, PDF ≤10MB (ใหญ่กว่านี้ใช้ลิงก์ Drive)`, `Up to ${MAX_ASSIGNMENT_ATTACHMENTS} • images ≤5MB, PDF ≤10MB (bigger: Drive link)`)
                       : tr(`แนบครบ ${MAX_ASSIGNMENT_ATTACHMENTS} รายการแล้ว — นำออกเพื่อเพิ่มรายการใหม่`, `All ${MAX_ASSIGNMENT_ATTACHMENTS} slots used — remove one to add another`)}
                   </p>
               </>
@@ -1368,8 +1368,8 @@ function NewAssignmentContent() {
                     <MobileText
                       short={language === 'th' ? 'นักเรียนเห็นงานและได้แจ้งเตือน LINE เมื่อถึงเวลานี้' : 'Students see it (and LINE is notified) at this time.'}
                       full={language === 'th'
-                        ? 'ก่อนถึงเวลานี้ นักเรียนจะยังไม่เห็นงานและส่งไม่ได้ เมื่อถึงเวลา งานจะขึ้นในไทม์ไลน์และแจ้งเข้า LINE group อัตโนมัติ'
-                        : 'Students cannot see or submit before this time. At this time it appears on the timeline and is announced in the LINE group.'}
+                        ? 'นักเรียนเห็นงานและได้รับแจ้งใน LINE เมื่อถึงเวลานี้'
+                        : 'Students see it and get a LINE notice at this time'}
                     />
                   </p>
                 </div>
@@ -1384,8 +1384,8 @@ function NewAssignmentContent() {
                       <MobileText
                         short={language === 'th' ? 'นักเรียนยังไม่เห็นงาน จนกว่าคุณครูจะกดเผยแพร่' : 'Hidden from students until you publish it.'}
                         full={language === 'th'
-                          ? 'นักเรียนจะยังไม่เห็นงานนี้และไม่มีการแจ้งเข้า LINE จนกว่าคุณครูจะกด "เผยแพร่ตอนนี้" ในหน้างานของห้องเรียน (หรือกลับมาแก้ไขแล้วเลือก "เผยแพร่ทันที")'
-                          : 'Students won\'t see it and nothing is sent to LINE until you press "Publish now" in the classwork list (or edit it and choose "Publish now").'}
+                          ? 'ซ่อนจากนักเรียนจนกว่าจะกด "เผยแพร่ตอนนี้"'
+                          : 'Hidden until you press "Publish now"'}
                       />
                     </span>
                   </p>
@@ -1432,11 +1432,11 @@ function NewAssignmentContent() {
                     : (language === 'th' ? `ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง` : `Late work accepted for ${LATE_WINDOW_HOURS}h.`)}
                   full={isExam
                     ? (language === 'th'
-                      ? `ข้อสอบปิดรับเมื่อถึงเวลานี้ — นักเรียนที่เปิดข้อสอบค้างไว้ยังส่งได้อีก ${QUIZ_LATE_GRACE_MINUTES} นาที (บันทึกว่าส่งช้า) โดยนักเรียนจะไม่เห็นข้อนี้`
-                      : `The quiz closes at this time. Sheets already open may still arrive for ${QUIZ_LATE_GRACE_MINUTES} min (marked late); students are not told.`)
+                      ? `ปิดรับเมื่อถึงเวลา • เปิดค้างไว้ส่งได้อีก ${QUIZ_LATE_GRACE_MINUTES} นาที (ส่งช้า, นักเรียนไม่เห็น)`
+                      : `Closes at this time • open sheets get ${QUIZ_LATE_GRACE_MINUTES} more min (late, hidden from students)`)
                     : (language === 'th'
-                      ? `ส่งหลังเวลานี้ได้อีก ${LATE_WINDOW_HOURS} ชม. (บันทึกว่า "ส่งช้า") แล้วปิดรับเอง — ขยายเวลาหรือปิดรับเองได้ภายหลัง`
-                      : `Late work is accepted for ${LATE_WINDOW_HOURS}h after this time (marked late), then it closes. You can extend or close it later.`)}
+                      ? `หลังเวลานี้ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดเอง`
+                      : `Late work for ${LATE_WINDOW_HOURS}h after, then closes`)}
                 />
               </p>
             </div>
@@ -1487,7 +1487,7 @@ function NewAssignmentContent() {
               <p className="hidden sm:block text-[11px] text-slate-500 dark:text-slate-400">
                 {selectedClassroomsLineReady
                   ? effectiveReminderOffsets.length
-                    ? tr('เตือน 1 ครั้งตามเวลาที่เลือก — ระบบจะตรวจรายชื่อนักเรียนที่ยังไม่ส่งงาน แล้วส่งสรุปเข้า LINE group ของห้องเรียน', 'One reminder at the chosen time — Pudding lists students who have not submitted and posts a summary to the class LINE group')
+                    ? tr('ส่งรายชื่อคนที่ยังไม่ส่งเข้า LINE group 1 ครั้ง', 'Posts who has not handed in to the LINE group once')
                     : reminderSelectValue === 'none'
                     ? tr('ไม่ส่งแจ้งเตือนเข้า LINE group สำหรับงานนี้', 'No LINE group reminder for this assignment')
                     : tr('แสดงเฉพาะเวลาที่ยังทันก่อนกำหนดส่ง — ถ้าเปลี่ยนกำหนดส่งแล้วเวลาที่เลือกไม่ทัน ต้องเลือกใหม่', 'Only times before the due date are shown — if a new due date makes the chosen time too late, pick again')

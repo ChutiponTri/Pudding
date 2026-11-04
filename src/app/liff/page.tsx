@@ -2602,7 +2602,7 @@ export default function LiffStudentPage() {
                                 ) : isClosed ? (
                                   <Pill tone="rose">🔒 ปิดรับแล้ว</Pill>
                                 ) : isPastDue ? (
-                                  <Pill tone="rose">🔒 ปิดแล้ว</Pill>
+                                  <Pill tone="amber">⏰ ส่งช้าได้</Pill>
                                 ) : (
                                   <Pill tone="amber">ยังไม่ส่ง</Pill>
                                 )}
@@ -2925,7 +2925,7 @@ export default function LiffStudentPage() {
                     <span>
                       {activeAssignment.is_exam
                         ? "หมดเวลาแล้ว กดส่งคำตอบทันที"
-                        : `เลยกำหนดส่งแล้ว — ส่งได้ถึง ${formatLateUntil(getAssignmentWindow(activeAssignment).lateUntil)} แต่จะถูกบันทึกว่าส่งช้า`}
+                        : `เลยกำหนดแล้ว • ส่งได้ถึง ${formatLateUntil(getAssignmentWindow(activeAssignment).lateUntil)} (ส่งช้า)`}
                     </span>
                   </div>
                 )}

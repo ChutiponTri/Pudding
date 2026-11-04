@@ -97,7 +97,7 @@
     "co_teachers": "Co-Teachers",
     "add_co_teacher": "Add Co-Teacher",
     "manage_indicators": "Configure Rubric & Indicator Weights",
-    "co_teaching_rule_badge": "Publication Rule: Student-facing grade & feedback render ONLY from the Primary Teacher. Co-teacher evaluations are stored for research (IRR benchmarking)."
+    "co_teaching_rule_badge": "Students see only the main teacher's scores • co-teacher scores are for research (IRR)"
   },
   "classroom_mgmt": {
     "title": "Classroom & Student Roster Management",

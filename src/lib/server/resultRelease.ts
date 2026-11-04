@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Assignment, Classroom, Question, Submission, SubmissionAnswer } from '@/types/database';
 import { getAssignmentWindow, QUIZ_LATE_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
-import { isHandedIn, isReopenActive } from '@/lib/utils/gradingStatus';
+import { isHandedIn, isReopenActive, REOPEN_GRACE_MS } from '@/lib/utils/gradingStatus';
 
 /**
  * When students see the scores of choice / true-false questions.
@@ -116,7 +116,8 @@ export async function resultRelease(
     if (!objective?.length) continue;
     const subs = rowsOf.get(a.id) || [];
     let released: boolean;
-    if (subs.some((s) => isReopenActive(s, now))) {
+    // Same grace the server gives a per-student permission (a sheet already on its way).
+    if (subs.some((s) => isReopenActive(s, now, REOPEN_GRACE_MS))) {
       released = false;
     } else if (!getAssignmentWindow(a, now, QUIZ_LATE_GRACE_MS).acceptsSubmissions) {
       released = true;

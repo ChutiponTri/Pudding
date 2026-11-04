@@ -215,11 +215,11 @@ export function ReopenTimeDialog({
           <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
             {kind === 'edit'
               ? th
-                ? 'เมื่อส่งใหม่ คะแนนและความเห็นเดิมจะถูกล้างเพื่อตรวจใหม่ (สถานะส่งตรงเวลา/ส่งช้าเดิมยังคงอยู่) • สิทธิ์หมดเมื่อส่งใหม่ หมดเวลา หรือกด "ปิดรับงานทันที"'
-                : 'Handing in again clears the current score and comments for regrading (on-time/late mark kept) • ends when they hand in, time runs out, or you choose "Close now"'
+                ? 'ส่งใหม่แล้วคะแนนเดิมถูกล้างเพื่อตรวจใหม่'
+                : 'Handing in again clears the score for regrading'
               : th
-              ? 'งานที่ส่งจะแทนคะแนน 0 (ถ้ามี) และบันทึกว่าส่งช้าหากเลยกำหนดแล้ว • สิทธิ์หมดเมื่อส่ง หมดเวลา หรือกด "ปิดรับงานทันที"'
-              : 'Their work replaces any 0 and is marked late if past due • ends when they hand in, time runs out, or you choose "Close now"'}
+              ? 'งานที่ส่งแทนคะแนน 0 • เลยกำหนด = ส่งช้า'
+              : 'Replaces any 0 • marked late if past due'}
           </p>
         </ModalSheetBody>
 

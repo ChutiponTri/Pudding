@@ -47,12 +47,12 @@ export function AssignmentStatusDialog({
       title: tr('ตามกำหนดส่ง (อัตโนมัติ)', 'Follow the due date (automatic)'),
       detail: assignment.is_exam
         ? tr(
-            `เปิดรับคำตอบถึง ${dueLabel} แล้วปิดรับ (คำตอบที่มาถึงภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีบันทึกว่าส่งช้า — นักเรียนไม่เห็นข้อนี้)`,
-            `Open until ${dueLabel}, then closes (answers arriving within ${QUIZ_LATE_GRACE_MINUTES} min are marked late — students don't see this)`
+            `เปิดถึง ${dueLabel} (ส่งภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีหลังหมดเวลา = ส่งช้า, นักเรียนไม่เห็น)`,
+            `Open until ${dueLabel} (up to ${QUIZ_LATE_GRACE_MINUTES} min after = late, hidden from students)`
           )
         : tr(
-            `เปิดรับงานถึง ${dueLabel} หลังจากนั้นรับงานส่งช้าอีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง`,
-            `Open until ${dueLabel}, then accepts late work for ${LATE_WINDOW_HOURS} more hours before closing`
+            `เปิดถึง ${dueLabel} แล้วรับส่งช้าอีก ${LATE_WINDOW_HOURS} ชม.`,
+            `Open until ${dueLabel}, then late work for ${LATE_WINDOW_HOURS}h`
           ),
       tone: 'emerald',
     },
@@ -63,8 +63,8 @@ export function AssignmentStatusDialog({
       detail: assignment.is_exam
         ? tr('นักเรียนส่งคำตอบไม่ได้จนกว่าจะเปิดอีกครั้ง', 'Students cannot submit until you reopen it')
         : tr(
-            'นักเรียนส่งหรือแก้ไขงานไม่ได้จนกว่าจะเปิดอีกครั้ง (ยกเลิกสิทธิ์ "ให้แก้ไขงาน" รายคนด้วย)',
-            'Students cannot submit or edit until you reopen it (also cancels per-student "Allow edit")'
+            'ส่ง/แก้ไม่ได้จนกว่าจะเปิดใหม่ (ยกเลิกสิทธิ์รายคนด้วย)',
+            'No hand-ins or edits until reopened (cancels per-student permissions)'
           ),
       tone: 'rose',
     },
@@ -73,8 +73,8 @@ export function AssignmentStatusDialog({
       icon: Unlock,
       title: tr('ขยายเวลาส่ง', 'Extend deadline'),
       detail: assignment.is_exam ? tr('เปิดรับคำตอบถึงเวลาใหม่ที่เลือก', 'Accept answers until the new time you pick') : tr(
-            `ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก (รับงานส่งช้าต่ออีก ${LATE_WINDOW_HOURS} ชม.) — คนที่ยังไม่ส่งส่งได้ • งานที่ส่งแล้วยังแก้ไม่ได้ ถ้าต้องการให้แก้ ใช้ "ให้แก้ไขงาน" ในหน้าตรวจงาน`,
-            `Move the due date to the new time (late work accepted for ${LATE_WINDOW_HOURS} more hours) — students who have not handed in can • handed-in work stays locked; to let students fix it, use "Allow edit" on the grading page`
+            `ย้ายกำหนดส่ง (+ส่งช้า ${LATE_WINDOW_HOURS} ชม.) • งานที่ส่งแล้วยังแก้ไม่ได้`,
+            `New due date (+${LATE_WINDOW_HOURS}h late) • handed-in work stays locked`
           ),
       tone: 'amber',
     },

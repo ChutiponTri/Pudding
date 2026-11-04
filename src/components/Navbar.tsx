@@ -224,7 +224,7 @@ export const Navbar: React.FC = () => {
                   },
                 }}
               />
-              <div className="hidden lg:block text-left">
+              <div className="hidden md:block text-left">
                 <span className="block text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
                   {user?.fullName || user?.firstName || tr('กำลังโหลด...', 'Loading...')}
                 </span>

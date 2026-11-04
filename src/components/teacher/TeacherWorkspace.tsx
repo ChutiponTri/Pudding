@@ -1351,7 +1351,7 @@ export function TeacherWorkspace({
       </div>
 
       {/* Top Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         
         {/* Classrooms count -> every classroom of the selected term */}
         <Link
@@ -1584,7 +1584,7 @@ export function TeacherWorkspace({
               className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 sm:p-6 space-y-5 sm:space-y-6 transition-all hover:border-slate-300 dark:hover:border-slate-700"
             >
               {/* Course Header */}
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
                 {/* Icon is as tall as the code + name block, so the two read as one unit. */}
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-12 h-12 rounded-xl bg-linear-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-sm shadow-amber-500/20 shrink-0">

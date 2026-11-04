@@ -334,8 +334,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       reopenedCount > 0 &&
       !confirm(
         language === 'th'
-          ? `มีนักเรียน ${reopenedCount} คนที่เปิดให้แก้ไขงานอยู่\nปิดรับงานทันทีจะยกเลิกสิทธิ์แก้ไขของทุกคนด้วย (กด "ให้แก้ไขงาน" รายคนอีกครั้งได้ภายหลัง)\n\nปิดรับงานเลยหรือไม่?`
-          : `${reopenedCount} student(s) are allowed to edit their work.\nClosing now cancels that for everyone too (you can allow them again afterwards).\n\nClose now?`
+          ? `ปิดรับงานทันที?\nสิทธิ์แก้ไข/ส่งรายคน ${reopenedCount} คนจะถูกยกเลิกด้วย`
+          : `Close now?\nThis also cancels ${reopenedCount} per-student permission(s).`
       )
     ) {
       return;
@@ -822,12 +822,12 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     ? assignmentWindow?.isPastDeadline
       ? th ? 'อัตโนมัติ: หมดเวลาแล้ว ปิดรับคำตอบ' : 'Automatic: time is up, answers are closed'
       : th
-        ? `อัตโนมัติ: เปิดรับถึง ${deadlineLabel} แล้วปิด (ส่งเข้ามาภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีหลังหมดเวลา บันทึกว่าส่งช้า)`
-        : `Automatic: open until ${deadlineLabel}, then closes (sheets arriving within ${QUIZ_LATE_GRACE_MINUTES} min after are saved as late; students are not told)`
+        ? `อัตโนมัติ: เปิดถึง ${deadlineLabel} (ส่งภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีหลังหมดเวลา = ส่งช้า)`
+        : `Automatic: open until ${deadlineLabel} (up to ${QUIZ_LATE_GRACE_MINUTES} min after = late)`
     : assignmentWindow?.isLateClosed
     ? th
-      ? `อัตโนมัติ: ปิดรับแล้ว (เลยกำหนด ${LATE_WINDOW_HOURS} ชม.) — กด "ขยายเวลา" เพื่อเปิดทั้งห้อง หรือกด "ให้แก้ไขงาน" ที่ชื่อนักเรียนเพื่อเปิดเฉพาะคน`
-      : `Automatic: closed ${LATE_WINDOW_HOURS}h after the deadline. Extend to reopen for everyone, or use "Allow edit" on a student to reopen just their work.`
+      ? `ปิดรับอัตโนมัติแล้ว • เปิดทั้งห้อง: ขยายเวลา • เปิดรายคน: ปุ่มสีส้ม`
+      : `Closed automatically • everyone: Extend • one student: orange button`
     : assignmentWindow?.isPastDeadline
     ? th
       ? `อัตโนมัติ: เลยกำหนดแล้ว รับงานส่งช้าถึง ${lateUntilLabel} แล้วปิดเอง`
@@ -1121,13 +1121,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   <ul className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 rounded-xl bg-white/70 dark:bg-slate-900/60 ring-1 ring-slate-200 dark:ring-slate-700 px-3 py-2 space-y-0.5">
                     <li>
                       <b className="text-amber-700 dark:text-amber-400">{t('submission_control.btn_reopen')}</b>{' '}
-                      {th ? '— ทั้งห้องที่ยังไม่ส่งส่งได้ถึงเวลาใหม่ • งานที่ส่งแล้วยังล็อกอยู่ (แก้ไม่ได้)' : '— anyone who has not handed in can until the new time • handed-in work stays locked (no edits)'}
+                      {th ? '— คนที่ยังไม่ส่งส่งได้ • งานที่ส่งแล้วยังแก้ไม่ได้' : '— those not handed in can • handed-in work stays locked'}
                     </li>
                     <li>
                       <b className="text-orange-600 dark:text-orange-400">{th ? 'ให้แก้ไขงาน / ให้ส่งงาน' : 'Allow edit / Allow hand-in'}</b>{' '}
-                      {th
-                        ? '(ปุ่มสีส้มในรายชื่อนักเรียน) — เปิดเฉพาะคน แม้ตรวจแล้วหรือปิดรับแล้ว ใกล้/เลยกำหนดส่งเลือกได้ว่าให้กี่นาที'
-                        : '(orange button on a student row) — just that student, even after grading or closing; near or past the deadline you pick how many minutes'}
+                      {th ? '(ปุ่มสีส้ม) — เฉพาะคน กำหนดเวลาเป็นนาทีได้' : '(orange button) — one student, with a time limit'}
                       {submissions.some((s) => isHandedIn(s) && isReopenActive(s, nowTick)) && (
                         <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold">
                           {th ? `เปิดอยู่ ${submissions.filter((s) => isHandedIn(s) && isReopenActive(s, nowTick)).length} คน` : `${submissions.filter((s) => isHandedIn(s) && isReopenActive(s, nowTick)).length} open`}
@@ -1136,7 +1134,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     </li>
                     <li>
                       <b className="text-rose-600 dark:text-rose-400">{t('submission_control.btn_force_close')}</b>{' '}
-                      {th ? '— หยุดทุกคน รวมถึงสิทธิ์แก้ไขรายคน' : '— stops everyone, including per-student edits'}
+                      {th ? '— หยุดทุกคน รวมสิทธิ์รายคน' : '— stops everyone, incl. per-student'}
                     </li>
                   </ul>
                 )}
@@ -1495,15 +1493,15 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
         {/* Table Content */}
         <div className="hidden sm:block overflow-x-auto">
-          <table className="w-full min-w-184 text-left text-xs">
+          <table className="w-full min-w-152 lg:min-w-184 text-left text-xs">
             <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 tracking-wide font-semibold border-b border-slate-100 dark:border-slate-800">
               <tr>
-                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.student_name')}</th>
-                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.status')}</th>
-                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.time_spent')}</th>
-                <th className="py-3.5 px-4 sm:px-6">{t('grading.table.integrity')}</th>
-                <th className="py-3.5 px-4 sm:px-6 text-center">{t('grading.table.score')}</th>
-                <th className="py-3.5 px-4 sm:px-6 text-right">{t('grading.table.action')}</th>
+                <th className="py-3.5 px-3 lg:px-6">{t('grading.table.student_name')}</th>
+                <th className="py-3.5 px-3 lg:px-6">{t('grading.table.status')}</th>
+                <th className="hidden lg:table-cell py-3.5 px-3 lg:px-6">{t('grading.table.time_spent')}</th>
+                <th className="py-3.5 px-3 lg:px-6">{t('grading.table.integrity')}</th>
+                <th className="py-3.5 px-3 lg:px-6 text-center">{t('grading.table.score')}</th>
+                <th className="py-3.5 px-3 lg:px-6 text-right">{t('grading.table.action')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
@@ -1523,7 +1521,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   const initials = (student?.first_name?.[0] || '?') + (student?.last_name?.[0] || '');
                   const isLate = sub?.status === 'late';
                   const studentCell = (
-                      <td className="py-3.5 px-4 sm:px-6">
+                      <td className="py-3.5 px-3 lg:px-6">
                         <div className="flex items-center gap-3 min-w-0">
                           {student?.avatar_url ? (
                             <img src={student.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-white dark:ring-slate-900" />
@@ -1546,16 +1544,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     return (
                       <tr key={key} className="bg-slate-50/40 dark:bg-slate-900/40">
                         {studentCell}
-                        <td className="py-3.5 px-4 sm:px-6 whitespace-nowrap">{noSubmissionBadge}</td>
-                        <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
-                        <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
-                        <td className="py-3.5 px-4 sm:px-6 text-center whitespace-nowrap">
+                        <td className="py-3.5 px-3 lg:px-6 whitespace-nowrap">{noSubmissionBadge}</td>
+                        <td className="hidden lg:table-cell py-3.5 px-3 lg:px-6 text-slate-400">-</td>
+                        <td className="py-3.5 px-3 lg:px-6 text-slate-400">-</td>
+                        <td className="py-3.5 px-3 lg:px-6 text-center whitespace-nowrap">
                           <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-black">
                             <span className="text-sm tabular-nums">{sub.total_score}</span>
                             <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
                           </span>
                         </td>
-                        <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
+                        <td className="py-3.5 px-3 lg:px-6 text-right whitespace-nowrap">
                           <div className="inline-flex items-center gap-2">
                             {handInControl(row)}
                             {clearNoSubmissionControl(sub)}
@@ -1569,16 +1567,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     return (
                       <tr key={key} className="bg-slate-50/40 dark:bg-slate-900/40">
                         {studentCell}
-                        <td className="py-3.5 px-4 sm:px-6 whitespace-nowrap">
+                        <td className="py-3.5 px-3 lg:px-6 whitespace-nowrap">
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
                             <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                             {language === 'th' ? 'ยังไม่ส่ง' : 'Not submitted'}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
-                        <td className="py-3.5 px-4 sm:px-6 text-slate-400">-</td>
-                        <td className="py-3.5 px-4 sm:px-6 text-center text-slate-400">-</td>
-                        <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
+                        <td className="hidden lg:table-cell py-3.5 px-3 lg:px-6 text-slate-400">-</td>
+                        <td className="py-3.5 px-3 lg:px-6 text-slate-400">-</td>
+                        <td className="py-3.5 px-3 lg:px-6 text-center text-slate-400">-</td>
+                        <td className="py-3.5 px-3 lg:px-6 text-right whitespace-nowrap">
                           <div className="inline-flex items-center gap-2">
                             {handInControl(row)}
                             {missingActions(row)}
@@ -1594,7 +1592,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                       {studentCell}
 
                       {/* Submission status + when it was submitted */}
-                      <td className="py-3.5 px-4 sm:px-6 whitespace-nowrap">
+                      <td className="py-3.5 px-3 lg:px-6 whitespace-nowrap">
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                             isLate
@@ -1614,15 +1612,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         {sub.submitted_at && (
                           <p className="text-[11px] text-slate-400 mt-1">
                             {formatDateTime(sub.submitted_at, language)}
+                            <span className="lg:hidden font-mono"> · {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}</span>
                           </p>
                         )}
                       </td>
 
-                      <td className="py-3.5 px-4 sm:px-6 text-slate-500 dark:text-slate-400 font-mono whitespace-nowrap">
+                      <td className="hidden lg:table-cell py-3.5 px-3 lg:px-6 text-slate-500 dark:text-slate-400 font-mono whitespace-nowrap">
                         {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}
                       </td>
 
-                      <td className="py-3.5 px-4 sm:px-6">
+                      <td className="py-3.5 px-3 lg:px-6">
                         <div className="flex flex-wrap items-center gap-2">
                           {tracksAway ? (
                             <AntiCheatingBadge
@@ -1654,7 +1653,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 sm:px-6 text-center whitespace-nowrap">
+                      <td className="py-3.5 px-3 lg:px-6 text-center whitespace-nowrap">
                         {isGraded ? (
                           <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
                             <span className="text-sm tabular-nums">{sub.total_score}</span>
@@ -1667,7 +1666,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         )}
                       </td>
 
-                      <td className="py-3.5 px-4 sm:px-6 text-right">
+                      <td className="py-3.5 px-3 lg:px-6 text-right">
                         <div className="flex items-center justify-end gap-2">
                           {reopenControl(sub)}
                           <button

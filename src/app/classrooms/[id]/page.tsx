@@ -1581,13 +1581,13 @@ export default function ClassroomWorkspacePage() {
         {/* ============================================================== */}
         {/* MAIN WORKSPACE CONTENT AREA (Full Width, No inner sidebar) */}
         {/* ============================================================== */}
-        <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-8">
+        <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8">
           {/* Sticky header: course/classroom labels, actions and (desktop) tabs stay in view while scrolling,
               pinned just under the global navbar. */}
-          <div className="sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 pt-2.5 lg:pt-6 mb-5 sm:mb-6 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 lg:gap-4 pb-2.5 lg:pb-4">
+          <div className="sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 pt-2.5 md:pt-5 lg:pt-6 mb-5 sm:mb-6 bg-slate-50/90 dark:bg-slate-950/90 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 md:gap-4 pb-2.5 md:pb-4">
             {/* Mobile title row: code, course name, room and semester sit on one line (course name truncates). */}
-            <div className="lg:hidden flex items-center gap-2 min-w-0">
+            <div className="md:hidden flex items-center gap-2 min-w-0">
               <span className="shrink-0 h-7 inline-flex items-center px-2 rounded-lg bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 font-mono text-xs font-black">
                 {courseCode}
               </span>
@@ -1608,7 +1608,7 @@ export default function ClassroomWorkspacePage() {
 
             {/* Desktop title: course code and name lead at the same size as the room, all on one line,
                 so the header grows sideways rather than down. */}
-            <div className="hidden lg:block flex-1 min-w-0 space-y-1">
+            <div className="hidden md:block flex-1 min-w-0 space-y-1">
               <div className="flex items-center gap-3 min-w-0">
                 <span className="shrink-0 h-9 inline-flex items-center px-3 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 font-mono text-xl font-black">
                   {courseCode}
@@ -1629,7 +1629,7 @@ export default function ClassroomWorkspacePage() {
             </div>
 
             {/* One compact row on mobile so the sticky header stays short. */}
-            <div className="lg:shrink-0 grid grid-cols-[1fr_1fr_1.2fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 *:shrink-0">
+            <div className="md:shrink-0 grid grid-cols-[1fr_1fr_1.2fr] gap-1.5 sm:flex sm:items-center sm:gap-2 sm:overflow-x-auto scrollbar-none sm:-mx-1 sm:px-1 sm:py-0.5 *:shrink-0">
               {/* Secondary: Invite Students Modal Trigger */}
               <button
                 type="button"
@@ -1687,7 +1687,7 @@ export default function ClassroomWorkspacePage() {
           </div>
 
           {/* Navigation Tab Bar (desktop; mobile uses the bottom bar below) */}
-          <div ref={tabBarRef} className="hidden lg:flex relative items-center gap-1.5 pb-3">
+          <div ref={tabBarRef} className="hidden md:flex relative items-center gap-1.5 pb-3 overflow-x-auto scrollbar-none">
             {tabIndicator && (
               <span
                 aria-hidden
@@ -1730,7 +1730,7 @@ export default function ClassroomWorkspacePage() {
           {/* Mobile bottom tab bar: all five tabs at once, icon above a short label. */}
           <nav
             aria-label={tr('เมนูห้องเรียน', 'Classroom menu')}
-            className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]"
+            className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]"
           >
             <div className="relative grid grid-cols-5 px-1 py-1.5">
               {/* One column-wide track slides to the active tab; the pill inside matches the icon highlight. */}
@@ -2130,7 +2130,7 @@ export default function ClassroomWorkspacePage() {
                       </div>
                     )}
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 items-start gap-3 sm:gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 items-start gap-3 sm:gap-4">
                       {items.map((item, itemIndex, all) => {
                         // Show the insertion line only where a drop would change something.
                         const draggedIndex = all.findIndex((a) => a.id === draggingAssignmentId);
