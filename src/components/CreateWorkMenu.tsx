@@ -22,6 +22,7 @@ const VIEWPORT_MARGIN = 12;
 export function CreateWorkMenu({
   classroomId,
   from,
+  returnTo,
   className,
   children,
   onNavigate,
@@ -29,7 +30,9 @@ export function CreateWorkMenu({
   /** The classroom the work is for (preselected on the creation page). */
   classroomId?: string;
   /** Where the creation page's "back" button returns to. */
-  from?: 'classroom' | 'dashboard';
+  from?: 'classroom' | 'dashboard' | 'works';
+  /** With from="works": the exact list view to come back to (e.g. "/works?term=2_2026&tab=quiz"). */
+  returnTo?: string;
   className?: string;
   children: ReactNode;
   /** Called before leaving the page (e.g. the mobile sidebar closes itself). */
@@ -48,6 +51,7 @@ export function CreateWorkMenu({
     const params = new URLSearchParams();
     if (classroomId) params.set('classroomId', classroomId);
     if (from) params.set('from', from);
+    if (returnTo) params.set('returnTo', returnTo);
     for (const [key, value] of Object.entries(extra)) params.set(key, value);
     return `/assignments/new?${params}`;
   };
@@ -216,6 +220,7 @@ export function CreateWorkMenu({
         <RetakePicker
           classroomId={classroomId}
           from={from}
+          returnTo={returnTo}
           onNavigate={onNavigate}
           onClose={() => setRetakeOpen(false)}
         />

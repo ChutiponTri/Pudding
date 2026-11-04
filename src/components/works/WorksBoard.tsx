@@ -21,6 +21,7 @@ import {
   Palette,
   Plus,
   Rocket,
+  School,
   Search,
   Share2,
   ShieldAlert,
@@ -41,7 +42,7 @@ import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
 import { assignmentGroupLabel } from '@/components/AssignmentGroupHeader';
 import { ActionMenu, ActionMenuRow, type ActionMenuItem } from '@/components/works/ActionMenu';
-import { classStatus, DueDateDialog, Pill, ProgressLine, shortDate, WorkDetailSheet } from '@/components/works/WorkBits';
+import { classStatus, DueDateDialog, MetricCells, Pill, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { isRetake } from '@/lib/utils/retake';
@@ -78,20 +79,27 @@ export function WorksBoard() {
   const { semesterKey, setSemesterKey, currentPeriod } = useSemesterParam();
   const prefs = useWorkPrefs();
 
-  const tab: Tab = search.get('tab') === 'quiz' ? 'quiz' : 'homework';
-  const courseFilter = search.get('course') || 'all';
+  // Tab and course live in local state (instant) and are mirrored to the URL
+  // without a navigation, so "back" from grading returns to the same view.
+  const [tab, setTab] = useState<Tab>(() => (search.get('tab') === 'quiz' ? 'quiz' : 'homework'));
+  const [courseFilter, setCourseFilter] = useState(() => search.get('course') || 'all');
   const [query, setQuery] = useState('');
   const [tabDirection, setTabDirection] = useState(0);
   const setParam = (key: string, value: string | null) => {
-    const params = new URLSearchParams(search.toString());
+    const params = new URLSearchParams(window.location.search);
     if (value) params.set(key, value);
     else params.delete(key);
-    router.replace(`${pathname}?${params}`, { scroll: false });
+    window.history.replaceState(window.history.state, '', `${pathname}?${params}`);
   };
   const selectTab = (next: Tab) => {
     if (next === tab) return;
     setTabDirection(next === 'quiz' ? 1 : -1);
+    setTab(next);
     setParam('tab', next === 'quiz' ? 'quiz' : null);
+  };
+  const selectCourse = (id: string) => {
+    setCourseFilter(id);
+    setParam('course', id === 'all' ? null : id);
   };
   const [setTabGroup, tabIndicator] = useSlidingIndicator(tab);
 
@@ -176,8 +184,10 @@ export function WorksBoard() {
   );
 
   // Categories of this tab, in the teacher's order (new ones after, most recent work first).
-  const { categories, unpublished } = useMemo(() => {
-    const groups = allGroups.filter((g) => g.isExam === (tab === 'quiz') && matches(g));
+  // Both tabs are worked out together, so switching tabs only swaps what is shown.
+  const byTab = useMemo(() => {
+    const build = (isExam: boolean) => {
+    const groups = allGroups.filter((g) => g.isExam === isExam && matches(g));
     const byCat = new Map<string, WorkGroup[]>();
     const hidden: WorkGroup[] = [];
     for (const g of groups) {
@@ -204,7 +214,10 @@ export function WorksBoard() {
       .map(([key, list]) => ({ key, groups: [...list].sort(sortWork), totals: list.reduce((t, g) => addTotals(t, g.totals), EMPTY_TOTALS) }));
     hidden.sort((a, b) => new Date(b.rep.created_at || 0).getTime() - new Date(a.rep.created_at || 0).getTime());
     return { categories: cats, unpublished: hidden };
-  }, [allGroups, tab, matches, prefs.order]);
+    };
+    return { homework: build(false), quiz: build(true) };
+  }, [allGroups, matches, prefs.order]);
+  const { categories, unpublished } = byTab[tab];
 
   // ---------------------------------------------------------------- dragging
   const listRef = useRef<HTMLDivElement>(null);
@@ -519,64 +532,89 @@ export function WorksBoard() {
     ].filter(Boolean) as ActionMenuItem[];
   };
 
-  const gradeButton = (pending: number, href: string, compact = false) => (
+  /** Always "ตรวจงาน"; filled amber with the count while work waits. */
+  const gradeButton = (pending: number, href: string) => (
     <Link
       href={href}
       draggable={false}
-      className={`shrink-0 ${compact ? 'h-8 px-2.5 text-[11px]' : 'h-9 px-3 text-xs'} rounded-xl font-black inline-flex items-center gap-1 transition-colors ${
+      className={`h-9 px-3 rounded-xl text-xs font-black inline-flex items-center gap-1.5 whitespace-nowrap transition-colors ${
         pending > 0
           ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm shadow-amber-500/20'
           : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
       }`}
     >
-      {pending > 0 ? tr(`ตรวจ ${pending}`, `Check ${pending}`) : tr('ดูคะแนน', 'Scores')}
-      <ChevronRight className="w-3.5 h-3.5 -mr-0.5" />
+      {tr('ตรวจงาน', 'Grade')}
+      {pending > 0 && <span className="min-w-5 px-1 rounded-full bg-slate-950/15 text-[11px] tabular-nums text-center">{pending}</span>}
     </Link>
   );
+  const publishButton = (items: WorkClass[]) => (
+    <button
+      type="button"
+      onClick={() => publish(items)}
+      className="h-9 px-3 rounded-xl text-xs font-black inline-flex items-center gap-1.5 whitespace-nowrap bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/60 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-200 cursor-pointer transition-colors"
+    >
+      <Rocket className="w-3.5 h-3.5" />
+      {tr('เผยแพร่', 'Publish')}
+    </button>
+  );
+  const hiddenNote = (
+    <span className="text-[11px] font-semibold text-slate-400 inline-flex items-center gap-1">
+      <EyeOff className="w-3.5 h-3.5" />
+      {tr('นักเรียนยังไม่เห็น', 'Hidden from students')}
+    </span>
+  );
+  /** Count chip that stands out next to a name ("3 ห้อง", "5 งาน"). */
+  const countChip = (n: number, th1: string, en1: string, enMany: string, icon: React.ReactNode) => (
+    <span className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-[11px] font-black tabular-nums">
+      {icon}
+      {n} {tr(th1, n === 1 ? en1 : enMany)}
+    </span>
+  );
+  const statusPill = (status: { label: string; tone: Parameters<typeof Pill>[0]['tone'] }) => (
+    <Pill tone={status.tone} className="max-w-full sm:max-w-32 truncate">
+      {status.label}
+    </Pill>
+  );
 
-  const classRow = (c: WorkClass, g: WorkGroup) => {
-    const status = classStatus(c, th, language, now);
-    return (
-      <li key={c.assignment.id} className={`p-3 rounded-2xl ${c.published ? 'bg-slate-50 dark:bg-slate-800/50' : 'bg-white/60 dark:bg-slate-900/40 border border-dashed border-slate-300 dark:border-slate-700'}`}>
-        <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-sm font-bold text-slate-900 dark:text-white truncate max-w-full">{c.classroom.name}</span>
-            <Pill tone={status.tone}>{status.label}</Pill>
+  const classRow = (c: WorkClass, g: WorkGroup) => (
+    <li
+      key={c.assignment.id}
+      className={`px-3 py-2.5 rounded-2xl ${c.published ? 'bg-slate-50 dark:bg-slate-800/50' : 'bg-white/60 dark:bg-slate-900/40 border border-dashed border-slate-300 dark:border-slate-700'}`}
+    >
+      <WorkRowLayout
+        lead={
+          <span className="flex items-center gap-1.5 min-w-0">
+            <School className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-sm font-bold text-slate-900 dark:text-white truncate">{c.classroom.name}</span>
             {c.counts.flagged > 0 && (
-              <Pill tone="rose">
+              <Pill tone="rose" className="shrink-0">
                 <ShieldAlert className="w-3 h-3" />
                 {c.counts.flagged}
               </Pill>
             )}
-          </div>
-          {c.published && gradeButton(c.counts.pending, gradeHref(c.assignment.id), true)}
-          <ActionMenu size="sm" label={tr(`ตัวเลือกของ ${c.classroom.name}`, `Options for ${c.classroom.name}`)} items={classMenu(c, g)} />
-        </div>
-        {c.published && <ProgressLine totals={c.counts} className="mt-2" />}
-      </li>
-    );
+          </span>
+        }
+        status={statusPill(classStatus(c, th, language, now))}
+        metrics={c.published ? <MetricCells totals={c.counts} /> : hiddenNote}
+        action={c.published ? gradeButton(c.counts.pending, gradeHref(c.assignment.id)) : publishButton([c])}
+        menu={<ActionMenu size="sm" label={tr(`ตัวเลือกของ ${c.classroom.name}`, `Options for ${c.classroom.name}`)} items={classMenu(c, g)} />}
+      />
+    </li>
+  );
+
+  /** The class whose state best describes the work: the soonest deadline still open, else the first. */
+  const workStatus = (g: WorkGroup) => {
+    const open = g.classes.filter((c) => c.published && c.window.acceptsSubmissions).sort((a, b) => (a.window.deadline ?? Infinity) - (b.window.deadline ?? Infinity));
+    const scheduled = g.classes.filter((c) => c.window.isScheduled).sort((a, b) => new Date(a.assignment.publish_at || 0).getTime() - new Date(b.assignment.publish_at || 0).getTime());
+    const pick = open[0] || (g.published ? g.classes.find((c) => c.published) : scheduled[0]) || g.classes[0];
+    return classStatus(pick, th, language, now);
   };
 
   const workCard = (g: WorkGroup) => {
     const open = isWorkOpen(g.key);
     const color = prefs.colors[g.rep.id];
     const first = firstClassToGrade(g);
-    const hiddenCount = g.classes.filter((c) => !c.published).length;
-    const dueLabel = (() => {
-      if (!g.published) {
-        const drafts = g.classes.filter((c) => c.window.isDraft).length;
-        if (drafts === g.classes.length) return tr('ฉบับร่าง · นักเรียนยังไม่เห็น', 'Draft · hidden from students');
-        const soonest = Math.min(...g.classes.filter((c) => c.window.isScheduled).map((c) => new Date(c.assignment.publish_at || 0).getTime()));
-        return `${tr('ตั้งเวลาเผยแพร่', 'Scheduled')} ${shortDate(soonest, language)}`;
-      }
-      const deadlines = [...new Set(g.classes.filter((c) => c.published && c.window.deadline != null).map((c) => c.window.deadline!))].sort((a, b) => a - b);
-      if (!deadlines.length) return '';
-      const label = g.isExam ? tr('ปิดรับ', 'Closes') : tr('ส่ง', 'Due');
-      return deadlines.length === 1
-        ? `${label} ${shortDate(deadlines[0], language)}`
-        : `${label} ${shortDate(deadlines[0], language)} – ${shortDate(deadlines[deadlines.length - 1], language)}`;
-    })();
-    const openCount = g.classes.filter((c) => c.published && c.window.acceptsSubmissions).length;
+    const hidden = g.classes.filter((c) => !c.published);
     return (
       <div
         key={g.key}
@@ -585,53 +623,41 @@ export function WorksBoard() {
         } ${color ? WORK_COLOR_CLASSES[color].tint : ''}`}
       >
         {color && <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 ${WORK_COLOR_CLASSES[color].bar}`} />}
-        <div className={`p-3 sm:p-4 ${color ? 'pl-4 sm:pl-5' : ''}`}>
-          <div className="flex items-start gap-2">
-            <button
-              type="button"
-              onClick={() => toggleWork(g.key)}
-              aria-expanded={open}
-              className="min-w-0 flex-1 text-left cursor-pointer group/work"
-            >
-              <span className="flex flex-wrap items-center gap-1.5 mb-1">
-                {showCourseChip && courseLabel(g.courseId) && (
-                  <span className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-bold font-mono text-slate-600 dark:text-slate-300">{courseLabel(g.courseId)}</span>
-                )}
-                {isRetake(g.rep) && <Pill tone="amber">{tr('สอบซ่อม', 'Retake')}</Pill>}
-                {!g.published && (
-                  <Pill tone="slate">
-                    <EyeOff className="w-3 h-3" />
-                    {g.classes.every((c) => c.window.isDraft) ? tr('ฉบับร่าง', 'Draft') : tr('ตั้งเวลา', 'Scheduled')}
-                  </Pill>
-                )}
-                {g.published && hiddenCount > 0 && <Pill tone="sky">{tr(`ยังไม่เผยแพร่ ${hiddenCount} ห้อง`, `${hiddenCount} not published`)}</Pill>}
-                {g.totals.flagged > 0 && (
-                  <Pill tone="rose">
-                    <ShieldAlert className="w-3 h-3" />
-                    {g.totals.flagged}
-                  </Pill>
-                )}
-              </span>
-              <span className="block text-sm sm:text-[15px] font-black text-slate-900 dark:text-white leading-snug line-clamp-2 group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
-                {g.rep.title}
-              </span>
-              <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                <span className="inline-flex items-center gap-1 font-semibold">
-                  {g.classes.length} {tr('ห้อง', g.classes.length === 1 ? 'class' : 'classes')}
-                  <ChevronDown className={`w-3 h-3 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
+        <div className={`p-3 ${color ? 'pl-4' : ''}`}>
+          <WorkRowLayout
+            lead={
+              <button type="button" onClick={() => toggleWork(g.key)} aria-expanded={open} className="w-full min-w-0 flex items-center gap-2 text-left cursor-pointer group/work">
+                <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-black text-slate-900 dark:text-white truncate group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
+                    {g.rep.title}
+                  </span>
+                  {(showCourseChip || isRetake(g.rep) || g.totals.flagged > 0 || (g.published && hidden.length > 0)) && (
+                    <span className="mt-0.5 flex items-center gap-1.5 overflow-hidden">
+                      {showCourseChip && courseLabel(g.courseId) && (
+                        <span className="text-[10px] font-bold font-mono text-slate-500 dark:text-slate-400">{courseLabel(g.courseId)}</span>
+                      )}
+                      {isRetake(g.rep) && <Pill tone="amber">{tr('สอบซ่อม', 'Retake')}</Pill>}
+                      {g.published && hidden.length > 0 && <Pill tone="sky">{tr(`ยังไม่เผยแพร่ ${hidden.length} ห้อง`, `${hidden.length} unpublished`)}</Pill>}
+                      {g.totals.flagged > 0 && (
+                        <Pill tone="rose">
+                          <ShieldAlert className="w-3 h-3" />
+                          {g.totals.flagged}
+                        </Pill>
+                      )}
+                    </span>
+                  )}
                 </span>
-                {dueLabel && <span className="truncate">· {dueLabel}</span>}
-                {g.published && openCount > 0 && g.classes.length > 1 && <span className="hidden sm:inline">· {tr(`เปิดรับ ${openCount}`, `${openCount} open`)}</span>}
-              </span>
-            </button>
-            <div className="flex items-center gap-1 shrink-0">
-              {g.published && gradeButton(g.totals.pending, gradeHref(first.assignment.id))}
-              <ActionMenu label={tr(`ตัวเลือกของ ${g.rep.title}`, `Options for ${g.rep.title}`)} items={workMenu(g)} />
-            </div>
-          </div>
-          {g.published && <ProgressLine totals={g.totals} className="mt-3" />}
+                {countChip(g.classes.length, 'ห้อง', 'class', 'classes', <School className="w-3 h-3" />)}
+              </button>
+            }
+            status={statusPill(workStatus(g))}
+            metrics={g.published ? <MetricCells totals={g.totals} /> : hiddenNote}
+            action={g.published ? gradeButton(g.totals.pending, gradeHref(first.assignment.id)) : publishButton(hidden)}
+            menu={<ActionMenu label={tr(`ตัวเลือกของ ${g.rep.title}`, `Options for ${g.rep.title}`)} items={workMenu(g)} />}
+          />
           <Collapse open={open}>
-            <ul className="pt-3 space-y-2">{g.classes.map((c) => classRow(c, g))}</ul>
+            <ul className="pt-2.5 space-y-1.5">{g.classes.map((c) => classRow(c, g))}</ul>
           </Collapse>
         </div>
       </div>
@@ -641,57 +667,66 @@ export function WorksBoard() {
   const categoryHeader = (cat: Category, opts: { open: boolean; draggable: boolean }) => {
     const unpub = cat.key === UNPUBLISHED_CATEGORY;
     const title = unpub ? tr('ยังไม่เผยแพร่', 'Not published') : assignmentGroupLabel(cat.key, th);
+    const openCount = cat.groups.filter((g) => g.classes.some((c) => c.published && c.window.acceptsSubmissions)).length;
+    const status = unpub
+      ? null
+      : cat.totals.pending > 0
+      ? { label: tr(`รอตรวจ ${cat.totals.pending}`, `${cat.totals.pending} to grade`), tone: 'amber' as const }
+      : openCount > 0
+      ? { label: tr(`เปิดรับ ${openCount} งาน`, `${openCount} open`), tone: 'emerald' as const }
+      : { label: tr('ปิดรับทั้งหมด', 'All closed'), tone: 'slate' as const };
     return (
-      <div className="flex items-start gap-1">
-        {opts.draggable && (
+      <WorkRowLayout
+        lead={
+          <span className="flex items-center gap-1 min-w-0">
+            {opts.draggable && (
+              <button
+                type="button"
+                aria-label={tr(`ลากเพื่อจัดลำดับ ${title}`, `Drag to reorder ${title}`)}
+                title={tr('ลากเพื่อจัดลำดับ', 'Drag to reorder')}
+                onPointerDown={(e) => startDrag(cat.key, e)}
+                onPointerMove={moveDrag}
+                onPointerUp={endDrag}
+                onPointerCancel={endDrag}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    nudge(cat.key, -1);
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    nudge(cat.key, 1);
+                  }
+                }}
+                className="-ml-1.5 w-7 h-9 shrink-0 rounded-lg flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 touch-none select-none cursor-grab active:cursor-grabbing"
+              >
+                <GripVertical className="w-4 h-4" />
+              </button>
+            )}
+            <button type="button" onClick={() => toggleCategory(cat.key)} aria-expanded={opts.open} className="min-w-0 flex-1 flex items-center gap-2 text-left cursor-pointer group/cat">
+              <span className={`w-8 h-8 rounded-xl shrink-0 flex items-center justify-center ${unpub ? 'bg-slate-200/70 dark:bg-slate-800 text-slate-500' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'}`}>
+                {unpub ? <EyeOff className="w-4 h-4" /> : <Layers className="w-4 h-4" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-black text-[15px] text-slate-900 dark:text-white truncate group-hover/cat:text-amber-700 dark:group-hover/cat:text-amber-400 transition-colors">{title}</span>
+                {unpub && <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate">{tr('นักเรียนยังไม่เห็นงานในกลุ่มนี้', 'Students can’t see these yet')}</span>}
+              </span>
+              {countChip(cat.groups.length, 'งาน', 'item', 'items', <FileText className="w-3 h-3" />)}
+            </button>
+          </span>
+        }
+        status={status && statusPill(status)}
+        metrics={unpub ? undefined : <MetricCells totals={cat.totals} />}
+        menu={
           <button
             type="button"
-            aria-label={tr(`ลากเพื่อจัดลำดับ ${title}`, `Drag to reorder ${title}`)}
-            title={tr('ลากเพื่อจัดลำดับ', 'Drag to reorder')}
-            onPointerDown={(e) => startDrag(cat.key, e)}
-            onPointerMove={moveDrag}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                nudge(cat.key, -1);
-              } else if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                nudge(cat.key, 1);
-              }
-            }}
-            className="-ml-1 mt-0.5 w-8 h-9 shrink-0 rounded-lg flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 touch-none select-none cursor-grab active:cursor-grabbing"
+            onClick={() => toggleCategory(cat.key)}
+            aria-label={opts.open ? tr('ย่อ', 'Collapse') : tr('ขยาย', 'Expand')}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-slate-500 dark:text-slate-400 ring-1 ring-slate-200 dark:ring-slate-700 hover:ring-amber-400 hover:text-amber-600 transition-colors cursor-pointer"
           >
-            <GripVertical className="w-4 h-4" />
+            <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${opts.open ? 'rotate-180' : ''}`} />
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => toggleCategory(cat.key)}
-          aria-expanded={opts.open}
-          className="min-w-0 flex-1 text-left cursor-pointer group/cat"
-        >
-          <span className="flex items-center gap-2">
-            <span className={`w-8 h-8 rounded-xl shrink-0 flex items-center justify-center ${unpub ? 'bg-slate-200/70 dark:bg-slate-800 text-slate-500' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'}`}>
-              {unpub ? <EyeOff className="w-4 h-4" /> : <Layers className="w-4 h-4" />}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-2">
-                <span className="font-black text-[15px] text-slate-900 dark:text-white truncate">{title}</span>
-                <span className="shrink-0 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] font-black text-slate-600 dark:text-slate-300 tabular-nums">
-                  {cat.groups.length} {tr('งาน', cat.groups.length === 1 ? 'item' : 'items')}
-                </span>
-              </span>
-              {unpub && <span className="block text-[11px] text-slate-500 dark:text-slate-400">{tr('นักเรียนยังไม่เห็นงานในกลุ่มนี้', 'Students can’t see these yet')}</span>}
-            </span>
-            <span className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-slate-500 dark:text-slate-400 ring-1 ring-slate-200 dark:ring-slate-700 group-hover/cat:ring-amber-400 group-hover/cat:text-amber-600 transition-colors">
-              <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${opts.open ? 'rotate-180' : ''}`} />
-            </span>
-          </span>
-          {!unpub && <ProgressLine totals={cat.totals} className="mt-2.5" />}
-        </button>
-      </div>
+        }
+      />
     );
   };
 
@@ -725,7 +760,8 @@ export function WorksBoard() {
             <SemesterSelect value={semesterKey} onChange={setSemesterKey} options={termOptions} currentPeriod={currentPeriod} />
           </div>
           <CreateWorkMenu
-            from="dashboard"
+            from="works"
+            returnTo={returnTo}
             className="h-10 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 shadow-sm cursor-pointer shrink-0"
           >
             <Plus className="w-4 h-4" />
@@ -776,7 +812,7 @@ export function WorksBoard() {
                 <button
                   key={c.id}
                   type="button"
-                  onClick={() => setParam('course', c.id === 'all' ? null : c.id)}
+                  onClick={() => selectCourse(c.id)}
                   title={c.name || undefined}
                   className={`shrink-0 h-9 px-3 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
                     active ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
@@ -803,8 +839,8 @@ export function WorksBoard() {
       {/* Tab content: re-keyed so it slides in from the side of the chosen tab. */}
       <div
         key={tab}
-        className="animate-in fade-in [--tw-duration:320ms] space-y-3"
-        style={{ '--tw-enter-translate-x': `${tabDirection * 2.5}rem` } as CSSProperties}
+        className="animate-in fade-in [--tw-duration:220ms] space-y-3"
+        style={{ '--tw-enter-translate-x': `${tabDirection * 1.5}rem` } as CSSProperties}
       >
         {loading && !data ? (
           [0, 1, 2].map((i) => <div key={i} className="h-32 rounded-3xl bg-slate-100 dark:bg-slate-800/60 animate-pulse" />)
@@ -820,7 +856,7 @@ export function WorksBoard() {
                 : tr('ภาคเรียนนี้ยังไม่มีการบ้าน', 'No assignments this term')}
             </p>
             {!q && activeCourse === 'all' && (
-              <CreateWorkMenu from="dashboard" className="h-10 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer">
+              <CreateWorkMenu from="works" returnTo={returnTo} className="h-10 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer">
                 <Plus className="w-4 h-4" />
                 {tr('สร้างงาน / ข้อสอบ', 'New assignment / quiz')}
               </CreateWorkMenu>

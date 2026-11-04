@@ -935,6 +935,8 @@ function NewAssignmentContent() {
       if (copySource && !retake) {
         // Back to where the copy was started (the source classroom or the grading hub).
         router.push(returnTo || `/classrooms/${urlClassroomId || targetClassId}?tab=classwork`);
+      } else if (returnTo) {
+        router.push(returnTo);
       } else if (targetClassId) {
         router.push(`/classrooms/${targetClassId}?tab=classwork`);
       } else {

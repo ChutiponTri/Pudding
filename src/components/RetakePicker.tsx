@@ -31,6 +31,7 @@ export function RetakePicker({
   classroomId,
   sourceId,
   from,
+  returnTo,
   onNavigate,
   onClose,
 }: {
@@ -38,7 +39,8 @@ export function RetakePicker({
   classroomId?: string;
   /** Start at the students of this quiz (e.g. from its grading page). */
   sourceId?: string;
-  from?: 'classroom' | 'dashboard';
+  from?: 'classroom' | 'dashboard' | 'works';
+  returnTo?: string;
   /** Called before leaving the page (e.g. the mobile sidebar closes itself). */
   onNavigate?: () => void;
   onClose: () => void;
@@ -148,6 +150,7 @@ export function RetakePicker({
     if (!a || !picked.size) return;
     const params = new URLSearchParams({ classroomId: a.classroom_id, mode: 'quiz', retakeOf: a.id, retakeStudents: [...picked].join(',') });
     if (from) params.set('from', from);
+    if (returnTo) params.set('returnTo', returnTo);
     if (version === 'same') {
       params.set('copy', a.id);
       params.set('reuse', '1');

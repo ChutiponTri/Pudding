@@ -28,26 +28,6 @@ export function shortDate(ms: number | string | null | undefined, language: stri
   return `${date} ${time}`;
 }
 
-/** Bar (checked / waiting / not in) with "handed in" and "checked" numbers under it. */
-export function ProgressLine({ totals, className = '' }: { totals: WorkTotals; className?: string }) {
-  const { tr } = useLanguage();
-  const { handedIn, totalStudents, graded, checkable, pending, notSubmitted } = totals;
-  return (
-    <div className={`space-y-1.5 ${className}`}>
-      <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
-        <span>
-          {tr('ส่งแล้ว', 'In')} <span className="text-slate-900 dark:text-white font-black">{handedIn}</span>/{totalStudents}
-        </span>
-        <span>
-          {tr('ตรวจแล้ว', 'Checked')} <span className="text-slate-900 dark:text-white font-black">{graded}</span>/{checkable}
-        </span>
-        {pending > 0 && <span className="text-amber-700 dark:text-amber-400 font-bold">{tr(`รอตรวจ ${pending}`, `${pending} to check`)}</span>}
-      </div>
-    </div>
-  );
-}
-
 export type Tone = 'slate' | 'sky' | 'emerald' | 'amber' | 'rose';
 export const TONE_CLASSES: Record<Tone, string> = {
   slate: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
@@ -211,5 +191,67 @@ export function WorkDetailSheet({ group, courseLabel, onClose }: { group: WorkGr
         )}
       </ModalSheetBody>
     </ModalSheet>
+  );
+}
+
+/**
+ * One line of numbers shared by category, work and class rows: handed in,
+ * checked, and a short bar with the checked share as a percentage.
+ * Fixed widths from `sm` up, so the columns line up row after row.
+ */
+export function MetricCells({ totals }: { totals: WorkTotals }) {
+  const { tr } = useLanguage();
+  const { handedIn, totalStudents, graded, checkable, pending, notSubmitted } = totals;
+  const percent = totalStudents > 0 ? Math.round((graded / totalStudents) * 100) : 0;
+  const cell = (label: string, value: number, of: number, strong: boolean) => (
+    <span className="w-16 shrink-0 leading-tight">
+      <span className="block text-[10px] font-semibold text-slate-400 dark:text-slate-500 truncate">{label}</span>
+      <span className={`text-sm font-black tabular-nums ${strong ? 'text-amber-700 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>
+        {value}
+        <span className="text-[11px] font-semibold text-slate-400">/{of}</span>
+      </span>
+    </span>
+  );
+  return (
+    <>
+      {cell(tr('ส่งแล้ว', 'Handed in'), handedIn, totalStudents, false)}
+      {cell(tr('ตรวจแล้ว', 'Checked'), graded, checkable, pending > 0)}
+      <span className="flex items-center gap-2 w-28 shrink-0" title={tr(`ตรวจแล้ว ${percent}% ของนักเรียนทั้งหมด`, `${percent}% of students checked`)}>
+        <span className="flex-1 min-w-0">
+          <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />
+        </span>
+        <span className={`w-9 text-right text-xs font-black tabular-nums ${percent === 100 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-200'}`}>{percent}%</span>
+      </span>
+    </>
+  );
+}
+
+/**
+ * Row skeleton: [lead] [status] [numbers + action] [menu]. From `sm` up it is
+ * one line; on phones the numbers drop to a second line under the name.
+ */
+export function WorkRowLayout({
+  lead,
+  status,
+  metrics,
+  action,
+  menu,
+}: {
+  lead: React.ReactNode;
+  status?: React.ReactNode;
+  metrics?: React.ReactNode;
+  action?: React.ReactNode;
+  menu?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-2">
+      <div className="order-1 min-w-0 flex-1">{lead}</div>
+      <div className="order-2 shrink-0 sm:w-32 flex sm:justify-start">{status}</div>
+      <div className="order-4 sm:order-3 basis-full sm:basis-auto flex items-center gap-3 min-w-0">
+        {metrics}
+        <span className="ml-auto sm:ml-0 shrink-0">{action}</span>
+      </div>
+      <div className="order-3 sm:order-4 shrink-0 w-9 flex justify-end">{menu}</div>
+    </div>
   );
 }
