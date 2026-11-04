@@ -15,11 +15,9 @@ import {
   Submission,
   SubmissionAnswer,
   SubmissionEvent,
-  SubmissionOverrideStatus,
   User,
 } from '@/types/database';
-import { DateTimeField } from '@/components/DateTimeField';
-import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
+import { formatDateTime } from '@/lib/utils/datetime';
 import { AntiCheatingBadge } from '@/components/AntiCheatingBadge';
 import { IntegrityAuditModal } from '@/components/IntegrityAuditModal';
 import { GradingWorkspace } from '@/components/GradingWorkspace';
@@ -49,14 +47,13 @@ import {
   Check,
   Calendar,
   Layers,
-  Rocket,
   PencilLine,
   Ban,
   Undo2,
   Loader2,
   Send,
 } from 'lucide-react';
-import { ASSIGNMENT_STATUS_CLASSES, canRecordNoSubmission, draftExpiresAt, getAssignmentStatus, getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
+import { ASSIGNMENT_STATUS_CLASSES, canRecordNoSubmission, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isReopenActive, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
@@ -158,11 +155,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const [gradingAnswers, setGradingAnswers] = useState<Record<string, SubmissionAnswer>>({});
   const [isGradingWorkspaceOpen, setIsGradingWorkspaceOpen] = useState(false);
 
-  // Manual Submission Control Panel State
-  const [overrideStatus, setOverrideStatus] = useState<SubmissionOverrideStatus>('auto');
-  const [extendedDateTime, setExtendedDateTime] = useState('');
-  const [showExtendPicker, setShowExtendPicker] = useState(false);
-  const [showControls, setShowControls] = useState(false);
   const [showStatusDialog, setShowStatusDialog] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -216,9 +208,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     setQuestions(qs);
     setSubmissions(subs);
     if (asg) {
-      setOverrideStatus(asg.status_override || 'auto');
-      // Suggest the current extension, or two days from now at 23:59.
-      setExtendedDateTime(asg.extended_until || daysFromNowAt(2, 23, 59));
       if (cls) {
         setClassroom(cls);
         watchClassrooms([cls.id]);
@@ -322,72 +311,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       bc?.close();
     };
   }, [assignmentId, signalClassroomId]);
-
-  // Handle Manual Override
-  const handleSetOverride = async (newStatus: SubmissionOverrideStatus, newExtendedUntil?: string) => {
-    if (newStatus === 'extended' && new Date(newExtendedUntil || extendedDateTime).getTime() <= Date.now()) {
-      alert(language === 'th' ? 'เลือกเวลาในอนาคต' : 'Please pick a time in the future');
-      return;
-    }
-    // "Close now" also cancels the per-student edit permissions (latest action wins).
-    const reopenedCount = submissions.filter((s) => isReopenActive(s)).length;
-    if (
-      newStatus === 'force_closed' &&
-      reopenedCount > 0 &&
-      !confirm(
-        language === 'th'
-          ? `ปิดรับงานทันที?\nสิทธิ์แก้ไข/ส่งรายคน ${reopenedCount} คนจะถูกยกเลิกด้วย`
-          : `Close now?\nThis also cancels ${reopenedCount} per-student permission(s).`
-      )
-    ) {
-      return;
-    }
-    try {
-      const updated = await dataService.updateAssignmentDeadlineOverride(assignmentId, {
-        status_override: newStatus,
-        extended_until: newExtendedUntil || (newStatus === 'extended' ? extendedDateTime : undefined),
-      });
-
-      if (updated) {
-        setAssignment(updated);
-        setOverrideStatus(newStatus);
-      }
-      if (newStatus === 'force_closed' && reopenedCount > 0) {
-        setSubmissions((prev) => prev.map((s) => (s.reopened_at ? { ...s, reopened_at: null, reopen_until: null } : s)));
-      }
-
-      const name = (updated || assignment)?.title || '';
-      const kind = (updated || assignment)?.is_exam ? (language === 'th' ? 'ข้อสอบ' : 'quiz') : language === 'th' ? 'งาน' : 'assignment';
-      if (newStatus === 'force_closed') {
-        showToast(language === 'th' ? `🔒 ปิดรับ${kind} “${name}” แล้ว` : `🔒 Closed ${kind} “${name}”`);
-      } else if (newStatus === 'extended') {
-        showToast(language === 'th' ? `⏳ ขยายเวลาส่ง${kind} “${name}” แล้ว` : `⏳ Extended ${kind} “${name}”`);
-      } else {
-        showToast(language === 'th' ? `${kind} “${name}” กลับไปรับงานตามกำหนดส่งแล้ว` : `${kind} “${name}” is back on its deadline`);
-      }
-      setShowExtendPicker(false);
-    } catch (err) {
-      console.error(err);
-      alert(err instanceof Error && err.message ? err.message : 'Error updating deadline override');
-    }
-  };
-
-  // Release scheduled work now (the class reached the topic early).
-  const handlePublishNow = async () => {
-    if (!assignment) return;
-    const kind = assignment.is_exam ? (language === 'th' ? 'ข้อสอบ' : 'quiz') : language === 'th' ? 'งาน' : 'assignment';
-    if (!confirm(language === 'th'
-      ? `เผยแพร่${kind}นี้ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`
-      : `Publish this ${kind} now? Students can start right away and get a LINE notification.`)) return;
-    try {
-      const updated = await dataService.publishAssignmentNow(assignmentId);
-      setAssignment(updated || { ...assignment, publish_at: new Date().toISOString() });
-      showToast(language === 'th' ? `เผยแพร่${kind}แล้ว นักเรียนเริ่มทำได้ทันที` : `Published; students can start now`);
-    } catch (err) {
-      console.error(err);
-      alert(err instanceof Error && err.message ? err.message : 'Error publishing assignment');
-    }
-  };
 
   // Open Integrity Audit Modal
   const handleOpenAudit = async (submission: Submission) => {
@@ -776,36 +699,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     assignmentWindow?.deadline != null ? new Date(assignmentWindow.deadline).toISOString() : assignment?.due_date,
     language
   );
-  const lateUntilLabel = assignmentWindow?.lateUntil != null ? formatDateTime(new Date(assignmentWindow.lateUntil).toISOString(), language) : '';
   const th = language === 'th';
-  // What "auto" actually does right now: homework keeps taking late work, a quiz closes.
-  const autoBannerText = !assignment
-    ? ''
-    : assignmentWindow?.isDraft
-    ? th
-      ? `ฉบับร่าง — นักเรียนยังไม่เห็นจนกว่าจะเผยแพร่${draftExpiresAt(assignment) ? ` (ลบเอง ${formatDateTime(draftExpiresAt(assignment), language)} หากยังไม่เผยแพร่)` : ''}`
-      : `Draft; hidden from students until you publish it${draftExpiresAt(assignment) ? ` (deleted automatically on ${formatDateTime(draftExpiresAt(assignment), language)} unless published)` : ''}`
-    : assignmentWindow?.isScheduled && assignment.publish_at
-    ? th
-      ? `เผยแพร่ ${formatDateTime(assignment.publish_at, language)} — ก่อนหน้านั้นนักเรียนยังไม่เห็น`
-      : `Scheduled for ${formatDateTime(assignment.publish_at, language)}; hidden from students until then`
-    : assignment.is_exam
-    ? assignmentWindow?.isPastDeadline
-      ? th ? 'อัตโนมัติ: หมดเวลาแล้ว ปิดรับคำตอบ' : 'Automatic: time is up, answers are closed'
-      : th
-        ? `อัตโนมัติ: เปิดถึง ${deadlineLabel} (ส่งภายใน ${QUIZ_LATE_GRACE_MINUTES} นาทีหลังหมดเวลา = ส่งช้า)`
-        : `Automatic: open until ${deadlineLabel} (up to ${QUIZ_LATE_GRACE_MINUTES} min after = late)`
-    : assignmentWindow?.isLateClosed
-    ? th
-      ? `ปิดรับอัตโนมัติแล้ว • เปิดทั้งห้อง: ขยายเวลา • เปิดรายคน: ปุ่มสีส้ม`
-      : `Closed automatically • everyone: Extend • one student: orange button`
-    : assignmentWindow?.isPastDeadline
-    ? th
-      ? `อัตโนมัติ: เลยกำหนดแล้ว รับงานส่งช้าถึง ${lateUntilLabel} แล้วปิดเอง`
-      : `Automatic: past due, accepting late work until ${lateUntilLabel}, then closes.`
-    : th
-    ? `อัตโนมัติ: เปิดรับถึง ${deadlineLabel} แล้วรับงานส่งช้าอีก ${LATE_WINDOW_HOURS} ชม.`
-    : `Automatic: open until ${deadlineLabel}; late work accepted for ${LATE_WINDOW_HOURS}h more, then closes`;
 
   const summaryTiles: Array<{
     id: typeof statusFilter;
@@ -1066,172 +960,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
             )}
           </div>
 
-          {/* Submission window controls, folded away until needed */}
-          <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80">
-            <button
-              type="button"
-              onClick={() => setShowControls((open) => !open)}
-              aria-expanded={showControls}
-              className="w-full p-3.5 flex items-center gap-2 text-left cursor-pointer"
-            >
-              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
-                <Clock className="w-4 h-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h3 className="text-xs font-bold text-slate-900 dark:text-white">{t('submission_control.title')}</h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                  {overrideStatus === 'force_closed'
-                    ? t('submission_control.btn_force_close')
-                    : overrideStatus === 'extended'
-                    ? `${t('submission_control.btn_reopen')} · ${formatDateTime(assignment?.extended_until || extendedDateTime, language)}`
-                    : t('submission_control.mode_auto')}
-                </p>
-              </div>
-              <ChevronRight className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${showControls ? 'rotate-90' : ''}`} />
-            </button>
-
-            {showControls && (
-              <div className="px-3.5 pb-3.5 space-y-3 animate-in fade-in">
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">{t('submission_control.subtitle')}</p>
-                {!assignment?.is_exam && (
-                  <ul className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 rounded-xl bg-white/70 dark:bg-slate-900/60 ring-1 ring-slate-200 dark:ring-slate-700 px-3 py-2 space-y-0.5">
-                    <li>
-                      <b className="text-amber-700 dark:text-amber-400">{t('submission_control.btn_reopen')}</b>{' '}
-                      {th ? '— คนที่ยังไม่ส่งส่งได้ • งานที่ส่งแล้วยังแก้ไม่ได้' : '— those not handed in can • handed-in work stays locked'}
-                    </li>
-                    <li>
-                      <b className="text-orange-600 dark:text-orange-400">{th ? 'ให้แก้ไขงาน / ให้ส่งงาน' : 'Allow edit / Allow hand-in'}</b>{' '}
-                      {th ? '(ปุ่มสีส้ม) — เฉพาะคน กำหนดเวลาเป็นนาทีได้' : '(orange button) — one student, with a time limit'}
-                      {submissions.some((s) => isHandedIn(s) && isReopenActive(s, nowTick)) && (
-                        <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold">
-                          {th ? `เปิดอยู่ ${submissions.filter((s) => isHandedIn(s) && isReopenActive(s, nowTick)).length} คน` : `${submissions.filter((s) => isHandedIn(s) && isReopenActive(s, nowTick)).length} open`}
-                        </span>
-                      )}
-                    </li>
-                    <li>
-                      <b className="text-rose-600 dark:text-rose-400">{t('submission_control.btn_force_close')}</b>{' '}
-                      {th ? '— หยุดทุกคน รวมสิทธิ์รายคน' : '— stops everyone, incl. per-student'}
-                    </li>
-                  </ul>
-                )}
-              {/* Status Action Buttons */}
-              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                {/* 1. Automated */}
-                <button
-                  type="button"
-                  onClick={() => handleSetOverride('auto')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    overrideStatus === 'auto'
-                      ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 border border-emerald-500/50 shadow-xs'
-                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>{t('submission_control.mode_auto')}</span>
-                </button>
-
-                {/* 2. Force Close Immediately */}
-                <button
-                  type="button"
-                  onClick={() => handleSetOverride('force_closed')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    overrideStatus === 'force_closed'
-                      ? 'bg-rose-600 text-white shadow-xs'
-                      : 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60'
-                  }`}
-                >
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>{t('submission_control.btn_force_close')}</span>
-                </button>
-
-                {/* 3. Re-open / Extend Deadline */}
-                <button
-                  type="button"
-                  onClick={() => setShowExtendPicker(!showExtendPicker)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    overrideStatus === 'extended'
-                      ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 border border-amber-300 dark:border-amber-900/60'
-                  }`}
-                >
-                  <Unlock className="w-3.5 h-3.5" />
-                  <span>{t('submission_control.btn_reopen')}</span>
-                </button>
-              </div>
-            {/* Extend Date-Time Picker Drawer */}
-            {showExtendPicker && (
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-start gap-3 animate-in fade-in">
-                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1.5 sm:pt-3 shrink-0">
-                  <Calendar className="w-3.5 h-3.5 text-amber-500" />
-                  <span>{t('submission_control.extend_date_label')}:</span>
-                </span>
-                <DateTimeField
-                  value={extendedDateTime}
-                  onChange={setExtendedDateTime}
-                  presets="deadline"
-                  className="flex-1 min-w-0"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleSetOverride('extended', extendedDateTime)}
-                  disabled={!extendedDateTime}
-                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                >
-                  {language === 'th' ? 'บันทึกเวลาขยาย' : 'Apply Extension'}
-                </button>
-              </div>
-            )}
-
-            {/* Current Active Status Indicator Banner */}
-            <div
-              className={`px-3.5 py-2.5 rounded-xl text-xs font-medium flex flex-wrap items-start sm:items-center justify-between gap-x-3 gap-y-1.5 ${
-                overrideStatus === 'force_closed'
-                  ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-900/60'
-                  : overrideStatus === 'extended'
-                  ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 border border-amber-200 dark:border-amber-900/60'
-                  : 'bg-emerald-100/70 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-900/50'
-              }`}
-            >
-              <div className="flex items-start gap-2 min-w-0 flex-1">
-                {overrideStatus === 'force_closed' && <Lock className="w-4 h-4 text-rose-600 shrink-0" />}
-                {overrideStatus === 'extended' && <Unlock className="w-4 h-4 text-amber-600 shrink-0" />}
-                {overrideStatus === 'auto' && <Clock className="w-4 h-4 text-emerald-600 shrink-0" />}
-                <span className="min-w-0 wrap-break-word leading-relaxed">
-                  {overrideStatus === 'force_closed'
-                    ? t('submission_control.status_banner_closed')
-                    : overrideStatus === 'extended'
-                    ? t('submission_control.status_banner_extended').replace(
-                        '{time}',
-                        formatDateTime(assignment?.extended_until || extendedDateTime, language)
-                      ) + (assignment?.is_exam ? '' : th ? ` (หลังจากนั้นรับงานส่งช้าอีก ${LATE_WINDOW_HOURS} ชม.)` : ` (late work accepted for ${LATE_WINDOW_HOURS}h after that)`)
-                    : autoBannerText}
-                </span>
-              </div>
-
-              {(assignmentWindow?.isScheduled || assignmentWindow?.isDraft) && (
-                <button
-                  type="button"
-                  onClick={handlePublishNow}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-black cursor-pointer shrink-0 ml-6 sm:ml-0 shadow-xs"
-                >
-                  <Rocket className="w-3.5 h-3.5" />
-                  {th ? 'เผยแพร่ตอนนี้' : 'Publish now'}
-                </button>
-              )}
-
-              {overrideStatus !== 'auto' && (
-                <button
-                  type="button"
-                  onClick={() => handleSetOverride('auto')}
-                  className="text-[11px] underline font-bold hover:text-slate-900 dark:hover:text-white cursor-pointer shrink-0 ml-6 sm:ml-0"
-                >
-                  {t('submission_control.btn_reset_auto')}
-                </button>
-              )}
-            </div>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
@@ -1241,8 +969,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           onClose={() => setShowStatusDialog(false)}
           onSaved={(updated, action) => {
             setAssignment((prev) => (prev ? { ...prev, ...updated } : updated));
-            setOverrideStatus(updated.status_override || 'auto');
-            if (updated.extended_until) setExtendedDateTime(updated.extended_until);
             setShowStatusDialog(false);
             const kind = updated.is_exam ? (th ? 'ข้อสอบ' : 'quiz') : th ? 'งาน' : 'assignment';
             showToast(

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { ArrowLeft, Check, ChevronRight, Copy, FilePlus2, Loader2, RotateCcw, Search, ShieldAlert } from 'lucide-react';
@@ -170,7 +171,8 @@ export function RetakePicker({
   const heading =
     step === 'quiz' ? tr('เลือกข้อสอบเดิม', 'Pick the quiz') : step === 'students' ? tr('เลือกนักเรียนที่ต้องสอบซ่อม', 'Pick students') : tr('ข้อสอบซ่อม', 'Retake version');
 
-  return (
+  // On <body>: a menu inside a sticky / blurred header would otherwise clip it to that header.
+  return createPortal(
     <ModalSheet onClose={onClose} size="sm:max-w-xl" zIndex="z-95" labelledBy="retake-title">
       <ModalSheetHeader>
         <div className="flex items-center gap-3 min-w-0">
@@ -408,7 +410,8 @@ export function RetakePicker({
           )}
         </ModalSheetFooter>
       )}
-    </ModalSheet>
+    </ModalSheet>,
+    document.body
   );
 }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useUser } from '@clerk/nextjs';
 import { ArrowLeft, BookOpen, Check, ChevronRight, Copy, GraduationCap, Loader2, Search, ShieldAlert, X } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -116,7 +117,8 @@ export function ReuseWorkPicker({
   const termLabel = (c: Classroom) =>
     c.semester && c.year_ce ? formatAcademicPeriod(c.semester, c.year_ce, language) : c.academic_year || '';
 
-  return (
+  // On <body>: a menu inside a sticky / blurred header would otherwise clip it to that header.
+  return createPortal(
     <div
       className="fixed inset-0 z-95 flex items-stretch sm:items-center justify-center bg-slate-950/50 backdrop-blur-sm sm:p-6 animate-in fade-in duration-150"
       onMouseDown={(e) => {
@@ -304,7 +306,8 @@ export function ReuseWorkPicker({
           )}
         </p>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
