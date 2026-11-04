@@ -706,7 +706,7 @@ export const dataService = {
   },
 
   /** The student's own result sheet (questions without answer keys + their scored answers) in one request. */
-  async getStudentResult(submissionId: string): Promise<{ questions: Question[]; answers: Record<string, SubmissionAnswer> }> {
+  async getStudentResult(submissionId: string): Promise<{ questions: Question[]; answers: Record<string, SubmissionAnswer>; resultsHidden?: boolean }> {
     return call('getStudentResult', submissionId);
   },
 

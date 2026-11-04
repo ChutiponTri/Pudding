@@ -192,6 +192,11 @@ export interface Submission {
   reopened_at?: string | null;
   /** End of that permission; null = no time limit (until they hand in or the teacher closes the work). */
   reopen_until?: string | null;
+  /**
+   * Student copies only: choice / true-false results are held back until
+   * nobody can hand in any more (see resultRelease); the total is then empty.
+   */
+  results_hidden?: boolean;
 }
 
 export interface TeacherGradeRecord {

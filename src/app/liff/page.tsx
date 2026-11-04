@@ -50,9 +50,10 @@ import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
 import { canonicalInstitution, institutionLabel } from "@/lib/data/thaiInstitutions";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
-import { getAssignmentWindow, isAssignmentPublished } from "@/lib/utils/assignmentWindow";
+import { getAssignmentWindow, isAssignmentPublished, QUIZ_LATE_GRACE_MS } from "@/lib/utils/assignmentWindow";
 import { formatDateTime } from "@/lib/utils/datetime";
 import { SubmitConfirmSheet, type SubmitReview } from "@/components/liff/SubmitConfirmSheet";
+import { QuizTimer } from "@/components/liff/QuizTimer";
 import { canEditSubmission, isHandInAllowed, isHandedIn, isReopenActive, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { assignmentAttachments } from "@/lib/utils/referenceWork";
@@ -158,6 +159,27 @@ function formatTimeLeft(deadline: number | null): string {
   if (hours < 24) return `เหลือ ${hours} ชม. ${minutes % 60} นาที`;
   const days = Math.floor(hours / 24);
   return days < 14 ? `เหลือ ${days} วัน ${hours % 24} ชม.` : `ส่งภายใน ${new Date(deadline).toLocaleDateString("th-TH", { dateStyle: "medium" })}`;
+}
+
+/**
+ * Choice / true-false results are held back until nobody can hand in any more
+ * (the work closed for good, or everyone handed in); the server sends none yet.
+ */
+function ResultsHiddenNote({ isExam, submittedAt }: { isExam: boolean; submittedAt?: string }) {
+  return (
+    <div className="liff-rise p-5 rounded-2xl bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-200 dark:ring-violet-900 text-center space-y-1.5">
+      <p className="liff-pop text-2xl" aria-hidden>🔒</p>
+      <p className="text-base font-bold text-violet-900 dark:text-violet-200">ส่งแล้ว • รอประกาศคะแนน</p>
+      <p className="text-xs leading-relaxed text-violet-800/80 dark:text-violet-300/80">
+        คะแนนข้อปรนัยและถูก/ผิด จะแสดงเมื่อปิดรับ{isExam ? "ข้อสอบ" : "งาน"}แล้ว หรือเมื่อเพื่อนในห้องส่งครบทุกคน
+      </p>
+      {submittedAt && (
+        <p className="text-[11px] text-violet-700/70 dark:text-violet-300/70">
+          ส่งเมื่อ {new Date(submittedAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Time left on the teacher's per-student "hand in / edit" permission. */
@@ -521,6 +543,8 @@ export default function LiffStudentPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   // The hand-in review sheet (every hand-in is confirmed there first).
   const [submitReview, setSubmitReview] = useState<SubmitReview | null>(null);
+  // Quiz bell has rung while the answer sheet is open (QuizTimer): the send button urges handing in.
+  const [quizTimeUp, setQuizTimeUp] = useState(false);
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
   // Handed-in homework being edited (its answers are loaded into the form); null = new work.
   const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
@@ -1080,7 +1104,7 @@ export default function LiffStudentPage() {
         enrolledClassroomIdsRef.current = new Set(enrolled.map((c) => c.id));
         latestEnrolled = enrolled;
         syncSignals(enrolled.map((c) => c.id));
-        schedulePublishReload(home.assignments);
+        schedulePublishReload(home.assignments, studentSubmissions);
         setClassrooms(enrolled);
         // A saved home screen may already show a classroom: keep it while it still exists.
         setSelectedClassroom(active || (isInitial ? enrolled.find((c) => c.id === selectedClassroomIdRef.current) || null : null));
@@ -1151,11 +1175,26 @@ export default function LiffStudentPage() {
         }, 300);
       });
     };
-    const schedulePublishReload = (all: Assignment[]) => {
+    /**
+     * One reload at the next moment something changes by the clock alone: a
+     * scheduled publish, or work closing for good (quiz bell + the hidden
+     * grace, homework's late window), which releases choice / true-false
+     * results the server is still holding back for this student.
+     */
+    const schedulePublishReload = (all: Assignment[], subs: Submission[] = []) => {
       if (publishTimer) clearTimeout(publishTimer);
       const now = Date.now();
+      const hiddenIds = new Set(subs.filter((s) => s.results_hidden).map((s) => s.assignment_id));
+      const closings = all
+        .filter((a) => hiddenIds.has(a.id))
+        .map((a) => {
+          const w = getAssignmentWindow(a);
+          const closesAt = a.is_exam ? w.deadline : w.lateUntil;
+          return closesAt === null ? NaN : closesAt + QUIZ_LATE_GRACE_MS;
+        });
       const next = all
         .map((a) => (a.publish_at ? new Date(a.publish_at).getTime() : NaN))
+        .concat(closings)
         .filter((t) => t > now)
         .sort((a, b) => a - b)[0];
       if (next) publishTimer = setTimeout(() => reloadClassroom(), Math.min(next - now + 1000, 2 ** 31 - 1));
@@ -1264,6 +1303,7 @@ export default function LiffStudentPage() {
     }
     setStudentAnswers(edit ? answersToForm(edit.answers) : {});
     setSubmitReview(null);
+    setQuizTimeUp(false);
     setEditingSubmission(edit?.submission || null);
     setSubmissionSuccess(false);
     setSubmittedResult(null);
@@ -1652,7 +1692,7 @@ export default function LiffStudentPage() {
     // The sheet opens at once (score header from the home data); the per-question
     // details arrive in one request, or show straight away when opened before.
     // Keyed by the hand-in too, so answers from before a resubmission are never shown (or edited) as current.
-    const cacheKey = `${s.id}|${s.submitted_at || ""}|${s.reopened_at || ""}|${s.total_score ?? ""}`;
+    const cacheKey = `${s.id}|${s.submitted_at || ""}|${s.reopened_at || ""}|${s.total_score ?? ""}|${s.results_hidden ? "h" : ""}`;
     const cached = gradedDetailCacheRef.current.get(cacheKey);
     setViewingGradedSub({ assignment: a, submission: s, questions: cached?.questions ?? null, answers: cached?.answers ?? {} });
     let detail: { questions: Question[]; answers: Record<string, SubmissionAnswer> };
@@ -2555,6 +2595,8 @@ export default function LiffStudentPage() {
                                     <span className="text-base tabular-nums">{submission.total_score}</span>
                                     <span className="text-[11px] font-bold">/{assignment.total_points || 20}</span>
                                   </span>
+                                ) : isSubmitted && submission.results_hidden ? (
+                                  <Pill tone="violet">🔒 รอประกาศคะแนน</Pill>
                                 ) : isSubmitted ? (
                                   <Pill tone="sky">รอตรวจ</Pill>
                                 ) : isClosed ? (
@@ -2802,7 +2844,9 @@ export default function LiffStudentPage() {
                   {isTrackingAway ? "ส่งคำตอบและรายงานถึงคุณครูแล้ว" : "ส่งงานถึงคุณครูแล้ว"}
                 </p>
               </div>
-              {submittedResult && submittedResult.total !== null ? (
+              {submittedResult?.submission.results_hidden ? (
+                <ResultsHiddenNote isExam={!!activeAssignment?.is_exam} />
+              ) : submittedResult && submittedResult.total !== null ? (
                 <div className="liff-sheen liff-rise p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white space-y-1">
                   <p className="text-xs font-semibold text-emerald-50">คะแนนของคุณ (ตรวจอัตโนมัติ)</p>
                   <p className="text-4xl font-black tabular-nums">
@@ -3104,15 +3148,33 @@ export default function LiffStudentPage() {
               </div>
 
               {/* Submit bar */}
-              <div className={`fixed bottom-0 inset-x-0 z-40 mx-auto w-full ${FRAME} px-4 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] bg-linear-to-t from-slate-50 via-slate-50/95 to-slate-50/0 dark:from-slate-950 dark:via-slate-950/95 dark:to-slate-950/0`}>
+              <div className={`fixed bottom-0 inset-x-0 z-40 mx-auto w-full ${FRAME} px-4 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] bg-linear-to-t from-slate-50 via-slate-50/95 to-slate-50/0 dark:from-slate-950 dark:via-slate-950/95 dark:to-slate-950/0 flex flex-col`}>
+                {/* Quiz: live countdown, with toasts (never blocking) at 5 min, 1 min and the bell. */}
+                {activeAssignment.is_exam && getAssignmentWindow(activeAssignment).deadline !== null && (
+                  <QuizTimer
+                    key={activeAssignment.id}
+                    deadline={getAssignmentWindow(activeAssignment).deadline!}
+                    onPhase={(phase) => setQuizTimeUp(phase === "up")}
+                  />
+                )}
                 <button
                   type="button"
                   disabled={isSubmitting || uploadingQuestionId !== null}
                   onClick={handleSubmitTask}
-                  className="w-full h-14 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-base shadow-xl shadow-emerald-600/25 flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 cursor-pointer"
+                  className={`w-full h-14 rounded-2xl text-white font-bold text-base shadow-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 cursor-pointer ${
+                    quizTimeUp && activeAssignment.is_exam
+                      ? "bg-rose-600 hover:bg-rose-700 shadow-rose-600/30 ring-4 ring-rose-300/60 dark:ring-rose-800/60 animate-pulse"
+                      : "bg-line hover:bg-line-dark shadow-emerald-600/25"
+                  }`}
                 >
                   {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-                  <span>{isSubmitting ? "กำลังส่ง..." : editingSubmission ? "ส่งงานที่แก้ไข" : activeQuestions.length > 0 ? `ส่งคำตอบ (${answeredCount}/${activeQuestions.length})` : "ยืนยันการส่งงาน"}</span>
+                  <span>
+                    {isSubmitting
+                      ? "กำลังส่ง..."
+                      : quizTimeUp && activeAssignment.is_exam
+                      ? `หมดเวลา • ส่งคำตอบเลย (${answeredCount}/${activeQuestions.length})`
+                      : editingSubmission ? "ส่งงานที่แก้ไข" : activeQuestions.length > 0 ? `ส่งคำตอบ (${answeredCount}/${activeQuestions.length})` : "ยืนยันการส่งงาน"}
+                  </span>
                 </button>
               </div>
             </>
@@ -3487,6 +3549,8 @@ export default function LiffStudentPage() {
                 คิดเป็น {Math.round(((viewingGradedSub.submission.total_score || 0) / (viewingGradedSub.assignment.total_points || 20)) * 100)}%
               </p>
             </div>
+          ) : viewingGradedSub.submission.results_hidden ? (
+            <ResultsHiddenNote isExam={!!viewingGradedSub.assignment.is_exam} submittedAt={viewingGradedSub.submission.submitted_at} />
           ) : (
             <div className="p-5 rounded-2xl bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-200 dark:ring-sky-900 text-center space-y-1">
               <p className="text-base font-bold text-sky-800 dark:text-sky-200">ส่งงานแล้ว • รอคุณครูตรวจ</p>
@@ -3533,6 +3597,8 @@ export default function LiffStudentPage() {
                       <span className="text-sm font-bold text-line shrink-0 tabular-nums">
                         {score}/{q.max_score}
                       </span>
+                    ) : viewingGradedSub.submission.results_hidden && (q.type === "multiple_choice" || q.type === "true_false") ? (
+                      <span className="shrink-0"><Pill tone="violet">🔒 รอประกาศ</Pill></span>
                     ) : (
                       <span className="shrink-0"><Pill tone="sky">รอตรวจ</Pill></span>
                     )}

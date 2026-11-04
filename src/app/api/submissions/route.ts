@@ -10,7 +10,8 @@ import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStuden
 import { attachFiles, discardDrafts, keysFromUrls, removeFiles } from '@/lib/storage/files';
 import { hasAnyAnswer, isHandedIn, isReopenActive, REOPEN_GRACE_MS } from '@/lib/utils/gradingStatus';
 import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
-import type { Classroom, Question } from '@/types/database';
+import { maskSubmission, resultRelease, resultReleaseForSubmissions } from '@/lib/server/resultRelease';
+import type { Classroom, Question, Submission } from '@/types/database';
 
 /** What the student's browser sends; the body is untrusted, so only these fields are read. */
 type IncomingAnswer = { question_id: string; answer_text?: string; file_url?: string };
@@ -74,7 +75,12 @@ export async function GET(request: NextRequest) {
     console.error('[GET /api/submissions] query failed:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  const submissions = (data || []) as SubmissionRow[];
+  let submissions = (data || []) as SubmissionRow[];
+  if (actor.kind === 'student' && submissions.length > 0) {
+    // Choice / true-false results stay hidden until nobody can hand in any more.
+    const release = await resultReleaseForSubmissions(supabase, submissions as unknown as Array<Pick<Submission, 'assignment_id' | 'status'>>);
+    submissions = submissions.map((sub) => (release.hidden.has(sub.assignment_id as string) ? (maskSubmission(sub as Partial<Submission>) as unknown as SubmissionRow) : sub));
+  }
   if (!withStudents || submissions.length === 0) {
     return NextResponse.json({ submissions });
   }
@@ -491,6 +497,18 @@ export async function POST(request: NextRequest) {
     after(() => discardDrafts(supabase, assignment_id, actor.keys, fileUrls, proxyStudent ? onBehalfTag(proxy_student_number) : ''));
     // Teacher pages with this classroom open refresh their counts now instead of polling.
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id }));
+    // Choice / true-false results are only shown once nobody can hand in any
+    // more (this hand-in may have been the last one). Read after the write.
+    const release = await resultRelease(supabase, [assignment], [{ assignment_id, status: submissionRecord.status as Submission['status'] }]);
+    if (release.hidden.size > 0) {
+      return NextResponse.json({
+        success: true,
+        submission: {
+          ...maskSubmission(submissionRecord as unknown as Submission),
+          answers: scoredAnswers.map((ans) => (release.objectiveQuestionIds.has(ans.question_id) ? { ...ans, teacher_score: undefined } : ans)),
+        },
+      });
+    }
     return NextResponse.json({ success: true, submission: submissionRecord });
   } catch (error) {
     console.error('[POST /api/submissions] Fatal error:', error);

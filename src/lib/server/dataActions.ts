@@ -32,6 +32,7 @@ import {
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { DRAFT_RETENTION_MS, canRecordNoSubmission, getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { isHandedIn } from '@/lib/utils/gradingStatus';
+import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions, type ResultRelease } from '@/lib/server/resultRelease';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
 import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, zeroFillNoSubmissions } from '@/lib/server/grading';
 import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
@@ -1192,7 +1193,10 @@ export const dataActions = {
     );
     const failed = results.find((r) => r.error);
     if (failed?.error) throw toDatabaseError(failed.error, 'submissions');
-    return { assignments, submissions: results.flatMap((r) => r.data || []) };
+    const own = results.flatMap((r) => (r.data || []) as Submission[]);
+    // Choice / true-false results stay hidden until nobody can hand in any more.
+    const release = await resultRelease(supabase, assignments, own);
+    return { assignments, submissions: own.map((sub) => (release.hidden.has(sub.assignment_id) ? maskSubmission(sub) : sub)) };
   },
 
   /**
@@ -1281,18 +1285,25 @@ export const dataActions = {
     ]);
     rows.push(...extra);
     rows.sort(byCreatedDesc);
-    const hydrated = await hydrateClassroomsForStudent(supabase, rows, me.keys, ownLinks, ownUsers);
     // Work of a classroom id that no longer exists is dropped with it.
     const existing = new Set(rows.map((c) => c.id));
     const visibleAssignments = assignments.filter((a) => existing.has(a.classroom_id));
     const assignmentIds = new Set(visibleAssignments.map((a) => a.id));
+    const ownRows = ((submissionResult.data || []) as Array<Submission & { submission_answers?: SubmissionAnswer[] }>).filter((row) =>
+      assignmentIds.has(row.assignment_id)
+    );
+    // Rosters and the "may the results show yet" check load side by side.
+    const [hydrated, release] = await Promise.all([
+      hydrateClassroomsForStudent(supabase, rows, me.keys, ownLinks, ownUsers),
+      resultRelease(supabase, visibleAssignments, ownRows),
+    ]);
     const submissions: Submission[] = [];
     const answers: SubmissionAnswer[] = [];
-    for (const row of (submissionResult.data || []) as Array<Submission & { submission_answers?: SubmissionAnswer[] }>) {
-      if (!assignmentIds.has(row.assignment_id)) continue;
+    for (const row of ownRows) {
       const { submission_answers: rowAnswers, ...submission } = row;
-      submissions.push(submission as Submission);
-      answers.push(...(rowAnswers || []));
+      const hidden = release.hidden.has(row.assignment_id);
+      submissions.push(hidden ? maskSubmission(submission as Submission) : (submission as Submission));
+      answers.push(...(rowAnswers || []).map((ans) => (hidden ? maskAnswer(ans, release.objectiveQuestionIds) : ans)));
     }
     return { classrooms: hydrated.map((c) => classroomForStudent(c, me)), assignments: visibleAssignments, submissions, answers };
   },
@@ -1629,12 +1640,19 @@ export const dataActions = {
   /** A submission's answers: for its teachers, or for the student who wrote it. */
   async getSubmissionAnswers({ supabase, actor }: Ctx, submissionId: string) {
     await requireSubmissionAccess(supabase, actor, submissionId);
-    const { data, error } = await supabase.from('submission_answers').select('*').eq('submission_id', submissionId);
+    const isStudent = actor?.kind === 'student';
+    const [{ data, error }, release] = await Promise.all([
+      supabase.from('submission_answers').select('*').eq('submission_id', submissionId),
+      isStudent ? releaseOfSubmissionIds(supabase, [submissionId]) : Promise.resolve(null),
+    ]);
     if (error) throw toDatabaseError(error, 'submission_answers');
     const mapped: Record<string, SubmissionAnswer> = {};
     for (const ans of (data || []) as SubmissionAnswer[]) {
-      // Students see their own scores and comments, not other teachers' or researchers' grades.
-      mapped[ans.question_id] = actor?.kind === 'student' ? { ...ans, co_grades: undefined, research_grades: undefined } : ans;
+      // Students see their own scores and comments, not other teachers' or researchers' grades
+      // (and no choice / true-false results while they are held back).
+      mapped[ans.question_id] = isStudent
+        ? maskAnswer({ ...ans, co_grades: undefined, research_grades: undefined }, release!.objectiveQuestionIds)
+        : ans;
     }
     return mapped;
   },
@@ -1656,12 +1674,16 @@ export const dataActions = {
       ids = (subs || []).filter((s) => okAssignments.has(s.assignment_id)).map((s) => s.id);
     }
     if (ids.length === 0) return [];
-    const results = await Promise.all(
-      chunk(ids).map((part) =>
-        supabase.from('submission_answers').select('id, submission_id, question_id, teacher_score, teacher_comment, graded_at').in('submission_id', part)
-      )
-    );
-    return results.flatMap((r) => (r.data || []) as SubmissionAnswer[]);
+    const [results, release] = await Promise.all([
+      Promise.all(
+        chunk(ids).map((part) =>
+          supabase.from('submission_answers').select('id, submission_id, question_id, teacher_score, teacher_comment, graded_at').in('submission_id', part)
+        )
+      ),
+      actor.kind === 'student' ? releaseOfSubmissionIds(supabase, ids) : Promise.resolve(null),
+    ]);
+    const rows = results.flatMap((r) => (r.data || []) as SubmissionAnswer[]);
+    return release ? rows.map((ans) => maskAnswer(ans, release.objectiveQuestionIds)) : rows;
   },
 
   /**
@@ -1673,13 +1695,15 @@ export const dataActions = {
     const me = requireStudent(actor);
     const { data, error } = await supabase
       .from('submissions')
-      .select('id, submission_answers(*), assignment:assignments(*, questions(*), classroom:classrooms(id, teacher_id, teachers, students, pending_students))')
+      .select('id, assignment_id, status, submission_answers(*), assignment:assignments(*, questions(*), classroom:classrooms(id, teacher_id, teachers, students, pending_students))')
       .eq('id', submissionId)
       .in('student_id', me.keys)
       .maybeSingle();
     if (error) throw toDatabaseError(error, 'submissions');
     if (!data) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
     type Row = {
+      assignment_id: string;
+      status: Submission['status'];
       submission_answers: SubmissionAnswer[] | null;
       assignment: (Assignment & { questions?: Question[] | null; classroom?: Classroom | null }) | null;
     };
@@ -1688,10 +1712,14 @@ export const dataActions = {
     // Same rule as getAssignmentById: published work of a classroom the student belongs to.
     const role = classroom ? await classroomRole(supabase, actor, classroom) : null;
     if (!role || !isAssignmentPublished(assignment as Assignment)) throw FORBIDDEN();
+    // Choice / true-false results stay hidden until nobody can hand in any more.
+    const release = await resultRelease(supabase, [assignment as Assignment], [{ assignment_id: row.assignment_id, status: row.status }]);
     const answers: Record<string, SubmissionAnswer> = {};
     // Students see their own scores and comments, not other teachers' or researchers' grades.
-    for (const ans of row.submission_answers || []) answers[ans.question_id] = { ...ans, co_grades: undefined, research_grades: undefined };
-    return { questions: questionsForStudent(questions || []), answers };
+    for (const ans of row.submission_answers || []) {
+      answers[ans.question_id] = maskAnswer({ ...ans, co_grades: undefined, research_grades: undefined }, release.objectiveQuestionIds);
+    }
+    return { questions: questionsForStudent(questions || []), answers, resultsHidden: release.hidden.size > 0 };
   },
 
   /** Saves one grade; see saveTeacherGrades. */
@@ -2143,6 +2171,13 @@ async function requireTeacherOfSubmission(supabase: Supabase, actor: Actor | nul
   const found = await submissionWithClassroom(supabase, submissionId);
   if (!isTeacherOf(found.classroom, me.userId)) throw FORBIDDEN();
   return found;
+}
+
+/** Result release for submissions given by id (a student's own; access is checked by the caller). */
+async function releaseOfSubmissionIds(supabase: Supabase, ids: string[]): Promise<ResultRelease> {
+  const rows = (await Promise.all(chunk(ids).map((part) => supabase.from('submissions').select('assignment_id, status').in('id', part))))
+    .flatMap((r) => (r.data || []) as Array<Pick<Submission, 'assignment_id' | 'status'>>);
+  return resultReleaseForSubmissions(supabase, rows);
 }
 
 async function requireSubmissionAccess(supabase: Supabase, actor: Actor | null, submissionId: string) {
