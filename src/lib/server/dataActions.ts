@@ -1890,28 +1890,41 @@ export const dataActions = {
   /**
    * "Allow edit" for every student who handed in this homework (e.g. after the
    * teacher fixed a wrongly made assignment), or takes it back from everyone.
-   * Same rules as setSubmissionReopened. Returns how many rows changed.
+   * Same rules and time limit (`until`, ISO or null) as setSubmissionReopened.
+   * Opening covers everyone whose work is locked (never allowed, or their time
+   * ran out); students with a permission still running keep their own.
+   * Returns the rows changed and the values written, so the page can show
+   * them without refetching.
    */
-  async setAllSubmissionsReopened({ supabase, actor }: Ctx, assignmentId: string, open: boolean) {
+  async setAllSubmissionsReopened({ supabase, actor }: Ctx, assignmentId: string, open: boolean, until?: unknown) {
     const me = requireTeacher(actor);
     const { assignment, classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
     const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
     if (role === 'researcher') throw FORBIDDEN();
     if (assignment.is_exam) throw new HttpError(400, 'ข้อสอบส่งซ้ำหรือแก้ไขไม่ได้');
-    // Everyone who handed in, with no time limit. Students already allowed keep their own limit.
-    let query = supabase
-      .from('submissions')
-      .update({ reopened_at: open ? new Date().toISOString() : null })
-      .eq('assignment_id', assignmentId)
-      .in('status', ['submitted', 'late']);
-    query = open ? query.is('reopened_at', null) : query.not('reopened_at', 'is', null);
-    const { data, error } = await query.select('id');
+    const reopenUntil = open ? parseReopenUntil(until) : null;
+    const reopenedAt = open ? new Date().toISOString() : null;
+    const run = (withLimit: boolean) => {
+      let query = supabase
+        .from('submissions')
+        .update(withLimit ? { reopened_at: reopenedAt, reopen_until: reopenUntil } : { reopened_at: reopenedAt })
+        .eq('assignment_id', assignmentId)
+        .in('status', ['submitted', 'late']);
+      if (!open) query = query.not('reopened_at', 'is', null);
+      else if (withLimit) query = query.or(`reopened_at.is.null,reopen_until.lt."${reopenedAt}"`);
+      else query = query.is('reopened_at', null);
+      return query.select('id');
+    };
+    let { data, error } = await run(true);
+    // Databases without reopen_until: only a permission with no limit can be stored.
+    if (error?.message.includes('reopen_until') && !reopenUntil) ({ data, error } = await run(false));
     if (error) {
-      if (error.message.includes('reopened_at')) throw new HttpError(503, REOPEN_MIGRATION_MESSAGE);
+      if (/reopen(ed_at|_until)/.test(error.message)) throw new HttpError(503, REOPEN_MIGRATION_MESSAGE);
       throw toDatabaseError(error, 'submissions');
     }
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
-    return { changed: (data || []).length };
+    const ids = (data || []).map((row) => row.id as string);
+    return { changed: ids.length, ids, reopened_at: reopenedAt, reopen_until: reopenUntil };
   },
 
   /**

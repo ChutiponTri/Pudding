@@ -486,7 +486,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // how long; with more than a day left it is granted straight away.
   type ReopenTarget = { key: string; sub: Submission | null; rosterId?: string; name: string };
   const [reopeningKey, setReopeningKey] = useState<string | null>(null);
-  const [reopenDialog, setReopenDialog] = useState<(ReopenTarget & { kind: 'edit' | 'handin'; minutes: number }) | null>(null);
+  const [reopenDialog, setReopenDialog] = useState<(ReopenTarget & { kind: 'edit' | 'handin'; minutes: number; count?: number }) | null>(null);
   // Re-renders now and then so a time-limited permission drops off when it runs out.
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
@@ -562,26 +562,44 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       setReopeningKey(null);
     }
   };
-  // Homework only: let everyone who handed in edit again (e.g. after fixing a wrongly made assignment), or undo that.
+  // Homework only: let everyone who handed in edit again (e.g. after fixing a
+  // wrongly made assignment), or undo that. Same time rule as one student:
+  // close to or after the deadline the teacher picks the minutes.
   const [bulkReopening, setBulkReopening] = useState(false);
-  const handleReopenAll = async (open: boolean, count: number) => {
-    if (!confirm(open
-      ? th
-        ? `ให้นักเรียนที่ส่งแล้ว ${count} คนแก้ไขงานได้?\nนักเรียนแก้และส่งใหม่ได้แม้ปิดรับแล้ว • เมื่อส่งใหม่ คะแนนและความเห็นเดิมของคนนั้นจะถูกล้างเพื่อตรวจใหม่`
-        : `Let ${count} students who handed in edit their work?\nThey can hand in again even if it is closed • handing in again clears that student's score and comments for regrading.`
-      : th
-      ? `ยกเลิกการให้แก้ไขงานของนักเรียน ${count} คน?`
-      : `Stop letting ${count} students edit their work?`)) return;
+  const saveReopenAll = async (open: boolean, minutes: number | null) => {
+    const until = open && minutes ? minutesFromNow(minutes) : null;
     setBulkReopening(true);
     try {
-      const { changed } = await dataService.setAllSubmissionsReopened(assignmentId, open);
-      await refreshSubmissions();
-      showToast(open ? (th ? `เปิดให้แก้ไขแล้ว ${changed} คน` : `${changed} students can edit now`) : th ? `ปิดการแก้ไขแล้ว ${changed} คน` : `Editing closed for ${changed}`);
+      const result = await dataService.setAllSubmissionsReopened(assignmentId, open, until);
+      const changed = new Set(result.ids || []);
+      applySubmissionChange((prev) =>
+        prev.map((s) => (changed.has(s.id) ? { ...s, reopened_at: result.reopened_at, reopen_until: result.reopen_until } : s))
+      );
+      setReopenDialog(null);
+      const when = until ? ` · ${th ? 'ถึง' : 'until'} ${formatDateTime(until, language)}` : '';
+      showToast(open
+        ? (th ? `เปิดให้แก้ไขแล้ว ${result.changed} คน` : `${result.changed} students can edit now`) + when
+        : th ? `ปิดการแก้ไขแล้ว ${result.changed} คน` : `Editing closed for ${result.changed}`);
     } catch (err) {
       alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
     } finally {
       setBulkReopening(false);
     }
+  };
+  const handleReopenAll = (open: boolean, count: number) => {
+    if (!open) {
+      if (confirm(th ? `ยกเลิกการให้แก้ไขงานของนักเรียน ${count} คน?` : `Stop letting ${count} students edit their work?`)) void saveReopenAll(false, null);
+      return;
+    }
+    if (!assignment) return;
+    const suggestion = reopenTimeSuggestion(getAssignmentWindow(assignment));
+    if (!suggestion.needsTime) {
+      if (confirm(th
+        ? `ให้นักเรียนที่ส่งแล้ว ${count} คนแก้ไขงานได้?\nเมื่อส่งใหม่ คะแนนและความเห็นเดิมของคนนั้นจะถูกล้างเพื่อตรวจใหม่`
+        : `Let ${count} students who handed in edit their work?\nHanding in again clears that student's score and comments for regrading.`)) void saveReopenAll(true, null);
+      return;
+    }
+    setReopenDialog({ key: 'bulk', sub: null, name: '', kind: 'edit', minutes: suggestion.minutes, count });
   };
 
   const canReopen = () => !!grader && grader.role !== 'researcher';
@@ -1046,9 +1064,13 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 onClick={() => handleReopenAll(!allReopened, allReopened ? handedInTotal : lockedCount)}
                 disabled={bulkReopening}
                 title={th ? 'งานที่ส่งแล้วนักเรียนแก้ไม่ได้ จนกว่าครูจะเปิดให้แก้' : 'Handed-in work is locked until you allow edits'}
-                className="w-full sm:w-auto px-3 py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+                className={`w-full sm:w-auto h-10 sm:h-9 px-3.5 rounded-xl text-xs font-black cursor-pointer active:scale-[0.98] transition-all disabled:opacity-50 inline-flex items-center justify-center gap-1.5 ${
+                  allReopened
+                    ? 'bg-white dark:bg-slate-900 text-orange-700 dark:text-orange-300 ring-2 ring-orange-300 dark:ring-orange-800 hover:bg-orange-50 dark:hover:bg-orange-950/40'
+                    : 'bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25'
+                }`}
               >
-                <PencilLine className="w-3.5 h-3.5" />
+                {bulkReopening ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PencilLine className="w-3.5 h-3.5" />}
                 {allReopened
                   ? th ? `ยกเลิกการให้แก้ไขทั้งหมด (${handedInTotal})` : `Stop all edits (${handedInTotal})`
                   : th ? `ให้ทุกคนที่ส่งแล้วแก้ไขงาน (${lockedCount})` : `Allow everyone who handed in to edit (${lockedCount})`}
@@ -1099,7 +1121,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   <ul className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 rounded-xl bg-white/70 dark:bg-slate-900/60 ring-1 ring-slate-200 dark:ring-slate-700 px-3 py-2 space-y-0.5">
                     <li>
                       <b className="text-amber-700 dark:text-amber-400">{t('submission_control.btn_reopen')}</b>{' '}
-                      {th ? '— ทั้งห้องส่งได้ และแก้งานที่ครูยังไม่ได้ตรวจได้' : '— everyone can hand in, and edit work not graded yet'}
+                      {th ? '— ทั้งห้องที่ยังไม่ส่งส่งได้ถึงเวลาใหม่ • งานที่ส่งแล้วยังล็อกอยู่ (แก้ไม่ได้)' : '— anyone who has not handed in can until the new time • handed-in work stays locked (no edits)'}
                     </li>
                     <li>
                       <b className="text-orange-600 dark:text-orange-400">{th ? 'ให้แก้ไขงาน / ให้ส่งงาน' : 'Allow edit / Allow hand-in'}</b>{' '}
@@ -1675,11 +1697,14 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       {reopenDialog && (
         <ReopenTimeDialog
           studentName={reopenDialog.name}
+          count={reopenDialog.count}
           kind={reopenDialog.kind}
           deadline={assignmentWindow?.deadline ?? null}
           defaultMinutes={reopenDialog.minutes}
-          busy={reopeningKey === reopenDialog.key}
-          onConfirm={(minutes) => saveReopen(reopenDialog, reopenDialog.kind, minutes)}
+          busy={reopenDialog.count != null ? bulkReopening : reopeningKey === reopenDialog.key}
+          onConfirm={(minutes) =>
+            reopenDialog.count != null ? saveReopenAll(true, minutes) : saveReopen(reopenDialog, reopenDialog.kind, minutes)
+          }
           onClose={() => setReopenDialog(null)}
         />
       )}

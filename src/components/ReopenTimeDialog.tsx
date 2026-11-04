@@ -45,11 +45,13 @@ function formatMinutes(minutes: number, th: boolean) {
 }
 
 /**
- * Teacher picks how long one student may edit / hand in, close to or after
- * the deadline. Only this student is affected; the class deadline stays.
+ * Teacher picks how long one student (or, with `count`, everyone whose
+ * handed-in work is locked) may edit / hand in, close to or after the
+ * deadline. The class deadline stays.
  */
 export function ReopenTimeDialog({
   studentName,
+  count,
   kind,
   deadline,
   defaultMinutes,
@@ -58,6 +60,8 @@ export function ReopenTimeDialog({
   onClose,
 }: {
   studentName: string;
+  /** Set for "allow everyone": how many students it covers (studentName is then ignored). */
+  count?: number;
   /** edit: handed-in homework; handin: nothing handed in yet (or recorded as missing). */
   kind: 'edit' | 'handin';
   deadline: number | null;
@@ -85,9 +89,10 @@ export function ReopenTimeDialog({
   };
   const left = deadline !== null ? deadline - now : null;
 
+  const who = count != null ? (th ? `ทุกคนที่ส่งแล้ว (${count} คน)` : `all ${count} who handed in`) : studentName;
   const title = kind === 'edit'
-    ? th ? `ให้ ${studentName} แก้ไขงาน` : `Let ${studentName} edit`
-    : th ? `ให้ ${studentName} ส่งงาน` : `Let ${studentName} hand in`;
+    ? th ? `ให้${count != null ? '' : ' '}${who} แก้ไขงาน` : `Let ${who} edit`
+    : th ? `ให้ ${who} ส่งงาน` : `Let ${who} hand in`;
 
   return (
     <ModalSheet onClose={() => !busy && onClose()} size="sm:max-w-md" zIndex="z-[60]" labelledBy="reopen-time-title">
@@ -99,7 +104,9 @@ export function ReopenTimeDialog({
           <div className="min-w-0">
             <h2 id="reopen-time-title" className="text-sm sm:text-base font-black text-slate-900 dark:text-white truncate">{title}</h2>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              {th ? 'เฉพาะนักเรียนคนนี้ • กำหนดส่งของทั้งห้องไม่เปลี่ยน' : 'This student only • the class deadline stays'}
+              {count != null
+                ? th ? 'ทุกคนที่งานยังล็อกอยู่ ได้เวลาเท่ากัน • กำหนดส่งของทั้งห้องไม่เปลี่ยน' : 'Everyone whose work is locked gets the same time • the class deadline stays'
+                : th ? 'เฉพาะนักเรียนคนนี้ • กำหนดส่งของทั้งห้องไม่เปลี่ยน' : 'This student only • the class deadline stays'}
             </p>
           </div>
         </div>
@@ -141,7 +148,7 @@ export function ReopenTimeDialog({
 
           <div className="space-y-2">
             <label htmlFor="reopen-minutes" className="text-xs font-bold text-slate-700 dark:text-slate-200">
-              {th ? 'ให้เวลานักเรียนคนนี้ (นาที)' : 'Time for this student (minutes)'}
+              {count != null ? (th ? 'ให้เวลาแก้ไข (นาที)' : 'Time to edit (minutes)') : th ? 'ให้เวลานักเรียนคนนี้ (นาที)' : 'Time for this student (minutes)'}
             </label>
             <div className="flex items-stretch gap-2">
               <button
@@ -231,7 +238,9 @@ export function ReopenTimeDialog({
             className="h-11 px-5 rounded-2xl text-sm font-black bg-orange-500 hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 inline-flex items-center gap-2 cursor-pointer active:scale-[0.98] transition-transform disabled:opacity-50"
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : kind === 'edit' ? <PencilLine className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-            {kind === 'edit' ? (th ? 'เปิดให้แก้ไข' : 'Allow edit') : th ? 'เปิดให้ส่ง' : 'Allow hand-in'}
+            {kind === 'edit'
+              ? count != null ? (th ? `เปิดให้แก้ไข ${count} คน` : `Allow ${count} to edit`) : th ? 'เปิดให้แก้ไข' : 'Allow edit'
+              : th ? 'เปิดให้ส่ง' : 'Allow hand-in'}
           </button>
         </ModalSheetFooter>
       </form>

@@ -73,8 +73,8 @@ export function AssignmentStatusDialog({
       icon: Unlock,
       title: tr('ขยายเวลาส่ง', 'Extend deadline'),
       detail: assignment.is_exam ? tr('เปิดรับคำตอบถึงเวลาใหม่ที่เลือก', 'Accept answers until the new time you pick') : tr(
-            `ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก (รับงานส่งช้าต่ออีก ${LATE_WINDOW_HOURS} ชม.) — เปิดรับงานที่ปิดไปแล้วให้ทั้งห้อง • ถ้าต้องการให้แก้เฉพาะบางคน ใช้ "ให้แก้ไขงาน" ในหน้าตรวจงานแทน`,
-            `Move the due date to the new time (late work accepted for ${LATE_WINDOW_HOURS} more hours) — reopens closed work for everyone • to let only some students fix their work, use "Allow edit" on the grading page`
+            `ย้ายกำหนดส่งไปเวลาใหม่ที่เลือก (รับงานส่งช้าต่ออีก ${LATE_WINDOW_HOURS} ชม.) — คนที่ยังไม่ส่งส่งได้ • งานที่ส่งแล้วยังแก้ไม่ได้ ถ้าต้องการให้แก้ ใช้ "ให้แก้ไขงาน" ในหน้าตรวจงาน`,
+            `Move the due date to the new time (late work accepted for ${LATE_WINDOW_HOURS} more hours) — students who have not handed in can • handed-in work stays locked; to let students fix it, use "Allow edit" on the grading page`
           ),
       tone: 'amber',
     },
