@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft,
+  BookOpen,
   Calendar,
   Check,
   ChevronDown,
@@ -15,8 +16,6 @@ import {
   Eye,
   EyeOff,
   FileText,
-  GripVertical,
-  Layers,
   Lock,
   MessageCircle,
   Palette,
@@ -41,35 +40,27 @@ import { dataService } from '@/lib/supabase/dataService';
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
-import { assignmentGroupLabel } from '@/components/AssignmentGroupHeader';
 import { ActionMenu, ActionMenuRow, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { DueDateDialog, MetricCells, Pill, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
-import { acceptStatus, BulkStatusDialog, combinedStatus, StatusButton } from '@/components/works/StatusBits';
+import { acceptStatus, BulkStatusDialog, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { isRetake } from '@/lib/utils/retake';
 import {
-  addTotals,
   buildWorkGroups,
-  EMPTY_TOTALS,
-  firstClassToGrade,
-  UNPUBLISHED_CATEGORY,
   type WorkClass,
   type WorkGroup,
-  type WorkTotals,
 } from '@/lib/utils/workGroups';
 
 type Tab = 'homework' | 'quiz';
 type LocalEdits = { base: TeacherDashboardData | null; updated: Record<string, Partial<Assignment>>; deleted: string[] };
-type Category = { key: string; groups: WorkGroup[]; totals: WorkTotals };
 
 const NO_EDITS: LocalEdits = { base: null, updated: {}, deleted: [] };
 
 /**
- * Every assignment and quiz of the term, across classrooms: categories (which
- * the teacher can drag into order) → work (one card for all its classes) →
- * each class. Uses the dashboard's session-cached data, so opening it from the
+ * Every assignment and quiz of the term, across classrooms: one card per work
+ * (all its classes together), unfolding to each class. Uses the dashboard's session-cached data, so opening it from the
  * dashboard is instant and it refetches by itself after any change.
  */
 export function WorksBoard() {
@@ -106,8 +97,7 @@ export function WorksBoard() {
   };
   const [setTabGroup, tabIndicator] = useSlidingIndicator(tab);
 
-  // Folds: categories start open; works start closed (their classes show on tap).
-  const { isOpen: isCategoryOpen, toggle: toggleCategory } = useCollapsedGroups('works:categories');
+  // Works start closed; their classes show on tap (remembered in this browser).
   const { isOpen: isWorkClosed, toggle: toggleWork } = useCollapsedGroups('works:expanded');
   const isWorkOpen = (key: string) => !isWorkClosed(key);
 
@@ -189,151 +179,28 @@ export function WorksBoard() {
     [allGroups, matches]
   );
 
-  // Categories of this tab, in the teacher's order (new ones after, most recent work first).
   // Both tabs are worked out together, so switching tabs only swaps what is shown.
+  // Latest deadline first; work no class can see yet goes in its own list below.
   const byTab = useMemo(() => {
     const build = (isExam: boolean) => {
-    const groups = allGroups.filter((g) => g.isExam === isExam && matches(g));
-    const byCat = new Map<string, WorkGroup[]>();
-    const hidden: WorkGroup[] = [];
-    for (const g of groups) {
-      if (!g.published) {
-        hidden.push(g);
-        continue;
-      }
-      const list = byCat.get(g.category);
-      if (list) list.push(g);
-      else byCat.set(g.category, [g]);
-    }
-    const sortWork = (a: WorkGroup, b: WorkGroup) => b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th');
-    const recent = (list: WorkGroup[]) => Math.max(...list.map((g) => new Date(g.rep.created_at || 0).getTime()));
-    const orderIndex = new Map(prefs.order.map((k, i) => [k, i]));
-    const cats: Category[] = [...byCat.entries()]
-      .sort(([ka, a], [kb, b]) => {
-        const ia = orderIndex.get(ka);
-        const ib = orderIndex.get(kb);
-        if (ia != null && ib != null) return ia - ib;
-        if (ia != null) return -1;
-        if (ib != null) return 1;
-        return recent(b) - recent(a);
-      })
-      .map(([key, list]) => ({ key, groups: [...list].sort(sortWork), totals: list.reduce((t, g) => addTotals(t, g.totals), EMPTY_TOTALS) }));
-    hidden.sort((a, b) => new Date(b.rep.created_at || 0).getTime() - new Date(a.rep.created_at || 0).getTime());
-    return { categories: cats, unpublished: hidden };
+      const groups = allGroups.filter((g) => g.isExam === isExam && matches(g));
+      const byDeadline = (a: WorkGroup, b: WorkGroup) => b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th');
+      const byCreated = (a: WorkGroup, b: WorkGroup) => new Date(b.rep.created_at || 0).getTime() - new Date(a.rep.created_at || 0).getTime();
+      return { works: groups.filter((g) => g.published).sort(byDeadline), unpublished: groups.filter((g) => !g.published).sort(byCreated) };
     };
     return { homework: build(false), quiz: build(true) };
-  }, [allGroups, matches, prefs.order]);
-  const { categories, unpublished } = byTab[tab];
-
-  // ---------------------------------------------------------------- dragging
-  const listRef = useRef<HTMLDivElement>(null);
-  const itemRefs = useRef(new Map<string, HTMLElement>());
-  const [dragOrder, setDragOrder] = useState<string[] | null>(null);
-  const [dragKey, setDragKey] = useState<string | null>(null);
-  const [dragY, setDragY] = useState(0);
-  const dragState = useRef<{ key: string; grab: number; lastY: number; raf: number } | null>(null);
-  const prevTops = useRef(new Map<string, number>());
-  const orderedCategories = useMemo(() => {
-    if (!dragOrder) return categories;
-    const byKey = new Map(categories.map((c) => [c.key, c]));
-    return dragOrder.map((k) => byKey.get(k)).filter(Boolean) as Category[];
-  }, [categories, dragOrder]);
-
-  /** Moves the dragged card under the finger and swaps it past neighbours' midpoints. */
-  const followPointer = useCallback(() => {
-    const s = dragState.current;
-    const list = listRef.current;
-    const el = s && itemRefs.current.get(s.key);
-    if (!s || !list || !el) return;
-    const y = s.lastY - list.getBoundingClientRect().top;
-    setDragY(y - s.grab - el.offsetTop);
-    const center = y - s.grab + el.offsetHeight / 2;
-    setDragOrder((order) => {
-      if (!order) return order;
-      const others = order.filter((k) => k !== s.key);
-      let index = 0;
-      for (const k of others) {
-        const other = itemRefs.current.get(k);
-        if (other && other.offsetTop + other.offsetHeight / 2 < center) index++;
-      }
-      if (order.indexOf(s.key) === index) return order;
-      // Remember where the others were, to slide them to their new place.
-      prevTops.current = new Map(others.map((k) => [k, itemRefs.current.get(k)?.offsetTop ?? 0]));
-      return [...others.slice(0, index), s.key, ...others.slice(index)];
-    });
-  }, []);
-
-  // After a swap: keep the dragged card under the finger and slide the others (FLIP).
-  useLayoutEffect(() => {
-    if (!dragOrder) return;
-    followPointer();
-    for (const [k, top] of prevTops.current) {
-      const el = itemRefs.current.get(k);
-      if (!el) continue;
-      const delta = top - el.offsetTop;
-      if (!delta) continue;
-      el.style.transition = 'none';
-      el.style.transform = `translate3d(0, ${delta}px, 0)`;
-      void el.offsetHeight;
-      requestAnimationFrame(() => {
-        el.style.transition = 'transform 220ms cubic-bezier(0.16, 1, 0.3, 1)';
-        el.style.transform = '';
-      });
-    }
-    prevTops.current = new Map();
-  }, [dragOrder, followPointer]);
-
-  const startDrag = (key: string, e: React.PointerEvent<HTMLElement>) => {
-    if (e.button !== 0 && e.pointerType === 'mouse') return;
-    const el = itemRefs.current.get(key);
-    const list = listRef.current;
-    if (!el || !list) return;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const grab = e.clientY - list.getBoundingClientRect().top - el.offsetTop;
-    const s = { key, grab, lastY: e.clientY, raf: 0 };
-    dragState.current = s;
-    setDragKey(key);
-    setDragOrder(categories.map((c) => c.key));
-    // Scroll the page while the finger is near the top or bottom edge.
-    const tick = () => {
-      if (dragState.current !== s) return;
-      const edge = 72;
-      const vh = window.innerHeight;
-      const speed = s.lastY < edge ? -Math.ceil((edge - s.lastY) / 6) : s.lastY > vh - edge ? Math.ceil((s.lastY - (vh - edge)) / 6) : 0;
-      if (speed) window.scrollBy(0, speed);
-      followPointer();
-      s.raf = requestAnimationFrame(tick);
-    };
-    s.raf = requestAnimationFrame(tick);
-  };
-  const moveDrag = (e: React.PointerEvent) => {
-    if (dragState.current) dragState.current.lastY = e.clientY;
-  };
-  const endDrag = () => {
-    const s = dragState.current;
-    if (!s) return;
-    cancelAnimationFrame(s.raf);
-    dragState.current = null;
-    if (dragOrder) prefs.setOrder(dragOrder);
-    setDragKey(null);
-    setDragOrder(null);
-    setDragY(0);
-  };
-  /** Keyboard: arrows move the focused category one place. */
-  const nudge = (key: string, step: -1 | 1) => {
-    const keys = categories.map((c) => c.key);
-    const i = keys.indexOf(key);
-    const j = i + step;
-    if (i < 0 || j < 0 || j >= keys.length) return;
-    [keys[i], keys[j]] = [keys[j], keys[i]];
-    prefs.setOrder(keys);
-  };
+  }, [allGroups, matches]);
+  const { works, unpublished } = byTab[tab];
 
   // ---------------------------------------------------------------- actions
   const errorText = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
   const returnTo = `${pathname}?${search.toString()}`;
   const gradeHref = (id: string) => `/assignments/${id}/grading?from=works&returnTo=${encodeURIComponent(returnTo)}`;
+  /** From the work itself: every class's students together (one class: its own page). */
+  const workGradeHref = (g: WorkGroup) => {
+    const ids = g.classes.filter((c) => c.published).map((c) => c.assignment.id);
+    return ids.length === 1 ? gradeHref(ids[0]) : `/works/grade?ids=${ids.map(encodeURIComponent).join(',')}&returnTo=${encodeURIComponent(returnTo)}`;
+  };
   const editorHref = (mode: 'edit' | 'copy', a: Assignment) =>
     `/assignments/new?${mode}=${a.id}&classroomId=${a.classroom_id}&from=works&returnTo=${encodeURIComponent(returnTo)}`;
 
@@ -429,7 +296,12 @@ export function WorksBoard() {
 
   // ---------------------------------------------------------------- render bits
   const courseLabel = (id: string) => courseById.get(id)?.code || '';
-  const showCourseChip = activeCourse === 'all' && termCourses.length > 1;
+  /** "ท31101 การสื่อสารภาษาไทย · บทที่ 1" — subject, then the classwork category if it has one. */
+  const subjectLine = (g: WorkGroup) => {
+    const course = courseById.get(g.courseId);
+    const parts = [course ? `${course.code} ${course.name}`.trim() : '', g.category.startsWith('__') ? '' : g.category];
+    return parts.filter(Boolean).join(' · ');
+  };
 
   const classMenu = (c: WorkClass, g: WorkGroup): ActionMenuItem[] => {
     const lineReady = (c.classroom.line_connection_status || (c.classroom.line_group_id ? 'connected' : '')) === 'connected';
@@ -584,62 +456,30 @@ export function WorksBoard() {
       {n} {tr(th1, n === 1 ? en1 : enMany)}
     </span>
   );
-  // ---- status at each level (tap the pill, or ⋯ → change status)
+  // ---- status: tap a class's pill, or ⋯ (class / work) → change status
   const classAccept = (c: WorkClass) => acceptStatus(c, th, language, now);
-  const workAccept = (g: WorkGroup) => combinedStatus(g.classes.map(classAccept), ['ห้อง', 'classes'], th);
   const openWorkStatus = (g: WorkGroup) => {
     if (g.classes.length === 1) setStatusOne(g.classes[0]);
     else setStatusMany({ title: g.rep.title, scope: tr(`${g.classes.length} ห้อง`, `${g.classes.length} classes`), items: g.classes });
-  };
-  const openCategoryStatus = (cat: Category, title: string) => {
-    const items = cat.groups.flatMap((g) => g.classes);
-    setStatusMany({ title, scope: tr(`${cat.groups.length} งาน · ${items.length} ห้อง`, `${cat.groups.length} items · ${items.length} classes`), items });
   };
   const applyChanges = (changes: Array<{ id: string; change: Partial<Assignment> }>, message: string) => {
     changes.forEach(({ id, change }) => patch(id, change));
     showToast(message);
   };
-  const categoryMenu = (cat: Category, title: string): ActionMenuItem[] => {
-    const items = cat.groups.flatMap((g) => g.classes);
-    const hidden = items.filter((c) => !c.published);
-    const accepting = items.filter((c) => c.published && c.window.acceptsSubmissions);
-    return [
-      items.some((c) => c.published) && {
-        key: 'status',
-        label: tr('เปลี่ยนสถานะทุกงาน', 'Change status (all items)'),
-        hint: tr(`${cat.groups.length} งาน`, `${cat.groups.length}`),
-        icon: <Clock className="w-4 h-4" />,
-        onSelect: () => openCategoryStatus(cat, title),
-      },
-      hidden.length > 0 && {
-        key: 'publish',
-        label: tr('เผยแพร่ทั้งหมด', 'Publish all'),
-        hint: tr(`${hidden.length} ห้อง`, `${hidden.length}`),
-        icon: <Rocket className="w-4 h-4" />,
-        onSelect: () => publish(hidden),
-      },
-      accepting.length > 0 && {
-        key: 'close',
-        label: tr('ปิดรับทุกงาน', 'Close all'),
-        hint: tr(`${accepting.length} ห้อง`, `${accepting.length}`),
-        icon: <Lock className="w-4 h-4" />,
-        danger: true,
-        onSelect: () => setClosed(accepting, true),
-      },
-    ].filter(Boolean) as ActionMenuItem[];
-  };
-
   const classRow = (c: WorkClass, g: WorkGroup) => (
     <li
       key={c.assignment.id}
-      className={`px-3 py-1.5 rounded-2xl ${c.published ? 'bg-slate-50 dark:bg-slate-800/50' : 'bg-white/60 dark:bg-slate-900/40 border border-dashed border-slate-300 dark:border-slate-700'}`}
+      className={`px-3 py-1.5 rounded-2xl border ${c.published ? 'bg-slate-50/80 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/70' : 'bg-white/60 dark:bg-slate-900/40 border-dashed border-slate-300 dark:border-slate-700'}`}
     >
       <WorkRowLayout
         inset={ROW_INSET.class}
         lead={
           <span className="flex items-center gap-1.5 min-w-0">
-            <School className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="text-sm font-bold text-slate-900 dark:text-white truncate">{c.classroom.name}</span>
+            {/* Each class reads as its own room: icon tile + name. */}
+            <span className="w-7 h-7 rounded-lg shrink-0 bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 flex items-center justify-center">
+              <School className="w-3.5 h-3.5" />
+            </span>
+            <span className="text-sm font-black text-slate-900 dark:text-white truncate">{c.classroom.name}</span>
             {c.counts.flagged > 0 && (
               <Pill tone="rose" className="shrink-0">
                 <ShieldAlert className="w-3 h-3" />
@@ -659,117 +499,55 @@ export function WorksBoard() {
   const workCard = (g: WorkGroup) => {
     const open = isWorkOpen(g.key);
     const color = prefs.colors[g.rep.id];
-    const first = firstClassToGrade(g);
     const hidden = g.classes.filter((c) => !c.published);
+    const subject = subjectLine(g);
     return (
       <div
         key={g.key}
-        className={`relative overflow-hidden rounded-2xl border transition-colors ${
+        className={`relative overflow-hidden rounded-3xl border shadow-xs transition-colors ${
           g.published ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800' : 'bg-slate-50/80 dark:bg-slate-900/50 border-dashed border-slate-300 dark:border-slate-700'
         } ${color ? WORK_COLOR_CLASSES[color].tint : ''}`}
       >
         {color && <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 ${WORK_COLOR_CLASSES[color].bar}`} />}
-        <div className={`px-3 py-2 ${color ? 'pl-4' : ''}`}>
+        <div className={`p-3 sm:p-4 ${color ? 'pl-4 sm:pl-5' : ''}`}>
           <WorkRowLayout
             inset={ROW_INSET.work}
             lead={
-              <button type="button" onClick={() => toggleWork(g.key)} aria-expanded={open} className="w-full min-w-0 flex items-center gap-2 text-left cursor-pointer group/work">
+              <button type="button" onClick={() => toggleWork(g.key)} aria-expanded={open} className="w-full min-w-0 flex items-center gap-2.5 text-left cursor-pointer group/work">
                 <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
-                {countChip(g.classes.length, 'ห้อง', 'class', 'classes', <School className="w-3 h-3" />)}
-                {/* One line: title, then small tags that give way first. */}
-                <span className="min-w-0 flex-1 flex items-center gap-1.5">
-                  <span className="min-w-0 truncate text-sm font-black text-slate-900 dark:text-white group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
-                    {g.rep.title}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="min-w-0 truncate text-[15px] font-black text-slate-900 dark:text-white group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
+                      {g.rep.title}
+                    </span>
+                    {isRetake(g.rep) && <Pill tone="amber" className="shrink-0">{tr('สอบซ่อม', 'Retake')}</Pill>}
+                    {g.published && hidden.length > 0 && <Pill tone="sky" className="shrink-0">{tr(`ยังไม่เผยแพร่ ${hidden.length}`, `${hidden.length} unpublished`)}</Pill>}
+                    {g.totals.flagged > 0 && (
+                      <Pill tone="rose" className="shrink-0">
+                        <ShieldAlert className="w-3 h-3" />
+                        {g.totals.flagged}
+                      </Pill>
+                    )}
                   </span>
-                  {showCourseChip && courseLabel(g.courseId) && (
-                    <span className="shrink-0 text-[10px] font-bold font-mono text-slate-500 dark:text-slate-400">{courseLabel(g.courseId)}</span>
-                  )}
-                  {isRetake(g.rep) && <Pill tone="amber" className="shrink-0">{tr('สอบซ่อม', 'Retake')}</Pill>}
-                  {g.published && hidden.length > 0 && <Pill tone="sky" className="shrink-0">{tr(`ยังไม่เผยแพร่ ${hidden.length}`, `${hidden.length} unpublished`)}</Pill>}
-                  {g.totals.flagged > 0 && (
-                    <Pill tone="rose" className="shrink-0">
-                      <ShieldAlert className="w-3 h-3" />
-                      {g.totals.flagged}
-                    </Pill>
+                  {subject && (
+                    <span className="mt-0.5 flex items-center gap-1 min-w-0 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                      <BookOpen className="w-3 h-3 shrink-0" />
+                      <span className="truncate">{subject}</span>
+                    </span>
                   )}
                 </span>
+                {countChip(g.classes.length, 'ห้อง', 'class', 'classes', <School className="w-3 h-3" />)}
               </button>
             }
-            status={<StatusButton status={workAccept(g)} onClick={() => openWorkStatus(g)} />}
             metrics={g.published ? <MetricCells totals={g.totals} /> : hiddenNote}
-            action={g.published ? gradeButton(g.totals.pending, gradeHref(first.assignment.id)) : publishButton(hidden)}
+            action={g.published ? gradeButton(g.totals.pending, workGradeHref(g)) : publishButton(hidden)}
             menu={<ActionMenu label={tr(`ตัวเลือกของ ${g.rep.title}`, `Options for ${g.rep.title}`)} items={workMenu(g)} />}
           />
           <Collapse open={open}>
-            <ul className="pt-2.5 space-y-1.5">{g.classes.map((c) => classRow(c, g))}</ul>
+            <ul className="pt-3 space-y-2">{g.classes.map((c) => classRow(c, g))}</ul>
           </Collapse>
         </div>
       </div>
-    );
-  };
-
-  const categoryHeader = (cat: Category, opts: { open: boolean; draggable: boolean }) => {
-    const unpub = cat.key === UNPUBLISHED_CATEGORY;
-    const title = unpub ? tr('ยังไม่เผยแพร่', 'Not published') : assignmentGroupLabel(cat.key, th);
-    const status = combinedStatus(cat.groups.map(workAccept), ['งาน', 'items'], th);
-    const menu = categoryMenu(cat, title);
-    return (
-      <WorkRowLayout
-        inset={ROW_INSET.category}
-        lead={
-          <span className="flex items-center gap-1 min-w-0">
-            {opts.draggable && (
-              <button
-                type="button"
-                aria-label={tr(`ลากเพื่อจัดลำดับ ${title}`, `Drag to reorder ${title}`)}
-                title={tr('ลากเพื่อจัดลำดับ', 'Drag to reorder')}
-                onPointerDown={(e) => startDrag(cat.key, e)}
-                onPointerMove={moveDrag}
-                onPointerUp={endDrag}
-                onPointerCancel={endDrag}
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    nudge(cat.key, -1);
-                  } else if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    nudge(cat.key, 1);
-                  }
-                }}
-                className="-ml-1.5 w-7 h-9 shrink-0 rounded-lg flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 touch-none select-none cursor-grab active:cursor-grabbing"
-              >
-                <GripVertical className="w-4 h-4" />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => toggleCategory(cat.key)}
-              aria-expanded={opts.open}
-              title={unpub ? tr('นักเรียนยังไม่เห็นงานในกลุ่มนี้', 'Students can’t see these yet') : undefined}
-              className="min-w-0 flex-1 flex items-center gap-2 text-left cursor-pointer group/cat"
-            >
-              <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-300 ${opts.open ? 'rotate-180' : ''}`} />
-              <span className={`w-8 h-8 rounded-xl shrink-0 flex items-center justify-center ${unpub ? 'bg-slate-200/70 dark:bg-slate-800 text-slate-500' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'}`}>
-                {unpub ? <EyeOff className="w-4 h-4" /> : <Layers className="w-4 h-4" />}
-              </span>
-              {countChip(cat.groups.length, 'งาน', 'item', 'items', <FileText className="w-3 h-3" />)}
-              <span className="min-w-0 truncate font-black text-[15px] text-slate-900 dark:text-white group-hover/cat:text-amber-700 dark:group-hover/cat:text-amber-400 transition-colors">{title}</span>
-            </button>
-          </span>
-        }
-        status={
-          unpub ? (
-            <span className="text-[11px] font-semibold text-slate-400 inline-flex items-center gap-1 truncate">
-              <EyeOff className="w-3.5 h-3.5 shrink-0" />
-              {tr('นักเรียนยังไม่เห็น', 'Hidden from students')}
-            </span>
-          ) : (
-            <StatusButton status={status} onClick={() => openCategoryStatus(cat, title)} />
-          )
-        }
-        metrics={unpub ? undefined : <MetricCells totals={cat.totals} />}
-        menu={menu.length > 0 ? <ActionMenu label={tr(`ตัวเลือกของ ${title}`, `Options for ${title}`)} items={menu} /> : undefined}
-      />
     );
   };
 
@@ -890,7 +668,7 @@ export function WorksBoard() {
           [0, 1, 2].map((i) => <div key={i} className="h-32 rounded-3xl bg-slate-100 dark:bg-slate-800/60 animate-pulse" />)
         ) : error && !data ? (
           <div className="p-6 rounded-3xl bg-rose-50 dark:bg-rose-950/30 text-sm font-semibold text-rose-700 dark:text-rose-300 text-center">{tr('โหลดข้อมูลไม่สำเร็จ ลองรีเฟรชหน้า', 'Could not load. Try refreshing.')}</div>
-        ) : categories.length === 0 && unpublished.length === 0 ? (
+        ) : works.length === 0 && unpublished.length === 0 ? (
           <div className="text-center py-14 px-6 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
             <p className="text-sm font-bold text-slate-900 dark:text-white">
               {q || activeCourse !== 'all'
@@ -908,43 +686,15 @@ export function WorksBoard() {
           </div>
         ) : (
           <>
-            <div ref={listRef} className="relative space-y-3" onPointerMove={moveDrag}>
-              {orderedCategories.map((cat) => {
-                const dragging = dragKey === cat.key;
-                const open = !dragKey && isCategoryOpen(cat.key);
-                return (
-                  <section
-                    key={cat.key}
-                    ref={(el) => {
-                      if (el) itemRefs.current.set(cat.key, el);
-                      else itemRefs.current.delete(cat.key);
-                    }}
-                    style={{
-                      transform: dragging ? `translate3d(0, ${dragY}px, 0)` : undefined,
-                      transition: dragging ? 'none' : undefined,
-                      zIndex: dragging ? 20 : undefined,
-                    }}
-                    className={`relative rounded-3xl border p-3 sm:p-4 bg-white dark:bg-slate-900 ${
-                      dragging ? 'border-amber-400 shadow-2xl shadow-amber-500/20 scale-[1.01]' : 'border-slate-200 dark:border-slate-800 shadow-xs'
-                    }`}
-                  >
-                    {categoryHeader(cat, { open, draggable: categories.length > 1 })}
-                    <Collapse open={open}>
-                      <div className="pt-3 space-y-2.5">{cat.groups.map(workCard)}</div>
-                    </Collapse>
-                  </section>
-                );
-              })}
-            </div>
+            <div className="space-y-2.5">{works.map(workCard)}</div>
             {unpublished.length > 0 && (
-              <section className="rounded-3xl border-2 border-dashed border-slate-300 dark:border-slate-700 p-3 sm:p-4 bg-slate-50/60 dark:bg-slate-900/40">
-                {categoryHeader(
-                  { key: UNPUBLISHED_CATEGORY, groups: unpublished, totals: EMPTY_TOTALS },
-                  { open: !dragKey && isCategoryOpen(UNPUBLISHED_CATEGORY), draggable: false }
-                )}
-                <Collapse open={!dragKey && isCategoryOpen(UNPUBLISHED_CATEGORY)}>
-                  <div className="pt-3 space-y-2.5">{unpublished.map(workCard)}</div>
-                </Collapse>
+              <section className="space-y-2.5 pt-3">
+                <h2 className="flex items-center gap-2 px-1 text-sm font-black text-slate-600 dark:text-slate-300">
+                  <EyeOff className="w-4 h-4" />
+                  {tr('ยังไม่เผยแพร่', 'Not published')}
+                  <span className="text-xs font-semibold text-slate-400">· {tr('นักเรียนยังไม่เห็น', 'hidden from students')}</span>
+                </h2>
+                {unpublished.map(workCard)}
               </section>
             )}
           </>

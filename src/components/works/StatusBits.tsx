@@ -74,7 +74,7 @@ export function StatusButton({ status, onClick }: { status: AcceptStatus; onClic
       {onClick && <ChevronDown className="w-3 h-3 shrink-0 ml-auto opacity-60" />}
     </>
   );
-  const cls = `h-7 w-full min-w-0 px-2.5 rounded-full border text-[11px] inline-flex items-center gap-1.5 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
+  const cls = `h-7 max-w-full min-w-0 px-2.5 rounded-full border text-[11px] inline-flex items-center gap-1.5 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
   return onClick ? (
     <button
       type="button"

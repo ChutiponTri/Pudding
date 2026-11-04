@@ -201,14 +201,10 @@ export function MetricCells({ totals }: { totals: WorkTotals }) {
   );
 }
 
-/**
- * Right-padding per nesting level, so the fixed columns of a category, its
- * works and their classes line up exactly (each level sits 12–13 px further
- * in on the right: card border + padding).
- */
+/** Right padding per level, so a work's numbers line up with its classes' (cards nest 13 px further in). */
 export const ROW_INSET = {
-  category: '@4xl:pr-[25px]',
-  work: '@4xl:pr-3',
+  /** Class rows sit one border + 12 px padding further in. */
+  work: '@4xl:pr-[13px]',
   class: '',
 } as const;
 
@@ -232,16 +228,17 @@ export function WorkRowLayout({
   /** ROW_INSET for the level, so columns line up across levels. */
   inset?: string;
 }) {
-  // Wide board (container ≥ 56rem): one line, every column a fixed width and
-  // the same 36 px height, so columns stack exactly row after row.
+  // Wide board (container ≥ 56rem): one line. The status sits right after the
+  // name; numbers, button and ⋯ keep fixed widths at the right so they line up.
   // Narrow: name + ⋯ / status + button / numbers.
   return (
     <div className={`flex flex-wrap @4xl:flex-nowrap items-center gap-x-3 gap-y-1.5 ${inset}`}>
-      <div className="order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 min-h-9 flex items-center">{lead}</div>
-      <div className="order-2 @4xl:order-5 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
-      <div className="order-3 @4xl:order-2 min-w-0 max-w-[65%] @4xl:max-w-none @4xl:w-36 shrink-0 h-9 flex items-center">{status}</div>
-      <div className="order-4 ml-auto @4xl:ml-0 shrink-0 @4xl:w-24 h-9 flex items-center justify-end">{action}</div>
-      <div className="order-5 @4xl:order-3 basis-full @4xl:basis-auto @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3">{metrics}</div>
+      <div className="order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 @4xl:flex-initial min-h-9 flex items-center">{lead}</div>
+      <div className="order-2 @4xl:order-6 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
+      {status && <div className="order-3 @4xl:order-2 min-w-0 shrink-0 h-9 flex items-center">{status}</div>}
+      <div aria-hidden className="hidden @4xl:block @4xl:order-3 flex-1" />
+      <div className="order-4 @4xl:order-5 ml-auto @4xl:ml-0 shrink-0 @4xl:w-24 h-9 flex items-center justify-end">{action}</div>
+      <div className="order-5 @4xl:order-4 basis-full @4xl:basis-auto @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3">{metrics}</div>
     </div>
   );
 }
