@@ -1,5 +1,6 @@
 'use client';
 
+import { usePageTitle } from '@/lib/hooks/usePageTitle';
 import React, { useState, useEffect, useRef, use, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -139,6 +140,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const [questions, setQuestions] = useState<Question[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [classroom, setClassroom] = useState<Classroom | null>(null);
+  usePageTitle(assignment?.title ? `ตรวจ: ${assignment.title}` : null);
   const [loading, setLoading] = useState(true);
 
   // Filters & Search

@@ -1,5 +1,6 @@
 'use client';
 
+import { usePageTitle } from '@/lib/hooks/usePageTitle';
 import { isRetake, rosterSizeFor } from '@/lib/utils/retake';
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
@@ -195,6 +196,7 @@ export default function ClassroomWorkspacePage() {
   const classroomId = params.id;
 
   const [classroom, setClassroom] = useState<Classroom | null>(null);
+  usePageTitle(classroom?.name);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);

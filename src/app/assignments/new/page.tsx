@@ -1,5 +1,6 @@
 'use client';
 
+import { usePageTitle } from '@/lib/hooks/usePageTitle';
 import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '@clerk/nextjs';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -207,6 +208,7 @@ function NewAssignmentContent() {
   // Retake quiz: the original quiz, the classroom roster and the chosen students.
   const [retake, setRetake] = useState<{ source: Assignment | null; roster: User[]; ids: string[] } | null>(null);
   const [retakeAdding, setRetakeAdding] = useState(false);
+  usePageTitle(editingAssignment ? `แก้ไข: ${editingAssignment.title}` : retake ? 'สร้างข้อสอบซ่อม' : copyId ? 'คัดลอกงาน' : null);
   const originalQuestionIdsRef = useRef<string[]>([]);
 
   // Form fields
