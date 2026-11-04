@@ -17,6 +17,16 @@ import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ClassworkRow } from '@/components/works/ClassworkRow';
+import { applySavedOrder, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
+
+/** One colour per classwork category (in turn), so neighbouring categories never look alike. */
+const GROUP_ACCENTS = [
+  { bar: 'bg-amber-400', head: 'bg-amber-50 dark:bg-amber-950/30', border: 'border-amber-200 dark:border-amber-900/60' },
+  { bar: 'bg-sky-400', head: 'bg-sky-50 dark:bg-sky-950/30', border: 'border-sky-200 dark:border-sky-900/60' },
+  { bar: 'bg-violet-400', head: 'bg-violet-50 dark:bg-violet-950/30', border: 'border-violet-200 dark:border-violet-900/60' },
+  { bar: 'bg-emerald-400', head: 'bg-emerald-50 dark:bg-emerald-950/30', border: 'border-emerald-200 dark:border-emerald-900/60' },
+  { bar: 'bg-rose-400', head: 'bg-rose-50 dark:bg-rose-950/30', border: 'border-rose-200 dark:border-rose-900/60' },
+];
 import { AssignmentGroupHeader, teacherGroupChips } from '@/components/AssignmentGroupHeader';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { gradingCounts, isGraded, isHandedIn, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
@@ -1012,6 +1022,47 @@ export default function ClassroomWorkspacePage() {
   const byClassworkOrder = (a: Assignment, b: Assignment) =>
     (a.sort_order ?? -1) - (b.sort_order ?? -1) ||
     new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+
+  // Categories with their work (filtered), in the order the teacher dragged
+  // them into (kept per classroom in this browser); new ones go last.
+  const classworkGroups = Object.entries(
+    assignments.reduce<Record<string, Assignment[]>>(
+      (groups, item) => {
+        (groups[groupKeyOf(item)] ||= []).push(item);
+        return groups;
+      },
+      Object.fromEntries(customGroups.map((name) => [name, [] as Assignment[]]))
+    )
+  )
+    .map(([group, unsorted]) => [group, [...unsorted].sort(byClassworkOrder).filter((a) => matchesClassworkFilter(a.id))] as const)
+    .filter(([, items]) => classworkFilter === 'all' || items.length > 0);
+  const groupOrderScope = `classwork-groups:${classroomId}`;
+  // Tagged with its classroom: moving to another classroom keeps this page mounted.
+  const [groupOrderState, setGroupOrderState] = useState<{ scope: string; keys: string[] }>(() => ({
+    scope: groupOrderScope,
+    keys: typeof window === 'undefined' ? [] : readLocalOrder(groupOrderScope),
+  }));
+  if (groupOrderState.scope !== groupOrderScope) setGroupOrderState({ scope: groupOrderScope, keys: readLocalOrder(groupOrderScope) });
+  const savedGroupOrder = groupOrderState.scope === groupOrderScope ? groupOrderState.keys : [];
+  const sortedClassworkGroups = applySavedOrder(classworkGroups, ([group]) => classworkFoldKey(group), savedGroupOrder);
+  const {
+    bindList: bindGroupList,
+    bindItem: bindGroupItem,
+    order: groupOrder,
+    dragKey: groupDragKey,
+    itemStyle: groupItemStyle,
+    handleProps: groupHandleProps,
+  } = useDragReorder(
+    sortedClassworkGroups.map(([group]) => classworkFoldKey(group)),
+    (keys) => {
+      const next = [...keys, ...savedGroupOrder.filter((k) => !keys.includes(k))];
+      setGroupOrderState({ scope: groupOrderScope, keys: next });
+      writeLocalOrder(groupOrderScope, next);
+    }
+  );
+  const orderedClassworkGroups = groupOrder
+    .map((key) => sortedClassworkGroups.find(([group]) => classworkFoldKey(group) === key))
+    .filter((entry): entry is (typeof sortedClassworkGroups)[number] => !!entry);
 
   /**
    * A card dropped into `group` at `index` (counted in that group's list as
@@ -2072,21 +2123,15 @@ export default function ClassroomWorkspacePage() {
                 className="space-y-5 animate-in fade-in [--tw-duration:320ms]"
                 style={{ '--tw-enter-translate-x': `${classworkFilterDirection * 2.5}rem` } as CSSProperties}
               >
-                {Object.entries(
-                  assignments.reduce<Record<string, Assignment[]>>(
-                    (groups, item) => {
-                      const key = item.group_name || (item.is_exam ? tr('ข้อสอบ', 'Exam') : tr('งานทั่วไป', 'General'));
-                      (groups[key] ||= []).push(item);
-                      return groups;
-                    },
-                    Object.fromEntries(customGroups.map((name) => [name, [] as Assignment[]]))
-                  )
-                )
-                  .map(([group, unsorted]) => [group, [...unsorted].sort(byClassworkOrder).filter((a) => matchesClassworkFilter(a.id))] as const)
-                  .filter(([, items]) => classworkFilter === 'all' || items.length > 0)
-                  .map(([group, items]) => (
+                <div ref={bindGroupList} className="relative space-y-5">
+                {orderedClassworkGroups.map(([group, items], groupIndex) => {
+                  const accent = GROUP_ACCENTS[groupIndex % GROUP_ACCENTS.length];
+                  const foldKey = classworkFoldKey(group);
+                  return (
                   <div
                     key={group}
+                    ref={bindGroupItem(foldKey)}
+                    style={groupItemStyle(foldKey)}
                     onDragOver={(e) => {
                       if (!draggingAssignmentId) return;
                       e.preventDefault();
@@ -2110,14 +2155,30 @@ export default function ClassroomWorkspacePage() {
                       setDraggingAssignmentId(null);
                       if (id) handleDropAssignment(id, group, index);
                     }}
-                    className={`rounded-3xl p-3 sm:p-4 space-y-3 transition-all border ${
+                    // Each category is its own card with a colour of its own, so they never run together.
+                    className={`relative overflow-hidden rounded-3xl border-2 transition-[border-color,box-shadow,background-color] ${
                       dragOverGroup === group
                         ? 'border-amber-400 ring-2 ring-amber-400/60 bg-amber-50/60 dark:bg-amber-950/20'
                         : draggingAssignmentId
                         ? 'border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40'
-                        : 'border-transparent bg-slate-100/60 dark:bg-slate-900/40'
-                    }`}
+                        : `${accent.border} bg-white dark:bg-slate-900`
+                    } ${groupDragKey === foldKey ? 'shadow-2xl shadow-slate-900/15' : 'shadow-xs'}`}
                   >
+                    <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 ${accent.bar}`} />
+                    <div className={`flex items-center gap-1 pl-3 pr-2 sm:pl-4 sm:pr-3 py-2 ${accent.head}`}>
+                      {classworkFilter === 'all' && orderedClassworkGroups.length > 1 && (
+                        <button
+                          type="button"
+                          draggable={false}
+                          aria-label={tr(`ลากเพื่อจัดลำดับหมวด ${group}`, `Drag to reorder ${group}`)}
+                          title={tr('ลากเพื่อจัดลำดับหมวด', 'Drag to reorder')}
+                          {...groupHandleProps(foldKey)}
+                          className="w-7 h-9 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-white/70 dark:hover:bg-slate-800 touch-none select-none cursor-grab active:cursor-grabbing"
+                        >
+                          <GripVertical className="w-4 h-4" />
+                        </button>
+                      )}
+                      <div className="min-w-0 flex-1">
                     <AssignmentGroupHeader
                       title={group}
                       count={items.length}
@@ -2129,8 +2190,10 @@ export default function ClassroomWorkspacePage() {
                       )}
                     />
 
+                      </div>
+                    </div>
                     <Collapse open={isClassworkGroupOpen(classworkFoldKey(group))}>
-                    <div className="space-y-3 pt-1">
+                    <div className="space-y-3 p-3 sm:p-4 pt-3">
                     {items.length === 0 && (
                       <div className="py-6 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-center text-[11px] text-slate-400">
                         {tr('ลากงานมาวางที่นี่ หรือกด “ย้ายกลุ่ม” ที่งาน', 'Drag work here, or use “Move group” on an item')}
@@ -2207,7 +2270,9 @@ export default function ClassroomWorkspacePage() {
                     </div>
                     </Collapse>
                   </div>
-                ))}
+                  );
+                })}
+                </div>
               </div>
 
             </section>

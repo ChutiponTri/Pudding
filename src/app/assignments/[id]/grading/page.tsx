@@ -139,6 +139,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   const { t, language } = useLanguage();
   const { user: clerkUser } = useUser();
+  // Opened from the work list: every link out of here (edit, copy, retake…) keeps the way back to it.
+  const pageSearch = useSearchParams();
+  const worksReturn =
+    pageSearch.get('from') === 'works' ? (pageSearch.get('returnTo')?.startsWith('/works') ? pageSearch.get('returnTo')! : '/works') : null;
+  const editorFrom = worksReturn ? `from=works&returnTo=${encodeURIComponent(worksReturn)}` : 'from=classroom';
 
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -811,7 +816,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               )}
               {isRetake(assignment) && assignment?.retake_of && (
                 <Link
-                  href={`/assignments/${assignment.retake_of}/grading`}
+                  href={`/assignments/${assignment.retake_of}/grading${worksReturn ? `?from=works&returnTo=${encodeURIComponent(worksReturn)}` : ''}`}
                   className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold text-orange-700 dark:text-orange-300 ring-1 ring-orange-200 dark:ring-orange-900 hover:bg-orange-50 dark:hover:bg-orange-950/40"
                 >
                   {th ? 'ข้อสอบเดิม →' : 'Original quiz →'}
@@ -841,7 +846,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     </button>
                   )}
                   <Link
-                    href={`/assignments/new?copy=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
+                    href={`/assignments/new?copy=${assignment.id}&classroomId=${assignment.classroom_id}&${editorFrom}`}
                     title={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
                     aria-label={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
                     className="inline-flex items-center gap-1 justify-center min-w-10 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-sky-600 hover:border-sky-400 transition-colors"
@@ -849,7 +854,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     📋 <span className="hidden sm:inline">{th ? 'คัดลอก' : 'Copy'}</span>
                   </Link>
                   <Link
-                    href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
+                    href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&${editorFrom}`}
                     aria-label={th ? 'แก้ไขงาน' : 'Edit'}
                     className="inline-flex items-center gap-1 justify-center min-w-10 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
                   >
@@ -1418,7 +1423,13 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       )}
 
       {retakeOpen && assignment && (
-        <RetakePicker classroomId={assignment.classroom_id} sourceId={assignment.id} from="classroom" onClose={() => setRetakeOpen(false)} />
+        <RetakePicker
+          classroomId={assignment.classroom_id}
+          sourceId={assignment.id}
+          from={worksReturn ? 'works' : 'classroom'}
+          returnTo={worksReturn || undefined}
+          onClose={() => setRetakeOpen(false)}
+        />
       )}
 
       {/* Integrity Audit Modal */}

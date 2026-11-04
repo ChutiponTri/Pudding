@@ -4,14 +4,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useUser } from '@clerk/nextjs';
 
 /**
- * The work list's personal layout: category order and card colours. Kept on
+ * The work list's personal layout: the order of works and card colours. Kept on
  * the teacher's Clerk account (like their term dates), so it follows them to
  * every device. Changes show at once and are saved in the background.
  */
 const METADATA_KEY = 'workPrefs';
 /** Clerk metadata is small (8 KB for all keys): keep only what is in use. */
-const MAX_COLORS = 150;
-const MAX_ORDER = 120;
+const MAX_COLORS = 100;
+const MAX_ORDER = 160;
+
+/** Assignment ids are stored without their "assign-" prefix to save space. */
+const compact = (id: string) => (id.startsWith('assign-') ? id.slice(7) : id);
+const expand = (id: string) => (/^\d{10,}-/.test(id) ? `assign-${id}` : id);
 
 export const WORK_COLORS = ['amber', 'rose', 'violet', 'sky', 'emerald', 'slate'] as const;
 export type WorkColor = (typeof WORK_COLORS)[number];
@@ -20,11 +24,11 @@ type WorkPrefs = { order: string[]; colors: Record<string, WorkColor> };
 
 function parse(raw: unknown): WorkPrefs {
   const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<WorkPrefs>;
-  const order = Array.isArray(value.order) ? value.order.filter((k): k is string => typeof k === 'string') : [];
+  const order = Array.isArray(value.order) ? value.order.filter((k): k is string => typeof k === 'string').map(expand) : [];
   const colors: Record<string, WorkColor> = {};
   if (value.colors && typeof value.colors === 'object') {
     for (const [k, v] of Object.entries(value.colors)) {
-      if ((WORK_COLORS as readonly string[]).includes(v as string)) colors[k] = v as WorkColor;
+      if ((WORK_COLORS as readonly string[]).includes(v as string)) colors[expand(k)] = v as WorkColor;
     }
   }
   return { order, colors };
@@ -52,12 +56,12 @@ export function useWorkPrefs() {
       // Several quick changes (drag, colour taps) save once.
       saveTimer.current = setTimeout(() => {
         const value = latest.current;
-        const colorEntries = Object.entries(value.colors).slice(-MAX_COLORS);
+        const colorEntries = Object.entries(value.colors).slice(-MAX_COLORS).map(([k, v]) => [compact(k), v]);
         user
           .update({
             unsafeMetadata: {
               ...user.unsafeMetadata,
-              [METADATA_KEY]: { order: value.order.slice(0, MAX_ORDER), colors: Object.fromEntries(colorEntries) },
+              [METADATA_KEY]: { order: value.order.slice(0, MAX_ORDER).map(compact), colors: Object.fromEntries(colorEntries) },
             },
           })
           .catch((err) => console.warn('Saving work list layout failed:', err));
@@ -66,7 +70,7 @@ export function useWorkPrefs() {
     [user, savedJson]
   );
 
-  /** New order for some categories; the others keep their place after them. */
+  /** New order for some works (e.g. one tab's); the others keep their place after them. */
   const setOrder = useCallback(
     (keys: string[]) => {
       const rest = latest.current.order.filter((k) => !keys.includes(k));

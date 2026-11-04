@@ -41,7 +41,7 @@ function rowsOf(block: Block): Row[] {
  * class-only tools (reopen, record no submission…).
  */
 export function CombinedGrading() {
-  const { tr, language } = useLanguage();
+  const { tr } = useLanguage();
   const search = useSearchParams();
   const { user } = useUser();
   const teacherId = user?.id;

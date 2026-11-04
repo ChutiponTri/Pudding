@@ -188,6 +188,9 @@ function NewAssignmentContent() {
   const editId = searchParams.get('edit');
   // ?copy=<assignmentId>: a new assignment filled from saved work (any state), for other classrooms.
   const copyId = editId ? null : searchParams.get('copy');
+  // ?siblings=<ids> (with edit): the same work in other classrooms; saving applies the changes to them too.
+  const siblingIds = editId ? (searchParams.get('siblings') || '').split(',').filter((id) => id && id !== editId).slice(0, 40) : [];
+  const siblingKey = siblingIds.join(',');
   // ?template=<token>: a new assignment filled from work another teacher shared.
   const templateToken = editId || copyId ? null : searchParams.get('template');
   // ?reuse=1 (with copy): "reuse earlier work" from the create menu — the new
@@ -220,6 +223,10 @@ function NewAssignmentContent() {
   const [retakeAdding, setRetakeAdding] = useState(false);
   usePageTitle(editingAssignment ? `แก้ไข: ${editingAssignment.title}` : retake ? 'สร้างข้อสอบซ่อม' : copyId ? 'คัดลอกงาน' : templateToken ? 'สร้างจากเทมเพลต' : null);
   const originalQuestionIdsRef = useRef<string[]>([]);
+  // The edited work's questions as loaded, to find the matching question in each sibling copy.
+  const originalQuestionsRef = useRef<Question[]>([]);
+  // Sibling copies (other classrooms) loaded with the form: their row and questions.
+  const [siblings, setSiblings] = useState<Array<{ assignment: Assignment; questions: Question[] }>>([]);
 
   // Form fields
   const [isExam, setIsExam] = useState(() => !editId && ((!copyId && urlMode === 'quiz') || !!retakeOfParam));
@@ -483,7 +490,17 @@ function NewAssignmentContent() {
           }
           // Shared work comes without indicators: use the target course's first one.
           const templateIndicatorId = (targetCourse?.indicators || crs[0]?.indicators || [])[0]?.id || '';
-          if (editId) originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
+          if (editId) {
+            originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
+            originalQuestionsRef.current = savedQuestions;
+          }
+          if (editId && siblingKey) {
+            const loadedSiblings = await Promise.all(siblingKey.split(',').map((id) => dataService.getAssignmentById(id).catch(() => null)));
+            // Retakes are per classroom and never edited along.
+            setSiblings(loadedSiblings.flatMap((sib) => (sib?.assignment && !isRetake(sib.assignment) ? [{ assignment: sib.assignment, questions: sib.questions }] : [])));
+          } else {
+            setSiblings([]);
+          }
           if (savedQuestions.length) {
             setQuestions(savedQuestions.map((q) => ({
               uid: newQuestionUid(),
@@ -539,7 +556,7 @@ function NewAssignmentContent() {
     }
     init(teacherId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per teacher / target
-  }, [urlClassroomId, editId, copyId, templateToken, isReuse, retakeOfParam, clerkUser?.id]);
+  }, [urlClassroomId, editId, copyId, templateToken, siblingKey, isReuse, retakeOfParam, clerkUser?.id]);
 
   // Groups already used in the selected classrooms, offered as one-tap choices.
   const selectedClassroomKey = selectedClassroomIds.join(',');
@@ -871,9 +888,40 @@ function NewAssignmentContent() {
         await dataService.replaceAssignmentQuestions(id, questionRows.map((row, index) => ({ ...row, id: questions[index].id })));
         // Was scheduled or a draft, teacher switched to "publish now".
         if (!editIsPublished && releaseMode === 'now') await dataService.publishAssignmentNow(id);
+        // The same work in other classrooms: only what was changed here, and
+        // each copy keeps its own question ids (so its students' answers stay).
+        if (siblings.length) {
+          const before = editingAssignment;
+          const changed: Partial<Assignment> = { total_points: totalPoints, attachments: savedAttachments };
+          if (title !== before.title) changed.title = title;
+          if (groupName.trim() !== (before.group_name || '')) changed.group_name = groupName.trim();
+          if (description !== (before.description || '')) changed.description = description;
+          if (dueDate && new Date(dueDate).getTime() !== new Date(before.due_date).getTime()) changed.due_date = dueDate;
+          if (isExam !== !!before.is_exam) changed.is_exam = isExam;
+          const sameQuestion = (a: Pick<Question, 'type' | 'question_text'>, b: Pick<Question, 'type' | 'question_text'>) =>
+            a.type === b.type && (a.question_text || '').trim() === (b.question_text || '').trim();
+          for (const sib of siblings) {
+            await dataService.updateAssignment(sib.assignment.id, changed);
+            const used = new Set<string>();
+            const rows = questionRows.map((row, index) => {
+              const original = originalQuestionsRef.current.find((q) => q.id === questions[index].id);
+              if (!original) return row;
+              const position = originalQuestionsRef.current.indexOf(original);
+              const match =
+                sib.questions.find((q) => !used.has(q.id) && sameQuestion(q, original)) ||
+                (sib.questions[position] && !used.has(sib.questions[position].id) ? sib.questions[position] : undefined);
+              if (!match) return row;
+              used.add(match.id);
+              return { ...row, id: match.id };
+            });
+            await dataService.replaceAssignmentQuestions(sib.assignment.id, rows);
+          }
+        }
         alert(
           !editIsPublished && saveAsDraft
             ? language === 'th' ? 'บันทึกฉบับร่างแล้ว นักเรียนยังไม่เห็นงานนี้' : 'Draft saved. Students cannot see it yet.'
+            : siblings.length
+            ? tr(`บันทึกการแก้ไขแล้ว (${siblings.length + 1} ห้อง)`, `Changes saved in ${siblings.length + 1} classes`)
             : language === 'th' ? 'บันทึกการแก้ไขเรียบร้อยแล้ว' : 'Changes saved'
         );
         router.push(returnTo || (isFromDashboard ? '/dashboard' : `/classrooms/${editingAssignment.classroom_id}?tab=classwork`));
@@ -1099,7 +1147,16 @@ function NewAssignmentContent() {
                 ? tr('กำลังแก้ไขงานเดิม · นักเรียนเห็นการเปลี่ยนแปลงทันทีที่บันทึก', 'Editing saved work · students see changes once you save')
                 : tr('กำลังแก้ไขงานเดิม (ยังไม่เผยแพร่)', 'Editing saved work (not released yet)')}
               title={editingAssignment.title || tr('(ไม่มีชื่อ)', '(untitled)')}
-              meta={where ? tr(`ในห้อง ${where}`, `In ${where}`) : undefined}
+              meta={
+                siblings.length
+                  ? tr(
+                      `ใช้กับทุกห้อง: ${[where, ...siblings.map((sib) => classrooms.find((c) => c.id === sib.assignment.classroom_id)?.name || sib.assignment.classroom_name || '')].filter(Boolean).join(', ')}`,
+                      `Applies to every class: ${[where, ...siblings.map((sib) => classrooms.find((c) => c.id === sib.assignment.classroom_id)?.name || sib.assignment.classroom_name || '')].filter(Boolean).join(', ')}`
+                    )
+                  : where
+                  ? tr(`ในห้อง ${where}`, `In ${where}`)
+                  : undefined
+              }
               action={
                 <button
                   type="button"

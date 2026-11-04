@@ -9,11 +9,13 @@ import {
   Calendar,
   Check,
   ChevronDown,
-  ChevronRight,
   Clock,
   Copy,
   Edit2,
   Eye,
+  GripVertical,
+  ListChecks,
+  NotebookPen,
   EyeOff,
   FileText,
   Lock,
@@ -35,12 +37,13 @@ import { useTeacherDashboardData, type TeacherDashboardData } from '@/lib/hooks/
 import { useSemesterParam } from '@/lib/hooks/useSemesterParam';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
+import { applySavedOrder, useDragReorder } from '@/lib/hooks/useDragReorder';
 import { useWorkPrefs, WORK_COLORS, WORK_COLOR_CLASSES, type WorkColor } from '@/lib/hooks/useWorkPrefs';
 import { dataService } from '@/lib/supabase/dataService';
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
-import { ActionMenu, ActionMenuRow, type ActionMenuItem } from '@/components/works/ActionMenu';
+import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { DueDateDialog, MetricCells, Pill, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, BulkStatusDialog, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
@@ -180,17 +183,28 @@ export function WorksBoard() {
   );
 
   // Both tabs are worked out together, so switching tabs only swaps what is shown.
-  // Latest deadline first; work no class can see yet goes in its own list below.
+  // Default order: not published yet → still being graded → fully graded
+  // (latest deadline first inside each). A dragged order wins; work added
+  // since goes to the top of its own part.
   const byTab = useMemo(() => {
+    const rank = (g: WorkGroup) =>
+      !g.published ? 0 : g.totals.pending === 0 && g.totals.notSubmitted === 0 && g.totals.totalStudents > 0 ? 2 : 1;
     const build = (isExam: boolean) => {
-      const groups = allGroups.filter((g) => g.isExam === isExam && matches(g));
-      const byDeadline = (a: WorkGroup, b: WorkGroup) => b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th');
-      const byCreated = (a: WorkGroup, b: WorkGroup) => new Date(b.rep.created_at || 0).getTime() - new Date(a.rep.created_at || 0).getTime();
-      return { works: groups.filter((g) => g.published).sort(byDeadline), unpublished: groups.filter((g) => !g.published).sort(byCreated) };
+      const groups = allGroups
+        .filter((g) => g.isExam === isExam && matches(g))
+        .sort((a, b) => rank(a) - rank(b) || b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th'));
+      return applySavedOrder(groups, (g) => g.rep.id, prefs.order, (item, other) => rank(item) <= rank(other));
     };
     return { homework: build(false), quiz: build(true) };
-  }, [allGroups, matches]);
-  const { works, unpublished } = byTab[tab];
+  }, [allGroups, matches, prefs.order]);
+  const works = byTab[tab];
+  // Dragging only on the full list (not while searching or filtering a course).
+  const canDrag = !q && activeCourse === 'all' && works.length > 1;
+  const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps } = useDragReorder(
+    works.map((g) => g.rep.id),
+    (keys) => prefs.setOrder(keys)
+  );
+  const workById = new Map(works.map((g) => [g.rep.id, g]));
 
   // ---------------------------------------------------------------- actions
   const errorText = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
@@ -201,8 +215,8 @@ export function WorksBoard() {
     const ids = g.classes.filter((c) => c.published).map((c) => c.assignment.id);
     return ids.length === 1 ? gradeHref(ids[0]) : `/works/grade?ids=${ids.map(encodeURIComponent).join(',')}&returnTo=${encodeURIComponent(returnTo)}`;
   };
-  const editorHref = (mode: 'edit' | 'copy', a: Assignment) =>
-    `/assignments/new?${mode}=${a.id}&classroomId=${a.classroom_id}&from=works&returnTo=${encodeURIComponent(returnTo)}`;
+  const editorHref = (mode: 'edit' | 'copy', a: Assignment, siblingIds: string[] = []) =>
+    `/assignments/new?${mode}=${a.id}&classroomId=${a.classroom_id}${siblingIds.length ? `&siblings=${siblingIds.map(encodeURIComponent).join(',')}` : ''}&from=works&returnTo=${encodeURIComponent(returnTo)}`;
 
   const publish = async (items: WorkClass[]) => {
     const list = items.filter((c) => !c.published);
@@ -317,6 +331,7 @@ export function WorksBoard() {
           disabled: !c.window.acceptsSubmissions,
           onSelect: () => reannounce(c),
         },
+      { key: 'edit', label: tr('แก้ไขเฉพาะห้องนี้', 'Edit this class only'), icon: <Edit2 className="w-4 h-4" />, onSelect: () => router.push(editorHref('edit', c.assignment)) },
       { key: 'due', label: tr('เปลี่ยนกำหนดส่ง', 'Change due date'), icon: <Calendar className="w-4 h-4" />, onSelect: () => setDueTarget({ item: c, group: g }) },
       c.published &&
         (closedByTeacher
@@ -330,25 +345,6 @@ export function WorksBoard() {
     const hidden = g.classes.filter((c) => !c.published);
     const accepting = g.classes.filter((c) => c.published && c.window.acceptsSubmissions);
     const color = prefs.colors[g.rep.id];
-    const classPanel = (title: string, go: (c: WorkClass) => void) => ({
-      title,
-      render: (close: () => void) => (
-        <div>
-          {g.classes.map((c) => (
-            <ActionMenuRow
-              key={c.assignment.id}
-              onClick={() => {
-                close();
-                go(c);
-              }}
-            >
-              <span className="flex-1 min-w-0 truncate">{c.classroom.name}</span>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-            </ActionMenuRow>
-          ))}
-        </div>
-      ),
-    });
     return [
       { key: 'detail', label: tr('ดูรายละเอียด', 'See details'), icon: <Eye className="w-4 h-4" />, onSelect: () => setDetail(g) },
       {
@@ -365,9 +361,13 @@ export function WorksBoard() {
         icon: <Rocket className="w-4 h-4" />,
         onSelect: () => publish(hidden),
       },
-      g.classes.length > 1
-        ? { key: 'edit', label: tr('แก้ไข', 'Edit'), icon: <Edit2 className="w-4 h-4" />, panel: classPanel(tr('แก้ไขของห้อง', 'Edit for class'), (c) => router.push(editorHref('edit', c.assignment))) }
-        : { key: 'edit', label: tr('แก้ไข', 'Edit'), icon: <Edit2 className="w-4 h-4" />, onSelect: () => router.push(editorHref('edit', g.rep)) },
+      {
+        key: 'edit',
+        label: g.classes.length > 1 ? tr('แก้ไขทุกห้อง', 'Edit (all classes)') : tr('แก้ไข', 'Edit'),
+        hint: g.classes.length > 1 ? tr(`${g.classes.length} ห้อง`, `${g.classes.length}`) : undefined,
+        icon: <Edit2 className="w-4 h-4" />,
+        onSelect: () => router.push(editorHref('edit', g.rep, g.classes.map((c) => c.assignment.id).filter((id) => id !== g.rep.id))),
+      },
       { key: 'copy', label: tr('คัดลอกไปห้องอื่น', 'Copy to classes'), icon: <Copy className="w-4 h-4" />, onSelect: () => router.push(editorHref('copy', g.rep)) },
       !isRetake(g.rep) && { key: 'share', label: tr('แชร์เป็นเทมเพลต', 'Share as template'), icon: <Share2 className="w-4 h-4" />, onSelect: () => shareTemplate(g) },
       {
@@ -504,7 +504,9 @@ export function WorksBoard() {
     return (
       <div
         key={g.key}
-        className={`relative overflow-hidden rounded-3xl border shadow-xs transition-colors ${
+        ref={bindItem(g.rep.id)}
+        style={itemStyle(g.rep.id)}
+        className={`relative overflow-hidden rounded-3xl border transition-colors ${dragKey === g.rep.id ? 'shadow-2xl shadow-amber-500/20 ring-2 ring-amber-400' : 'shadow-xs'} ${
           g.published ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800' : 'bg-slate-50/80 dark:bg-slate-900/50 border-dashed border-slate-300 dark:border-slate-700'
         } ${color ? WORK_COLOR_CLASSES[color].tint : ''}`}
       >
@@ -513,6 +515,18 @@ export function WorksBoard() {
           <WorkRowLayout
             inset={ROW_INSET.work}
             lead={
+              <span className="w-full min-w-0 flex items-center gap-1">
+              {canDrag && (
+                <button
+                  type="button"
+                  aria-label={tr(`ลากเพื่อจัดลำดับ ${g.rep.title}`, `Drag to reorder ${g.rep.title}`)}
+                  title={tr('ลากเพื่อจัดลำดับ', 'Drag to reorder')}
+                  {...handleProps(g.rep.id)}
+                  className="-ml-1.5 w-7 h-9 shrink-0 rounded-lg flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 touch-none select-none cursor-grab active:cursor-grabbing"
+                >
+                  <GripVertical className="w-4 h-4" />
+                </button>
+              )}
               <button type="button" onClick={() => toggleWork(g.key)} aria-expanded={open} className="w-full min-w-0 flex items-center gap-2.5 text-left cursor-pointer group/work">
                 <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
                 <span className="min-w-0 flex-1">
@@ -520,6 +534,11 @@ export function WorksBoard() {
                     <span className="min-w-0 truncate text-[15px] font-black text-slate-900 dark:text-white group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
                       {g.rep.title}
                     </span>
+                    {!g.published && (
+                      <Pill tone={hidden.every((c) => c.window.isDraft) ? 'slate' : 'sky'} className="shrink-0">
+                        {hidden.every((c) => c.window.isDraft) ? tr('ฉบับร่าง', 'Draft') : tr('ตั้งเวลา', 'Scheduled')}
+                      </Pill>
+                    )}
                     {isRetake(g.rep) && <Pill tone="amber" className="shrink-0">{tr('สอบซ่อม', 'Retake')}</Pill>}
                     {g.published && hidden.length > 0 && <Pill tone="sky" className="shrink-0">{tr(`ยังไม่เผยแพร่ ${hidden.length}`, `${hidden.length} unpublished`)}</Pill>}
                     {g.totals.flagged > 0 && (
@@ -538,6 +557,7 @@ export function WorksBoard() {
                 </span>
                 {countChip(g.classes.length, 'ห้อง', 'class', 'classes', <School className="w-3 h-3" />)}
               </button>
+              </span>
             }
             metrics={g.published ? <MetricCells totals={g.totals} /> : hiddenNote}
             action={g.published ? gradeButton(g.totals.pending, workGradeHref(g)) : publishButton(hidden)}
@@ -560,8 +580,7 @@ export function WorksBoard() {
   ];
 
   return (
-    // @container: rows switch to one line by the board's own width (the sidebar changes it).
-    <div className="@container max-w-6xl mx-auto space-y-4 sm:space-y-5 pb-24">
+    <div className="max-w-6xl mx-auto space-y-4 sm:space-y-5 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-24">
       <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400">
         <ArrowLeft className="w-3.5 h-3.5" />
         {tr('กลับแดชบอร์ด', 'Back to dashboard')}
@@ -592,71 +611,116 @@ export function WorksBoard() {
         </div>
       </div>
 
-      {/* Two main tabs; the highlight slides between them. */}
-      <div ref={setTabGroup} role="tablist" className="relative grid grid-cols-2 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/70">
-        {tabIndicator && (
-          <span
-            aria-hidden
-            className="absolute top-0 left-0 rounded-xl bg-white dark:bg-slate-900 shadow-sm transition-[transform,width,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-            style={indicatorStyle(tabIndicator)}
-          />
-        )}
-        {TABS.map(({ id, label }) => {
-          const active = tab === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              data-active={active}
-              onClick={() => selectTab(id)}
-              className={`relative h-11 rounded-xl text-sm font-black inline-flex items-center justify-center gap-2 transition-colors duration-300 cursor-pointer ${
-                active ? `text-slate-900 dark:text-white ${tabIndicator ? '' : 'bg-white dark:bg-slate-900'}` : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-              }`}
-            >
-              <span className="truncate">{label}</span>
-              <span className={`min-w-6 px-1.5 rounded-full text-[11px] tabular-nums ${tabPending[id] > 0 ? 'bg-amber-400 text-slate-950' : 'bg-slate-200/80 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
-                {tabCounts[id]}
-              </span>
-            </button>
-          );
-        })}
+      {/* Desktop: tabs and filters stay pinned under the navbar while scrolling. */}
+      <div className="md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 md:py-3 space-y-2 md:bg-slate-50/90 md:dark:bg-slate-950/90 md:backdrop-blur-xl md:border-b md:border-slate-200/80 md:dark:border-slate-800">
+        {/* Two main tabs; the highlight slides between them. */}
+        <div ref={setTabGroup} role="tablist" className="hidden md:grid relative grid-cols-2 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/70">
+          {tabIndicator && (
+            <span
+              aria-hidden
+              className="absolute top-0 left-0 rounded-xl bg-white dark:bg-slate-900 shadow-sm transition-[transform,width,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+              style={indicatorStyle(tabIndicator)}
+            />
+          )}
+          {TABS.map(({ id, label }) => {
+            const active = tab === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                data-active={active}
+                onClick={() => selectTab(id)}
+                className={`relative h-11 rounded-xl text-sm font-black inline-flex items-center justify-center gap-2 transition-colors duration-300 cursor-pointer ${
+                  active ? `text-slate-900 dark:text-white ${tabIndicator ? '' : 'bg-white dark:bg-slate-900'}` : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+              >
+                <span className="truncate">{label}</span>
+                <span className={`min-w-6 px-1.5 rounded-full text-[11px] tabular-nums ${tabPending[id] > 0 ? 'bg-amber-400 text-slate-950' : 'bg-slate-200/80 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                  {tabCounts[id]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Course chips + search */}
+        <div className="flex flex-col sm:flex-row gap-2">
+          {termCourses.length > 1 && (
+            <div className="-mx-4 px-4 sm:mx-0 sm:px-0 flex gap-1.5 overflow-x-auto scrollbar-none sm:flex-1 sm:min-w-0">
+              {[{ id: 'all', code: tr('ทุกวิชา', 'All courses'), name: '' }, ...termCourses].map((c) => {
+                const active = activeCourse === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => selectCourse(c.id)}
+                    title={c.name || undefined}
+                    className={`shrink-0 h-9 px-3 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                      active ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
+                    }`}
+                  >
+                    {c.code}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <label className="relative block sm:w-64 sm:ml-auto">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={tr('ค้นหางานหรือห้อง', 'Search work or class')}
+              className="w-full h-10 pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+            />
+          </label>
+        </div>
+
       </div>
 
-      {/* Course chips + search */}
-      <div className="flex flex-col sm:flex-row gap-2">
-        {termCourses.length > 1 && (
-          <div className="-mx-4 px-4 sm:mx-0 sm:px-0 flex gap-1.5 overflow-x-auto scrollbar-none sm:flex-1 sm:min-w-0">
-            {[{ id: 'all', code: tr('ทุกวิชา', 'All courses'), name: '' }, ...termCourses].map((c) => {
-              const active = activeCourse === c.id;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => selectCourse(c.id)}
-                  title={c.name || undefined}
-                  className={`shrink-0 h-9 px-3 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
-                    active ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
-                  }`}
-                >
-                  {c.code}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        <label className="relative block sm:w-64 sm:ml-auto">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={tr('ค้นหางานหรือห้อง', 'Search work or class')}
-            className="w-full h-10 pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-          />
-        </label>
-      </div>
+      {/* Phones: the two tabs as a bottom bar (like the classroom page). */}
+      <nav
+        aria-label={tr('ประเภทงาน', 'Work type')}
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]"
+      >
+        <div className="relative grid grid-cols-2 px-1 py-1.5">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-1.5 left-1 w-[calc((100%-0.5rem)/2)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            style={{ transform: `translateX(${tab === 'quiz' ? 100 : 0}%)` }}
+          >
+            <span className="absolute top-1 left-1/2 -translate-x-1/2 h-7 w-14 rounded-full bg-amber-100 dark:bg-amber-950/70" />
+          </span>
+          {TABS.map(({ id, label }) => {
+            const active = tab === id;
+            const Icon = id === 'quiz' ? ListChecks : NotebookPen;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => selectTab(id)}
+                aria-current={active ? 'page' : undefined}
+                className={`relative min-w-0 flex flex-col items-center gap-1 py-1 rounded-2xl text-[11px] transition-colors cursor-pointer ${
+                  active ? 'text-amber-600 dark:text-amber-400 font-black' : 'text-slate-500 dark:text-slate-400 font-semibold'
+                }`}
+              >
+                <span className="relative px-4 py-1">
+                  <Icon className={`w-5 h-5 transition-transform duration-300 ${active ? 'scale-110' : ''}`} />
+                  {tabCounts[id] > 0 && (
+                    <span className={`absolute -top-1 right-0 min-w-4.5 h-4.5 px-1 rounded-full text-[10px] leading-4.5 font-black tabular-nums ${tabPending[id] > 0 ? 'bg-amber-500 text-slate-950' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'}`}>
+                      {tabCounts[id]}
+                    </span>
+                  )}
+                </span>
+                <span className="max-w-full truncate">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       {/* Tab content: re-keyed so it slides in from the side of the chosen tab. */}
       <div
@@ -668,7 +732,7 @@ export function WorksBoard() {
           [0, 1, 2].map((i) => <div key={i} className="h-32 rounded-3xl bg-slate-100 dark:bg-slate-800/60 animate-pulse" />)
         ) : error && !data ? (
           <div className="p-6 rounded-3xl bg-rose-50 dark:bg-rose-950/30 text-sm font-semibold text-rose-700 dark:text-rose-300 text-center">{tr('โหลดข้อมูลไม่สำเร็จ ลองรีเฟรชหน้า', 'Could not load. Try refreshing.')}</div>
-        ) : works.length === 0 && unpublished.length === 0 ? (
+        ) : works.length === 0 ? (
           <div className="text-center py-14 px-6 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
             <p className="text-sm font-bold text-slate-900 dark:text-white">
               {q || activeCourse !== 'all'
@@ -685,19 +749,10 @@ export function WorksBoard() {
             )}
           </div>
         ) : (
-          <>
-            <div className="space-y-2.5">{works.map(workCard)}</div>
-            {unpublished.length > 0 && (
-              <section className="space-y-2.5 pt-3">
-                <h2 className="flex items-center gap-2 px-1 text-sm font-black text-slate-600 dark:text-slate-300">
-                  <EyeOff className="w-4 h-4" />
-                  {tr('ยังไม่เผยแพร่', 'Not published')}
-                  <span className="text-xs font-semibold text-slate-400">· {tr('นักเรียนยังไม่เห็น', 'hidden from students')}</span>
-                </h2>
-                {unpublished.map(workCard)}
-              </section>
-            )}
-          </>
+          // @container: rows go one line by the list's own width (the sidebar changes it).
+          <div ref={bindList} className="@container relative space-y-2.5">
+            {shownOrder.map((id) => workById.get(id)).filter((g): g is WorkGroup => !!g).map(workCard)}
+          </div>
         )}
       </div>
 
@@ -724,7 +779,7 @@ export function WorksBoard() {
       {detail && <WorkDetailSheet group={detail} courseLabel={courseLabel(detail.courseId)} onClose={() => setDetail(null)} />}
 
       {toast && (
-        <div role="status" className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
+        <div role="status" className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] md:bottom-6 inset-x-4 sm:inset-x-auto sm:right-6 sm:max-w-sm z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
           <Check className="w-4 h-4 shrink-0" />
           <span>{toast.text}</span>
         </div>
