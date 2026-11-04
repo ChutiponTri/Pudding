@@ -1753,7 +1753,7 @@ export const dataActions = {
   async getAssignmentTemplate({ supabase, actor }: Ctx, token: string) {
     requireTeacher(actor);
     const id = assignmentIdFromTemplateToken(token);
-    if (!id) throw new HttpError(404, 'ลิงก์แม่แบบไม่ถูกต้อง');
+    if (!id) throw new HttpError(404, 'ลิงก์เทมเพลตไม่ถูกต้อง');
     const [assignmentResult, questionsResult] = await Promise.all([
       supabase.from('assignments').select('*').eq('id', id).maybeSingle(),
       supabase.from('questions').select('*').eq('assignment_id', id),

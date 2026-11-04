@@ -402,7 +402,7 @@ export function WorksBoard() {
         return;
       }
       await navigator.clipboard.writeText(url);
-      showToast(tr('คัดลอกลิงก์แม่แบบแล้ว ครูท่านอื่นเปิดแล้วสร้างงานนี้ในห้องตัวเองได้', 'Template link copied. Other teachers can open it to create this work in their classes.'));
+      showToast(tr('คัดลอกลิงก์เทมเพลตแล้ว ครูท่านอื่นเปิดแล้วสร้างงานนี้ในห้องตัวเองได้', 'Template link copied. Other teachers can open it to create this work in their classes.'));
     } catch (err) {
       showToast(errorText(err, tr('สร้างลิงก์ไม่สำเร็จ', 'Could not create the link')));
     }
@@ -470,7 +470,7 @@ export function WorksBoard() {
         ? { key: 'edit', label: tr('แก้ไข', 'Edit'), icon: <Edit2 className="w-4 h-4" />, panel: classPanel(tr('แก้ไขของห้อง', 'Edit for class'), (c) => router.push(editorHref('edit', c.assignment))) }
         : { key: 'edit', label: tr('แก้ไข', 'Edit'), icon: <Edit2 className="w-4 h-4" />, onSelect: () => router.push(editorHref('edit', g.rep)) },
       { key: 'copy', label: tr('คัดลอกไปห้องอื่น', 'Copy to classes'), icon: <Copy className="w-4 h-4" />, onSelect: () => router.push(editorHref('copy', g.rep)) },
-      !isRetake(g.rep) && { key: 'share', label: tr('แชร์เป็นแม่แบบ', 'Share as template'), icon: <Share2 className="w-4 h-4" />, onSelect: () => shareTemplate(g) },
+      !isRetake(g.rep) && { key: 'share', label: tr('แชร์เป็นเทมเพลต', 'Share as template'), icon: <Share2 className="w-4 h-4" />, onSelect: () => shareTemplate(g) },
       {
         key: 'color',
         label: tr('สีการ์ด', 'Card colour'),

@@ -218,7 +218,7 @@ function NewAssignmentContent() {
   // Retake quiz: the original quiz, the classroom roster and the chosen students.
   const [retake, setRetake] = useState<{ source: Assignment | null; roster: User[]; ids: string[] } | null>(null);
   const [retakeAdding, setRetakeAdding] = useState(false);
-  usePageTitle(editingAssignment ? `แก้ไข: ${editingAssignment.title}` : retake ? 'สร้างข้อสอบซ่อม' : copyId ? 'คัดลอกงาน' : templateToken ? 'สร้างจากแม่แบบ' : null);
+  usePageTitle(editingAssignment ? `แก้ไข: ${editingAssignment.title}` : retake ? 'สร้างข้อสอบซ่อม' : copyId ? 'คัดลอกงาน' : templateToken ? 'สร้างจากเทมเพลต' : null);
   const originalQuestionIdsRef = useRef<string[]>([]);
 
   // Form fields
@@ -1065,7 +1065,7 @@ function NewAssignmentContent() {
             : isReuse
             ? tr('สร้างงานใหม่จากงานเดิม', 'New work from earlier work')
             : templateToken
-            ? tr('สร้างงานจากแม่แบบ', 'New work from a template')
+            ? tr('สร้างงานจากเทมเพลต', 'New work from a template')
             : copyId
             ? tr('คัดลอกงาน / ข้อสอบไปห้องอื่น', 'Copy assignment / quiz to other classrooms')
             : t('assignment_creator.title')}
