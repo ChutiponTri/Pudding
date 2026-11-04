@@ -5,7 +5,7 @@ import { forgetStudentActor, type Actor } from '@/lib/auth/actor';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import type { ClassroomSignal } from '@/lib/realtime/signals';
-import { assignmentPostBody, createClassroomPost } from '@/lib/server/classroomPosts';
+import { ASSIGNMENT_POST_PREFIX, assignmentPostBody, assignmentPostMetadata, createClassroomPost } from '@/lib/server/classroomPosts';
 import { newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
 import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 import { THAI_INSTITUTIONS, canonicalInstitution, sameInstitution } from '@/lib/data/thaiInstitutions';
@@ -36,6 +36,8 @@ import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions,
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
 import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, zeroFillNoSubmissions } from '@/lib/server/grading';
 import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
+import { isRetake, retakeIncludes, rosterFor } from '@/lib/utils/retake';
+import { RETAKE_MIGRATION_MESSAGE, resyncRetakesOf, syncRetakeScores, unlinkRetake } from '@/lib/server/retake';
 import { personNameError, studentProfileError } from '@/lib/utils/studentName';
 import type {
   Assignment,
@@ -64,6 +66,26 @@ type Ctx = { supabase: Supabase; actor: Actor | null };
 
 /** Columns the UI needs from users; avoids shipping whole rows. */
 const USER_FIELDS = 'id, first_name, last_name, student_id, institution, avatar_url, email, line_uid, role, is_line_connected';
+/** What the "add student" picker shows: no LINE ids, no emails. */
+const STUDENT_PICKER_FIELDS = 'id, first_name, last_name, student_id, institution, avatar_url, role, is_line_connected';
+
+/** "chutipon@gmail.com" → "ch•••@gmail.com". */
+function maskEmail(email?: string | null): string | undefined {
+  if (!email) return undefined;
+  const [name, domain] = email.split('@');
+  if (!domain) return '•••';
+  return `${name.slice(0, 2)}•••@${domain}`;
+}
+
+/** Co-teacher entries keep the email of their account, never one typed or masked in the browser. */
+async function withRealTeacherEmails<T extends { teacher_id: string; email?: string }>(supabase: Supabase, teachers: T[]): Promise<T[]> {
+  const ids = [...new Set((teachers || []).map((t) => t?.teacher_id).filter(Boolean))];
+  if (!ids.length) return teachers;
+  const { data } = await supabase.from('users').select('id, email').in('id', ids);
+  const emailOf = new Map(((data || []) as Array<{ id: string; email?: string | null }>).map((u) => [u.id, u.email || undefined]));
+  return teachers.map((t) => (emailOf.has(t.teacher_id) ? { ...t, email: emailOf.get(t.teacher_id) } : t));
+}
+
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
 const IN_CHUNK = 150;
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
@@ -378,13 +400,16 @@ async function teacherClassroomIds(supabase: Supabase, teacherId: string): Promi
  * Assignments of already-authorised classrooms. Teachers see drafts (until the
  * retention sweep removes them); students only published work.
  */
-async function loadAssignments(supabase: Supabase, classroomIds: string[], forTeacher: boolean): Promise<Assignment[]> {
+async function loadAssignments(supabase: Supabase, classroomIds: string[], forTeacher: boolean, studentKeys: string[] = []): Promise<Assignment[]> {
   if (classroomIds.length === 0) return [];
   const results = await Promise.all(chunk(classroomIds).map((part) => supabase.from('assignments').select('*').in('classroom_id', part)));
   const failed = results.find((r) => r.error);
   if (failed?.error) throw toDatabaseError(failed.error, 'assignments');
   const list = results.flatMap((r) => (r.data || []) as Assignment[]);
-  return forTeacher ? teacherVisibleAssignments(supabase, list) : list.filter((a) => isAssignmentPublished(a)).sort(byCreatedDesc);
+  // A retake quiz is only for the students it names; the rest of the class never sees it.
+  return forTeacher
+    ? teacherVisibleAssignments(supabase, list)
+    : list.filter((a) => isAssignmentPublished(a) && retakeIncludes(a, studentKeys)).sort(byCreatedDesc);
 }
 
 /** Newest first, without drafts past DRAFT_RETENTION_DAYS (hidden until the sweep deletes them). */
@@ -439,6 +464,31 @@ const signalRoster = (classroomId: string, detail: Omit<Extract<ClassroomSignal,
   after(() => signalClassroom(classroomId, { type: 'roster', ...detail }));
 
 const isSelf = (actor: Extract<Actor, { kind: 'student' }>, id?: string | null) => !!id && actor.keys.includes(id);
+
+const RETAKE_NOT_YOURS = 'ข้อสอบนี้เป็นการสอบซ่อมสำหรับนักเรียนที่คุณครูเลือกเท่านั้น';
+
+/**
+ * Checks a retake before it is saved: the original is a quiz (not itself a
+ * retake) of the same classroom, and every student is on that classroom's
+ * roster. A retake is always a quiz without LINE reminders.
+ */
+async function checkedRetake<T extends Partial<Assignment>>(supabase: Supabase, classroom: Classroom, data: T): Promise<T> {
+  if (!data.retake_of) throw new HttpError(400, 'กรุณาเลือกข้อสอบเดิมที่ต้องการสอบซ่อม');
+  const { data: original, error } = await supabase.from('assignments').select('*').eq('id', data.retake_of).maybeSingle();
+  if (error) throw toDatabaseError(error, 'assignments');
+  const source = original as Assignment | null;
+  if (!source || source.classroom_id !== classroom.id) throw new HttpError(400, 'ไม่พบข้อสอบเดิมในห้องเรียนนี้');
+  if (!source.is_exam || isRetake(source)) throw new HttpError(400, 'สอบซ่อมได้จากข้อสอบปกติเท่านั้น');
+  const roster = new Map<string, string>();
+  for (const s of classroom.students || []) {
+    if (!s?.id) continue;
+    roster.set(s.id, s.id);
+    if (s.line_uid) roster.set(s.line_uid, s.id);
+  }
+  const ids = [...new Set((Array.isArray(data.retake_student_ids) ? data.retake_student_ids : []).map((id) => roster.get(String(id))).filter((id): id is string => !!id))];
+  if (!ids.length) throw new HttpError(400, 'กรุณาเลือกนักเรียนที่ต้องสอบซ่อมอย่างน้อย 1 คน');
+  return { ...data, is_exam: true, retake_student_ids: ids, reminder_offset_minutes: 0, reminder_offsets_minutes: [] };
+}
 
 // ==============================================================================
 // ACTIONS (name → handler). Arguments mirror the browser dataService methods.
@@ -543,14 +593,21 @@ export const dataActions = {
     const inst = canonicalInstitution(profile.institution);
     if (!isTeacherProfileComplete({ first_name: fn, last_name: ln, institution: inst })) return false;
     const { data: before } = await supabase.from('users').select('first_name, last_name, institution, email, teacher_approval').eq('id', me.userId).maybeSingle();
-    const { error } = await supabase.from('users').update({ first_name: fn, last_name: ln, institution: inst, updated_at: new Date().toISOString() }).eq('id', me.userId);
+    // An approved teacher moving to another school is checked again: the school
+    // decides which students they can find and add.
+    const schoolChanged = before?.teacher_approval === 'approved' && !!before.institution && !sameInstitution(before.institution, inst);
+    const approval = schoolChanged ? 'pending' : before?.teacher_approval;
+    const { error } = await supabase
+      .from('users')
+      .update({ first_name: fn, last_name: ln, institution: inst, ...(schoolChanged ? { teacher_approval: 'pending' } : {}), updated_at: new Date().toISOString() })
+      .eq('id', me.userId);
     if (error) throw toDatabaseError(error, 'users');
-    const access = teacherAccessOf({ first_name: fn, last_name: ln, institution: inst, teacher_approval: before?.teacher_approval });
+    const access = teacherAccessOf({ first_name: fn, last_name: ln, institution: inst, teacher_approval: approval });
     rememberTeacherAccess(me.userId, access);
     registeredInstitutionsCache = null;
     // A new teacher just finished signing up: ask the admin to review them (once,
     // when the profile first becomes complete, so the email has a name and school).
-    if (access === 'pending' && !isTeacherProfileComplete(before)) {
+    if (access === 'pending' && (schoolChanged || !isTeacherProfileComplete(before))) {
       after(() => notifyAdminNewTeacher({ id: me.userId, first_name: fn, last_name: ln, institution: inst!, email: before?.email }));
     }
     // Mirror to Clerk so the Clerk dashboard shows the same name and institution.
@@ -644,9 +701,10 @@ export const dataActions = {
     const me = requireTeacher(actor);
     const institution = await teacherInstitution(supabase, me.userId);
     if (!institution) return [];
-    let req = supabase.from('users').select(USER_FIELDS).eq('role', 'student').eq('institution', institution);
+    // Only what the picker shows: never LINE ids or emails (the server fills those in when the student is added).
+    let req = supabase.from('users').select(STUDENT_PICKER_FIELDS).eq('role', 'student').eq('institution', institution);
     const q = searchTerm(query || '');
-    if (q) req = req.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,student_id.ilike.%${q}%,email.ilike.%${q}%`);
+    if (q) req = req.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,student_id.ilike.%${q}%`);
     const { data, error } = await req.order('first_name').limit(50);
     if (error) {
       console.warn('searchStudentsByInstitution error:', error.message);
@@ -660,18 +718,21 @@ export const dataActions = {
     requireTeacher(actor);
     let req = supabase.from('users').select('id, first_name, last_name, institution, avatar_url, email, role').eq('role', 'teacher');
     const q = searchTerm(query || '');
+    // An email is matched only in full (no listing everyone's address letter by letter).
+    const exactEmail = q.includes('@') ? q.toLowerCase() : '';
     if (q) {
       // Institutions are stored by Thai name; let an English query match them too.
       const lower = q.toLowerCase();
       const byEnglishName = THAI_INSTITUTIONS.filter((inst) => inst.nameEn.toLowerCase().includes(lower)).map((inst) => `institution.eq.${pgValue(inst.name)}`);
-      req = req.or([`first_name.ilike.%${q}%`, `last_name.ilike.%${q}%`, `email.ilike.%${q}%`, `institution.ilike.%${q}%`, ...byEnglishName].join(','));
+      req = req.or([`first_name.ilike.%${q}%`, `last_name.ilike.%${q}%`, ...(exactEmail ? [`email.ilike.${pgValue(exactEmail)}`] : []), `institution.ilike.%${q}%`, ...byEnglishName].join(','));
     }
     const { data, error } = await req.order('first_name').limit(50);
     if (error) {
       console.warn('searchTeachers error:', error.message);
       return [];
     }
-    const list = (data || []) as User[];
+    // Other teachers' addresses stay hidden unless typed in full.
+    const list = ((data || []) as User[]).map((t) => (t.email && t.email.toLowerCase() === exactEmail ? t : { ...t, email: maskEmail(t.email) }));
     if (institution) list.sort((a, b) => Number(sameInstitution(b.institution, institution)) - Number(sameInstitution(a.institution, institution)));
     return list;
   },
@@ -762,6 +823,7 @@ export const dataActions = {
     if (!current) throw new HttpError(404, 'ไม่พบรายวิชา');
     if (!isTeacherOf(current, me.userId)) throw FORBIDDEN();
     const { id: _id, primary_teacher_id: _owner, ...patch } = data;
+    if (patch.teachers) patch.teachers = await withRealTeacherEmails(supabase, patch.teachers);
     const { data: updated, error } = await supabase.from('courses').update(patch).eq('id', id).select().maybeSingle();
     if (error) throw toDatabaseError(error, 'courses');
     // Sections copy the course's teachers, name and code; keep them in step in one update.
@@ -960,6 +1022,7 @@ export const dataActions = {
     await requireTeacherOfClassroom(supabase, actor, id);
     // The owner and LINE link are not editable from here.
     const { id: _id, teacher_id: _owner, line_group_id: _group, line_connection_token: _token, ...patch } = data;
+    if (patch.teachers) patch.teachers = await withRealTeacherEmails(supabase, patch.teachers);
     const { data: updated, error } = await supabase.from('classrooms').update(patch).eq('id', id).select().maybeSingle();
     if (error) throw toDatabaseError(error, 'classrooms');
     if (patch.students || patch.pending_students) signalRoster(id, { action: 'updated' });
@@ -993,6 +1056,11 @@ export const dataActions = {
     let data = studentData;
     if (actor.kind === 'teacher') {
       if (!isTeacherOf(classroom, actor.userId)) throw FORBIDDEN();
+      // Search results carry no LINE id or email; take them from the student's account.
+      if (data.id) {
+        const { data: account } = await supabase.from('users').select('line_uid, email').eq('id', data.id).eq('role', 'student').maybeSingle();
+        if (account) data = { ...data, line_uid: account.line_uid || data.line_uid, email: account.email || data.email };
+      }
     } else {
       // Self-join: identity comes from LINE, admission from the teacher, and a
       // new join request needs the classroom's invite code (not just its id).
@@ -1173,7 +1241,7 @@ export const dataActions = {
       return teacherVisibleAssignments(supabase, mine);
     }
     const allowed = await studentClassroomIds(supabase, actor);
-    return loadAssignments(supabase, requested.filter((id) => allowed.has(id)), false);
+    return loadAssignments(supabase, requested.filter((id) => allowed.has(id)), false, actor.keys);
   },
 
   /**
@@ -1185,7 +1253,7 @@ export const dataActions = {
     const requested = [...new Set(classroomIds.filter(Boolean))];
     if (requested.length === 0) return { assignments: [] as Assignment[], submissions: [] };
     const allowed = await studentClassroomIds(supabase, me);
-    const assignments = await loadAssignments(supabase, requested.filter((id) => allowed.has(id)), false);
+    const assignments = await loadAssignments(supabase, requested.filter((id) => allowed.has(id)), false, me.keys);
     const results = await Promise.all(
       chunk(assignments.map((a) => a.id)).map((part) =>
         supabase.from('submissions').select('*').in('assignment_id', part).in('student_id', me.keys)
@@ -1281,7 +1349,7 @@ export const dataActions = {
       extraIds.length
         ? supabase.from('classrooms').select('*').in('id', extraIds).then(({ data }) => (data || []) as Classroom[])
         : Promise.resolve([] as Classroom[]),
-      loadAssignments(supabase, classroomIds, false),
+      loadAssignments(supabase, classroomIds, false, me.keys),
     ]);
     rows.push(...extra);
     rows.sort(byCreatedDesc);
@@ -1332,6 +1400,7 @@ export const dataActions = {
       return { assignment, questions, classroom: hydrated };
     }
     if (!role || !isAssignmentPublished(assignment)) throw FORBIDDEN();
+    if (actor.kind === 'student' && !retakeIncludes(assignment, actor.keys)) throw new HttpError(403, RETAKE_NOT_YOURS);
     return { assignment, questions: questionsForStudent(questions) };
   },
 
@@ -1346,6 +1415,12 @@ export const dataActions = {
   ) {
     const me = requireTeacher(actor);
     const classroom = await requireTeacherOfClassroom(supabase, actor, assignmentData.classroom_id);
+    if (assignmentData.retake_of || assignmentData.retake_student_ids) {
+      assignmentData = await checkedRetake(supabase, classroom, assignmentData);
+    } else {
+      const { retake_of: _of, retake_student_ids: _ids, ...plain } = assignmentData;
+      assignmentData = plain;
+    }
     const stamp = Date.now();
     const id = `assign-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
     const newAssignment: Assignment = {
@@ -1359,6 +1434,8 @@ export const dataActions = {
     // Databases without the newer optional columns still accept the assignment.
     let row: Partial<Assignment> = newAssignment;
     let { error } = await supabase.from('assignments').insert(row);
+    // A retake must never fall back to a quiz the whole class sees.
+    if (error?.message?.includes('retake_')) throw new HttpError(503, RETAKE_MIGRATION_MESSAGE);
     for (const column of OPTIONAL_ASSIGNMENT_COLUMNS) {
       if (!error?.message?.includes(column)) continue;
       // Dropping a requested publish time would release the work right away; refuse instead.
@@ -1391,7 +1468,7 @@ export const dataActions = {
         authorId: me.userId,
         activityType: assignmentData.is_exam ? 'exam' : 'assignment',
         body: assignmentPostBody(assignmentData),
-        metadata: { assignmentId: id, dueDate: assignmentData.due_date, groupName: assignmentData.group_name || (assignmentData.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
+        metadata: assignmentPostMetadata(assignmentData, id),
         // Only when the database kept publish_at; otherwise the assignment is already visible.
         publishAt: row.publish_at || undefined,
       });
@@ -1402,10 +1479,17 @@ export const dataActions = {
   },
 
   async updateAssignment({ supabase, actor }: Ctx, id: string, data: Partial<Omit<Assignment, 'id' | 'created_at'>>) {
-    const { assignment: previous } = await requireTeacherOfAssignment(supabase, actor, id);
-    // Moving work to another classroom is not an edit.
-    const { classroom_id: _cls, ...rest } = data as Partial<Assignment>;
+    const { assignment: previous, classroom: ownClassroom } = await requireTeacherOfAssignment(supabase, actor, id);
+    // Moving work to another classroom is not an edit; nor is turning work into a retake or back.
+    const { classroom_id: _cls, retake_of: _of, retake_student_ids: retakeIds, ...rest } = data as Partial<Assignment>;
     let patch: Partial<Assignment> = withCleanAttachments(rest);
+    if (isRetake(previous)) {
+      // A retake stays a quiz; its list of students may change.
+      patch.is_exam = true;
+      if (retakeIds !== undefined) {
+        patch.retake_student_ids = (await checkedRetake(supabase, ownClassroom, { ...previous, retake_student_ids: retakeIds })).retake_student_ids;
+      }
+    }
 
     const due = new Date(patch.due_date ?? previous.due_date).getTime();
     const publishAt = patch.publish_at ?? previous.publish_at;
@@ -1455,7 +1539,7 @@ export const dataActions = {
             authorId: requireTeacher(actor).userId,
             activityType: next.is_exam ? 'exam' : 'assignment',
             body: assignmentPostBody(next),
-            metadata: { assignmentId: id, dueDate: next.due_date, groupName: next.group_name || (next.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
+            metadata: assignmentPostMetadata(next, id),
             publishAt: new Date(nextPublishMs).toISOString(),
           });
         }
@@ -1475,11 +1559,12 @@ export const dataActions = {
 
     // The timeline post spells out the title and due date; keep it in step.
     const dueChanged = patch.due_date && new Date(patch.due_date).getTime() !== new Date(previous.due_date).getTime();
-    if (dueChanged || (patch.title && patch.title !== previous.title)) {
+    const retakeCountChanged = isRetake(previous) && patch.retake_student_ids && patch.retake_student_ids.length !== (previous.retake_student_ids || []).length;
+    if (dueChanged || (patch.title && patch.title !== previous.title) || retakeCountChanged) {
       const { data: posts } = await supabase.from('classroom_posts').select('id, body, metadata').contains('metadata', { assignmentId: id });
       await Promise.all(
         (posts || [])
-          .filter((p) => /^(งานใหม่|ข้อสอบใหม่):/.test(p.body || ''))
+          .filter((p) => ASSIGNMENT_POST_PREFIX.test(p.body || ''))
           .map((p) =>
             supabase
               .from('classroom_posts')
@@ -1557,6 +1642,8 @@ export const dataActions = {
     await zeroFillNoSubmissions(supabase, id, rows.filter((q) => !previousById.has(q.id)).map((q) => q.id));
     // Added / removed questions and new points change every total.
     await recomputeSubmissionTotals(supabase, id);
+    // Retake scores follow (this retake's, or the retakes of this quiz on its new points).
+    await (isRetake(assignment) ? syncRetakeScores(supabase, assignment) : resyncRetakesOf(supabase, id));
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: id }));
     return rows;
   },
@@ -1578,6 +1665,7 @@ export const dataActions = {
     const { error: updateError } = await supabase.from('questions').update({ ideal_answer: key }).eq('id', questionId);
     if (updateError) throw toDatabaseError(updateError, 'questions');
     const result = await regradeObjectiveQuestions(supabase, assignmentId, [{ before, after: corrected }]);
+    if (isRetake(assignment)) await syncRetakeScores(supabase, assignment);
     // Students with the result open see the new score.
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId }));
     return { question: corrected, ...result };
@@ -1617,6 +1705,8 @@ export const dataActions = {
     const { assignment } = await requireTeacherOfAssignment(supabase, actor, id);
     // Students' uploaded work and the reference file are deleted from storage with it.
     const fileKeys = await assignmentFileKeys(supabase, [id]);
+    // The original quiz gets back the scores this retake replaced.
+    await unlinkRetake(supabase, assignment);
     await Promise.all([
       supabase.from('questions').delete().eq('assignment_id', id),
       supabase.from('submissions').delete().eq('assignment_id', id),
@@ -1751,7 +1841,7 @@ export const dataActions = {
     if (!Array.isArray(grades) || grades.length === 0) return;
     const { data, error } = await supabase
       .from('submissions')
-      .select('id, assignment_id, status, submission_answers(*), assignment:assignments(id, classroom:classrooms(id, teacher_id, teachers), questions(id, max_score))')
+      .select('id, assignment_id, status, submission_answers(*), assignment:assignments(*, classroom:classrooms(id, teacher_id, teachers), questions(id, max_score))')
       .eq('id', submissionId)
       .maybeSingle();
     if (error) throw toDatabaseError(error, 'submissions');
@@ -1760,7 +1850,7 @@ export const dataActions = {
       assignment_id: string;
       status: Submission['status'];
       submission_answers: SubmissionAnswer[] | null;
-      assignment: { classroom: Pick<Classroom, 'id' | 'teacher_id' | 'teachers'> | null; questions: Pick<Question, 'id' | 'max_score'>[] | null } | null;
+      assignment: (Assignment & { classroom: Pick<Classroom, 'id' | 'teacher_id' | 'teachers'> | null; questions: Pick<Question, 'id' | 'max_score'>[] | null }) | null;
     };
     const row = data as unknown as Row;
     const classroom = row.assignment?.classroom;
@@ -1817,6 +1907,11 @@ export const dataActions = {
     if (isOfficial) {
       // Total = sum of official scores, set once every question has one (read after the write).
       await recomputeSubmissionTotals(supabase, row.assignment_id, [submissionId], questions);
+      // A retake's score goes into the original quiz.
+      if (row.assignment && isRetake(row.assignment)) {
+        const { classroom: _c, questions: _q, ...retake } = row.assignment;
+        await syncRetakeScores(supabase, retake as Assignment, [submissionId]);
+      }
       // Open score tables (classroom grades tab, co-teachers, the student) refetch.
       const assignmentId = row.assignment_id;
       after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
@@ -1858,10 +1953,10 @@ export const dataActions = {
    */
   async allowStudentHandIn({ supabase, actor }: Ctx, assignmentId: string, rosterId: string, until?: unknown) {
     const me = requireTeacher(actor);
-    const { classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
+    const { assignment, classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
     const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
     if (role === 'researcher') throw FORBIDDEN();
-    const rosterEntry = (classroom.students || []).find((s) => s && s.id === rosterId);
+    const rosterEntry = rosterFor(assignment, classroom.students || []).find((s) => s && s.id === rosterId);
     if (!rosterEntry) throw new HttpError(404, 'ไม่พบนักเรียนคนนี้ในห้องเรียน');
     const keys = [...new Set([rosterEntry.id, rosterEntry.line_uid].filter((k): k is string => !!k))];
     const quoted = keys.map(pgValue).join(',');
@@ -1916,46 +2011,6 @@ export const dataActions = {
   },
 
   /**
-   * "Allow edit" for every student who handed in this homework (e.g. after the
-   * teacher fixed a wrongly made assignment), or takes it back from everyone.
-   * Same rules and time limit (`until`, ISO or null) as setSubmissionReopened.
-   * Opening covers everyone whose work is locked (never allowed, or their time
-   * ran out); students with a permission still running keep their own.
-   * Returns the rows changed and the values written, so the page can show
-   * them without refetching.
-   */
-  async setAllSubmissionsReopened({ supabase, actor }: Ctx, assignmentId: string, open: boolean, until?: unknown) {
-    const me = requireTeacher(actor);
-    const { assignment, classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
-    const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
-    if (role === 'researcher') throw FORBIDDEN();
-    if (assignment.is_exam) throw new HttpError(400, 'ข้อสอบส่งซ้ำหรือแก้ไขไม่ได้');
-    const reopenUntil = open ? parseReopenUntil(until) : null;
-    const reopenedAt = open ? new Date().toISOString() : null;
-    const run = (withLimit: boolean) => {
-      let query = supabase
-        .from('submissions')
-        .update(withLimit ? { reopened_at: reopenedAt, reopen_until: reopenUntil } : { reopened_at: reopenedAt })
-        .eq('assignment_id', assignmentId)
-        .in('status', ['submitted', 'late']);
-      if (!open) query = query.not('reopened_at', 'is', null);
-      else if (withLimit) query = query.or(`reopened_at.is.null,reopen_until.lt."${reopenedAt}"`);
-      else query = query.is('reopened_at', null);
-      return query.select('id');
-    };
-    let { data, error } = await run(true);
-    // Databases without reopen_until: only a permission with no limit can be stored.
-    if (error?.message.includes('reopen_until') && !reopenUntil) ({ data, error } = await run(false));
-    if (error) {
-      if (/reopen(ed_at|_until)/.test(error.message)) throw new HttpError(503, REOPEN_MIGRATION_MESSAGE);
-      throw toDatabaseError(error, 'submissions');
-    }
-    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
-    const ids = (data || []).map((row) => row.id as string);
-    return { changed: ids.length, ids, reopened_at: reopenedAt, reopen_until: reopenUntil };
-  },
-
-  /**
    * Records that students handed in nothing: a 'pending' row (not handed in)
    * with an official 0 on every question. Allowed only once the deadline has
    * passed or the work is closed (canRecordNoSubmission), so it never scores
@@ -1985,7 +2040,8 @@ export const dataActions = {
     }
 
     const wanted = new Set((Array.isArray(rosterIds) ? rosterIds : []).filter((id): id is string => typeof id === 'string' && !!id));
-    const roster = (classroom.students || []).filter((s) => s && wanted.has(s.id));
+    // A retake records only its own students.
+    const roster = rosterFor(assignment, classroom.students || []).filter((s) => s && wanted.has(s.id));
     const keys = [...new Set(roster.flatMap((s) => [s.id, s.line_uid]).filter((k): k is string => !!k))];
     if (!keys.length) return [];
     const users: Array<{ id: string; line_uid?: string | null }> = [];

@@ -11,6 +11,8 @@ import { attachFiles, discardDrafts, keysFromUrls, removeFiles } from '@/lib/sto
 import { hasAnyAnswer, isHandedIn, isReopenActive, REOPEN_GRACE_MS } from '@/lib/utils/gradingStatus';
 import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
 import { maskSubmission, resultRelease, resultReleaseForSubmissions } from '@/lib/server/resultRelease';
+import { isRetake, retakeIncludes } from '@/lib/utils/retake';
+import { syncRetakeScores } from '@/lib/server/retake';
 import type { Classroom, Question, Submission } from '@/types/database';
 
 /** What the student's browser sends; the body is untrusted, so only these fields are read. */
@@ -191,6 +193,11 @@ export async function POST(request: NextRequest) {
         if (proxyError instanceof HttpError) return NextResponse.json({ error: proxyError.message }, { status: proxyError.status });
         throw proxyError;
       }
+    }
+    // A retake quiz takes only the students the teacher chose (whoever's phone sends it).
+    const owner = proxyStudent ? [proxyStudent.id, proxyStudent.line_uid] : actor.keys;
+    if (!retakeIncludes(assignment, owner)) {
+      return NextResponse.json({ error: 'ข้อสอบนี้เป็นการสอบซ่อมสำหรับนักเรียนที่คุณครูเลือกเท่านั้น' }, { status: 403 });
     }
     if (assignmentWindow.isScheduled || assignmentWindow.isDraft) {
       return NextResponse.json({ error: 'งานนี้ยังไม่เปิดให้ส่ง' }, { status: 409 });
@@ -485,6 +492,15 @@ export async function POST(request: NextRequest) {
         error: 'บันทึกคำตอบลงฐานข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
         detail: dbErr instanceof Error ? dbErr.message : (dbErr as { message?: string } | null)?.message || 'Supabase write failed',
       }, { status: 503 });
+    }
+
+    // A retake's score replaces the original quiz's score (before replying, so the grade book is right at once).
+    if (isRetake(assignment)) {
+      try {
+        await syncRetakeScores(supabase, assignment, [subId]);
+      } catch (syncError) {
+        console.error('[POST /api/submissions] Retake score sync failed:', syncError);
+      }
     }
 
     // The handed-in files are now in use (before replying, so leaving the page cannot drop them);

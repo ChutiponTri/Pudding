@@ -27,6 +27,8 @@ import { AttachmentList } from '@/components/AssignmentAttachments';
 import { assignmentAttachments } from '@/lib/utils/referenceWork';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ReopenTimeDialog, reopenTimeSuggestion } from '@/components/ReopenTimeDialog';
+import { RetakePicker } from '@/components/RetakePicker';
+import { isRetake, rosterFor } from '@/lib/utils/retake';
 import {
   Search,
   Filter,
@@ -486,7 +488,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // how long; with more than a day left it is granted straight away.
   type ReopenTarget = { key: string; sub: Submission | null; rosterId?: string; name: string };
   const [reopeningKey, setReopeningKey] = useState<string | null>(null);
-  const [reopenDialog, setReopenDialog] = useState<(ReopenTarget & { kind: 'edit' | 'handin'; minutes: number; count?: number }) | null>(null);
+  const [retakeOpen, setRetakeOpen] = useState(false);
+  const [reopenDialog, setReopenDialog] = useState<(ReopenTarget & { kind: 'edit' | 'handin'; minutes: number }) | null>(null);
   // Re-renders now and then so a time-limited permission drops off when it runs out.
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
@@ -562,46 +565,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       setReopeningKey(null);
     }
   };
-  // Homework only: let everyone who handed in edit again (e.g. after fixing a
-  // wrongly made assignment), or undo that. Same time rule as one student:
-  // close to or after the deadline the teacher picks the minutes.
-  const [bulkReopening, setBulkReopening] = useState(false);
-  const saveReopenAll = async (open: boolean, minutes: number | null) => {
-    const until = open && minutes ? minutesFromNow(minutes) : null;
-    setBulkReopening(true);
-    try {
-      const result = await dataService.setAllSubmissionsReopened(assignmentId, open, until);
-      const changed = new Set(result.ids || []);
-      applySubmissionChange((prev) =>
-        prev.map((s) => (changed.has(s.id) ? { ...s, reopened_at: result.reopened_at, reopen_until: result.reopen_until } : s))
-      );
-      setReopenDialog(null);
-      const when = until ? ` · ${th ? 'ถึง' : 'until'} ${formatDateTime(until, language)}` : '';
-      showToast(open
-        ? (th ? `เปิดให้แก้ไขแล้ว ${result.changed} คน` : `${result.changed} students can edit now`) + when
-        : th ? `ปิดการแก้ไขแล้ว ${result.changed} คน` : `Editing closed for ${result.changed}`);
-    } catch (err) {
-      alert(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
-    } finally {
-      setBulkReopening(false);
-    }
-  };
-  const handleReopenAll = (open: boolean, count: number) => {
-    if (!open) {
-      if (confirm(th ? `ยกเลิกการให้แก้ไขงานของนักเรียน ${count} คน?` : `Stop letting ${count} students edit their work?`)) void saveReopenAll(false, null);
-      return;
-    }
-    if (!assignment) return;
-    const suggestion = reopenTimeSuggestion(getAssignmentWindow(assignment));
-    if (!suggestion.needsTime) {
-      if (confirm(th
-        ? `ให้นักเรียนที่ส่งแล้ว ${count} คนแก้ไขงานได้?\nเมื่อส่งใหม่ คะแนนและความเห็นเดิมของคนนั้นจะถูกล้างเพื่อตรวจใหม่`
-        : `Let ${count} students who handed in edit their work?\nHanding in again clears that student's score and comments for regrading.`)) void saveReopenAll(true, null);
-      return;
-    }
-    setReopenDialog({ key: 'bulk', sub: null, name: '', kind: 'edit', minutes: suggestion.minutes, count });
-  };
-
+  /** The score came from a retake (graded on the retake's own page). */
+  const retakeMark = (sub: Submission | null | undefined) =>
+    sub?.retake_submission_id ? (
+      <span
+        title={th ? 'คะแนนจากการสอบซ่อม (ตรวจที่หน้าข้อสอบซ่อม)' : 'Retake score (graded on the retake page)'}
+        className="ml-1 self-center px-1.5 py-px rounded-md text-[10px] font-bold bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
+      >
+        {th ? 'ซ่อม' : 'Retake'}
+      </span>
+    ) : null;
   const canReopen = () => !!grader && grader.role !== 'researcher';
   const studentLabel = (sub: Submission | null, row?: RosterRow) =>
     sub?.student?.first_name || row?.student?.first_name || (th ? 'นักเรียน' : 'the student');
@@ -730,7 +703,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // LINE id or the school number, so match on any of them.
   const rosterRows: RosterRow[] = (() => {
     const used = new Set<string>();
-    const rows: RosterRow[] = (classroom?.students || []).map((std) => {
+    // A retake lists only the students it is for.
+    const rows: RosterRow[] = rosterFor(assignment, classroom?.students || []).map((std) => {
       const sub = submissions.find(
         (s) =>
           !used.has(s.id) && isStudentSubmission(s, std)
@@ -797,9 +771,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const assignmentWindow = assignment ? getAssignmentWindow(assignment) : null;
   const canMarkNoSubmission = !!assignmentWindow && canRecordNoSubmission(assignmentWindow);
   // Handed-in homework is locked for students until the teacher allows edits.
-  const lockedCount = submissions.filter((sub) => isHandedIn(sub) && !isReopenActive(sub, nowTick)).length;
-  const allReopened = handedInTotal > 0 && lockedCount === 0;
-  const canBulkReopen = !!grader && grader.role !== 'researcher' && !assignment?.is_exam && handedInTotal > 0;
   const assignmentStatus = assignment && assignmentWindow ? getAssignmentStatus(assignmentWindow, assignment.is_exam, language) : null;
   const deadlineLabel = formatDateTime(
     assignmentWindow?.deadline != null ? new Date(assignmentWindow.deadline).toISOString() : assignment?.due_date,
@@ -932,6 +903,19 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               >
                 {assignment?.is_exam ? t('assignment_creator.mode_exam') : t('assignment_creator.mode_assignment')}
               </span>
+              {isRetake(assignment) && (
+                <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300">
+                  🔁 {th ? `สอบซ่อม · ${assignment?.retake_student_ids?.length || 0} คน` : `Retake · ${assignment?.retake_student_ids?.length || 0}`}
+                </span>
+              )}
+              {isRetake(assignment) && assignment?.retake_of && (
+                <Link
+                  href={`/assignments/${assignment.retake_of}/grading`}
+                  className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold text-orange-700 dark:text-orange-300 ring-1 ring-orange-200 dark:ring-orange-900 hover:bg-orange-50 dark:hover:bg-orange-950/40"
+                >
+                  {th ? 'ข้อสอบเดิม →' : 'Original quiz →'}
+                </Link>
+              )}
               {(classroom?.name || assignment?.classroom_name) && (
                 <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-bold">
                   {classroom?.name || assignment?.classroom_name}
@@ -944,6 +928,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               </h1>
               {assignment && grader && (
                 <div className="shrink-0 flex items-center gap-1.5">
+                  {assignment.is_exam && !isRetake(assignment) && grader.role !== 'researcher' && (
+                    <button
+                      type="button"
+                      onClick={() => setRetakeOpen(true)}
+                      title={th ? 'สร้างข้อสอบซ่อมให้นักเรียนที่เลือก' : 'Retake for chosen students'}
+                      aria-label={th ? 'สอบซ่อม' : 'Retake'}
+                      className="inline-flex items-center gap-1 justify-center min-w-10 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-[11px] font-bold shadow-sm shadow-orange-500/25 cursor-pointer transition-colors"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{th ? 'สอบซ่อม' : 'Retake'}</span>
+                    </button>
+                  )}
                   <Link
                     href={`/assignments/new?copy=${assignment.id}&classroomId=${assignment.classroom_id}&from=classroom`}
                     title={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
@@ -1058,25 +1053,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           </div>
 
           <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 empty:hidden">
-            {canBulkReopen && (
-              <button
-                type="button"
-                onClick={() => handleReopenAll(!allReopened, allReopened ? handedInTotal : lockedCount)}
-                disabled={bulkReopening}
-                title={th ? 'งานที่ส่งแล้วนักเรียนแก้ไม่ได้ จนกว่าครูจะเปิดให้แก้' : 'Handed-in work is locked until you allow edits'}
-                className={`w-full sm:w-auto h-10 sm:h-9 px-3.5 rounded-xl text-xs font-black cursor-pointer active:scale-[0.98] transition-all disabled:opacity-50 inline-flex items-center justify-center gap-1.5 ${
-                  allReopened
-                    ? 'bg-white dark:bg-slate-900 text-orange-700 dark:text-orange-300 ring-2 ring-orange-300 dark:ring-orange-800 hover:bg-orange-50 dark:hover:bg-orange-950/40'
-                    : 'bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25'
-                }`}
-              >
-                {bulkReopening ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PencilLine className="w-3.5 h-3.5" />}
-                {allReopened
-                  ? th ? `ยกเลิกการให้แก้ไขทั้งหมด (${handedInTotal})` : `Stop all edits (${handedInTotal})`
-                  : th ? `ให้ทุกคนที่ส่งแล้วแก้ไขงาน (${lockedCount})` : `Allow everyone who handed in to edit (${lockedCount})`}
-              </button>
-            )}
-
             {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && canMarkNoSubmission && (
               <button
                 type="button"
@@ -1391,10 +1367,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                       <span className="shrink-0 inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
                         <span className="text-sm tabular-nums">{sub.total_score}</span>
                         <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
+                            {retakeMark(sub)}
                       </span>
                     ) : (
                       <span className="shrink-0 inline-flex items-center px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
-                        {t('grading.pending_eval')}
+                        {t('grading.pending_eval')}{retakeMark(sub)}
                       </span>
                     ))}
                   </div>
@@ -1551,6 +1528,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                           <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-black">
                             <span className="text-sm tabular-nums">{sub.total_score}</span>
                             <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
+                            {retakeMark(sub)}
                           </span>
                         </td>
                         <td className="py-3.5 px-3 lg:px-6 text-right whitespace-nowrap">
@@ -1658,10 +1636,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                           <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
                             <span className="text-sm tabular-nums">{sub.total_score}</span>
                             <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
+                            {retakeMark(sub)}
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
-                            {t('grading.pending_eval')}
+                            {t('grading.pending_eval')}{retakeMark(sub)}
                           </span>
                         )}
                       </td>
@@ -1696,16 +1675,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       {reopenDialog && (
         <ReopenTimeDialog
           studentName={reopenDialog.name}
-          count={reopenDialog.count}
           kind={reopenDialog.kind}
           deadline={assignmentWindow?.deadline ?? null}
           defaultMinutes={reopenDialog.minutes}
-          busy={reopenDialog.count != null ? bulkReopening : reopeningKey === reopenDialog.key}
-          onConfirm={(minutes) =>
-            reopenDialog.count != null ? saveReopenAll(true, minutes) : saveReopen(reopenDialog, reopenDialog.kind, minutes)
-          }
+          busy={reopeningKey === reopenDialog.key}
+          onConfirm={(minutes) => saveReopen(reopenDialog, reopenDialog.kind, minutes)}
           onClose={() => setReopenDialog(null)}
         />
+      )}
+
+      {retakeOpen && assignment && (
+        <RetakePicker classroomId={assignment.classroom_id} sourceId={assignment.id} from="classroom" onClose={() => setRetakeOpen(false)} />
       )}
 
       {/* Integrity Audit Modal */}

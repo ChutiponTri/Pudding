@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { BookOpen, ChevronRight, Copy, ShieldAlert } from 'lucide-react';
+import { BookOpen, ChevronRight, Copy, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { ReuseWorkPicker } from '@/components/ReuseWorkPicker';
+import { RetakePicker } from '@/components/RetakePicker';
 import type { Assignment } from '@/types/database';
 
 const MENU_WIDTH = 288;
@@ -14,9 +15,9 @@ const VIEWPORT_MARGIN = 12;
 
 /**
  * The "new assignment / quiz" button. Opens a small menu right next to the
- * button (below, or above when there is no room) with three starts:
- * homework, quiz, or reuse earlier work (a full-screen picker). All three end
- * on the normal creation page; reuse arrives with the chosen work filled in.
+ * button (below, or above when there is no room) with four starts:
+ * homework, quiz, a retake quiz for chosen students, or reuse earlier work.
+ * All end on the normal creation page, set up for the choice.
  */
 export function CreateWorkMenu({
   classroomId,
@@ -40,6 +41,7 @@ export function CreateWorkMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [retakeOpen, setRetakeOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number; above: boolean } | null>(null);
 
   const query = (extra: Record<string, string>) => {
@@ -129,6 +131,17 @@ export function CreateWorkMenu({
       onSelect: () => go(query({ mode: 'quiz' })),
     },
     {
+      key: 'retake',
+      icon: RotateCcw,
+      tile: 'bg-orange-50 dark:bg-orange-950/50 text-orange-600 dark:text-orange-400',
+      label: tr('สอบซ่อม', 'Retake quiz'),
+      hint: tr('เฉพาะนักเรียนที่เลือก คะแนนแทนของเดิม', 'Chosen students; replaces their score'),
+      onSelect: () => {
+        setOpen(false);
+        setRetakeOpen(true);
+      },
+    },
+    {
       key: 'reuse',
       icon: Copy,
       tile: 'bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400',
@@ -176,7 +189,7 @@ export function CreateWorkMenu({
               const Icon = option.icon;
               return (
                 <div key={option.key}>
-                  {index === 2 && <div className="my-1 mx-2 border-t border-slate-100 dark:border-slate-800" aria-hidden="true" />}
+                  {index === 3 && <div className="my-1 mx-2 border-t border-slate-100 dark:border-slate-800" aria-hidden="true" />}
                   <button
                     type="button"
                     role="menuitem"
@@ -190,7 +203,7 @@ export function CreateWorkMenu({
                       <span className="block text-xs font-bold text-slate-900 dark:text-white">{option.label}</span>
                       <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate">{option.hint}</span>
                     </span>
-                    {option.key === 'reuse' && <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 shrink-0" />}
+                    {(option.key === 'reuse' || option.key === 'retake') && <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 shrink-0" />}
                   </button>
                 </div>
               );
@@ -199,6 +212,14 @@ export function CreateWorkMenu({
           document.body
         )}
 
+      {retakeOpen && (
+        <RetakePicker
+          classroomId={classroomId}
+          from={from}
+          onNavigate={onNavigate}
+          onClose={() => setRetakeOpen(false)}
+        />
+      )}
       {pickerOpen && <ReuseWorkPicker targetClassroomId={classroomId} onPick={pick} onClose={closePicker} />}
     </>
   );

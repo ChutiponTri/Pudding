@@ -1,4 +1,5 @@
 'use client';
+import { rosterSizeFor } from '@/lib/utils/retake';
 import { useUser } from '@clerk/nextjs';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
@@ -78,7 +79,7 @@ import { formatDateTime } from '@/lib/utils/datetime';
 import { GradingBar } from '@/components/AssignmentProgressCard';
 import { TeacherProfileFields, announceTeacherProfile, profileFormValues } from '@/components/TeacherProfileGate';
 import { TEACHER_PROFILE_UPDATED_EVENT, isTeacherProfileComplete } from '@/lib/utils/teacherProfile';
-import { canonicalInstitution, institutionLabel } from '@/lib/data/thaiInstitutions';
+import { canonicalInstitution, institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { EditStudentModal } from '@/components/EditStudentModal';
@@ -580,7 +581,7 @@ export function TeacherWorkspace({
     for (const s of filteredSubmissions) bySubmission.set(s.assignment_id, [...(bySubmission.get(s.assignment_id) || []), s]);
     const rosterSize = new Map(classrooms.map((c) => [c.id, c.students?.length || c.student_count || 0]));
     return new Map(
-      assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSize.get(a.classroom_id) || 0, a.is_exam)])
+      assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSizeFor(a, rosterSize.get(a.classroom_id) || 0), a.is_exam)])
     );
   }, [filteredSubmissions, assignments, classrooms]);
   // Course cards: the "still to grade" group and its categories start open; folds are remembered.
@@ -982,10 +983,20 @@ export function TeacherWorkspace({
       alert(tr('กรุณากรอกชื่อ นามสกุล และสถานศึกษาให้ครบ', 'Please fill in first name, last name and institution'));
       return;
     }
+    // Moving to another school needs the admin's approval again (it decides which students show up).
+    const schoolChanged = !!teacherProfile?.institution && !sameInstitution(teacherProfile.institution, inst);
+    if (schoolChanged && !confirm(tr(
+      'เปลี่ยนสถานศึกษาแล้วต้องรอผู้ดูแลอนุมัติใหม่ก่อนใช้งานต่อ\nยืนยันเปลี่ยนหรือไม่?',
+      'Changing your school needs admin approval again before you can continue.\nChange it?'
+    ))) return;
     try {
       // The server saves the users row and mirrors it to Clerk (name + institution).
       const ok = await dataService.updateTeacherProfile(clerkUser.id, { first_name: fn, last_name: ln, institution: inst! });
       if (!ok) throw new Error('Profile incomplete');
+      if (schoolChanged) {
+        window.location.assign('/pending-approval');
+        return;
+      }
       await clerkUser.reload().catch(() => undefined);
       const saved = { ...(teacherProfile || { id: clerkUser.id, role: 'teacher' }), first_name: fn, last_name: ln, institution: inst } as User;
       setTeacherProfile(saved);

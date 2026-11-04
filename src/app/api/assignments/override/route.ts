@@ -4,7 +4,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { assignmentPostBody, createClassroomPost } from '@/lib/server/classroomPosts';
+import { assignmentPostBody, assignmentPostMetadata, createClassroomPost } from '@/lib/server/classroomPosts';
 import { isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
           authorId: userId,
           activityType: published.is_exam ? 'exam' : 'assignment',
           body: assignmentPostBody(published),
-          metadata: { assignmentId, dueDate: published.due_date, groupName: published.group_name || (published.is_exam ? 'ข้อสอบ' : 'งานทั่วไป') },
+          metadata: assignmentPostMetadata(published, assignmentId),
         });
       } catch (postError) {
         console.warn('Unable to post published draft:', postError);

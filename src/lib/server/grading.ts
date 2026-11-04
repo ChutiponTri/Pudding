@@ -40,6 +40,20 @@ export function submissionTotal(questions: Pick<Question, 'id'>[], answers: Arra
   return Math.round(total * 10) / 10;
 }
 
+/** Of the given submissions, those whose score a retake replaced (none on databases without the column). */
+async function retakeReplacedIds(supabase: SupabaseClient, ids: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!ids.length) return out;
+  const results = await Promise.all(
+    chunk(ids).map((part) => supabase.from('submissions').select('id').in('id', part).not('retake_submission_id', 'is', null))
+  );
+  for (const r of results) {
+    if (r.error) return new Set();
+    for (const row of r.data || []) out.add(row.id as string);
+  }
+  return out;
+}
+
 /**
  * Recomputes total_score / max_total_score of an assignment's submissions (all, or the given ones).
  * Callers that already loaded the assignment's questions pass them to save a round trip.
@@ -72,7 +86,10 @@ export async function recomputeSubmissionTotals(
           return (data || []).map((s) => s.id as string);
         });
   const answersPromise = idsPromise.then((ids) => (ids.length ? answersFor(supabase, 'submission_id', ids) : []));
-  const [qs, ids, answers] = await Promise.all([questionsPromise, idsPromise, answersPromise]);
+  // Rows whose score a retake replaced keep the retake's score (see syncRetakeScores).
+  const replacedPromise = idsPromise.then((ids) => retakeReplacedIds(supabase, ids));
+  const [qs, allIds, answers, replaced] = await Promise.all([questionsPromise, idsPromise, answersPromise, replacedPromise]);
+  const ids = allIds.filter((id) => !replaced.has(id));
   if (!ids.length) return;
   const bySubmission = new Map<string, AnswerRow[]>();
   for (const a of answers) bySubmission.set(a.submission_id, [...(bySubmission.get(a.submission_id) || []), a]);

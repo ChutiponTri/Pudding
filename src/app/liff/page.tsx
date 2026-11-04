@@ -1,5 +1,6 @@
 "use client";
 
+import { isRetake } from '@/lib/utils/retake';
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Avatar } from '@/components/Avatar';
 import { AssignmentGroupHeader, assignmentGroupKey, assignmentGroupLabel, type GroupChip } from '@/components/AssignmentGroupHeader';
@@ -88,7 +89,7 @@ interface ClassroomPost {
   body: string;
   created_at: string;
   activity_type?: "announcement" | "assignment" | "exam" | "attendance";
-  metadata?: { assignmentId?: string; groupName?: string };
+  metadata?: { assignmentId?: string; groupName?: string; retake?: boolean };
 }
 /** A classmate this phone is being lent to, verified by the server (same school, same classroom). */
 interface ProxyFriend {
@@ -1732,7 +1733,11 @@ export default function LiffStudentPage() {
     }
     if (link.assignmentId) {
       const assignment = assignments.find((item) => item.id === link.assignmentId);
-      if (!assignment) return;
+      if (!assignment) {
+        // A retake for other students (or deleted work) in the student's own classroom.
+        if (targetClassroom) alert("ไม่พบงานนี้ — อาจถูกลบ หรือเป็นการสอบซ่อมเฉพาะนักเรียนที่คุณครูเลือก");
+        return;
+      }
       const assignmentClassroom = classrooms.find((c) => c.id === assignment.classroom_id);
       if (assignmentClassroom) setSelectedClassroom(assignmentClassroom);
       setCourseTab("work");
@@ -1934,7 +1939,7 @@ export default function LiffStudentPage() {
     ...classroomPosts.map((post) => ({
       id: `post-${post.id}`,
       kind: post.activity_type || 'announcement',
-      label: post.activity_type === 'exam' ? 'ข้อสอบใหม่' : post.activity_type === 'assignment' ? 'งานใหม่' : post.activity_type === 'attendance' ? 'เช็คชื่อ' : 'ประกาศจากครู',
+      label: post.activity_type === 'exam' ? (post.metadata?.retake ? 'สอบซ่อม' : 'ข้อสอบใหม่') : post.activity_type === 'assignment' ? 'งานใหม่' : post.activity_type === 'attendance' ? 'เช็คชื่อ' : 'ประกาศจากครู',
       body: post.body,
       created_at: post.created_at || new Date().toISOString()
     })),
@@ -2582,7 +2587,7 @@ export default function LiffStudentPage() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <span className="text-[11px] font-semibold text-slate-400">
-                                  {assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม {assignment.total_points || 20} คะแนน
+                                  {isRetake(assignment) ? '🔁 สอบซ่อม' : assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม {assignment.total_points || 20} คะแนน
                                   {assignmentAttachments(assignment).length > 0 && ` • 📎 ไฟล์แนบ ${assignmentAttachments(assignment).length}`}
                                 </span>
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
@@ -3307,7 +3312,7 @@ export default function LiffStudentPage() {
                           return (
                             <div key={a.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700">
                               <div className="min-w-0">
-                                <p className="text-[11px] font-semibold text-slate-400">{a.is_exam ? "📝 ข้อสอบ" : "📋 งาน"}</p>
+                                <p className="text-[11px] font-semibold text-slate-400">{isRetake(a) ? "🔁 สอบซ่อม" : a.is_exam ? "📝 ข้อสอบ" : "📋 งาน"}</p>
                                 <p className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-2">{a.title}</p>
                               </div>
                               {done ? (

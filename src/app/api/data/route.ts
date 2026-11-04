@@ -3,6 +3,11 @@ import { getActor } from '@/lib/auth/actor';
 import { errorResponse, HttpError } from '@/lib/server/access';
 import { createDataContext, dataActions, type DataActionName } from '@/lib/server/dataActions';
 import { requireTeacherAccess } from '@/lib/server/teacherProfileGuard';
+import { clientIp, takeRequest } from '@/lib/server/rateLimit';
+
+/** Requests per minute: a signed-in caller (pages fire several at once), and per address without sign-in. */
+const SIGNED_IN_LIMIT = 300;
+const ANONYMOUS_LIMIT = 60;
 
 /** What a teacher may call before their profile is complete and the admin has approved them. */
 const PROFILE_SETUP_ACTIONS = new Set<string>(['syncClerkUser', 'updateTeacherProfile']);
@@ -25,6 +30,8 @@ export async function POST(request: NextRequest) {
       throw new HttpError(400, 'Unknown action');
     }
     const actor = await getActor(request, { allowIncompleteProfile: true });
+    const allowed = actor ? takeRequest(`u:${actor.userId}`, SIGNED_IN_LIMIT) : takeRequest(`ip:${clientIp(request.headers)}`, ANONYMOUS_LIMIT);
+    if (!allowed) throw new HttpError(429, 'ส่งคำขอถี่เกินไป กรุณารอสักครู่แล้วลองใหม่');
     if (actor?.kind === 'teacher' && !PROFILE_SETUP_ACTIONS.has(action)) await requireTeacherAccess(actor.userId);
     const ctx = createDataContext(actor);
     const handler = dataActions[action] as (c: typeof ctx, ...a: unknown[]) => Promise<unknown>;

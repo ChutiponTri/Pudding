@@ -1,5 +1,6 @@
 'use client';
 
+import { rosterSizeFor } from '@/lib/utils/retake';
 import React, { useMemo, useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -131,7 +132,7 @@ function GradingHubContent() {
       if (!cls) continue;
       const subs = subsByAssignment.get(asg.id) || [];
       // Leaving the screen is tracked during quizzes only, so only quizzes count flags.
-      items.push({ classroom: cls, assignment: asg, ...gradingCounts(subs, cls.students?.length || cls.student_count || 0, asg.is_exam) });
+      items.push({ classroom: cls, assignment: asg, ...gradingCounts(subs, rosterSizeFor(asg, cls.students?.length || cls.student_count || 0), asg.is_exam) });
     }
     return items;
   }, [assignments, classrooms, submissions]);

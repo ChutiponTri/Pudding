@@ -4,6 +4,7 @@ import type { Assignment, Classroom, Question, Submission, SubmissionAnswer } fr
 import { getAssignmentWindow, QUIZ_LATE_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
 import { isHandedIn, isReopenActive, REOPEN_GRACE_MS } from '@/lib/utils/gradingStatus';
+import { rosterFor } from '@/lib/utils/retake';
 
 /**
  * When students see the scores of choice / true-false questions.
@@ -74,7 +75,7 @@ export type ResultRelease = {
  */
 export async function resultRelease(
   supabase: Supabase,
-  assignments: Array<Pick<Assignment, 'id' | 'classroom_id' | 'due_date' | 'status_override' | 'extended_until' | 'is_exam' | 'publish_at'>>,
+  assignments: Array<Pick<Assignment, 'id' | 'classroom_id' | 'due_date' | 'status_override' | 'extended_until' | 'is_exam' | 'publish_at' | 'retake_student_ids'>>,
   ownSubmissions: Array<Pick<Submission, 'assignment_id' | 'status'>>,
   now: number = Date.now()
 ): Promise<ResultRelease> {
@@ -123,7 +124,8 @@ export async function resultRelease(
       released = true;
     } else {
       const done = new Set(subs.filter((s) => isHandedIn(s)).map((s) => s.student_id));
-      const roster = rosterOf.get(a.classroom_id) || [];
+      // A retake waits only for its own students.
+      const roster = rosterFor(a, rosterOf.get(a.classroom_id) || []);
       released = roster.length > 0 && roster.every((s) => done.has(s.id) || (!!s.line_uid && done.has(s.line_uid)));
     }
     if (released) continue;

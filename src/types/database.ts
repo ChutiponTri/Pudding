@@ -145,6 +145,10 @@ export interface Assignment {
   group_name?: string;
   /** Position inside its group, set by dragging in the classroom; missing = newest first. */
   sort_order?: number | null;
+  /** Retake quiz: the original quiz whose score this one replaces. */
+  retake_of?: string | null;
+  /** Retake quiz: roster ids (classroom.students[].id) who may see and take it; missing = everyone. */
+  retake_student_ids?: string[] | null;
 }
 
 export type QuestionType = 'multiple_choice' | 'short_answer' | 'file_upload' | 'true_false';
@@ -197,6 +201,10 @@ export interface Submission {
    * nobody can hand in any more (see resultRelease); the total is then empty.
    */
   results_hidden?: boolean;
+  /** Original quiz row: the retake submission whose score replaced this one. */
+  retake_submission_id?: string | null;
+  /** Original quiz row: the values before the retake replaced them. */
+  retake_previous?: Pick<Submission, 'status' | 'total_score' | 'max_total_score' | 'submitted_at'> | null;
 }
 
 export interface TeacherGradeRecord {

@@ -19,9 +19,29 @@ export type ClassroomPost = {
   created_at: string;
 };
 
-/** Timeline/LINE text for new work. The edit path matches the "งานใหม่:" / "ข้อสอบใหม่:" prefix. */
-export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date'>) {
-  return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${a.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE)})`;
+/** Metadata of a work post: links it to the work, and marks a retake (its LINE message says so). */
+export function assignmentPostMetadata(a: Pick<Assignment, 'is_exam' | 'due_date' | 'group_name' | 'retake_student_ids'>, assignmentId: string) {
+  return {
+    assignmentId,
+    dueDate: a.due_date,
+    groupName: a.group_name || (a.is_exam ? 'ข้อสอบ' : 'งานทั่วไป'),
+    ...(Array.isArray(a.retake_student_ids) ? { retake: true } : {}),
+  };
+}
+
+/** Prefixes of work posts; the edit path rewrites posts that start with one of them. */
+export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอบใหม่|สอบซ่อม):/;
+
+/**
+ * Timeline/LINE text for new work. A retake names no students (the group
+ * sees the post); only the chosen students can open it.
+ */
+export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'>) {
+  const due = formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE);
+  if (Array.isArray(a.retake_student_ids)) {
+    return `สอบซ่อม: ${a.title} (ปิดรับคำตอบ: ${due})\nเฉพาะนักเรียนที่คุณครูแจ้ง ${a.retake_student_ids.length} คน`;
+  }
+  return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${a.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due})`;
 }
 
 /**

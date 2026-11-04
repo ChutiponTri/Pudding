@@ -750,15 +750,6 @@ export const dataService = {
     return call<Submission>('allowStudentHandIn', assignmentId, rosterId, until);
   },
 
-  /** "Allow edit" for everyone who handed in this homework (optionally until `until`), or takes it back from everyone. */
-  async setAllSubmissionsReopened(
-    assignmentId: string,
-    open: boolean,
-    until: string | null = null
-  ): Promise<{ changed: number; ids: string[]; reopened_at: string | null; reopen_until: string | null }> {
-    return call('setAllSubmissionsReopened', assignmentId, open, until);
-  },
-
   /**
    * Records that roster students handed in nothing (an official 0 on every
    * question). The server allows it only after the deadline or once closed.

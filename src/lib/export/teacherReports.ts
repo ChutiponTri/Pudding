@@ -3,6 +3,7 @@ import type { Cell, Sheet } from '@/lib/export/xlsx';
 import { classroomTitle, roomLabel, subjectTitle } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
+import { isRetake } from '@/lib/utils/retake';
 import { isGraded, isHandedIn, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
@@ -33,10 +34,14 @@ const pointsOf = (a: Assignment) => a.total_points || 20;
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const when = (iso: string | null | undefined, lang: Lang) => (iso ? formatDateTime(iso, lang) : '');
 
-/** Published work of a classroom in classroom order: by group, the teacher's order, then oldest first. */
+/**
+ * Published work of a classroom in classroom order: by group, the teacher's
+ * order, then oldest first. Retake quizzes are left out: their scores are in
+ * the original quiz's column.
+ */
 function workOf(data: ExportData, classroomId: string) {
   return data.assignments
-    .filter((a) => a.classroom_id === classroomId && !isAssignmentDraft(a) && isAssignmentPublished(a))
+    .filter((a) => a.classroom_id === classroomId && !isAssignmentDraft(a) && isAssignmentPublished(a) && !isRetake(a))
     .sort(
       (a, b) =>
         (a.group_name || '').localeCompare(b.group_name || '') ||
@@ -215,7 +220,8 @@ function submissionLog(data: ExportData, lang: Lang): Sheet {
           when(sub && isHandedIn(sub) ? sub.submitted_at : null, lang),
           sub && isGraded(sub) ? Number(sub.total_score) : null,
           pointsOf(a),
-          sub && needsGrading(sub) ? t(lang, 'รอตรวจ', 'To grade') : sub && isGraded(sub) ? t(lang, 'ตรวจแล้ว', 'Graded') : '',
+          (sub && needsGrading(sub) ? t(lang, 'รอตรวจ', 'To grade') : sub && isGraded(sub) ? t(lang, 'ตรวจแล้ว', 'Graded') : '') +
+            (sub?.retake_submission_id ? t(lang, ' (คะแนนสอบซ่อม)', ' (retake score)') : ''),
           sub?.reopened_at ? t(lang, 'เปิดให้แก้ไขอยู่', 'Editing allowed') : '',
           sub?.submitted_by ? nameById.get(sub.submitted_by) || sub.submitted_by : '',
           a.is_exam && sub ? sub.tab_switch_count || 0 : null,

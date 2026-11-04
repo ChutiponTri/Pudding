@@ -196,6 +196,8 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   sample_work_title TEXT,
   sample_work_description TEXT,
   attachments JSONB,                          -- Up to 3 {kind, url, name}; sample_work_url mirrors the first
+  retake_of TEXT REFERENCES public.assignments(id) ON DELETE SET NULL, -- Retake quiz: the original quiz
+  retake_student_ids TEXT[],                  -- Retake quiz: roster ids allowed to take it (NULL = everyone)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -243,6 +245,8 @@ CREATE TABLE IF NOT EXISTS public.submissions (
   submitted_by TEXT REFERENCES public.users(id) ON DELETE SET NULL, -- Classmate whose phone sent it (NULL = own phone)
   reopened_at TIMESTAMPTZ, -- The teacher let this student hand in again (cleared when they hand in)
   reopen_until TIMESTAMPTZ, -- End of that permission (NULL = no time limit)
+  retake_submission_id TEXT, -- Original quiz row: the retake submission whose score replaced this one
+  retake_previous JSONB, -- Values before the retake replaced them (restored if the retake is deleted)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(assignment_id, student_id)

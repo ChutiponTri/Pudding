@@ -1,5 +1,6 @@
 'use client';
 
+import { isRetake } from '@/lib/utils/retake';
 import React, { useId, useState } from 'react';
 import Link from 'next/link';
 import { Calendar, CalendarClock, CheckCircle2, ChevronDown, ChevronRight, Clock, Copy, Edit2, FilePen, Lock, Rocket, ShieldAlert, Trash2, Unlock } from 'lucide-react';
@@ -130,12 +131,16 @@ export function AssignmentProgressCard({
           )}
           <span
             className={`px-2 py-0.5 rounded-lg text-[11px] font-bold ${
-              assignment.is_exam
+              isRetake(assignment)
+                ? 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300'
+                : assignment.is_exam
                 ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
                 : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
             }`}
           >
-            {assignment.is_exam ? (th ? 'ข้อสอบ' : 'Quiz') : th ? 'การบ้าน/ใบงาน' : 'Assignment'}
+            {isRetake(assignment)
+              ? th ? `สอบซ่อม · ${assignment.retake_student_ids?.length || 0} คน` : `Retake · ${assignment.retake_student_ids?.length || 0}`
+              : assignment.is_exam ? (th ? 'ข้อสอบ' : 'Quiz') : th ? 'การบ้าน/ใบงาน' : 'Assignment'}
           </span>
           {onStatusClick ? (
             <button

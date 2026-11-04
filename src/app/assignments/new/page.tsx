@@ -6,7 +6,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
 import { cachedCall, readCache, TEACHER_DASHBOARD_CACHE_KEY } from '@/lib/cache/sessionCache';
-import { Assignment, AssignmentAttachment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question } from '@/types/database';
+import { Assignment, AssignmentAttachment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question, User } from '@/types/database';
+import { isRetake } from '@/lib/utils/retake';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { DateTimeField } from '@/components/DateTimeField';
 import { Collapse } from '@/components/Collapse';
@@ -43,6 +44,9 @@ import {
   ArrowLeft,
   Copy,
   PencilLine,
+  Plus,
+  RotateCcw,
+  X,
 } from 'lucide-react';
 
 /** An attachment in the form; `file` = picked but not uploaded yet (url is a blob preview). */
@@ -132,7 +136,7 @@ function WorkContextBanner({
   action,
   children,
 }: {
-  tone: 'copy' | 'edit';
+  tone: 'copy' | 'edit' | 'retake';
   icon: React.ReactNode;
   kicker: string;
   title: string;
@@ -142,6 +146,8 @@ function WorkContextBanner({
 }) {
   const accent = tone === 'copy'
     ? { edge: 'border-l-sky-500', tile: 'bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400', kicker: 'text-sky-700 dark:text-sky-300' }
+    : tone === 'retake'
+    ? { edge: 'border-l-orange-500', tile: 'bg-orange-500 text-white', kicker: 'text-orange-700 dark:text-orange-300' }
     : { edge: 'border-l-amber-500', tile: 'bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400', kicker: 'text-amber-700 dark:text-amber-300' };
   return (
     <div role="status" className={`mt-3 rounded-2xl border border-slate-200 dark:border-slate-800 border-l-4 ${accent.edge} bg-white dark:bg-slate-900 shadow-xs`}>
@@ -178,6 +184,9 @@ function NewAssignmentContent() {
   const isReuse = !!copyId && searchParams.get('reuse') === '1';
   // ?mode=quiz|homework: the type chosen in the create menu (new work only).
   const urlMode = searchParams.get('mode');
+  // ?retakeOf=<quizId>&retakeStudents=<rosterIds>: a retake quiz for those students (RetakePicker).
+  const retakeOfParam = editId ? null : searchParams.get('retakeOf');
+  const retakeStudentsParam = searchParams.get('retakeStudents') || '';
   const { user: clerkUser } = useUser();
   const { t, tr, language } = useLanguage();
 
@@ -195,10 +204,13 @@ function NewAssignmentContent() {
   // Typed into the form since it loaded (asked before leaving an edit for a copy).
   const [formTouched, setFormTouched] = useState(false);
   const [editSubmissionCount, setEditSubmissionCount] = useState(0);
+  // Retake quiz: the original quiz, the classroom roster and the chosen students.
+  const [retake, setRetake] = useState<{ source: Assignment | null; roster: User[]; ids: string[] } | null>(null);
+  const [retakeAdding, setRetakeAdding] = useState(false);
   const originalQuestionIdsRef = useRef<string[]>([]);
 
   // Form fields
-  const [isExam, setIsExam] = useState(() => !editId && !copyId && urlMode === 'quiz');
+  const [isExam, setIsExam] = useState(() => !editId && ((!copyId && urlMode === 'quiz') || !!retakeOfParam));
   const [trackModeToggle, modeIndicator] = useSlidingIndicator(isExam);
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
@@ -382,6 +394,7 @@ function NewAssignmentContent() {
         }
 
         const sourceId = editId || copyId;
+        let loadedAssignment: Assignment | null = null;
         if (sourceId) {
           const [{ assignment, questions: savedQuestions }, subs] = await Promise.all([
             dataService.getAssignmentById(sourceId),
@@ -392,6 +405,7 @@ function NewAssignmentContent() {
             router.back();
             return;
           }
+          loadedAssignment = assignment;
           const ownClassroom = cls.find((c) => c.id === assignment.classroom_id);
           const courseId = assignment.course_id || ownClassroom?.course_id || '';
           // Edit → "copy" stays on this page, so the other mode's state is cleared here.
@@ -469,6 +483,33 @@ function NewAssignmentContent() {
             })));
           }
         }
+        // Retake: the original quiz and its classroom roster (a new retake, or editing one).
+        const editedRetake = editId ? loadedAssignment : null;
+        const retakeSourceId = retakeOfParam || (editedRetake && isRetake(editedRetake) ? editedRetake.retake_of || null : null);
+        if (retakeOfParam || (editedRetake && isRetake(editedRetake))) {
+          const lookupId = retakeSourceId || editId!;
+          const { assignment: found, classroom: rosterClass } = await dataService.getAssignmentById(lookupId, { withClassroom: true });
+          const source = retakeSourceId ? found : null;
+          const roster = rosterClass?.students || [];
+          const known = new Set(roster.map((st) => st.id));
+          const ids = editedRetake
+            ? editedRetake.retake_student_ids || []
+            : retakeStudentsParam.split(',').filter((id) => known.has(id));
+          setRetake({ source, roster, ids });
+          if (source && !editId) {
+            setIsExam(true);
+            setSelectedClassroomIds([source.classroom_id]);
+            const sourceCourse = crs.find((c) => c.id === (source.course_id || cls.find((c2) => c2.id === source.classroom_id)?.course_id));
+            if (sourceCourse) {
+              setSelectedCourseId(sourceCourse.id);
+              setCourseIndicators(sourceCourse.indicators || []);
+            }
+            setTitle(`${language === 'th' ? 'สอบซ่อม' : 'Retake'}: ${source.title}`);
+            setGroupName(source.group_name || '');
+            setReleaseMode('now');
+            setReminderOffset(null);
+          }
+        }
       } catch (err) {
         console.error(err);
       } finally {
@@ -477,7 +518,7 @@ function NewAssignmentContent() {
     }
     init(teacherId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per teacher / target
-  }, [urlClassroomId, editId, copyId, isReuse, clerkUser?.id]);
+  }, [urlClassroomId, editId, copyId, isReuse, retakeOfParam, clerkUser?.id]);
 
   // Groups already used in the selected classrooms, offered as one-tap choices.
   const selectedClassroomKey = selectedClassroomIds.join(',');
@@ -499,7 +540,7 @@ function NewAssignmentContent() {
   }, [selectedClassroomKey]);
 
   const handleCourseChange = (courseId: string) => {
-    if (editingAssignment) return; // an edit stays in its own classroom
+    if (editingAssignment || retake) return; // an edit (or a retake) stays in its own classroom
     setSelectedCourseId(courseId);
     const matchingClasses = classrooms.filter((c) => c.course_id === courseId);
     if (matchingClasses.length > 0) {
@@ -516,7 +557,7 @@ function NewAssignmentContent() {
   };
 
   const toggleClassroomSelection = (classId: string) => {
-    if (editingAssignment) return;
+    if (editingAssignment || retake) return;
     setSelectedClassroomIds((prev) => {
       if (prev.includes(classId)) {
         if (prev.length === 1) return prev; // Keep at least one
@@ -640,6 +681,11 @@ function NewAssignmentContent() {
     e.preventDefault();
     if (!title.trim()) {
       alert(language === 'th' ? 'กรุณาระบุชื่อการบ้านหรือข้อสอบ' : 'Please provide a title');
+      return;
+    }
+    if (retake && !retake.ids.length) {
+      alert(tr('กรุณาเลือกนักเรียนที่ต้องสอบซ่อมอย่างน้อย 1 คน', 'Choose at least one student for the retake'));
+      document.getElementById('retake-students')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
     // An edit may keep a deadline that has already passed; only a new one must be ahead.
@@ -799,6 +845,7 @@ function NewAssignmentContent() {
           reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
           total_points: totalPoints,
           attachments: savedAttachments,
+          ...(retake ? { retake_student_ids: retake.ids } : {}),
         });
         await dataService.replaceAssignmentQuestions(id, questionRows.map((row, index) => ({ ...row, id: questions[index].id })));
         // Was scheduled or a draft, teacher switched to "publish now".
@@ -831,13 +878,14 @@ function NewAssignmentContent() {
             total_points: totalPoints,
             status_override: 'auto',
             attachments: savedAttachments,
+            ...(retake?.source ? { retake_of: retake.source.id, retake_student_ids: retake.ids } : {}),
           },
           questionRows
         );
         createdIds.push(created.assignment.id);
       }
 
-      const copiedTo = copySource
+      const copiedTo = copySource && !retake
         ? tr('คัดลอกไปยัง: ', 'Copied to: ') + targetClassIds.map((id) => classrooms.find((c) => c.id === id)?.name || id).join(', ') + '\n\n'
         : '';
       alert(
@@ -849,6 +897,10 @@ function NewAssignmentContent() {
           ? language === 'th'
             ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
             : `Scheduled for ${formatDateTime(publishAt, 'en')}. Students will see it then.`
+          : retake
+          ? selectedClassroomsLineReady
+            ? tr(`สร้างข้อสอบซ่อมแล้ว · ส่งลิงก์เข้ากลุ่ม LINE แล้ว\nเปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก`, `Retake created · link sent to the LINE group\nOnly the ${retake.ids.length} chosen students can open it`)
+            : tr(`สร้างข้อสอบซ่อมแล้ว · เปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก\nห้องนี้ยังไม่เชื่อม LINE จึงต้องส่งลิงก์เอง`, `Retake created · only the ${retake.ids.length} chosen students can open it\nThis class has no LINE group, so share the link yourself`)
           : isExam
           ? (language === 'th' ? 'สร้างแบบทดสอบสำเร็จ!' : 'Quiz created successfully!')
           : !selectedClassroomsLineReady || !effectiveReminderOffsets.length
@@ -859,7 +911,7 @@ function NewAssignmentContent() {
       );
 
       const targetClassId = primaryClassId || urlClassroomId || selectedClassroomIds[0];
-      if (copySource) {
+      if (copySource && !retake) {
         // Back to where the copy was started (the source classroom or the grading hub).
         router.push(returnTo || `/classrooms/${urlClassroomId || targetClassId}?tab=classwork`);
       } else if (targetClassId) {
@@ -880,6 +932,72 @@ function NewAssignmentContent() {
   );
   const selectedClassroomsLineReady = selectedClassroomIds.length > 0
     && selectedClassroomIds.every((classroomId) => lineConnectionStatuses[classroomId] === 'connected');
+
+  // Retake: who takes it (chips to remove, the rest of the roster to add).
+  const retakeCard = () => {
+    if (!retake) return null;
+    const name = (st: User) => `${st.first_name || ''} ${st.last_name || ''}`.trim() || st.name || st.student_id || '-';
+    const chosen = retake.roster.filter((st) => retake.ids.includes(st.id));
+    const others = retake.roster.filter((st) => !retake.ids.includes(st.id));
+    const setIds = (ids: string[]) => {
+      setRetake((prev) => (prev ? { ...prev, ids } : prev));
+      setFormTouched(true);
+    };
+    return (
+      <WorkContextBanner
+        tone="retake"
+        icon={<RotateCcw className="w-4 h-4" />}
+        kicker={tr('สอบซ่อม · เห็นและทำได้เฉพาะคนที่เลือก · คะแนนแทนของเดิม', 'Retake · only chosen students · replaces their score')}
+        title={retake.source ? tr(`จาก ${retake.source.title}`, `Of ${retake.source.title}`) : tr('ข้อสอบเดิมถูกลบแล้ว', 'Original quiz deleted')}
+        meta={selectedClassroomsLineReady ? tr('บันทึกแล้วส่งลิงก์เข้ากลุ่ม LINE ของห้อง', 'Saving sends the link to the class LINE group') : tr('ห้องนี้ยังไม่เชื่อม LINE', 'This class has no LINE group')}
+      >
+        <div id="retake-students" className="space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            {chosen.map((st) => (
+              <span key={st.id} className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full bg-orange-50 dark:bg-orange-950/40 ring-1 ring-orange-200 dark:ring-orange-900 text-[11px] font-bold text-orange-800 dark:text-orange-200">
+                {name(st)}
+                <button
+                  type="button"
+                  onClick={() => setIds(retake.ids.filter((id) => id !== st.id))}
+                  aria-label={tr(`เอา ${name(st)} ออก`, `Remove ${name(st)}`)}
+                  className="w-5 h-5 rounded-full hover:bg-orange-200 dark:hover:bg-orange-900 flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            {!chosen.length && <span className="text-[11px] font-bold text-rose-600">{tr('ยังไม่ได้เลือกนักเรียน', 'No students chosen')}</span>}
+            {others.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setRetakeAdding((v) => !v)}
+                aria-expanded={retakeAdding}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full ring-1 ring-dashed ring-slate-300 dark:ring-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:ring-orange-400 cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+                {tr('เพิ่มนักเรียน', 'Add student')}
+              </button>
+            )}
+          </div>
+          {retakeAdding && others.length > 0 && (
+            <div className="max-h-48 overflow-y-auto rounded-xl ring-1 ring-slate-200 dark:ring-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+              {others.map((st) => (
+                <button
+                  key={st.id}
+                  type="button"
+                  onClick={() => setIds([...retake.ids, st.id])}
+                  className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-xs hover:bg-orange-50 dark:hover:bg-orange-950/30 cursor-pointer"
+                >
+                  <span className="truncate font-semibold text-slate-800 dark:text-slate-100">{name(st)}</span>
+                  <span className="shrink-0 text-[11px] text-slate-400">{st.student_id || ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </WorkContextBanner>
+    );
+  };
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-24">
@@ -919,7 +1037,9 @@ function NewAssignmentContent() {
           <span>{isExam ? '🛡️ ' + t('assignment_creator.mode_exam') : '📚 ' + t('assignment_creator.mode_assignment')}</span>
         </div>
         <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-          {editId
+          {retake
+            ? editId ? tr('แก้ไขข้อสอบซ่อม', 'Edit retake quiz') : tr('สร้างข้อสอบซ่อม', 'New retake quiz')
+            : editId
             ? (language === 'th' ? 'แก้ไขงาน / ข้อสอบ' : 'Edit assignment / quiz')
             : isReuse
             ? tr('สร้างงานใหม่จากงานเดิม', 'New work from earlier work')
@@ -927,7 +1047,8 @@ function NewAssignmentContent() {
             ? tr('คัดลอกงาน / ข้อสอบไปห้องอื่น', 'Copy assignment / quiz to other classrooms')
             : t('assignment_creator.title')}
         </h1>
-        {copySource && (() => {
+        {retake && retakeCard()}
+        {copySource && !retake && (() => {
           const from = classrooms.find((c) => c.id === copySource.classroom_id)?.name || copySource.classroom_name || tr('ห้องเดิม', 'original classroom');
           return (
             <WorkContextBanner
@@ -1029,7 +1150,8 @@ function NewAssignmentContent() {
                   role="radio"
                   aria-checked={selected}
                   data-active={selected}
-                  onClick={() => setIsExam(option.exam)}
+                  onClick={() => !retake && setIsExam(option.exam)}
+                  disabled={!!retake && !option.exam}
                   className={`relative lg:min-w-40 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors duration-300 cursor-pointer ${
                     selected
                       ? `text-white ${modeIndicator ? '' : option.pill}`
@@ -1048,7 +1170,7 @@ function NewAssignmentContent() {
           <span key={`hint-${isExam}`} className="hidden lg:inline-flex animate-in fade-in slide-in-from-top-1">
             <ModeHint isExam={isExam} language={language} />
           </span>
-          {(copySource || editingAssignment) && (
+          {((copySource && !retake) || editingAssignment) && (
             <span
               title={copySource ? tr('กำลังสร้างสำเนาใหม่ งานต้นฉบับไม่ถูกแก้ไข', 'Creating a new copy; the original is not changed') : tr('กำลังแก้ไขงานที่บันทึกไว้', 'Editing saved work')}
               className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-bold ring-1 ${

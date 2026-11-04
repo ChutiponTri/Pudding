@@ -1,5 +1,6 @@
 'use client';
 
+import { isRetake, rosterSizeFor } from '@/lib/utils/retake';
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
@@ -739,6 +740,10 @@ export default function ClassroomWorkspacePage() {
         title = tr('มอบหมายงานใหม่', 'New assignment');
         badgeLabel = tr('งาน', 'Assignment');
         badgeColor = 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300';
+      } else if (post.activity_type === 'exam' && (post.metadata as { retake?: boolean } | undefined)?.retake) {
+        title = tr('สร้างข้อสอบซ่อม', 'New retake');
+        badgeLabel = tr('สอบซ่อม', 'Retake');
+        badgeColor = 'bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300';
       } else if (post.activity_type === 'exam') {
         title = tr('สร้างข้อสอบใหม่', 'New exam');
         badgeLabel = tr('ข้อสอบ', 'Exam');
@@ -839,9 +844,10 @@ export default function ClassroomWorkspacePage() {
   // Grade book columns: assignments and quizzes in the order they were given.
   const gradeColumns = useMemo(
     () =>
-      [...assignments].sort(
-        (a, b) => new Date(a.created_at || a.due_date).getTime() - new Date(b.created_at || b.due_date).getTime()
-      ),
+      // A retake has no column: its scores are in the original quiz's column.
+      assignments
+        .filter((a) => !isRetake(a))
+        .sort((a, b) => new Date(a.created_at || a.due_date).getTime() - new Date(b.created_at || b.due_date).getTime()),
     [assignments]
   );
 
@@ -974,7 +980,7 @@ export default function ClassroomWorkspacePage() {
     const bySubmission = new Map<string, Submission[]>();
     for (const s of submissions) bySubmission.set(s.assignment_id, [...(bySubmission.get(s.assignment_id) || []), s]);
     const total = classroom?.students?.length || 0;
-    return new Map(assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], total, a.is_exam)]));
+    return new Map(assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSizeFor(a, total), a.is_exam)]));
   }, [assignments, submissions, classroom?.students?.length]);
   const classworkSummary = useMemo(() => {
     const all = [...classworkCounts.values()];
@@ -2117,7 +2123,7 @@ export default function ClassroomWorkspacePage() {
                       open={isClassworkGroupOpen(classworkFoldKey(group))}
                       onToggle={() => toggleClassworkGroup(classworkFoldKey(group))}
                       chips={teacherGroupChips(
-                        items.map((a) => ({ assignment: a, counts: classworkCounts.get(a.id) || gradingCounts([], classroom.students?.length || 0, a.is_exam) })),
+                        items.map((a) => ({ assignment: a, counts: classworkCounts.get(a.id) || gradingCounts([], rosterSizeFor(a, classroom.students?.length || 0), a.is_exam) })),
                         language === 'th'
                       )}
                     />
@@ -2179,7 +2185,7 @@ export default function ClassroomWorkspacePage() {
                             <AssignmentProgressCard
                               className="flex-1 min-w-0 hover:border-amber-400"
                               assignment={item}
-                              counts={classworkCounts.get(item.id) || gradingCounts([], classroom.students?.length || 0, item.is_exam)}
+                              counts={classworkCounts.get(item.id) || gradingCounts([], rosterSizeFor(item, classroom.students?.length || 0), item.is_exam)}
                               gradingHref={`/assignments/${item.id}/grading?from=classroom&classroomId=${classroomId}`}
                               editHref={`/assignments/new?edit=${item.id}&classroomId=${classroomId}&from=classroom`}
                               copyHref={`/assignments/new?copy=${item.id}&classroomId=${classroomId}&from=classroom`}

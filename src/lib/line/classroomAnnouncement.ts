@@ -23,8 +23,8 @@ export function buildPostLineMessage(
     icon = '📋';
     title = 'งานใหม่';
   } else if (activityType === 'exam') {
-    icon = '📝';
-    title = 'ข้อสอบใหม่';
+    icon = metadata.retake ? '🔁' : '📝';
+    title = metadata.retake ? 'สอบซ่อม' : 'ข้อสอบใหม่';
   } else if (activityType === 'attendance') {
     icon = '⏰';
     title = 'เปิดคาบเช็คชื่อ';
