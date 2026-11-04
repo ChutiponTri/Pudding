@@ -14,9 +14,6 @@ import { formatDateTime } from '@/lib/utils/datetime';
 import { assignmentGroupLabel } from '@/components/AssignmentGroupHeader';
 import type { WorkClass, WorkGroup, WorkTotals } from '@/lib/utils/workGroups';
 
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
-
 /** "12 พ.ย. 23:59" — short enough for a row. */
 export function shortDate(ms: number | string | null | undefined, language: string) {
   if (ms == null || ms === '') return '';
@@ -36,27 +33,6 @@ export const TONE_CLASSES: Record<Tone, string> = {
   amber: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
   rose: 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
 };
-
-const span = (ms: number, th: boolean) =>
-  ms >= DAY ? (th ? `${Math.floor(ms / DAY)} วัน` : `${Math.floor(ms / DAY)}d`) : th ? `${Math.max(1, Math.floor(ms / HOUR))} ชม.` : `${Math.max(1, Math.floor(ms / HOUR))}h`;
-
-/** The one thing worth knowing about a class's copy right now. */
-export function classStatus(c: WorkClass, th: boolean, language: string, now: number): { label: string; tone: Tone } {
-  const w = c.window;
-  if (w.isDraft) return { label: th ? 'ฉบับร่าง' : 'Draft', tone: 'slate' };
-  if (w.isScheduled) return { label: `${th ? 'เผยแพร่' : 'Publishes'} ${shortDate(c.assignment.publish_at, language)}`, tone: 'sky' };
-  const allChecked = c.counts.pending === 0 && c.counts.notSubmitted === 0 && c.counts.totalStudents > 0;
-  if (!w.acceptsSubmissions) {
-    if (allChecked) return { label: th ? 'ตรวจครบแล้ว' : 'All checked', tone: 'emerald' };
-    return { label: th ? 'ปิดรับแล้ว' : 'Closed', tone: 'slate' };
-  }
-  if (w.deadline == null) return { label: th ? 'เปิดรับ' : 'Open', tone: 'emerald' };
-  if (w.isPastDeadline) return { label: th ? `เลยกำหนด ${span(now - w.deadline, true)}` : `${span(now - w.deadline, false)} past due`, tone: 'rose' };
-  const left = w.deadline - now;
-  if (left < 2 * DAY) return { label: th ? `เหลือ ${span(left, true)}` : `${span(left, false)} left`, tone: 'amber' };
-  if (left < 7 * DAY) return { label: th ? `เหลือ ${span(left, true)}` : `${span(left, false)} left`, tone: 'emerald' };
-  return { label: `${th ? 'ส่ง' : 'Due'} ${shortDate(w.deadline, language)}`, tone: 'emerald' };
-}
 
 export function Pill({ tone, children, className = '' }: { tone: Tone; children: React.ReactNode; className?: string }) {
   return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${TONE_CLASSES[tone]} ${className}`}>{children}</span>;
@@ -203,20 +179,19 @@ export function MetricCells({ totals }: { totals: WorkTotals }) {
   const { tr } = useLanguage();
   const { handedIn, totalStudents, graded, checkable, pending, notSubmitted } = totals;
   const percent = totalStudents > 0 ? Math.round((graded / totalStudents) * 100) : 0;
+  // One line each, same height, so every row's numbers sit on the same line.
   const cell = (label: string, value: number, of: number, strong: boolean) => (
-    <span className="w-16 shrink-0 leading-tight">
-      <span className="block text-[10px] font-semibold text-slate-400 dark:text-slate-500 truncate">{label}</span>
-      <span className={`text-sm font-black tabular-nums ${strong ? 'text-amber-700 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>
-        {value}
-        <span className="text-[11px] font-semibold text-slate-400">/{of}</span>
-      </span>
+    <span className="@4xl:w-21 shrink-0 h-9 inline-flex items-center gap-1 whitespace-nowrap tabular-nums">
+      <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">{label}</span>
+      <span className={`text-sm font-black ${strong ? 'text-amber-700 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>{value}</span>
+      <span className="text-[11px] font-semibold text-slate-400">/{of}</span>
     </span>
   );
   return (
     <>
-      {cell(tr('ส่งแล้ว', 'Handed in'), handedIn, totalStudents, false)}
-      {cell(tr('ตรวจแล้ว', 'Checked'), graded, checkable, pending > 0)}
-      <span className="flex items-center gap-2 w-28 shrink-0" title={tr(`ตรวจแล้ว ${percent}% ของนักเรียนทั้งหมด`, `${percent}% of students checked`)}>
+      {cell(tr('ส่ง', 'In'), handedIn, totalStudents, false)}
+      {cell(tr('ตรวจ', 'Checked'), graded, checkable, pending > 0)}
+      <span className="h-9 flex items-center gap-2 flex-1 min-w-20 @4xl:flex-none @4xl:w-28" title={tr(`ตรวจแล้ว ${percent}% ของนักเรียนทั้งหมด`, `${percent}% of students checked`)}>
         <span className="flex-1 min-w-0">
           <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />
         </span>
@@ -225,6 +200,17 @@ export function MetricCells({ totals }: { totals: WorkTotals }) {
     </>
   );
 }
+
+/**
+ * Right-padding per nesting level, so the fixed columns of a category, its
+ * works and their classes line up exactly (each level sits 12–13 px further
+ * in on the right: card border + padding).
+ */
+export const ROW_INSET = {
+  category: '@4xl:pr-[25px]',
+  work: '@4xl:pr-3',
+  class: '',
+} as const;
 
 /**
  * Row skeleton: [lead] [status] [numbers + action] [menu]. From `sm` up it is
@@ -236,22 +222,26 @@ export function WorkRowLayout({
   metrics,
   action,
   menu,
+  inset = '',
 }: {
   lead: React.ReactNode;
   status?: React.ReactNode;
   metrics?: React.ReactNode;
   action?: React.ReactNode;
   menu?: React.ReactNode;
+  /** ROW_INSET for the level, so columns line up across levels. */
+  inset?: string;
 }) {
+  // Wide board (container ≥ 56rem): one line, every column a fixed width and
+  // the same 36 px height, so columns stack exactly row after row.
+  // Narrow: name + ⋯ / status + button / numbers.
   return (
-    <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-2">
-      <div className="order-1 min-w-0 flex-1">{lead}</div>
-      <div className="order-2 shrink-0 sm:w-32 flex sm:justify-start">{status}</div>
-      <div className="order-4 sm:order-3 basis-full sm:basis-auto flex items-center gap-3 min-w-0">
-        {metrics}
-        <span className="ml-auto sm:ml-0 shrink-0">{action}</span>
-      </div>
-      <div className="order-3 sm:order-4 shrink-0 w-9 flex justify-end">{menu}</div>
+    <div className={`flex flex-wrap @4xl:flex-nowrap items-center gap-x-3 gap-y-1.5 ${inset}`}>
+      <div className="order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 min-h-9 flex items-center">{lead}</div>
+      <div className="order-2 @4xl:order-5 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
+      <div className="order-3 @4xl:order-2 min-w-0 max-w-[65%] @4xl:max-w-none @4xl:w-36 shrink-0 h-9 flex items-center">{status}</div>
+      <div className="order-4 ml-auto @4xl:ml-0 shrink-0 @4xl:w-24 h-9 flex items-center justify-end">{action}</div>
+      <div className="order-5 @4xl:order-3 basis-full @4xl:basis-auto @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3">{metrics}</div>
     </div>
   );
 }

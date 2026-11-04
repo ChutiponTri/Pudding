@@ -289,9 +289,7 @@ export function AssignmentProgressCard({
           }`}
         >
           <span className="truncate">
-            {pending > 0
-              ? th ? `ตรวจงาน (${pending} คน)` : `Grade (${pending})`
-              : th ? 'ดูรายชื่อ & คะแนน' : 'View roster & scores'}
+            {pending > 0 ? (th ? `ตรวจงาน (${pending} คน)` : `Grade (${pending})`) : th ? 'ตรวจงาน' : 'Grade'}
           </span>
           <ChevronRight className="w-4 h-4 shrink-0" />
         </Link>

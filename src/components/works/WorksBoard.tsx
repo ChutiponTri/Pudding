@@ -9,6 +9,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock,
   Copy,
   Edit2,
   Eye,
@@ -42,7 +43,9 @@ import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
 import { assignmentGroupLabel } from '@/components/AssignmentGroupHeader';
 import { ActionMenu, ActionMenuRow, type ActionMenuItem } from '@/components/works/ActionMenu';
-import { classStatus, DueDateDialog, MetricCells, Pill, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
+import { DueDateDialog, MetricCells, Pill, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
+import { acceptStatus, BulkStatusDialog, combinedStatus, StatusButton } from '@/components/works/StatusBits';
+import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { isRetake } from '@/lib/utils/retake';
@@ -128,6 +131,9 @@ export function WorksBoard() {
   }, [toast]);
   const [dueTarget, setDueTarget] = useState<{ item: WorkClass; group: WorkGroup } | null>(null);
   const [detail, setDetail] = useState<WorkGroup | null>(null);
+  // Status: one class uses the full dialog; a work or a category the bulk one.
+  const [statusOne, setStatusOne] = useState<WorkClass | null>(null);
+  const [statusMany, setStatusMany] = useState<{ title: string; scope: string; items: WorkClass[] } | null>(null);
 
   // Ticks every minute so "2 days left" stays true on an open page.
   const [now, setNow] = useState(() => Date.now());
@@ -429,6 +435,7 @@ export function WorksBoard() {
     const lineReady = (c.classroom.line_connection_status || (c.classroom.line_group_id ? 'connected' : '')) === 'connected';
     const closedByTeacher = c.assignment.status_override === 'force_closed';
     return [
+      { key: 'status', label: tr('เปลี่ยนสถานะการรับงาน', 'Change status'), icon: <Clock className="w-4 h-4" />, onSelect: () => setStatusOne(c) },
       !c.published && { key: 'publish', label: tr('เผยแพร่ตอนนี้', 'Publish now'), icon: <Rocket className="w-4 h-4" />, onSelect: () => publish([c]) },
       c.published &&
         lineReady && {
@@ -472,6 +479,13 @@ export function WorksBoard() {
     });
     return [
       { key: 'detail', label: tr('ดูรายละเอียด', 'See details'), icon: <Eye className="w-4 h-4" />, onSelect: () => setDetail(g) },
+      {
+        key: 'status',
+        label: g.classes.length > 1 ? tr('เปลี่ยนสถานะทุกห้อง', 'Change status (all classes)') : tr('เปลี่ยนสถานะการรับงาน', 'Change status'),
+        hint: g.classes.length > 1 ? tr(`${g.classes.length} ห้อง`, `${g.classes.length}`) : undefined,
+        icon: <Clock className="w-4 h-4" />,
+        onSelect: () => openWorkStatus(g),
+      },
       hidden.length > 0 && {
         key: 'publish',
         label: tr('เผยแพร่', 'Publish'),
@@ -570,18 +584,58 @@ export function WorksBoard() {
       {n} {tr(th1, n === 1 ? en1 : enMany)}
     </span>
   );
-  const statusPill = (status: { label: string; tone: Parameters<typeof Pill>[0]['tone'] }) => (
-    <Pill tone={status.tone} className="max-w-full sm:max-w-32 truncate">
-      {status.label}
-    </Pill>
-  );
+  // ---- status at each level (tap the pill, or ⋯ → change status)
+  const classAccept = (c: WorkClass) => acceptStatus(c, th, language, now);
+  const workAccept = (g: WorkGroup) => combinedStatus(g.classes.map(classAccept), ['ห้อง', 'classes'], th);
+  const openWorkStatus = (g: WorkGroup) => {
+    if (g.classes.length === 1) setStatusOne(g.classes[0]);
+    else setStatusMany({ title: g.rep.title, scope: tr(`${g.classes.length} ห้อง`, `${g.classes.length} classes`), items: g.classes });
+  };
+  const openCategoryStatus = (cat: Category, title: string) => {
+    const items = cat.groups.flatMap((g) => g.classes);
+    setStatusMany({ title, scope: tr(`${cat.groups.length} งาน · ${items.length} ห้อง`, `${cat.groups.length} items · ${items.length} classes`), items });
+  };
+  const applyChanges = (changes: Array<{ id: string; change: Partial<Assignment> }>, message: string) => {
+    changes.forEach(({ id, change }) => patch(id, change));
+    showToast(message);
+  };
+  const categoryMenu = (cat: Category, title: string): ActionMenuItem[] => {
+    const items = cat.groups.flatMap((g) => g.classes);
+    const hidden = items.filter((c) => !c.published);
+    const accepting = items.filter((c) => c.published && c.window.acceptsSubmissions);
+    return [
+      items.some((c) => c.published) && {
+        key: 'status',
+        label: tr('เปลี่ยนสถานะทุกงาน', 'Change status (all items)'),
+        hint: tr(`${cat.groups.length} งาน`, `${cat.groups.length}`),
+        icon: <Clock className="w-4 h-4" />,
+        onSelect: () => openCategoryStatus(cat, title),
+      },
+      hidden.length > 0 && {
+        key: 'publish',
+        label: tr('เผยแพร่ทั้งหมด', 'Publish all'),
+        hint: tr(`${hidden.length} ห้อง`, `${hidden.length}`),
+        icon: <Rocket className="w-4 h-4" />,
+        onSelect: () => publish(hidden),
+      },
+      accepting.length > 0 && {
+        key: 'close',
+        label: tr('ปิดรับทุกงาน', 'Close all'),
+        hint: tr(`${accepting.length} ห้อง`, `${accepting.length}`),
+        icon: <Lock className="w-4 h-4" />,
+        danger: true,
+        onSelect: () => setClosed(accepting, true),
+      },
+    ].filter(Boolean) as ActionMenuItem[];
+  };
 
   const classRow = (c: WorkClass, g: WorkGroup) => (
     <li
       key={c.assignment.id}
-      className={`px-3 py-2.5 rounded-2xl ${c.published ? 'bg-slate-50 dark:bg-slate-800/50' : 'bg-white/60 dark:bg-slate-900/40 border border-dashed border-slate-300 dark:border-slate-700'}`}
+      className={`px-3 py-1.5 rounded-2xl ${c.published ? 'bg-slate-50 dark:bg-slate-800/50' : 'bg-white/60 dark:bg-slate-900/40 border border-dashed border-slate-300 dark:border-slate-700'}`}
     >
       <WorkRowLayout
+        inset={ROW_INSET.class}
         lead={
           <span className="flex items-center gap-1.5 min-w-0">
             <School className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -594,21 +648,13 @@ export function WorksBoard() {
             )}
           </span>
         }
-        status={statusPill(classStatus(c, th, language, now))}
+        status={<StatusButton status={classAccept(c)} onClick={() => setStatusOne(c)} />}
         metrics={c.published ? <MetricCells totals={c.counts} /> : hiddenNote}
         action={c.published ? gradeButton(c.counts.pending, gradeHref(c.assignment.id)) : publishButton([c])}
         menu={<ActionMenu size="sm" label={tr(`ตัวเลือกของ ${c.classroom.name}`, `Options for ${c.classroom.name}`)} items={classMenu(c, g)} />}
       />
     </li>
   );
-
-  /** The class whose state best describes the work: the soonest deadline still open, else the first. */
-  const workStatus = (g: WorkGroup) => {
-    const open = g.classes.filter((c) => c.published && c.window.acceptsSubmissions).sort((a, b) => (a.window.deadline ?? Infinity) - (b.window.deadline ?? Infinity));
-    const scheduled = g.classes.filter((c) => c.window.isScheduled).sort((a, b) => new Date(a.assignment.publish_at || 0).getTime() - new Date(b.assignment.publish_at || 0).getTime());
-    const pick = open[0] || (g.published ? g.classes.find((c) => c.published) : scheduled[0]) || g.classes[0];
-    return classStatus(pick, th, language, now);
-  };
 
   const workCard = (g: WorkGroup) => {
     const open = isWorkOpen(g.key);
@@ -623,35 +669,33 @@ export function WorksBoard() {
         } ${color ? WORK_COLOR_CLASSES[color].tint : ''}`}
       >
         {color && <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 ${WORK_COLOR_CLASSES[color].bar}`} />}
-        <div className={`p-3 ${color ? 'pl-4' : ''}`}>
+        <div className={`px-3 py-2 ${color ? 'pl-4' : ''}`}>
           <WorkRowLayout
+            inset={ROW_INSET.work}
             lead={
               <button type="button" onClick={() => toggleWork(g.key)} aria-expanded={open} className="w-full min-w-0 flex items-center gap-2 text-left cursor-pointer group/work">
                 <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-black text-slate-900 dark:text-white truncate group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
+                {countChip(g.classes.length, 'ห้อง', 'class', 'classes', <School className="w-3 h-3" />)}
+                {/* One line: title, then small tags that give way first. */}
+                <span className="min-w-0 flex-1 flex items-center gap-1.5">
+                  <span className="min-w-0 truncate text-sm font-black text-slate-900 dark:text-white group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
                     {g.rep.title}
                   </span>
-                  {(showCourseChip || isRetake(g.rep) || g.totals.flagged > 0 || (g.published && hidden.length > 0)) && (
-                    <span className="mt-0.5 flex items-center gap-1.5 overflow-hidden">
-                      {showCourseChip && courseLabel(g.courseId) && (
-                        <span className="text-[10px] font-bold font-mono text-slate-500 dark:text-slate-400">{courseLabel(g.courseId)}</span>
-                      )}
-                      {isRetake(g.rep) && <Pill tone="amber">{tr('สอบซ่อม', 'Retake')}</Pill>}
-                      {g.published && hidden.length > 0 && <Pill tone="sky">{tr(`ยังไม่เผยแพร่ ${hidden.length} ห้อง`, `${hidden.length} unpublished`)}</Pill>}
-                      {g.totals.flagged > 0 && (
-                        <Pill tone="rose">
-                          <ShieldAlert className="w-3 h-3" />
-                          {g.totals.flagged}
-                        </Pill>
-                      )}
-                    </span>
+                  {showCourseChip && courseLabel(g.courseId) && (
+                    <span className="shrink-0 text-[10px] font-bold font-mono text-slate-500 dark:text-slate-400">{courseLabel(g.courseId)}</span>
+                  )}
+                  {isRetake(g.rep) && <Pill tone="amber" className="shrink-0">{tr('สอบซ่อม', 'Retake')}</Pill>}
+                  {g.published && hidden.length > 0 && <Pill tone="sky" className="shrink-0">{tr(`ยังไม่เผยแพร่ ${hidden.length}`, `${hidden.length} unpublished`)}</Pill>}
+                  {g.totals.flagged > 0 && (
+                    <Pill tone="rose" className="shrink-0">
+                      <ShieldAlert className="w-3 h-3" />
+                      {g.totals.flagged}
+                    </Pill>
                   )}
                 </span>
-                {countChip(g.classes.length, 'ห้อง', 'class', 'classes', <School className="w-3 h-3" />)}
               </button>
             }
-            status={statusPill(workStatus(g))}
+            status={<StatusButton status={workAccept(g)} onClick={() => openWorkStatus(g)} />}
             metrics={g.published ? <MetricCells totals={g.totals} /> : hiddenNote}
             action={g.published ? gradeButton(g.totals.pending, gradeHref(first.assignment.id)) : publishButton(hidden)}
             menu={<ActionMenu label={tr(`ตัวเลือกของ ${g.rep.title}`, `Options for ${g.rep.title}`)} items={workMenu(g)} />}
@@ -667,16 +711,11 @@ export function WorksBoard() {
   const categoryHeader = (cat: Category, opts: { open: boolean; draggable: boolean }) => {
     const unpub = cat.key === UNPUBLISHED_CATEGORY;
     const title = unpub ? tr('ยังไม่เผยแพร่', 'Not published') : assignmentGroupLabel(cat.key, th);
-    const openCount = cat.groups.filter((g) => g.classes.some((c) => c.published && c.window.acceptsSubmissions)).length;
-    const status = unpub
-      ? null
-      : cat.totals.pending > 0
-      ? { label: tr(`รอตรวจ ${cat.totals.pending}`, `${cat.totals.pending} to grade`), tone: 'amber' as const }
-      : openCount > 0
-      ? { label: tr(`เปิดรับ ${openCount} งาน`, `${openCount} open`), tone: 'emerald' as const }
-      : { label: tr('ปิดรับทั้งหมด', 'All closed'), tone: 'slate' as const };
+    const status = combinedStatus(cat.groups.map(workAccept), ['งาน', 'items'], th);
+    const menu = categoryMenu(cat, title);
     return (
       <WorkRowLayout
+        inset={ROW_INSET.category}
         lead={
           <span className="flex items-center gap-1 min-w-0">
             {opts.draggable && (
@@ -702,30 +741,34 @@ export function WorksBoard() {
                 <GripVertical className="w-4 h-4" />
               </button>
             )}
-            <button type="button" onClick={() => toggleCategory(cat.key)} aria-expanded={opts.open} className="min-w-0 flex-1 flex items-center gap-2 text-left cursor-pointer group/cat">
+            <button
+              type="button"
+              onClick={() => toggleCategory(cat.key)}
+              aria-expanded={opts.open}
+              title={unpub ? tr('นักเรียนยังไม่เห็นงานในกลุ่มนี้', 'Students can’t see these yet') : undefined}
+              className="min-w-0 flex-1 flex items-center gap-2 text-left cursor-pointer group/cat"
+            >
+              <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-300 ${opts.open ? 'rotate-180' : ''}`} />
               <span className={`w-8 h-8 rounded-xl shrink-0 flex items-center justify-center ${unpub ? 'bg-slate-200/70 dark:bg-slate-800 text-slate-500' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'}`}>
                 {unpub ? <EyeOff className="w-4 h-4" /> : <Layers className="w-4 h-4" />}
               </span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-black text-[15px] text-slate-900 dark:text-white truncate group-hover/cat:text-amber-700 dark:group-hover/cat:text-amber-400 transition-colors">{title}</span>
-                {unpub && <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate">{tr('นักเรียนยังไม่เห็นงานในกลุ่มนี้', 'Students can’t see these yet')}</span>}
-              </span>
               {countChip(cat.groups.length, 'งาน', 'item', 'items', <FileText className="w-3 h-3" />)}
+              <span className="min-w-0 truncate font-black text-[15px] text-slate-900 dark:text-white group-hover/cat:text-amber-700 dark:group-hover/cat:text-amber-400 transition-colors">{title}</span>
             </button>
           </span>
         }
-        status={status && statusPill(status)}
-        metrics={unpub ? undefined : <MetricCells totals={cat.totals} />}
-        menu={
-          <button
-            type="button"
-            onClick={() => toggleCategory(cat.key)}
-            aria-label={opts.open ? tr('ย่อ', 'Collapse') : tr('ขยาย', 'Expand')}
-            className="w-8 h-8 rounded-full flex items-center justify-center text-slate-500 dark:text-slate-400 ring-1 ring-slate-200 dark:ring-slate-700 hover:ring-amber-400 hover:text-amber-600 transition-colors cursor-pointer"
-          >
-            <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${opts.open ? 'rotate-180' : ''}`} />
-          </button>
+        status={
+          unpub ? (
+            <span className="text-[11px] font-semibold text-slate-400 inline-flex items-center gap-1 truncate">
+              <EyeOff className="w-3.5 h-3.5 shrink-0" />
+              {tr('นักเรียนยังไม่เห็น', 'Hidden from students')}
+            </span>
+          ) : (
+            <StatusButton status={status} onClick={() => openCategoryStatus(cat, title)} />
+          )
         }
+        metrics={unpub ? undefined : <MetricCells totals={cat.totals} />}
+        menu={menu.length > 0 ? <ActionMenu label={tr(`ตัวเลือกของ ${title}`, `Options for ${title}`)} items={menu} /> : undefined}
       />
     );
   };
@@ -739,7 +782,8 @@ export function WorksBoard() {
   ];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-4 sm:space-y-5 pb-24">
+    // @container: rows switch to one line by the board's own width (the sidebar changes it).
+    <div className="@container max-w-6xl mx-auto space-y-4 sm:space-y-5 pb-24">
       <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400">
         <ArrowLeft className="w-3.5 h-3.5" />
         {tr('กลับแดชบอร์ด', 'Back to dashboard')}
@@ -915,6 +959,18 @@ export function WorksBoard() {
           onSave={(due, all) => saveDue(dueTarget.item, dueTarget.group, due, all)}
         />
       )}
+      {statusOne && (
+        <AssignmentStatusDialog
+          assignment={statusOne.assignment}
+          onClose={() => setStatusOne(null)}
+          onSaved={(updated, action) => {
+            patch(statusOne.assignment.id, updated);
+            setStatusOne(null);
+            showToast(action === 'published' ? tr('เผยแพร่แล้ว', 'Published') : tr('เปลี่ยนสถานะแล้ว', 'Status changed'));
+          }}
+        />
+      )}
+      {statusMany && <BulkStatusDialog {...statusMany} onClose={() => setStatusMany(null)} onDone={applyChanges} />}
       {detail && <WorkDetailSheet group={detail} courseLabel={courseLabel(detail.courseId)} onClose={() => setDetail(null)} />}
 
       {toast && (

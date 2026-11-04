@@ -16,7 +16,7 @@ import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
-import { AssignmentProgressCard } from '@/components/AssignmentProgressCard';
+import { ClassworkRow } from '@/components/works/ClassworkRow';
 import { AssignmentGroupHeader, teacherGroupChips } from '@/components/AssignmentGroupHeader';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { gradingCounts, isGraded, isHandedIn, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
@@ -57,7 +57,6 @@ import {
   Send,
   Share2,
   Sparkles,
-  Tag,
   Trash2,
   UserCheck,
   UserPlus,
@@ -2138,7 +2137,7 @@ export default function ClassroomWorkspacePage() {
                       </div>
                     )}
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 items-start gap-3 sm:gap-4">
+                    <div className="@container space-y-2">
                       {items.map((item, itemIndex, all) => {
                         // Show the insertion line only where a drop would change something.
                         const draggedIndex = all.findIndex((a) => a.id === draggingAssignmentId);
@@ -2179,13 +2178,14 @@ export default function ClassroomWorkspacePage() {
                           >
                             {/* Insertion line: where the dragged card will land */}
                             {lineAt(itemIndex) && (
-                              <span aria-hidden className="pointer-events-none absolute top-[-9px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
+                              <span aria-hidden className="pointer-events-none absolute top-[-6px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
                             )}
                             {itemIndex === items.length - 1 && lineAt(items.length) && (
-                              <span aria-hidden className="pointer-events-none absolute bottom-[-9px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
+                              <span aria-hidden className="pointer-events-none absolute bottom-[-6px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
                             )}
-                            <AssignmentProgressCard
+                            <ClassworkRow
                               className="flex-1 min-w-0 hover:border-amber-400"
+                              now={nowMs}
                               assignment={item}
                               counts={classworkCounts.get(item.id) || gradingCounts([], rosterSizeFor(item, classroom.students?.length || 0), item.is_exam)}
                               gradingHref={`/assignments/${item.id}/grading?from=classroom&classroomId=${classroomId}`}
@@ -2194,26 +2194,11 @@ export default function ClassroomWorkspacePage() {
                               onStatusClick={() => setStatusAssignment(item)}
                               onDelete={() => handleDeleteAssignment(item.id)}
                               onPublishNow={itemWindow.isScheduled || itemWindow.isDraft ? () => handlePublishAssignmentNow(item) : undefined}
+                              onMoveGroup={() => {
+                                setEditingAssignmentGroup(item);
+                                setTargetGroupForAssignment(item.group_name || '');
+                              }}
                               leading={canDrag ? <GripVertical className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 shrink-0 -ml-1" aria-hidden /> : undefined}
-                              footer={
-                                <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
-                                  <span className="text-slate-400 flex items-center gap-1 min-w-0">
-                                    <Tag className="w-3 h-3 shrink-0" />
-                                    <span className="truncate">{tr('หมวดหมู่', 'Group')}: {item.group_name || tr('ไม่ได้จัดกลุ่ม', 'Ungrouped')}</span>
-                                  </span>
-                                  <button
-                                    type="button"
-                                    draggable={false}
-                                    onClick={() => {
-                                      setEditingAssignmentGroup(item);
-                                      setTargetGroupForAssignment(item.group_name || '');
-                                    }}
-                                    className="text-amber-600 font-bold hover:underline cursor-pointer shrink-0"
-                                  >
-                                    {tr('ย้ายกลุ่ม', 'Move group')}
-                                  </button>
-                                </div>
-                              }
                             />
                           </div>
                         );
