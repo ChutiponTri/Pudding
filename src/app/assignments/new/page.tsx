@@ -556,7 +556,8 @@ function NewAssignmentContent() {
               setSelectedCourseId(sourceCourse.id);
               setCourseIndicators(sourceCourse.indicators || []);
             }
-            setTitle(`${language === 'th' ? 'สอบซ่อม' : 'Retake'}: ${source.title}`);
+            // No "สอบซ่อม" in the title: the system labels retakes itself (pills, posts, LINE).
+            setTitle(source.title);
             setGroupName(source.group_name || '');
             setReleaseMode('now');
             setReminderOffset(null);

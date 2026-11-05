@@ -21,38 +21,50 @@ export type ClassroomPost = {
   created_at: string;
 };
 
-/** Metadata of a work post: links it to the work, and marks a retake (its LINE message says so). */
-export function assignmentPostMetadata(a: Pick<Assignment, 'is_exam' | 'due_date' | 'group_name' | 'retake_student_ids'>, assignmentId: string) {
+type RosterStudent = Pick<User, 'id' | 'line_uid' | 'first_name' | 'last_name'> & { name?: string };
+
+/**
+ * Metadata of a work post: links it to the work, and marks a retake. A
+ * retake's LINE message has its own wording (lineBody: due date and the
+ * students' names), while the timeline card keeps the one-line body.
+ */
+export function assignmentPostMetadata(
+  a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'group_name' | 'retake_student_ids'>,
+  assignmentId: string,
+  /** The classroom roster: a retake's LINE message names its students from it. */
+  students?: RosterStudent[] | null
+) {
   return {
     assignmentId,
     dueDate: a.due_date,
     groupName: a.group_name || (a.is_exam ? 'ข้อสอบ' : 'งานทั่วไป'),
-    ...(Array.isArray(a.retake_student_ids) ? { retake: true } : {}),
+    ...(Array.isArray(a.retake_student_ids) ? { retake: true, lineBody: retakeLineBody(a, students) } : {}),
   };
 }
 
 /** Prefixes of work posts; the edit path rewrites posts that start with one of them. */
-export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอบใหม่|สอบซ่อม):/;
+export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอบใหม่|ข้อสอบซ่อม|สอบซ่อม):/;
 
 /**
- * Timeline/LINE text for new work. A retake lists the students who take it
- * (from the classroom roster); only they can open it.
+ * The system adds "สอบซ่อม" itself (labels, posts, LINE), so a title that
+ * already starts with it (older retakes) is shown without it.
  */
-export function assignmentPostBody(
-  a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'>,
-  /** The classroom roster: a retake names its students from it. */
-  students?: Array<Pick<User, 'id' | 'line_uid' | 'first_name' | 'last_name'> & { name?: string }> | null
-) {
+export const retakeTitle = (title: string) => title.replace(/^\s*สอบซ่อม(\s*[:：-]\s*|\s+)/, '') || title;
+
+/** Timeline card text for new work: one line, title and deadline. */
+export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'>) {
   const due = formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE);
-  if (Array.isArray(a.retake_student_ids)) {
-    const names = rosterFor(a, (students || []).filter((s) => !!s?.id)).map(studentName);
-    // Retake titles often start with "สอบซ่อม" already; never say it twice.
-    const title = a.title.replace(/^\s*สอบซ่อม(\s*[:：-]\s*|\s+)/, '') || a.title;
-    const head = `สอบซ่อม: ${title}\nกำหนดส่ง: ${due}`;
-    if (!names.length) return `${head}\n\nเฉพาะนักเรียนที่คุณครูแจ้ง ${a.retake_student_ids.length} คน`;
-    return `${head}\n\nเฉพาะนักเรียนต่อไปนี้ (${names.length} คน):\n${names.map((name, i) => `${i + 1}. ${name}`).join('\n')}`;
-  }
+  if (Array.isArray(a.retake_student_ids)) return `ข้อสอบซ่อม: ${retakeTitle(a.title)} (ปิดรับคำตอบ: ${due})`;
   return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${a.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due})`;
+}
+
+/** A retake's LINE message body: title, deadline, and who takes it (only they can open it). */
+function retakeLineBody(a: Pick<Assignment, 'title' | 'due_date' | 'retake_student_ids'>, students?: RosterStudent[] | null) {
+  const due = formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE);
+  const names = rosterFor(a, (students || []).filter((s) => !!s?.id)).map(studentName);
+  const head = `สอบซ่อม: ${retakeTitle(a.title)}\nกำหนดส่ง: ${due}`;
+  if (!names.length) return `${head}\n\nเฉพาะนักเรียนที่คุณครูแจ้ง ${(a.retake_student_ids || []).length} คน`;
+  return `${head}\n\nเฉพาะนักเรียนต่อไปนี้ (${names.length} คน):\n${names.map((name, i) => `${i + 1}. ${name}`).join('\n')}`;
 }
 
 const studentName = (s: Partial<User> & { name?: string }) => `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.name || 'ไม่ระบุชื่อ';

@@ -1512,8 +1512,8 @@ export const dataActions = {
         classroom,
         authorId: me.userId,
         activityType: assignmentData.is_exam ? 'exam' : 'assignment',
-        body: assignmentPostBody(assignmentData, classroom.students),
-        metadata: assignmentPostMetadata(assignmentData, id),
+        body: assignmentPostBody(assignmentData),
+        metadata: assignmentPostMetadata(assignmentData, id, classroom.students),
         // Only when the database kept publish_at; otherwise the assignment is already visible.
         publishAt: row.publish_at || undefined,
       });
@@ -1584,8 +1584,8 @@ export const dataActions = {
             classroom,
             authorId: requireTeacher(actor).userId,
             activityType: next.is_exam ? 'exam' : 'assignment',
-            body: assignmentPostBody(next, classroom.students),
-            metadata: assignmentPostMetadata(next, id),
+            body: assignmentPostBody(next),
+            metadata: assignmentPostMetadata(next, id, classroom.students),
             publishAt: new Date(nextPublishMs).toISOString(),
           });
         }
@@ -1605,9 +1605,8 @@ export const dataActions = {
 
     // The timeline post spells out the title and due date; keep it in step.
     const dueChanged = patch.due_date && new Date(patch.due_date).getTime() !== new Date(previous.due_date).getTime();
-    const retakeListChanged =
-      isRetake(previous) && patch.retake_student_ids && [...patch.retake_student_ids].sort().join() !== [...(previous.retake_student_ids || [])].sort().join();
-    if (dueChanged || (patch.title && patch.title !== previous.title) || retakeListChanged) {
+    // A retake's post is always refreshed: older ones still carry the earlier wording.
+    if (dueChanged || (patch.title && patch.title !== previous.title) || isRetake(previous)) {
       const { data: posts } = await supabase.from('classroom_posts').select('id, body, metadata').contains('metadata', { assignmentId: id });
       await Promise.all(
         (posts || [])
@@ -1615,7 +1614,14 @@ export const dataActions = {
           .map((p) =>
             supabase
               .from('classroom_posts')
-              .update({ body: assignmentPostBody(next, ownClassroom.students), metadata: { ...(p.metadata || {}), dueDate: next.due_date } })
+              .update({
+                body: assignmentPostBody(next),
+                metadata: {
+                  ...(p.metadata || {}),
+                  dueDate: next.due_date,
+                  ...(isRetake(next) ? { lineBody: assignmentPostMetadata(next, id, ownClassroom.students).lineBody } : {}),
+                },
+              })
               .eq('id', p.id)
           )
       );

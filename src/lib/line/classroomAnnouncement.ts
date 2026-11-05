@@ -34,7 +34,9 @@ export function buildPostLineMessage(
     icon = '⏰';
     title = 'เปิดคาบเช็คชื่อ';
   }
-  const message = `${icon} ${title}\n📘 ${classroomTitle(classroom)}\n\n${body}`;
+  // A retake's LINE wording (deadline and names) differs from its one-line timeline card.
+  const text = typeof metadata.lineBody === 'string' && metadata.lineBody ? metadata.lineBody : body;
+  const message = `${icon} ${title}\n📘 ${classroomTitle(classroom)}\n\n${text}`;
   const assignmentId = typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined;
   if (activityType === 'attendance') return withLiffLink(message, 'กดเพื่อเช็คชื่อ', { classroomId, inviteCode, view: 'attendance' });
   if ((activityType === 'assignment' || activityType === 'exam') && assignmentId) {

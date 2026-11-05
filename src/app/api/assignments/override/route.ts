@@ -164,8 +164,8 @@ export async function POST(request: NextRequest) {
           classroom,
           authorId: userId,
           activityType: published.is_exam ? 'exam' : 'assignment',
-          body: assignmentPostBody(published, classroom.students),
-          metadata: assignmentPostMetadata(published, assignmentId),
+          body: assignmentPostBody(published),
+          metadata: assignmentPostMetadata(published, assignmentId, classroom.students),
         }));
       } catch (postError) {
         console.warn('Unable to post published draft:', postError);
