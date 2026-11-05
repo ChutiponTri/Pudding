@@ -6,6 +6,7 @@ import { Avatar } from '@/components/Avatar';
 import { dataService } from '@/lib/supabase/dataService';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { institutionLabel } from '@/lib/data/thaiInstitutions';
+import { teacherRoleBadgeClass, teacherRoleLabel } from '@/lib/utils/teacherRole';
 import type { ClassroomTeacher, User } from '@/types/database';
 
 export type CoTeacherRole = 'assistant' | 'researcher';
@@ -71,8 +72,8 @@ export function CoTeacherPanel({
 
   const inviteText = (code: string) =>
     tr(
-      `เชิญร่วมสอนเป็น${role === 'assistant' ? 'ครูผู้ช่วยสอน (TA)' : 'ครูตรวจเพื่อวิจัย (IRR)'} ตอบรับคำเชิญที่: ${window.location.origin}/teacher-invite?code=${code}`,
-      `You're invited to co-teach as ${role === 'assistant' ? 'a teaching assistant (TA)' : 'a research grader (IRR)'}. Accept here: ${window.location.origin}/teacher-invite?code=${code}`
+      `เชิญร่วมสอนเป็น ${role === 'assistant' ? 'TA (ผู้ช่วยสอน)' : 'ผู้ตรวจเพื่อวิจัย (IRR)'} ตอบรับคำเชิญที่: ${window.location.origin}/teacher-invite?code=${code}`,
+      `You're invited to co-teach as ${role === 'assistant' ? 'a TA (teaching assistant)' : 'a research grader (IRR)'}. Accept here: ${window.location.origin}/teacher-invite?code=${code}`
     );
 
   const shareOnLine = async () => {
@@ -94,13 +95,6 @@ export function CoTeacherPanel({
     }
   };
 
-  const roleBadge = (r: ClassroomTeacher['role']) =>
-    r === 'primary'
-      ? { label: tr('เจ้าของ', 'Owner'), cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' }
-      : r === 'researcher'
-      ? { label: tr('นักวิจัย', 'Researcher'), cls: 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300' }
-      : { label: tr('ครู', 'Teacher'), cls: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300' };
-
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5">
@@ -114,8 +108,8 @@ export function CoTeacherPanel({
           aria-label={tr('บทบาท', 'Role')}
           className="h-8 shrink-0 px-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-800 dark:text-slate-100 outline-none focus:border-amber-500 cursor-pointer"
         >
-          <option value="assistant">{tr('👨‍🏫 ครู', '👨‍🏫 Teacher')}</option>
-          <option value="researcher">{tr('🔬 นักวิจัย', '🔬 Researcher')}</option>
+          <option value="assistant">{teacherRoleLabel('assistant', tr)}</option>
+          <option value="researcher">{teacherRoleLabel('researcher', tr)}</option>
         </select>
         <div className="relative flex-1 min-w-40">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -189,7 +183,6 @@ export function CoTeacherPanel({
       {teachers && !hideList && (
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800">
           {teachers.map((teacher) => {
-            const badge = roleBadge(teacher.role);
             return (
               <div key={teacher.teacher_id} className="px-2 py-1.5 flex items-center gap-2">
                 <Avatar src={teacher.avatar_url} name={teacher.name} className="w-6 h-6 text-[9px]" />
@@ -197,7 +190,7 @@ export function CoTeacherPanel({
                   <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{teacher.name || teacher.email || teacher.teacher_id}</p>
                   {teacher.email && <p className="text-[10px] text-slate-400 truncate">{teacher.email}</p>}
                 </div>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${badge.cls}`}>{badge.label}</span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border shrink-0 ${teacherRoleBadgeClass(teacher.role)}`}>{teacherRoleLabel(teacher.role, tr)}</span>
                 {onRemove && teacher.role !== 'primary' ? (
                   <button
                     type="button"

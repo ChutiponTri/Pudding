@@ -2,6 +2,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import {
   Assignment,
   Classroom,
+  ClassroomTeacher,
   Course,
   CourseLearningIndicator,
   LearningIndicator,
@@ -339,6 +340,19 @@ export const dataService = {
     const updated = await call<Classroom | null>('updateClassroom', id, data);
     notifyClassroomsChanged({ classroomId: id, action: 'updated' });
     return updated;
+  },
+
+  /** Adds a teacher to the classroom's course (every section), or to the classroom alone without a course. */
+  async addClassroomTeacher(classroomId: string, teacherId: string, role: 'assistant' | 'researcher'): Promise<ClassroomTeacher[]> {
+    const teachers = await call<ClassroomTeacher[]>('addClassroomTeacher', classroomId, teacherId, role);
+    notifyClassroomsChanged({ classroomId, action: 'updated' });
+    return teachers;
+  },
+
+  async removeClassroomTeacher(classroomId: string, teacherId: string): Promise<ClassroomTeacher[]> {
+    const teachers = await call<ClassroomTeacher[]>('removeClassroomTeacher', classroomId, teacherId);
+    notifyClassroomsChanged({ classroomId, action: 'updated' });
+    return teachers;
   },
 
   async deleteClassroom(id: string): Promise<void> {

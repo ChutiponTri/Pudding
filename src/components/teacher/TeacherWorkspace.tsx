@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Avatar } from '@/components/Avatar';
 import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeacherPanel';
+import { teacherRoleBadgeClass, teacherRoleLabel } from '@/lib/utils/teacherRole';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
@@ -1093,10 +1094,28 @@ export function TeacherWorkspace({
     }
   };
 
+  /**
+   * Who teaches a course: its list, plus anyone once added to a single class
+   * of it (classes used to save teachers on themselves only), so the card and
+   * the co-teacher popup match the classroom's People tab.
+   */
+  const courseTeachers = (course: Course): ClassroomTeacher[] => {
+    const list = [...(course.teachers || [])];
+    for (const cls of classrooms) {
+      if (cls.course_id !== course.id) continue;
+      for (const t of cls.teachers || []) if (!list.some((d) => d.teacher_id === t.teacher_id)) list.push(t);
+    }
+    return list;
+  };
+
+  /** The signed-in teacher's role in a course they do not own (TA unless listed as researcher). */
+  const myCourseRole = (course: Course): CoTeacherRole =>
+    courseTeachers(course).find((t) => t.teacher_id === clerkUser?.id)?.role === 'researcher' ? 'researcher' : 'assistant';
+
   // Co-Teachers Setup (TA vs Research Grader)
   const handleOpenCoTeachersModal = (course: Course) => {
     setEditingCourseCoTeachers(course);
-    setCoTeachersDraft(course.teachers || []);
+    setCoTeachersDraft(courseTeachers(course));
     setIsCoTeachersModalOpen(true);
   };
 
@@ -1512,11 +1531,11 @@ export function TeacherWorkspace({
                     title={t('courses.co_teachers')}
                   >
                     <div className="flex -space-x-1.5 overflow-hidden">
-                      {course.teachers?.map((tchr, i) => (
-                        <Avatar key={i} src={tchr.avatar_url} name={tchr.name} className="w-5 h-5 ring-1 ring-white dark:ring-slate-900 text-[10px]" />
+                      {courseTeachers(course).map((tchr) => (
+                        <Avatar key={tchr.teacher_id} src={tchr.avatar_url} name={tchr.name} className="w-5 h-5 ring-1 ring-white dark:ring-slate-900 text-[10px]" />
                       ))}
                     </div>
-                    <span className="whitespace-nowrap">{course.teachers?.length || 1}<span className="hidden sm:inline"> {language === 'th' ? 'ครูผู้สอน' : 'Teachers'}</span></span>
+                    <span className="whitespace-nowrap">{courseTeachers(course).length || 1}<span className="hidden sm:inline"> {language === 'th' ? 'ครูผู้สอน' : 'Teachers'}</span></span>
                   </button>
 
                   {/* Learning Indicators Settings - Only Course Owner */}
@@ -1544,9 +1563,9 @@ export function TeacherWorkspace({
                       </button>
                     </>
                   ) : (
-                    <span className="col-span-4 px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold text-[11px] border border-blue-200/60 dark:border-blue-800/60 flex items-center justify-center sm:justify-start gap-1">
+                    <span className={`col-span-4 px-2.5 py-1 rounded-full font-black text-[11px] border flex items-center justify-center sm:justify-start gap-1 ${teacherRoleBadgeClass(myCourseRole(course))}`}>
                       <GraduationCap className="w-3.5 h-3.5" />
-                      <span>{language === 'th' ? 'ผู้ช่วยสอน (ตรวจงานได้)' : 'TA Access'}</span>
+                      <span>{teacherRoleLabel(myCourseRole(course), tr)}</span>
                     </span>
                   )}
 
@@ -1652,10 +1671,8 @@ export function TeacherWorkspace({
                                   </button>
                                 </div>
                               ) : (
-                                <span className="shrink-0 text-xs font-bold px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
-                                  {course.teachers?.some((t) => t.teacher_id === clerkUser?.id && t.role === 'researcher')
-                                    ? tr('🔬 โหมดวิจัย', '🔬 Research mode')
-                                    : '👨‍🏫 TA'}
+                                <span className={`shrink-0 text-[10px] font-black px-2.5 py-1 rounded-full border ${teacherRoleBadgeClass(myCourseRole(course))}`}>
+                                  {teacherRoleLabel(myCourseRole(course), tr)}
                                 </span>
                               )}
                             </div>

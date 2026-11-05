@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { createClassroomPost } from '@/lib/server/classroomPosts';
+import { attendanceShare, createClassroomPost } from '@/lib/server/classroomPosts';
+import { attendanceLineText } from '@/lib/line/classroomAnnouncement';
+import { botSendOrShare } from '@/lib/server/lineSend';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 import { getActor, type Actor } from '@/lib/auth/actor';
@@ -396,6 +398,28 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     signalAttendance(classroomId);
     return NextResponse.json({ success: true, deletedSessionId: sessionId });
+  }
+
+  if (action === 'reannounce') {
+    // "ส่งซ้ำใน LINE": the bot calls the class to check in again; whenever it
+    // cannot (no group, quota, rationing, LINE error) the teacher shares it by hand.
+    const { data: current } = await supabase
+      .from('attendance_sessions')
+      .select('id, title, starts_at, on_time_until_minutes, late_until_minutes, status')
+      .eq('id', sessionId)
+      .eq('classroom_id', classroomId)
+      .maybeSingle();
+    if (!current) return NextResponse.json({ error: 'ไม่พบคาบเช็คชื่อนี้' }, { status: 404 });
+    if (current.status !== 'open') return NextResponse.json({ error: 'คาบเช็คชื่อนี้ปิดรับแล้ว' }, { status: 409 });
+    const text = attendanceLineText(current, classroom);
+    const result = await botSendOrShare(supabase, {
+      groupId: classroom.line_group_id,
+      text,
+      share: attendanceShare(sessionId, text),
+      teacherId: userId,
+      classroomId,
+    });
+    return NextResponse.json(result);
   }
 
   if (action === 'extend') {

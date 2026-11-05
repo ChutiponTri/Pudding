@@ -9,7 +9,7 @@ import { ASSIGNMENT_POST_PREFIX, assignmentPostBody, assignmentPostMetadata, cre
 import { assignmentIdFromTemplateToken, assignmentTemplateToken, newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
 import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 import { THAI_INSTITUTIONS, canonicalInstitution, sameInstitution } from '@/lib/data/thaiInstitutions';
-import { pushTeacherProfileToClerk, readClerkTeacherProfile } from '@/lib/server/clerkTeacherProfile';
+import { clerkImageUrls, pushTeacherProfileToClerk, readClerkTeacherProfile } from '@/lib/server/clerkTeacherProfile';
 import { TEACHER_NAME_PLACEHOLDER, isTeacherProfileComplete, teacherAccessOf } from '@/lib/utils/teacherProfile';
 import { rememberTeacherAccess } from '@/lib/server/teacherProfileGuard';
 import { notifyAdminNewTeacher } from '@/lib/server/adminNotify';
@@ -42,6 +42,7 @@ import { personNameError, studentProfileError } from '@/lib/utils/studentName';
 import type {
   Assignment,
   Classroom,
+  ClassroomTeacher,
   Course,
   CourseLearningIndicator,
   LearningIndicator,
@@ -84,6 +85,32 @@ async function withRealTeacherEmails<T extends { teacher_id: string; email?: str
   const { data } = await supabase.from('users').select('id, email').in('id', ids);
   const emailOf = new Map(((data || []) as Array<{ id: string; email?: string | null }>).map((u) => [u.id, u.email || undefined]));
   return teachers.map((t) => (emailOf.has(t.teacher_id) ? { ...t, email: emailOf.get(t.teacher_id) } : t));
+}
+
+/**
+ * Fills every teacher entry's photo from Clerk (the users row's copy when
+ * Clerk has none or is unreachable). The lists store a snapshot from when the
+ * teacher was added, which is often empty or out of date.
+ */
+async function withTeacherAvatars<T extends { teachers?: ClassroomTeacher[] | null }>(supabase: Supabase, records: T[]): Promise<T[]> {
+  const ids = [...new Set(records.flatMap((r) => (r.teachers || []).map((t) => t?.teacher_id)).filter(Boolean))];
+  if (!ids.length) return records;
+  const [clerk, { data: rows }] = await Promise.all([
+    clerkImageUrls(ids),
+    supabase.from('users').select('id, avatar_url').in('id', ids.slice(0, IN_CHUNK)),
+  ]);
+  const stored = new Map(((rows || []) as Array<{ id: string; avatar_url?: string | null }>).map((u) => [u.id, u.avatar_url || '']));
+  return records.map((r) =>
+    r.teachers?.length
+      ? {
+          ...r,
+          teachers: r.teachers.map((t) => {
+            const url = clerk.get(t.teacher_id) || stored.get(t.teacher_id) || t.avatar_url;
+            return url ? { ...t, avatar_url: url } : t;
+          }),
+        }
+      : r
+  );
 }
 
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
@@ -198,11 +225,17 @@ function mergeStudent(raw: User, db: User | undefined, status: 'active' | 'pendi
   };
 }
 
+/** Roster (see hydrateRosters) plus teachers' Clerk photos. */
+async function hydrateClassrooms(supabase: Supabase, rows: Classroom[]): Promise<Classroom[]> {
+  const [hydrated, withPhotos] = await Promise.all([hydrateRosters(supabase, rows), withTeacherAvatars(supabase, rows)]);
+  return hydrated.map((cls, i) => ({ ...cls, teachers: withPhotos[i]?.teachers ?? cls.teachers }));
+}
+
 /**
  * Fill in each classroom's roster from the users table. The classroom row keeps
  * a JSON snapshot of students; classroom_students holds relational enrolments.
  */
-async function hydrateClassrooms(supabase: Supabase, rows: Classroom[]): Promise<Classroom[]> {
+async function hydrateRosters(supabase: Supabase, rows: Classroom[]): Promise<Classroom[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((c) => c.id);
   const linkResults = await Promise.all(
@@ -865,7 +898,9 @@ export const dataActions = {
     // Other teachers' addresses stay hidden unless typed in full.
     const list = ((data || []) as User[]).map((t) => (t.email && t.email.toLowerCase() === exactEmail ? t : { ...t, email: maskEmail(t.email) }));
     if (institution) list.sort((a, b) => Number(sameInstitution(b.institution, institution)) - Number(sameInstitution(a.institution, institution)));
-    return list;
+    // Clerk's current photo; the users row only refreshes when that teacher signs in.
+    const photos = await clerkImageUrls(list.map((t) => t.id));
+    return list.map((t) => (photos.get(t.id) ? { ...t, avatar_url: photos.get(t.id) } : t));
   },
 
   async getRegisteredInstitutions({ supabase, actor }: Ctx) {
@@ -918,12 +953,21 @@ export const dataActions = {
   // ---------- COURSES ----------
   async getCourses({ supabase, actor }: Ctx) {
     const me = requireTeacher(actor);
-    const [own, shared] = await Promise.all([
+    const [own, shared, sections] = await Promise.all([
       supabase.from('courses').select('*').eq('primary_teacher_id', me.userId),
       supabase.from('courses').select('*').contains('teachers', jsonArray({ teacher_id: me.userId })),
+      // A TA listed on a class but not (yet) on its course still gets the course card.
+      supabase.from('classrooms').select('course_id').contains('teachers', jsonArray({ teacher_id: me.userId })),
     ]);
     if (own.error || shared.error) throw toDatabaseError((own.error || shared.error)!, 'courses');
-    return uniqueById([...(own.data || []), ...(shared.data || [])] as Course[]).sort(byCreatedDesc);
+    let list = uniqueById([...(own.data || []), ...(shared.data || [])] as Course[]);
+    const known = new Set(list.map((c) => c.id));
+    const missing = [...new Set(((sections.data || []) as Array<{ course_id?: string | null }>).map((c) => c.course_id).filter((id): id is string => !!id && !known.has(id)))];
+    if (missing.length) {
+      const { data: extra } = await supabase.from('courses').select('*').in('id', missing.slice(0, IN_CHUNK));
+      list = uniqueById([...list, ...((extra || []) as Course[])]);
+    }
+    return withTeacherAvatars(supabase, list.sort(byCreatedDesc));
   },
 
   async getCourseById({ supabase, actor }: Ctx, id: string) {
@@ -932,10 +976,10 @@ export const dataActions = {
     if (error) throw toDatabaseError(error, 'courses');
     const course = data as Course | null;
     if (!course) return null;
-    if (isTeacherOf(course, me.userId)) return course;
+    if (isTeacherOf(course, me.userId)) return (await withTeacherAvatars(supabase, [course]))[0];
     // Teachers of one of the course's classrooms (e.g. a TA added to a section) may read it.
     const { data: rows } = await supabase.from('classrooms').select('id, teacher_id, teachers').eq('course_id', id);
-    if ((rows || []).some((c) => isTeacherOf(c, me.userId))) return course;
+    if ((rows || []).some((c) => isTeacherOf(c, me.userId))) return (await withTeacherAvatars(supabase, [course]))[0];
     throw FORBIDDEN();
   },
 
@@ -1182,6 +1226,46 @@ export const dataActions = {
       signalRoster(id, { action: 'updated' });
     }
     return (updated as Classroom) || null;
+  },
+
+  /**
+   * Adds a teacher found by search to a classroom. Teachers belong to the
+   * course, so it goes on the course and every section of it (what the
+   * dashboard shows); a classroom without a course keeps its own list. No
+   * approval step: the teacher gets access at once, like an accepted invite.
+   */
+  async addClassroomTeacher({ supabase, actor }: Ctx, classroomId: string, teacherId: string, role: TeacherRole) {
+    const classroom = await requireTeacherOfClassroom(supabase, actor, classroomId);
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, name, email, avatar_url, institution')
+      .eq('id', teacherId)
+      .eq('role', 'teacher')
+      .maybeSingle();
+    if (!user) throw new HttpError(404, 'ไม่พบครูท่านนี้ในระบบ');
+    return saveClassroomTeachers(supabase, classroom, (teachers) => {
+      if (teachers.some((t) => t.teacher_id === teacherId)) return teachers;
+      const entry: ClassroomTeacher = {
+        teacher_id: teacherId,
+        name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.name || user.email || 'ครูผู้สอน',
+        email: user.email || undefined,
+        avatar_url: user.avatar_url || undefined,
+        institution: user.institution || undefined,
+        role: role === 'researcher' ? 'researcher' : 'assistant',
+      };
+      return [...teachers, entry];
+    });
+  },
+
+  /** Removes a co-teacher from a classroom's course (every section), never its owner. */
+  async removeClassroomTeacher({ supabase, actor }: Ctx, classroomId: string, teacherId: string) {
+    const classroom = await requireTeacherOfClassroom(supabase, actor, classroomId);
+    return saveClassroomTeachers(supabase, classroom, (teachers, ownerId) => {
+      if (teacherId === ownerId) throw new HttpError(400, 'นำเจ้าของรายวิชาออกไม่ได้');
+      const next = teachers.filter((t) => t.teacher_id !== teacherId);
+      if (!next.length) throw new HttpError(400, 'ห้องเรียนต้องมีครูผู้สอนอย่างน้อย 1 ท่าน');
+      return next;
+    });
   },
 
   async deleteClassroom({ supabase, actor }: Ctx, id: string) {
@@ -2491,6 +2575,35 @@ async function requireSubmissionAccess(supabase: Supabase, actor: Actor | null, 
 async function teacherInstitution(supabase: Supabase, teacherId: string): Promise<string> {
   const { data } = await supabase.from('users').select('institution').eq('id', teacherId).maybeSingle();
   return data?.institution?.trim() || '';
+}
+
+/**
+ * Changes who teaches a classroom. With a course, the course list is the
+ * truth (the dashboard reads it) and every section gets a copy; teachers that
+ * were added to this classroom alone before are folded in, so nobody drops off.
+ */
+async function saveClassroomTeachers(
+  supabase: Supabase,
+  classroom: Classroom,
+  change: (teachers: ClassroomTeacher[], ownerId: string | null) => ClassroomTeacher[]
+): Promise<ClassroomTeacher[]> {
+  const local = (classroom.teachers || []) as ClassroomTeacher[];
+  if (!classroom.course_id) {
+    const teachers = await withRealTeacherEmails(supabase, change(local, classroom.teacher_id || null));
+    const { error } = await supabase.from('classrooms').update({ teachers }).eq('id', classroom.id);
+    if (error) throw toDatabaseError(error, 'classrooms');
+    return teachers;
+  }
+  const { data: course } = await supabase.from('courses').select('id, primary_teacher_id, teachers').eq('id', classroom.course_id).maybeSingle();
+  if (!course) throw new HttpError(404, 'ไม่พบรายวิชาของห้องเรียนนี้');
+  const base = [...((course.teachers || []) as ClassroomTeacher[])];
+  for (const t of local) if (!base.some((b) => b.teacher_id === t.teacher_id)) base.push(t);
+  const teachers = await withRealTeacherEmails(supabase, change(base, course.primary_teacher_id || null));
+  const { error } = await supabase.from('courses').update({ teachers }).eq('id', course.id);
+  if (error) throw toDatabaseError(error, 'courses');
+  const { error: clsError } = await supabase.from('classrooms').update({ teachers }).eq('course_id', course.id);
+  if (clsError) throw toDatabaseError(clsError, 'classrooms');
+  return teachers;
 }
 
 /** Finds the course and role a co-teacher invite code stands for (checks every course; codes are HMACs). */

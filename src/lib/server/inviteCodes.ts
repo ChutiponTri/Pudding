@@ -125,6 +125,17 @@ export function joinShareToken(classroomId: string): string {
   return `${JOIN_PREFIX}${classroomId}.${sig}`;
 }
 
+/** Prefix of share tokens for an attendance period's check-in call ("เช็คชื่อ"). */
+const ATTENDANCE_PREFIX = 'a:';
+
+/** Link token for an open attendance period shared by hand: `a:<sessionId>.<16-char HMAC>`. */
+export function attendanceShareToken(sessionId: string): string {
+  const digest = createHmac('sha256', inviteSecret()).update(`attendance-share:${sessionId}`).digest();
+  let sig = '';
+  for (let i = 0; i < 16; i++) sig += ALPHABET[digest[i] & 31];
+  return `${ATTENDANCE_PREFIX}${sessionId}.${sig}`;
+}
+
 /** Prefix of share tokens for a co-teacher invitation; the rest is the (already signed) teacher invite code. */
 const TEACHER_PREFIX = 'c:';
 
@@ -134,8 +145,16 @@ export function teacherInviteShareToken(code: string): string {
 }
 
 /** What a share token points at: a timeline post, a work to re-announce, a work's reminder or its score announcement, a classroom's invitation, or a co-teacher invitation (id = its invite code, checked when resolved). null if it was not made here. */
-export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind' | 'results' | 'join' | 'teacher'; id: string } | null {
+export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind' | 'results' | 'join' | 'teacher' | 'attendance'; id: string } | null {
   if (typeof token !== 'string' || token.length > 200) return null;
+  if (token.startsWith(ATTENDANCE_PREFIX)) {
+    const dot = token.lastIndexOf('.');
+    if (dot <= ATTENDANCE_PREFIX.length) return null;
+    const id = token.slice(ATTENDANCE_PREFIX.length, dot);
+    const expected = Buffer.from(attendanceShareToken(id));
+    const given = Buffer.from(token);
+    return expected.length === given.length && timingSafeEqual(expected, given) ? { kind: 'attendance', id } : null;
+  }
   if (token.startsWith(TEACHER_PREFIX)) {
     const code = normalizeInviteCode(token.slice(TEACHER_PREFIX.length));
     return code.length === 12 ? { kind: 'teacher', id: code } : null;

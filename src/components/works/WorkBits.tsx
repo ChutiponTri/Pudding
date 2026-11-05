@@ -379,15 +379,15 @@ export function WorkRowLayout({
   /** ROW_INSET for the level, so columns line up across levels. */
   inset?: string;
 }) {
-  // Wide board (container ≥ 56rem): one line. The status sits right after the
-  // name; numbers, button and ⋯ keep fixed widths at the right so they line up.
+  // Wide board (container ≥ 56rem): one line. The name takes the free space;
+  // status, numbers, button and ⋯ keep fixed widths at the right, so every
+  // row's status button starts at the same x (each sized to its label).
   // Narrow: name + ⋯ / status + button / numbers.
   return (
     <div className={`flex flex-wrap @4xl:flex-nowrap items-center gap-x-3 gap-y-1.5 ${inset}`}>
-      <div className="order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 @4xl:flex-initial min-h-9 flex items-center">{lead}</div>
+      <div className="order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 min-h-9 flex items-center">{lead}</div>
       <div className="order-2 @4xl:order-6 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
-      {status && <div className="order-3 @4xl:order-2 min-w-0 shrink-0 h-9 flex items-center">{status}</div>}
-      <div aria-hidden className="hidden @4xl:block @4xl:order-3 flex-1" />
+      <div className={`order-3 @4xl:order-2 min-w-0 shrink-0 @4xl:w-36 h-9 flex items-center ${status ? '' : 'hidden @4xl:flex'}`}>{status}</div>
       <div className="order-4 @4xl:order-5 ml-auto @4xl:ml-0 shrink-0 @4xl:w-52 h-9 flex items-center justify-end gap-1.5">{action}</div>
       <div className="order-5 @4xl:order-4 basis-full @4xl:basis-auto @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3">{metrics}</div>
     </div>

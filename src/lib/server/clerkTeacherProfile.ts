@@ -52,3 +52,41 @@ export async function pushTeacherProfileToClerk(
     console.warn('Push teacher profile to Clerk failed:', error);
   }
 }
+
+/** Clerk photo URLs by user id, kept briefly so every page load does not ask Clerk again. */
+const IMAGE_TTL_MS = 10 * 60 * 1000;
+const imageCache = new Map<string, { url: Promise<string>; at: number }>();
+
+/**
+ * Teachers' current Clerk profile photos ('' when Clerk has none or cannot be
+ * reached), so co-teacher lists show the same picture as Clerk does. One
+ * Clerk request for all ids not cached yet; parallel callers share it.
+ */
+export async function clerkImageUrls(userIds: string[]): Promise<Map<string, string>> {
+  const now = Date.now();
+  const ids = [...new Set(userIds.filter((id) => id?.startsWith('user_')))];
+  const missing = ids.filter((id) => {
+    const hit = imageCache.get(id);
+    return !hit || now - hit.at > IMAGE_TTL_MS;
+  });
+  if (missing.length) {
+    const batch = (async () => {
+      const found = new Map<string, string>();
+      try {
+        const client = await clerkClient();
+        for (let i = 0; i < missing.length; i += 100) {
+          const { data } = await client.users.getUserList({ userId: missing.slice(i, i + 100), limit: 100 });
+          for (const user of data) found.set(user.id, user.imageUrl || '');
+        }
+      } catch (error) {
+        console.warn('Read Clerk photos failed:', error);
+        // Not cached on failure, so the next request tries again.
+        for (const id of missing) imageCache.delete(id);
+      }
+      return found;
+    })();
+    for (const id of missing) imageCache.set(id, { url: batch.then((found) => found.get(id) ?? ''), at: now });
+  }
+  const urls = await Promise.all(ids.map(async (id) => [id, await (imageCache.get(id)?.url ?? Promise.resolve(''))] as const));
+  return new Map(urls);
+}

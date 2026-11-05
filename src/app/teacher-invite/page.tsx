@@ -1,5 +1,6 @@
 'use client';
 
+import { teacherRoleLabel } from '@/lib/utils/teacherRole';
 import React, { useState, useEffect, Suspense } from 'react';
 import { Avatar } from '@/components/Avatar';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -169,7 +170,7 @@ function TeacherInviteContent() {
           <div className="relative z-10 space-y-2">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-white text-xs font-black">
               {inviteRole === 'researcher' ? <FlaskConical className="w-3.5 h-3.5" /> : <GraduationCap className="w-3.5 h-3.5" />}
-              <span>{inviteRole === 'researcher' ? tr('ครูตรวจเพื่อวิจัย • IRR', 'Research grader • IRR') : tr('ครูผู้ช่วยสอน (TA)', 'Teaching assistant (TA)')}</span>
+              <span>{teacherRoleLabel(inviteRole === 'researcher' ? 'researcher' : 'assistant', tr)}</span>
             </div>
             <h1 className="text-2xl font-black tracking-tight">
               {inviteRole === 'researcher' ? tr('คำเชิญเป็นครูตรวจเพื่อวิจัย', 'Invitation to be a research grader') : tr('คำเชิญเป็นครูผู้ช่วยสอน', 'Invitation to be a teaching assistant')}

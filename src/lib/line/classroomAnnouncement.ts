@@ -64,6 +64,23 @@ export function reannounceLineText(
   });
 }
 
+/**
+ * An open attendance period called again ("ส่งซ้ำใน LINE"): the check-in
+ * deadlines as clock times, since "within 10 minutes" no longer holds later.
+ */
+export function attendanceLineText(
+  session: { title: string; starts_at: string; on_time_until_minutes: number; late_until_minutes: number },
+  classroom: LabelledClassroom & { id: string; invite_code?: string | null }
+): string {
+  const start = new Date(session.starts_at).getTime();
+  const at = (minutes: number) =>
+    new Date(start + minutes * 60_000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: SCHOOL_TIME_ZONE });
+  const text =
+    `⏰ อย่าลืมเช็คชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${session.title}\n\n` +
+    `⏱️ ตรงเวลาถึง ${at(session.on_time_until_minutes)} น.\nเช็คชื่อได้ (สาย) ถึง ${at(session.late_until_minutes)} น.`;
+  return withLiffLink(text, 'กดเพื่อเช็คชื่อ', { classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'attendance' });
+}
+
 /** LINE text announcing a work's scores ("ประกาศคะแนน"); the link opens the student's own result. */
 export function resultsLineText(
   assignment: Pick<Assignment, 'id' | 'title' | 'is_exam'>,

@@ -16,6 +16,8 @@ import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { StudentRosterModal, type StudentRosterTab } from '@/components/StudentRosterModal';
+import { Avatar } from '@/components/Avatar';
+import { teacherRoleBadgeClass, teacherRoleLabel } from '@/lib/utils/teacherRole';
 import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeacherPanel';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ClassworkRow } from '@/components/works/ClassworkRow';
@@ -970,6 +972,24 @@ export default function ClassroomWorkspacePage() {
     }
   };
 
+  /** An open attendance period called again in the LINE group (share popup when the bot cannot). */
+  const handleReannounceSession = async (sessionId: string, title: string) => {
+    if (!confirm(tr(`ส่งข้อความเช็คชื่อ "${title}" เข้ากลุ่ม LINE อีกครั้ง?`, `Send the check-in for "${title}" to the LINE group again?`))) return;
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'reannounce', classroomId, sessionId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || tr('ส่งไม่สำเร็จ', 'Could not send'));
+      reportLineUnsent(json.line, json.share, title, json.message);
+      setNotice(botNotice(json.line || 'sent', tr('ส่งเข้า LINE อีกครั้งแล้ว', 'Sent to LINE again')));
+    } catch (err) {
+      setNotice(err instanceof Error && err.message ? err.message : tr('ส่งไม่สำเร็จ', 'Could not send'));
+    }
+  };
+
   /** A timeline post sent to the LINE group again by the bot (share popup when it cannot). */
   const handleResendPost = async (postId: string, title?: string) => {
     if (!confirm(tr('ส่งโพสต์นี้เข้ากลุ่ม LINE อีกครั้ง?', 'Send this post to the LINE group again?'))) return;
@@ -1552,11 +1572,17 @@ export default function ClassroomWorkspacePage() {
       alert(tr('ลบไม่ได้ ห้องเรียนต้องมีครูผู้สอนอย่างน้อย 1 ท่าน', 'Cannot remove: a classroom needs at least one teacher'));
       return;
     }
-    if (!confirm(tr('ต้องการนำครูผู้สอนท่านนี้ออกจากห้องเรียนหรือไม่?', 'Remove this teacher from the classroom?'))) return;
-    const updated = teachersList.filter((t) => t.teacher_id !== teacherId);
-    await dataService.updateClassroom(classroom.id, { teachers: updated });
-    setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
-    setNotice(tr('นำครูผู้สอนออกแล้ว', 'Teacher removed'));
+    const message = classroom.course_id
+      ? tr('นำครูท่านนี้ออกจากรายวิชา? (ออกจากทุกห้องของวิชานี้)', 'Remove this teacher from the course? (every class of it)')
+      : tr('ต้องการนำครูผู้สอนท่านนี้ออกจากห้องเรียนหรือไม่?', 'Remove this teacher from the classroom?');
+    if (!confirm(message)) return;
+    try {
+      const updated = await dataService.removeClassroomTeacher(classroom.id, teacherId);
+      setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
+      setNotice(tr('นำครูผู้สอนออกแล้ว', 'Teacher removed'));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : tr('นำครูออกไม่สำเร็จ', 'Could not remove the teacher'));
+    }
   };
 
   const handleAdmitStudent = async (studentId: string) => {
@@ -1617,24 +1643,19 @@ export default function ClassroomWorkspacePage() {
 
   const handleSelectFoundTeacher = async (foundTeacher: User, role: CoTeacherRole) => {
     if (!classroom) return;
-    const currentTeachers = teachersList;
-    if (currentTeachers.some((t) => t.teacher_id === foundTeacher.id)) {
+    if (teachersList.some((t) => t.teacher_id === foundTeacher.id)) {
       setNotice(tr('ครูท่านนี้อยู่ในห้องเรียนแล้ว', 'This teacher is already in the classroom'));
       return;
     }
-    const updated = [
-      ...currentTeachers,
-      {
-        teacher_id: foundTeacher.id,
-        role,
-        name: `${foundTeacher.first_name || ''} ${foundTeacher.last_name || ''}`.trim() || foundTeacher.email || tr('อาจารย์', 'Teacher'),
-        email: foundTeacher.email || '',
-      },
-    ];
-    await dataService.updateClassroom(classroom.id, { teachers: updated });
-    setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
-    setNotice(tr('เพิ่มผู้สอนแล้ว', 'Teacher added'));
-    setShowAddTeacherModal(false);
+    try {
+      // Saved on the course, so the dashboard and the other classes of it show the teacher too.
+      const updated = await dataService.addClassroomTeacher(classroom.id, foundTeacher.id, role);
+      setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
+      setNotice(tr('เพิ่มผู้สอนแล้ว', 'Teacher added'));
+      setShowAddTeacherModal(false);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : tr('เพิ่มผู้สอนไม่สำเร็จ', 'Could not add the teacher'));
+    }
   };
 
   const [editingStudent, setEditingStudent] = useState<User | null>(null);
@@ -2461,6 +2482,7 @@ export default function ClassroomWorkspacePage() {
               selectSession={setSelectedSessionId}
               onUpdateSession={handleUpdateSession}
               onDeleteSession={handleDeleteSession}
+              onReannounceSession={handleReannounceSession}
               isUpdatingSession={isUpdatingSession}
             />
           )}
@@ -2488,18 +2510,8 @@ export default function ClassroomWorkspacePage() {
 
                 <div className="space-y-2.5">
                   {teachersList.map((teacher) => {
-                    const isPrimary = teacher.role === 'primary';
-                    const isResearcher = teacher.role === 'researcher';
-                    const roleLabel = isPrimary
-                      ? tr('ครูประจำวิชา', 'Primary teacher')
-                      : isResearcher
-                      ? tr('ผู้ตรวจเพื่อวิจัย (IRR)', 'Research grader (IRR)')
-                      : tr('TA (ผู้ช่วยสอน)', 'TA (teaching assistant)');
-                    const roleBadgeClass = isPrimary
-                      ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300'
-                      : isResearcher
-                      ? 'bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border-purple-300'
-                      : 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border-blue-300';
+                    const roleLabel = teacherRoleLabel(teacher.role, tr);
+                    const roleBadgeClass = teacherRoleBadgeClass(teacher.role);
 
                     return (
                       <div
@@ -2507,9 +2519,7 @@ export default function ClassroomWorkspacePage() {
                         className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-between gap-3 border border-slate-100 dark:border-slate-700/60"
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-200 font-bold flex items-center justify-center text-sm shrink-0">
-                            {teacher.name?.[0] || 'T'}
-                          </div>
+                          <Avatar src={teacher.avatar_url} name={teacher.name} className="w-10 h-10 text-sm" />
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                               {teacher.name || teacher.teacher_id}
@@ -3213,6 +3223,7 @@ function AttendancePanel({
   selectSession,
   onUpdateSession,
   onDeleteSession,
+  onReannounceSession,
   isUpdatingSession,
 }: {
   classroom: Classroom;
@@ -3243,6 +3254,8 @@ function AttendancePanel({
     late?: number
   ) => void;
   onDeleteSession?: (id: string) => void;
+  /** "ส่งซ้ำใน LINE" for an open period: the bot, or the share popup when it cannot. */
+  onReannounceSession?: (id: string, title: string) => void;
   isUpdatingSession?: boolean;
 }) {
   const { tr } = useLanguage();
@@ -3546,6 +3559,23 @@ function AttendancePanel({
                         {tr('ปิดรับเช็คชื่อ', 'Close attendance')}
                       </button>
                     </>
+                  )}
+
+                  {onReannounceSession && (
+                    <button
+                      type="button"
+                      disabled={!isOpen}
+                      onClick={() => onReannounceSession(item.id, item.title)}
+                      title={
+                        isOpen
+                          ? tr('ส่งข้อความเช็คชื่อเข้ากลุ่ม LINE อีกครั้ง', 'Send the check-in message to the LINE group again')
+                          : tr('คาบนี้ปิดรับเช็คชื่อแล้ว เปิดรับใหม่ก่อนจึงส่งซ้ำได้', 'This period is closed; reopen it to post it again')
+                      }
+                      className="flex-1 sm:flex-none whitespace-nowrap px-3 py-2 sm:py-1.5 rounded-xl bg-line hover:bg-line-dark text-white text-xs font-bold inline-flex items-center justify-center gap-1 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-line"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>{tr('ส่งซ้ำใน LINE', 'Post to LINE again')}</span>
+                    </button>
                   )}
 
                   <button
