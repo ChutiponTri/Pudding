@@ -370,6 +370,7 @@ export function WorkRowLayout({
   action,
   menu,
   phone,
+  phoneMeta,
   inset = '',
 }: {
   lead: React.ReactNode;
@@ -379,6 +380,11 @@ export function WorkRowLayout({
   menu?: React.ReactNode;
   /** Phones only: a short summary kept on the title's line (PhoneWorkSummary); status, buttons and numbers then hide below `sm`. */
   phone?: React.ReactNode;
+  /**
+   * Phones only, with `phone`: the title gets a line to itself (up to two lines),
+   * and this (e.g. the work type) starts the second line, before the summary and ⋯.
+   */
+  phoneMeta?: React.ReactNode;
   /** ROW_INSET for the level, so columns line up across levels. */
   inset?: string;
 }) {
@@ -387,9 +393,21 @@ export function WorkRowLayout({
   // row's status button starts at the same x (each sized to its label).
   // Narrow: name + ⋯ / status + button / numbers. Phones with `phone`: one line.
   const wide = phone ? 'max-sm:hidden' : '';
+  const stacked = !!(phone && phoneMeta);
   return (
-    <div className={`flex flex-wrap @4xl:flex-nowrap items-center gap-x-3 gap-y-1.5 ${phone ? 'max-sm:flex-nowrap max-sm:gap-x-1.5' : ''} ${inset}`}>
-      <div className={`order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 min-h-9 flex items-center ${phone ? 'max-sm:basis-0' : ''}`}>{lead}</div>
+    <div
+      className={`flex flex-wrap @4xl:flex-nowrap items-center gap-x-3 gap-y-1.5 ${
+        phone ? (stacked ? 'max-sm:gap-x-1.5 max-sm:gap-y-0.5' : 'max-sm:flex-nowrap max-sm:gap-x-1.5') : ''
+      } ${inset}`}
+    >
+      <div
+        className={`order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 min-h-9 flex items-center ${
+          phone ? (stacked ? 'max-sm:basis-full max-sm:min-h-0 max-sm:pt-0.5' : 'max-sm:basis-0') : ''
+        }`}
+      >
+        {lead}
+      </div>
+      {stacked && <div className="sm:hidden order-1 min-w-0 flex-1 flex items-center gap-1.5">{phoneMeta}</div>}
       {phone && <div className="sm:hidden order-1 shrink-0 flex items-center">{phone}</div>}
       <div className="order-2 @4xl:order-6 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
       <div className={`order-3 @4xl:order-2 min-w-0 shrink-0 @4xl:w-36 h-9 flex items-center ${status ? '' : 'hidden @4xl:flex'} ${wide}`}>{status}</div>

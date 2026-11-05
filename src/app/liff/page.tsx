@@ -378,6 +378,15 @@ export default function LiffStudentPage() {
   const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
   const [isInLineClient, setIsInLineClient] = useState(false);
   const [liffInstance, setLiffInstance] = useState<Liff | null>(null);
+  // LINE's window size for this page ("full", or a half / tall sheet): read by the quiz split check.
+  const liffViewTypeRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    try {
+      liffViewTypeRef.current = liffInstance?.getContext()?.viewType;
+    } catch {
+      liffViewTypeRef.current = undefined;
+    }
+  }, [liffInstance]);
   const [currentStudent, setCurrentStudent] = useState<RealLineStudent | null>(null);
   // Latest profile for the saved home screen (background loads may outlive a profile edit).
   const currentStudentRef = useRef<RealLineStudent | null>(null);
@@ -1545,29 +1554,80 @@ export default function LiffStudentPage() {
     const focusInsideQuiz = () => document.activeElement?.tagName === "IFRAME";
 
     // ---------- split screen / Split View / pop-up window ----------
-    // The quiz page becomes much narrower, or much shorter, than it should be.
-    // Compared with the screen for width; for height, with the tallest the page
-    // has been during this quiz (LINE may open it at half height on purpose —
-    // that is not a split). Layout viewport sizes: pinch-zoom does not change them.
-    let tallest = 0;
+    // The quiz page becomes clearly smaller than it should be. Two references:
+    // 1. The screen. iPhone / iPad report the real screen, so a half-width page
+    //    is caught even when the quiz opens already split.
+    // 2. The largest this quiz has been during this session. Android reports the
+    //    *window* as the "screen" in split screen (both shrink together, so
+    //    check 1 sees nothing there); a clear shrink of the page or of the
+    //    reported screen against its own largest size catches it. The page is
+    //    compared with itself in the same orientation, so turning the phone is
+    //    not a shrink.
+    // Layout viewport sizes: pinch-zoom does not change them. Height-only
+    // shrinks are ignored while typing (the keyboard does that) and while the
+    // tallest seen is LINE's own half-height window (compared with itself).
     const isTyping = () => !!(document.activeElement as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]");
+    const most = { screenLong: 0, screenShort: 0, portrait: { width: 0, height: 0 }, landscape: { width: 0, height: 0 } };
+    let lastSize = "";
     const isSplitNow = () => {
       if (isDesktop) return false;
       const sw = window.screen.width;
       const sh = window.screen.height;
-      if (!sw || !sh) return false;
-      const short = Math.min(sw, sh);
-      const long = Math.max(sw, sh);
-      const type = window.screen.orientation?.type;
-      const legacy = (window as unknown as { orientation?: number }).orientation;
-      const landscape = type ? type.startsWith("landscape") : typeof legacy === "number" ? Math.abs(legacy) === 90 : window.innerWidth > window.innerHeight;
       const width = document.documentElement.clientWidth;
       const height = document.documentElement.clientHeight;
-      if (width < (landscape ? long : short) * 0.85) return true;
-      if (isTyping()) return false; // the keyboard shrinks the page too
-      if (height > tallest) tallest = height;
-      // Clearly shorter than this quiz page has been, and well under the screen: the other half is another app.
-      return height < tallest * 0.65 && height < (landscape ? short : long) * 0.6;
+      if (!sw || !sh || !width || !height) return false;
+      const typing = isTyping();
+
+      // 1. Against the screen (iOS / iPadOS).
+      const screenShort = Math.min(sw, sh);
+      const screenLong = Math.max(sw, sh);
+      const type = window.screen.orientation?.type;
+      const legacy = (window as unknown as { orientation?: number }).orientation;
+      const landscape = type ? type.startsWith("landscape") : typeof legacy === "number" ? Math.abs(legacy) === 90 : width > height;
+      if (width < (landscape ? screenLong : screenShort) * 0.85) return true;
+
+      // 1b. Shape (Android, even when the quiz opens already split): a phone's page shown
+      // full-screen is long and narrow (about 1.6–2.4 : 1 either way up); half of a phone is
+      // close to square. Not while typing (the keyboard squares the page too), not on large
+      // pages (a foldable's inner screen is square when full), not in LINE's half / tall sheet.
+      const viewType = liffViewTypeRef.current;
+      const lineSheet = !!viewType && viewType !== "full" && viewType !== "full-flex";
+      if (!typing && !lineSheet) {
+        const short = Math.min(width, height);
+        const long = Math.max(width, height);
+        if (short <= 520 && long / short < 1.45) return true;
+      }
+
+      // 2. Against the largest seen in this quiz, per orientation (Android multi-window, and any device).
+      const longShrank = most.screenLong > 0 && screenLong < most.screenLong * 0.85;
+      const shortShrank = most.screenShort > 0 && screenShort < most.screenShort * 0.85;
+      if (longShrank && shortShrank) {
+        // Both sides smaller: a different display (a foldable folded shut), not a split. Learn it afresh.
+        most.screenLong = screenLong;
+        most.screenShort = screenShort;
+        most.portrait = { width: 0, height: 0 };
+        most.landscape = { width: 0, height: 0 };
+        lastSize = "";
+        return false;
+      }
+      // One side smaller: Android put the app in a split window (it reports the window as the screen).
+      if (longShrank || shortShrank) return true;
+      most.screenLong = Math.max(most.screenLong, screenLong);
+      most.screenShort = Math.max(most.screenShort, screenShort);
+      const seen = landscape ? most.landscape : most.portrait;
+      // Width: the keyboard never changes it. Height: only while not typing.
+      if (seen.width && width < seen.width * 0.8) return true;
+      if (!typing && seen.height && height < seen.height * 0.65) return true;
+      // Learn only steady, full-looking sizes: the same as last check (not mid-rotation),
+      // and shaped like the orientation (wider than tall in landscape).
+      const size = `${width}x${height}x${landscape}`;
+      const steady = size === lastSize;
+      lastSize = size;
+      if (steady && landscape === width > height) {
+        seen.width = Math.max(seen.width, width);
+        if (!typing) seen.height = Math.max(seen.height, height);
+      }
+      return false;
     };
     // A size must hold for two checks in a row (~1.5 s): rotating, folding or the
     // keyboard closing pass through odd sizes for a moment.

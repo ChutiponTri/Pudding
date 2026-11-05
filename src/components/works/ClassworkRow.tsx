@@ -68,6 +68,12 @@ export function ClassworkRow({
   const retake = isRetake(assignment);
   const resultsMode = !!onAnnounceResults && announcesResults(counts, win.acceptsSubmissions);
 
+  const typePill = (
+    <Pill tone={retake ? 'amber' : assignment.is_exam ? 'sky' : 'emerald'} className="shrink-0">
+      {retake ? tr(`สอบซ่อม · ${assignment.retake_student_ids?.length || 0}`, `Retake · ${assignment.retake_student_ids?.length || 0}`) : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : tr('การบ้าน', 'Homework')}
+    </Pill>
+  );
+
   const menu: ActionMenuItem[] = [
     onStatusClick && { key: 'status', label: tr('เปลี่ยนสถานะการรับงาน', 'Change status'), icon: <Clock className="w-4 h-4" />, onSelect: onStatusClick },
     hidden && onPublishNow && { key: 'publish', label: tr('เผยแพร่ตอนนี้', 'Publish now'), icon: <Rocket className="w-4 h-4" />, onSelect: onPublishNow },
@@ -116,18 +122,14 @@ export function ClassworkRow({
         lead={
           <span className="w-full min-w-0 flex items-center gap-1.5">
             {leading}
-            <Pill
-              tone={retake ? 'amber' : assignment.is_exam ? 'sky' : 'emerald'}
-              className="shrink-0"
-            >
-              {retake ? tr(`สอบซ่อม · ${assignment.retake_student_ids?.length || 0}`, `Retake · ${assignment.retake_student_ids?.length || 0}`) : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : tr('การบ้าน', 'Homework')}
-            </Pill>
+            {/* Phones: the type moves to the second line (phoneMeta) so the title has room. */}
+            <span className="max-sm:hidden contents">{typePill}</span>
             <Link
               href={gradingHref}
               draggable={false}
               data-drag-ok
               title={assignment.title}
-              className="min-w-0 truncate text-sm font-black text-slate-900 dark:text-white hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
+              className="min-w-0 truncate max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:leading-snug text-sm max-sm:text-[13px] font-black text-slate-900 dark:text-white hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
             >
               {assignment.title}
             </Link>
@@ -146,6 +148,7 @@ export function ClassworkRow({
         }
         status={<StatusButton status={status} onClick={onStatusClick} />}
         phone={<PhoneWorkSummary status={status} onStatusClick={onStatusClick} totals={counts} gradeHref={gradingHref} hidden={hidden} />}
+        phoneMeta={typePill}
         metrics={
           hidden ? (
             <span className="text-[11px] font-semibold text-slate-400 inline-flex items-center gap-1">
