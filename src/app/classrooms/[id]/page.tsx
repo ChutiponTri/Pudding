@@ -894,9 +894,16 @@ export default function ClassroomWorkspacePage() {
         setNotice(tr('บันทึกโพสต์ไม่สำเร็จ ลองใหม่อีกครั้ง', 'Could not save the post, please try again'));
         return;
       }
+      const result = await response.json().catch(() => ({}));
       setPostBody('');
       setIsPostExpanded(false);
-      setNotice(tr('โพสต์แล้ว และแจ้งเข้ากลุ่ม LINE แล้ว', 'Posted and sent to the LINE group'));
+      setNotice(
+        result.line === 'failed'
+          ? tr('โพสต์แล้ว แต่ส่งเข้ากลุ่ม LINE ไม่สำเร็จ', 'Posted, but sending to the LINE group failed')
+          : result.line === 'no_group'
+            ? tr('โพสต์แล้ว (ห้องนี้ยังไม่ได้เชื่อมกลุ่ม LINE)', 'Posted (this class is not linked to a LINE group yet)')
+            : tr('โพสต์แล้ว และแจ้งเข้ากลุ่ม LINE แล้ว', 'Posted and sent to the LINE group')
+      );
       await loadWorkspace();
     } catch {
       setNotice(tr('เกิดข้อผิดพลาดในการโพสต์', 'Something went wrong while posting'));

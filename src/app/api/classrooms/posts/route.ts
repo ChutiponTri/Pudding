@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     const supabase = createServiceSupabaseClient();
     const actor = await getActor(request);
     const classroom = await requireTeacherOfClassroom(supabase, actor, classroomId);
-    const { post, deduplicated } = await createClassroomPost(supabase, {
+    const { post, deduplicated, line } = await createClassroomPost(supabase, {
       classroom,
       authorId: actor!.kind === 'teacher' ? actor!.userId : '',
       body: postBody,
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
       metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {},
       publishAt: typeof body.publishAt === 'string' ? body.publishAt : undefined,
     });
-    return NextResponse.json({ post, deduplicated }, { status: deduplicated ? 200 : 201 });
+    return NextResponse.json({ post, deduplicated, line }, { status: deduplicated ? 200 : 201 });
   } catch (error) {
     return errorResponse(error);
   }

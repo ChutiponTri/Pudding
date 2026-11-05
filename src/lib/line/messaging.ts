@@ -13,7 +13,11 @@ async function sendLineMessage(endpoint: string, body: Record<string, unknown>):
     body: JSON.stringify(body),
     cache: 'no-store',
   });
-  if (!response.ok) throw new Error(`LINE message failed with status ${response.status}`);
+  if (!response.ok) {
+    // LINE explains a 400 in the body (e.g. which message property is invalid).
+    const detail = await response.text().catch(() => '');
+    throw new Error(`LINE message failed with status ${response.status}${detail ? `: ${detail.slice(0, 500)}` : ''}`);
+  }
 }
 
 export interface LinkButton {
@@ -21,7 +25,24 @@ export interface LinkButton {
   uri: string;
 }
 
-const URL_PATTERN = /https?:\/\/[^\s<>()"']+/g;
+/**
+ * Thai text is written without spaces, so a link is often followed directly by
+ * Thai words ("https://forms.gle/abcภายในวันศุกร์"); Thai letters end the link.
+ */
+const URL_PATTERN = /https?:\/\/[^\s<>()"'\u0E00-\u0E7F]+/g;
+/** LINE limit for a uri action. */
+const MAX_URI_LENGTH = 1000;
+
+/** The link as LINE accepts it in a button (a valid, encoded http(s) URI), or null to leave it in the text. */
+function buttonUri(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.href.length <= MAX_URI_LENGTH ? url.href : null;
+  } catch {
+    return null;
+  }
+}
 /** LINE allows 4 buttons per card and 5 messages per request (the text + 4 cards). */
 const BUTTONS_PER_CARD = 4;
 const MAX_CARDS = 4;
@@ -53,8 +74,12 @@ export function splitLinkButtons(text: string): { text: string; buttons: LinkBut
   lines.forEach((line, index) => {
     const matches = [...line.matchAll(URL_PATTERN)];
     let rest = line;
+    let lastIndex = 0;
     for (const match of matches) {
-      const uri = match[0].replace(/[.,!?;:]+$/, '');
+      const raw = match[0].replace(/[.,!?;:]+$/, '');
+      const uri = buttonUri(raw);
+      // A link LINE would reject as a button stays in the text, so the push still goes out.
+      if (!uri) continue;
       if (!buttons.some((button) => button.uri === uri)) {
         if (buttons.length >= MAX_BUTTONS) continue;
         const before = cleanLabel(line.slice(0, match.index));
@@ -64,11 +89,11 @@ export function splitLinkButtons(text: string): { text: string; buttons: LinkBut
         // The line above was only this button's label.
         if (above && !HAS_URL.test(lines[index - 1])) kept[index - 1] = null;
       }
-      rest = rest.replace(uri, '');
+      rest = rest.replace(raw, '');
+      lastIndex = (match.index ?? 0) + match[0].length;
     }
     if (rest === line) return;
-    const last = matches[matches.length - 1];
-    const after = line.slice(last.index + last[0].length);
+    const after = line.slice(lastIndex);
     // "label: <url>" goes away whole; a link inside a sentence leaves the sentence.
     kept[index] = cleanLabel(after) || HAS_URL.test(rest) ? rest.replace(/[ \t]{2,}/g, ' ').trim() : null;
   });
@@ -103,7 +128,8 @@ function textWithLinkButtons(text: string, cardText?: string): Record<string, un
   const split = splitLinkButtons(text);
   const cards = linkCards(split.buttons, cardText);
   // A message that was nothing but a link becomes just its button.
-  return split.text || !cards.length ? [{ type: 'text', text: split.text || text }, ...cards] : cards;
+  // LINE rejects a text message over 5000 characters (and with it the whole push).
+  return split.text || !cards.length ? [{ type: 'text', text: fit(split.text || text, 5000) }, ...cards] : cards;
 }
 
 export async function pushLineGroupText(to: string, text: string): Promise<void> {

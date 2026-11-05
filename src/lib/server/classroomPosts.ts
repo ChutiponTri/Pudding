@@ -60,7 +60,12 @@ export async function createClassroomPost(
     metadata?: Record<string, unknown>;
     publishAt?: string;
   }
-): Promise<{ post: ClassroomPost; deduplicated: boolean }> {
+): Promise<{
+  post: ClassroomPost;
+  deduplicated: boolean;
+  /** 'sent' | 'failed' | 'no_group' (classroom not linked to LINE) | 'scheduled' (sent at publish time). */
+  line?: 'sent' | 'failed' | 'no_group' | 'scheduled';
+}> {
   const { classroom, activityType } = input;
   const body = input.body.trim();
   const metadata: Record<string, unknown> = { ...(input.metadata || {}) };
@@ -95,17 +100,20 @@ export async function createClassroomPost(
   const { data: saved, error } = await supabase.from('classroom_posts').insert(newPost).select('*').single();
   if (error) throw new Error(error.message);
 
+  let line: 'sent' | 'failed' | 'no_group' | 'scheduled' = isScheduled ? 'scheduled' : 'no_group';
   if (!isScheduled) {
     const lineGroupId = classroom.line_group_id;
     if (lineGroupId) {
       try {
         await pushLineGroupText(lineGroupId, buildPostLineMessage(activityType, classroom, body, classroom.id, metadata, classroom.invite_code));
+        line = 'sent';
       } catch (lineError) {
-        console.error('Classroom post LINE push failed:', lineError);
+        line = 'failed';
+        console.error(`Classroom post LINE push failed for ${saved.id}:`, lineError);
       }
     }
     // Scheduled posts stay hidden from students, so there is nothing to show them yet.
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
   }
-  return { post: saved as ClassroomPost, deduplicated: false };
+  return { post: saved as ClassroomPost, deduplicated: false, line };
 }
