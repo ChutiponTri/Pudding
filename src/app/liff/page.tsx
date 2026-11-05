@@ -46,7 +46,7 @@ import {
 import { useTheme } from "@/lib/theme/ThemeContext";
 import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
 import { dataService, type ClassroomChangeEvent } from "@/lib/supabase/dataService";
-import { clearLiffSnapshots, readLiffSnapshot, writeLiffSnapshot, type LiffSnapshot } from "@/lib/cache/liffSnapshot";
+import { clearLiffSnapshots, readLiffSnapshot, readSheetCache, writeLiffSnapshot, writeSheetCache, type LiffSnapshot } from "@/lib/cache/liffSnapshot";
 import type { Liff } from "@line/liff";
 import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
@@ -608,8 +608,6 @@ export default function LiffStudentPage() {
   const [submissionSuccess, setSubmissionSuccess] = useState(false);
   // Handed-in homework being edited (its answers are loaded into the form); null = new work.
   const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
-  /** Closed homework opened just to read: no answering, no hand-in. */
-  const [isViewOnlyWork, setIsViewOnlyWork] = useState(false);
   // What the server scored at hand-in: choice / true-false answers are scored at once;
   // the total only exists when every question was (all choices), otherwise it waits for the teacher.
   const [submittedResult, setSubmittedResult] = useState<{ submission: Submission; total: number | null; max: number; autoScored: number; pending: number } | null>(null);
@@ -756,6 +754,8 @@ export default function LiffStudentPage() {
   } | null>(null);
   // Result sheets already loaded this session: reopening shows them at once while a fresh copy loads.
   const gradedDetailCacheRef = useRef(new Map<string, { questions: Question[]; answers: Record<string, SubmissionAnswer> }>());
+  // Closed homework opened to read (not handed in): the work and its questions, no answers.
+  const [viewingClosedWork, setViewingClosedWork] = useState<{ assignment: Assignment; questions: Question[] | null; loadFailed?: boolean } | null>(null);
   // First open without a saved home screen: the home request starts as soon as
   // LINE gives a token, alongside the profile sync, instead of after it.
   const homePrefetchRef = useRef<{ at: number; promise: Promise<Awaited<ReturnType<typeof dataService.getStudentHome>> | null> } | null>(null);
@@ -1377,11 +1377,13 @@ export default function LiffStudentPage() {
     const openWindow = getAssignmentWindow(a);
     // Work the teacher reopened for this student (to edit, or to hand in) may be done even after it closed.
     const ownRow = edit?.submission || (forFriend ? undefined : submissions[a.id]);
-    const isClosedForMe = !openWindow.acceptsSubmissions && !isReopenActive(ownRow);
-    // Closed homework still opens on the student's own phone, read-only (the work and its
-    // attachments stay viewable). Closed quizzes stay shut: their questions are not shown.
-    const viewOnly = isClosedForMe && !a.is_exam && !forFriend && !edit;
-    if (isClosedForMe && !viewOnly) {
+    if (!openWindow.acceptsSubmissions && !isReopenActive(ownRow)) {
+      // Closed homework still opens on the student's own phone, as a read-only popup (the work
+      // and its attachments). Closed quizzes stay shut: their questions are not shown.
+      if (!a.is_exam && !forFriend && !edit) {
+        handleOpenClosedWork(a);
+        return;
+      }
       alert(openWindow.isQuizClosed
         ? `หมดเวลาทำข้อสอบ “${a.title}” แล้ว`
         : openWindow.isLateClosed
@@ -1390,7 +1392,6 @@ export default function LiffStudentPage() {
       return;
     }
     setStudentAnswers(edit ? answersToForm(edit.answers) : {});
-    setIsViewOnlyWork(viewOnly);
     setSubmitReview(null);
     setQuizTimeUp(false);
     setEditingSubmission(edit?.submission || null);
@@ -1460,7 +1461,6 @@ export default function LiffStudentPage() {
     !activeAssignment ||
     submissionSuccess ||
     isQuizForfeited ||
-    isViewOnlyWork ||
     confirm(editingSubmission ? "ออกโดยไม่บันทึกการแก้ไข? (งานเดิมยังอยู่)" : activeAssignment.is_exam ? quizLeaveWarning(quizOpen) : "ออกจากหน้านี้? (คำตอบจะยังไม่ถูกส่ง)");
 
   // 3. Real-Time Anti-Cheating Listener ("ตรวจจับเวลาแอบกดออกจอ")
@@ -1827,12 +1827,46 @@ export default function LiffStudentPage() {
     }
   }, [seenScoresKey]);
 
+  /**
+   * Sheets already opened show at once: from memory this session, or from this
+   * phone's storage after the app was closed (this LINE account only). A fresh
+   * copy always loads behind it and replaces it.
+   */
+  const sheetCacheUid = currentStudent?.line_uid;
+  const readSheet = <T,>(key: string, memory: Map<string, T>): T | undefined => {
+    const hit = memory.get(key) ?? readSheetCache<T>(sheetCacheUid, key) ?? undefined;
+    if (hit) memory.set(key, hit);
+    return hit;
+  };
+  const saveSheet = <T,>(key: string, memory: Map<string, T>, value: T) => {
+    memory.set(key, value);
+    writeSheetCache(sheetCacheUid, key, value);
+  };
+
+  const closedWorkCacheRef = useRef(new Map<string, Question[]>());
+  const handleOpenClosedWork = async (a: Assignment) => {
+    // Shown from the cache at once; the fresh copy below replaces it if the teacher changed the work.
+    const cacheKey = `work|${a.id}`;
+    const cached = readSheet(cacheKey, closedWorkCacheRef.current);
+    setViewingClosedWork({ assignment: a, questions: cached ?? null });
+    let questions: Question[];
+    try {
+      ({ questions } = await dataService.getAssignmentById(a.id));
+    } catch (err) {
+      console.error("Could not load the work:", err);
+      if (!cached) setViewingClosedWork((prev) => (prev?.assignment.id === a.id ? { ...prev, loadFailed: true } : prev));
+      return;
+    }
+    saveSheet(cacheKey, closedWorkCacheRef.current, questions);
+    setViewingClosedWork((prev) => (prev?.assignment.id === a.id ? { ...prev, questions, loadFailed: false } : prev));
+  };
+
   const handleOpenGradedDetail = async (a: Assignment, s: Submission) => {
     // The sheet opens at once (score header from the home data); the per-question
     // details arrive in one request, or show straight away when opened before.
     // Keyed by the hand-in too, so answers from before a resubmission are never shown (or edited) as current.
-    const cacheKey = `${s.id}|${s.submitted_at || ""}|${s.reopened_at || ""}|${s.total_score ?? ""}|${s.results_hidden ? "h" : ""}`;
-    const cached = gradedDetailCacheRef.current.get(cacheKey);
+    const cacheKey = `result|${s.id}|${s.submitted_at || ""}|${s.reopened_at || ""}|${s.total_score ?? ""}|${s.results_hidden ? "h" : ""}`;
+    const cached = readSheet(cacheKey, gradedDetailCacheRef.current);
     setViewingGradedSub({ assignment: a, submission: s, questions: cached?.questions ?? null, answers: cached?.answers ?? {} });
     let detail: { questions: Question[]; answers: Record<string, SubmissionAnswer> };
     try {
@@ -1842,7 +1876,7 @@ export default function LiffStudentPage() {
       if (!cached) setViewingGradedSub((prev) => (prev?.submission.id === s.id ? { ...prev, loadFailed: true } : prev));
       return;
     }
-    gradedDetailCacheRef.current.set(cacheKey, detail);
+    saveSheet(cacheKey, gradedDetailCacheRef.current, { questions: detail.questions, answers: detail.answers });
     // Only fill the sheet that is still open (the student may have closed it or opened another).
     setViewingGradedSub((prev) => (prev?.submission.id === s.id ? { ...prev, ...detail, loadFailed: false } : prev));
     // Once a graded result is opened, it no longer needs announcing on the overview.
@@ -3112,14 +3146,7 @@ export default function LiffStudentPage() {
                     </div>
                   );
                 })()}
-                {isViewOnlyWork ? (
-                  <div role="status" className="flex items-start gap-2 p-3 rounded-2xl bg-slate-100 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold">
-                    <span aria-hidden>🔒</span>
-                    <span>
-                      {getAssignmentWindow(activeAssignment).isLateClosed ? "หมดเวลาส่งงานแล้ว" : "คุณครูปิดรับงานแล้ว"} • ดูงานได้อย่างเดียว ส่งไม่ได้ — ติดต่อคุณครูหากต้องการขยายเวลา
-                    </span>
-                  </div>
-                ) : getAssignmentWindow(activeAssignment).isPastDeadline && !isReopenActive(editingSubmission || (activeProxy ? undefined : submissions[activeAssignment.id])) && (
+                {getAssignmentWindow(activeAssignment).isPastDeadline && !isReopenActive(editingSubmission || (activeProxy ? undefined : submissions[activeAssignment.id])) && (
                   <div role="status" className="flex items-start gap-2 p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/50 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-700 dark:text-rose-300 text-xs font-bold">
                     <span aria-hidden>🔒</span>
                     <span>
@@ -3132,7 +3159,7 @@ export default function LiffStudentPage() {
                 {activeAssignment.description && (
                   <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap">{activeAssignment.description}</p>
                 )}
-                {activeQuestions.length > 0 && !isViewOnlyWork && (
+                {activeQuestions.length > 0 && (
                   <div className="pt-1 space-y-1.5">
                     <div className="flex justify-between text-xs font-semibold text-slate-500">
                       <span>ตอบแล้ว</span>
@@ -3189,12 +3216,12 @@ export default function LiffStudentPage() {
 
               {activeQuestions.length === 0 && (
                 <div className={CARD}>
-                  <EmptyState icon="📄" text={isViewOnlyWork ? "งานนี้ไม่มีคำถาม" : "งานนี้ไม่มีคำถาม กดส่งได้เลย"} />
+                  <EmptyState icon="📄" text="งานนี้ไม่มีคำถาม กดส่งได้เลย" />
                 </div>
               )}
 
-              {/* Questions (a closed homework opened to read: every input disabled) */}
-              <fieldset disabled={isViewOnlyWork} className="space-y-4 min-w-0">
+              {/* Questions */}
+              <div className="space-y-4">
                 {activeQuestions.map((q, idx) => {
                   // Quizzes take no photos or files (older quizzes may still have such a question: answer it in text).
                   const isFileUpload = !activeAssignment?.is_exam && (q.type === 'file_upload' || (q as LegacyUploadQuestion).allow_upload || (q as LegacyUploadQuestion).requires_file);
@@ -3363,7 +3390,7 @@ export default function LiffStudentPage() {
                     </div>
                   );
                 })}
-              </fieldset>
+              </div>
 
               {/* Submit bar */}
               <div className={`fixed bottom-0 inset-x-0 z-40 mx-auto w-full ${FRAME} px-4 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] bg-linear-to-t from-slate-50 via-slate-50/95 to-slate-50/0 dark:from-slate-950 dark:via-slate-950/95 dark:to-slate-950/0 flex flex-col`}>
@@ -3375,16 +3402,6 @@ export default function LiffStudentPage() {
                     onPhase={(phase) => setQuizTimeUp(phase === "up")}
                   />
                 )}
-                {isViewOnlyWork ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveAssignment(null)}
-                  className="w-full h-14 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-base shadow-xl flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                  <span>กลับ</span>
-                </button>
-                ) : (
                 <button
                   type="button"
                   disabled={isSubmitting || uploadingQuestionId !== null}
@@ -3404,7 +3421,6 @@ export default function LiffStudentPage() {
                       : editingSubmission ? "ส่งงานที่แก้ไข" : activeQuestions.length > 0 ? `ส่งคำตอบ (${answeredCount}/${activeQuestions.length})` : "ยืนยันการส่งงาน"}
                   </span>
                 </button>
-                )}
               </div>
             </>
           )}
@@ -3775,6 +3791,102 @@ export default function LiffStudentPage() {
           </button>
         </Sheet>
       )}
+
+      {/* Closed homework the student did not hand in: the work, read-only (same popup style as a result) */}
+      {viewingClosedWork && (() => {
+        const work = viewingClosedWork.assignment;
+        const closedWindow = getAssignmentWindow(work);
+        return (
+        <Sheet onClose={() => setViewingClosedWork(null)}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="w-11 h-11 rounded-2xl bg-slate-100 dark:bg-slate-800 text-xl flex items-center justify-center shrink-0">📋</span>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">ดูงาน</h3>
+                <p className="text-xs text-slate-500 truncate">{work.title}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setViewingClosedWork(null)}
+              aria-label="ปิด"
+              className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white flex items-center justify-center cursor-pointer shrink-0"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div role="status" className="flex items-start gap-2 p-3 rounded-2xl bg-slate-100 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold">
+            <span aria-hidden>🔒</span>
+            <span>
+              {closedWindow.isLateClosed ? "หมดเวลาส่งงานแล้ว" : "คุณครูปิดรับงานแล้ว"} • ดูได้อย่างเดียว — ติดต่อคุณครูหากต้องการขยายเวลา
+            </span>
+          </div>
+
+          {work.description && (
+            <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap wrap-break-word">{work.description}</p>
+          )}
+          <ReferenceWork assignment={work} />
+
+          <div className="space-y-3">
+            <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">คำถาม</h4>
+            {viewingClosedWork.questions === null && viewingClosedWork.loadFailed ? (
+              <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 ring-1 ring-rose-200 dark:ring-rose-900 text-center space-y-2">
+                <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">โหลดรายละเอียดไม่สำเร็จ</p>
+                <button
+                  type="button"
+                  onClick={() => handleOpenClosedWork(work)}
+                  className="h-9 px-4 rounded-xl bg-white dark:bg-slate-900 ring-1 ring-rose-200 dark:ring-rose-900 text-sm font-bold text-rose-700 dark:text-rose-300 cursor-pointer"
+                >
+                  ลองอีกครั้ง
+                </button>
+              </div>
+            ) : viewingClosedWork.questions === null ? (
+              <div className="space-y-3" aria-busy="true" aria-label="กำลังโหลด">
+                {[0, 1].map((i) => (
+                  <div key={i} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200/80 dark:ring-slate-700/70 space-y-2.5 animate-pulse">
+                    <div className="h-4 w-2/3 rounded bg-slate-200 dark:bg-slate-700" />
+                    <div className="h-8 rounded-xl bg-white dark:bg-slate-900" />
+                  </div>
+                ))}
+              </div>
+            ) : viewingClosedWork.questions.length === 0 ? (
+              <p className="text-sm text-slate-500">งานนี้ไม่มีคำถาม</p>
+            ) : null}
+            {(viewingClosedWork.questions || []).map((q, i) => {
+              const options = Array.isArray(q.options) && q.options.length > 0
+                ? q.options
+                : q.type === "true_false" ? [...TRUE_FALSE_OPTIONS] : [];
+              return (
+                <div key={q.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200/80 dark:ring-slate-700/70 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 min-w-0 wrap-break-word">
+                      <span className="text-slate-400">ข้อ {i + 1}.</span> {q.question_text}
+                    </p>
+                    <span className="text-[11px] font-bold text-slate-400 shrink-0 tabular-nums">{q.max_score} คะแนน</span>
+                  </div>
+                  {(q.type === "multiple_choice" || q.type === "true_false") && options.length > 0 && (
+                    <ul className="space-y-1">
+                      {options.map((opt, oi) => (
+                        <li key={oi} className="px-3 py-2 rounded-xl bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-300 wrap-break-word">
+                          {String(opt)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={() => setViewingClosedWork(null)}
+            className="w-full h-12 rounded-2xl font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform bg-slate-900 dark:bg-white text-white dark:text-slate-900"
+          >
+            ตกลง
+          </button>
+        </Sheet>
+        );
+      })()}
 
       {viewingGradedSub && (
         <Sheet onClose={() => setViewingGradedSub(null)}>
