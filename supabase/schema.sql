@@ -288,7 +288,7 @@ CREATE INDEX IF NOT EXISTS idx_answers_submission ON public.submission_answers(s
 CREATE TABLE IF NOT EXISTS public.submission_events (
   id TEXT PRIMARY KEY DEFAULT ('evt_' || substr(md5(random()::text), 1, 12)),
   submission_id TEXT NOT NULL REFERENCES public.submissions(id) ON DELETE CASCADE,
-  event_type TEXT NOT NULL CHECK (event_type IN ('tab_hidden', 'window_blur', 'tab_visible', 'window_focus', 'copy_attempt', 'paste_attempt', 'quiz_reopened')),
+  event_type TEXT NOT NULL CHECK (event_type IN ('tab_hidden', 'window_blur', 'split_screen', 'pointer_left', 'tab_visible', 'window_focus', 'copy_attempt', 'paste_attempt', 'quiz_reopened')),
   away_duration_seconds INTEGER DEFAULT 0,
   details TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -303,6 +303,8 @@ CREATE TABLE IF NOT EXISTS public.quiz_attempts (
   student_id TEXT NOT NULL,
   open_count INTEGER NOT NULL DEFAULT 0,
   opened_at JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- Trips away from the quiz, saved while they happen (see supabase_quiz_away_update.sql).
+  away_events JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (assignment_id, student_id)
 );

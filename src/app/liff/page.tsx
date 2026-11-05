@@ -633,6 +633,11 @@ export default function LiffStudentPage() {
   // The classmate the open assignment is being done for; null = the phone's owner.
   // Set every time an assignment is opened (handleOpenAssignment).
   const [activeProxy, setActiveProxy] = useState<ProxyFriend | null>(null);
+  // For live away reports during a quiz (a ref: it must not restart the tracking).
+  const activeProxyNumberRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    activeProxyNumberRef.current = activeProxy?.studentNumber;
+  }, [activeProxy]);
 
   const handleProxyLookup = async () => {
     const classroomId = selectedClassroom?.id;
@@ -680,13 +685,17 @@ export default function LiffStudentPage() {
   const [awayWarningToast, setAwayWarningToast] = useState<string | null>(null);
   const [auditEvents, setAuditEvents] = useState<
     Array<{
-      event_type: "tab_hidden" | "window_blur" | "tab_visible" | "window_focus";
+      /** One per trip away; the trip is also saved live on the server under this id. */
+      id?: string;
+      event_type: "tab_hidden" | "window_blur" | "split_screen" | "pointer_left" | "copy_attempt" | "paste_attempt" | "tab_visible" | "window_focus";
       timestamp: string;
       duration_seconds: number;
       details?: string;
     }>
   >([]);
   const awayStartRef = useRef<number | null>(null);
+  /** The trip away in progress (sent to the server when it starts and when it ends). */
+  const awayTripRef = useRef<{ id: string; event_type: "tab_hidden" | "window_blur" | "split_screen"; started_at: string; details: string } | null>(null);
   const tabSwitchCountRef = useRef(0);
   // The open quiz's server-side count of times it was closed and opened again
   // (closing LINE resets everything above, so leaving is counted at each opening).
@@ -1479,25 +1488,36 @@ export default function LiffStudentPage() {
     awayStartRef.current = null;
     if (!activeAssignment || !isTrackingAway) return;
 
-    const startAway = (event_type: "tab_hidden" | "window_blur", details: string) => {
-      awayStartRef.current = Date.now();
+    const assignmentId = activeAssignment.id;
+    const proxyNumber = activeProxyNumberRef.current;
+    type Tracked = "tab_hidden" | "window_blur" | "split_screen" | "pointer_left" | "copy_attempt" | "paste_attempt";
+    const newId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+    const report = (event: { id: string; event_type: Tracked; started_at: string; details: string }, duration_seconds: number) =>
+      dataService.reportQuizAway(assignmentId, { ...event, duration_seconds }, proxyNumber);
+
+    // ---------- trips away (counted, timed, flagged) ----------
+    const startAway = (event_type: "tab_hidden" | "window_blur" | "split_screen", details: string, startedAt = Date.now()) => {
+      if (awayStartRef.current) return;
+      awayStartRef.current = startedAt;
+      const trip = { id: newId(), event_type, started_at: new Date(startedAt).toISOString(), details };
+      awayTripRef.current = trip;
       setTabSwitchCount((prev) => {
         tabSwitchCountRef.current = prev + 1;
         return prev + 1;
       });
-      setAuditEvents((prev) => [...prev, { event_type, timestamp: new Date().toISOString(), duration_seconds: 0, details }]);
+      setAuditEvents((prev) => [...prev, { id: trip.id, event_type, timestamp: trip.started_at, duration_seconds: 0, details }]);
+      // Saved on the server right away (keepalive), so closing LINE now cannot erase this trip.
+      report(trip, 0);
     };
 
     const endAway = () => {
       if (!awayStartRef.current) return;
       const durationSec = Math.max(1, Math.round((Date.now() - awayStartRef.current) / 1000));
       awayStartRef.current = null;
-      setAuditEvents((prev) => {
-        if (!prev.length) return prev;
-        const copy = [...prev];
-        copy[copy.length - 1] = { ...copy[copy.length - 1], duration_seconds: durationSec };
-        return copy;
-      });
+      const trip = awayTripRef.current;
+      awayTripRef.current = null;
+      if (trip) report(trip, durationSec);
+      setAuditEvents((prev) => prev.map((e) => (trip && e.id === trip.id ? { ...e, duration_seconds: durationSec } : e)));
       setTotalAwaySeconds((prev) => prev + durationSec);
       setAwayWarningToast(
         `⚠️ ออกจากหน้าจอ ${durationSec} วินาที (ครั้งที่ ${tabSwitchCountRef.current}) — จะรายงานให้คุณครูเมื่อส่ง`
@@ -1505,34 +1525,215 @@ export default function LiffStudentPage() {
       setTimeout(() => setAwayWarningToast(null), 5000);
     };
 
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        // Already away since the window lost focus: one trip, counted once.
-        if (awayStartRef.current) return;
-        startAway("tab_hidden", "นักเรียนสลับหน้าจอ หรือออกจากแอป LINE");
-      } else {
+    /** A logged signal that is not a trip (pointer left, copy, paste): shown to the teacher. */
+    const logSignal = (event_type: "pointer_left" | "copy_attempt" | "paste_attempt", details: string, startedAt: number, durationSec: number) => {
+      const event = { id: newId(), event_type, started_at: new Date(startedAt).toISOString(), details };
+      setAuditEvents((prev) => [...prev, { id: event.id, event_type, timestamp: event.started_at, duration_seconds: durationSec, details }]);
+      report(event, durationSec);
+    };
+
+    // ---------- what kind of device ----------
+    // Phones / tablets (iPad included, even with a trackpad: it reports MacIntel with touch points).
+    // Touch laptops are desktops: their windows are often not full-screen, so no split check there.
+    const ua = navigator.userAgent;
+    const isIPad = /iPad/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const isMobileOS = /Android|iPhone|iPod/.test(ua) || isIPad;
+    const isDesktop = !isMobileOS;
+
+    // ---------- the quiz's own focus (no false alarm) ----------
+    // Focus that moved into our own embedded viewer (a PDF preview iframe) is still the quiz.
+    const focusInsideQuiz = () => document.activeElement?.tagName === "IFRAME";
+
+    // ---------- split screen / Split View / pop-up window ----------
+    // The quiz page becomes much narrower, or much shorter, than it should be.
+    // Compared with the screen for width; for height, with the tallest the page
+    // has been during this quiz (LINE may open it at half height on purpose —
+    // that is not a split). Layout viewport sizes: pinch-zoom does not change them.
+    let tallest = 0;
+    const isTyping = () => !!(document.activeElement as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]");
+    const isSplitNow = () => {
+      if (isDesktop) return false;
+      const sw = window.screen.width;
+      const sh = window.screen.height;
+      if (!sw || !sh) return false;
+      const short = Math.min(sw, sh);
+      const long = Math.max(sw, sh);
+      const type = window.screen.orientation?.type;
+      const legacy = (window as unknown as { orientation?: number }).orientation;
+      const landscape = type ? type.startsWith("landscape") : typeof legacy === "number" ? Math.abs(legacy) === 90 : window.innerWidth > window.innerHeight;
+      const width = document.documentElement.clientWidth;
+      const height = document.documentElement.clientHeight;
+      if (width < (landscape ? long : short) * 0.85) return true;
+      if (isTyping()) return false; // the keyboard shrinks the page too
+      if (height > tallest) tallest = height;
+      // Clearly shorter than this quiz page has been, and well under the screen: the other half is another app.
+      return height < tallest * 0.65 && height < (landscape ? short : long) * 0.6;
+    };
+    // A size must hold for two checks in a row (~1.5 s): rotating, folding or the
+    // keyboard closing pass through odd sizes for a moment.
+    let split = false;
+    let pendingSplit: boolean | null = null;
+    let splitSince = 0;
+    const checkSplit = () => {
+      const now = isSplitNow();
+      if (now === split) {
+        pendingSplit = null;
+        return;
+      }
+      if (pendingSplit !== now) {
+        pendingSplit = now;
+        splitSince = Date.now();
+        return;
+      }
+      if (Date.now() - splitSince < 1200) return;
+      pendingSplit = null;
+      split = now;
+      if (now) {
+        // Already away (hidden / lost focus): the same trip continues.
+        startAway("split_screen", "แบ่งหน้าจอ / เปิดแอปอื่นข้างกัน (หน้าข้อสอบเล็กลงกว่าจอ)", splitSince);
+      } else if (!document.hidden && (document.hasFocus() || focusInsideQuiz())) {
         endAway();
       }
     };
 
-    // Split screen or a floating chat bubble takes focus without hiding the page.
-    const handleBlur = () => {
-      if (awayStartRef.current || document.hidden) return;
-      startAway("window_blur", "หน้าต่างเสียการโฟกัส (เช่น แบ่งหน้าจอ หรือเปิดแอปลอยทับ)");
+    // ---------- hidden / focus ----------
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Already away since the window lost focus: one trip, counted once.
+        // Hiding is reported at once: the app may be closed right after.
+        startAway("tab_hidden", "นักเรียนสลับหน้าจอ หรือออกจากแอป LINE");
+      } else if (!split) {
+        endAway();
+      }
     };
 
+    // Focus lost without hiding (split screen, a floating chat bubble, another window, a
+    // system overlay): counted once it lasts 1 s, so a passing system pop-up is not a trip.
+    let blurTimer = 0;
+    let blurAt = 0;
+    const handleBlur = () => {
+      if (awayStartRef.current || document.hidden || blurTimer) return;
+      blurAt = Date.now();
+      blurTimer = window.setTimeout(() => {
+        blurTimer = 0;
+        if (document.hidden || document.hasFocus() || focusInsideQuiz()) return;
+        startAway("window_blur", "หน้าต่างเสียการโฟกัส (เช่น แบ่งหน้าจอ เปิดแอปลอยทับ หรือคลิกหน้าต่างอื่น)", blurAt);
+      }, 1000);
+    };
     const handleFocus = () => {
-      if (!document.hidden) endAway();
+      if (blurTimer) {
+        window.clearTimeout(blurTimer);
+        blurTimer = 0;
+      }
+      if (!document.hidden && !split) endAway();
+    };
+    // Some in-app browsers never send blur: check focus directly as well — but only once the
+    // page has been seen focused (some report "not focused" until the first tap).
+    let sawFocus = document.hasFocus();
+    const focusPoll = () => {
+      if (document.hidden) return;
+      if (document.hasFocus()) sawFocus = true;
+      if (!sawFocus) return;
+      if (!document.hasFocus() && !focusInsideQuiz()) handleBlur();
+      else if (awayTripRef.current?.event_type === "window_blur") handleFocus();
+    };
+
+    // ---------- desktop: pointer leaving the window (e.g. to a second monitor) ----------
+    // Not a trip (moving the mouse aside is common): logged when it stays out ≥ 3 s, and
+    // not through the top edge (the browser's own tabs and address bar).
+    let pointerOutAt = 0;
+    const handlePointerOut = (e: MouseEvent) => {
+      if (!isDesktop || e.relatedTarget || awayStartRef.current) return;
+      if (e.clientY <= 0) return;
+      pointerOutAt = Date.now();
+    };
+    const handlePointerBack = () => {
+      if (!pointerOutAt) return;
+      const seconds = Math.round((Date.now() - pointerOutAt) / 1000);
+      const at = pointerOutAt;
+      pointerOutAt = 0;
+      if (seconds >= 3 && !awayStartRef.current) logSignal("pointer_left", "เมาส์ออกนอกหน้าต่างข้อสอบ (เช่น ไปที่จออื่น)", at, seconds);
+    };
+
+    // ---------- copy / paste ----------
+    // Text copied inside the quiz (a question, or the student's own answer) and pasted back
+    // is not "from outside": only a paste of anything else is logged (and flags the hand-in).
+    const copiedInside = new Set<string>();
+    const norm = (text: string) => text.replace(/\s+/g, " ").trim();
+    const selectedText = () => {
+      const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA") && el.selectionStart != null && el.selectionEnd != null) {
+        return el.value.slice(el.selectionStart, el.selectionEnd);
+      }
+      return window.getSelection()?.toString() || "";
+    };
+    const handleCopy = () => {
+      const text = norm(selectedText());
+      if (text) copiedInside.add(text);
+      logSignal("copy_attempt", "คัดลอกข้อความจากหน้าข้อสอบ", Date.now(), 0);
+    };
+    const handlePaste = (e: ClipboardEvent) => {
+      const text = norm(e.clipboardData?.getData("text") || "");
+      if (text && copiedInside.has(text)) return;
+      logSignal("paste_attempt", `วางข้อความจากภายนอกลงในคำตอบ${text ? ` (${Math.min(text.length, 9999)} ตัวอักษร)` : ""}`, Date.now(), 0);
+    };
+
+    // ---------- keep the screen on (auto-lock would look like leaving) ----------
+    let wakeLock: { release: () => Promise<void> } | null = null;
+    let disposed = false;
+    const requestWakeLock = async () => {
+      try {
+        const nav = navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> } };
+        if (!nav.wakeLock || document.hidden) return;
+        const lock = await nav.wakeLock.request("screen");
+        if (disposed) void lock.release();
+        else wakeLock = lock;
+      } catch {
+        // Not supported or not allowed: auto-lock may still count as leaving.
+      }
+    };
+    void requestWakeLock();
+    // The browser drops the lock whenever the page hides; take it again on return.
+    const reacquireWakeLock = () => {
+      if (!document.hidden) void requestWakeLock();
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("visibilitychange", reacquireWakeLock);
     window.addEventListener("blur", handleBlur);
     window.addEventListener("focus", handleFocus);
+    window.addEventListener("resize", checkSplit);
+    window.addEventListener("orientationchange", checkSplit);
+    document.addEventListener("mouseout", handlePointerOut);
+    document.addEventListener("mouseover", handlePointerBack);
+    document.addEventListener("copy", handleCopy);
+    document.addEventListener("cut", handleCopy);
+    document.addEventListener("paste", handlePaste);
+    // Split changes without a resize event, and focus lost without a blur, are caught here.
+    const poll = window.setInterval(() => {
+      checkSplit();
+      focusPoll();
+    }, 750);
+    const firstCheck = window.setTimeout(checkSplit, 600);
 
     return () => {
+      disposed = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("visibilitychange", reacquireWakeLock);
       window.removeEventListener("blur", handleBlur);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("resize", checkSplit);
+      window.removeEventListener("orientationchange", checkSplit);
+      document.removeEventListener("mouseout", handlePointerOut);
+      document.removeEventListener("mouseover", handlePointerBack);
+      document.removeEventListener("copy", handleCopy);
+      document.removeEventListener("cut", handleCopy);
+      document.removeEventListener("paste", handlePaste);
+      window.clearInterval(poll);
+      window.clearTimeout(firstCheck);
+      if (blurTimer) window.clearTimeout(blurTimer);
+      if (wakeLock) void wakeLock.release().catch(() => undefined);
+      awayTripRef.current = null;
     };
   }, [activeAssignment, isTrackingAway]);
 

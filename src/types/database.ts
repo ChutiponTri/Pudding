@@ -234,7 +234,7 @@ export interface SubmissionAnswer {
   graded_at?: string;
 }
 
-export type SubmissionEventType = 'tab_hidden' | 'window_blur' | 'tab_visible' | 'window_focus' | 'copy_attempt' | 'paste_attempt' | 'quiz_reopened';
+export type SubmissionEventType = 'tab_hidden' | 'window_blur' | 'split_screen' | 'pointer_left' | 'tab_visible' | 'window_focus' | 'copy_attempt' | 'paste_attempt' | 'quiz_reopened';
 
 export interface SubmissionEvent {
   id: string;

@@ -746,6 +746,31 @@ export const dataService = {
     return json as QuizOpenResult;
   },
 
+  /**
+   * One trip away from a quiz, saved on the server as it happens (when it starts,
+   * and again with its length on return), so closing LINE cannot erase it.
+   * keepalive: the "started" report still goes out while the page is hidden.
+   * Best effort: a failure only means the trip is reported with the hand-in.
+   */
+  reportQuizAway(
+    assignmentId: string,
+    event: {
+      id: string;
+      event_type: 'tab_hidden' | 'window_blur' | 'split_screen' | 'pointer_left' | 'copy_attempt' | 'paste_attempt';
+      started_at: string;
+      duration_seconds: number;
+      details?: string;
+    },
+    proxyStudentNumber?: string
+  ): void {
+    authFetch('/api/quiz-attempts/away', {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignment_id: assignmentId, proxy_student_number: proxyStudentNumber || undefined, event }),
+    }).catch(() => undefined);
+  },
+
   async submitStudentWork(payload: {
     assignment_id: string;
     student_id: string;
@@ -761,7 +786,9 @@ export const dataService = {
       tab_switch_count: number;
       away_time_seconds: number;
       events: Array<{
-        event_type: 'tab_hidden' | 'window_blur' | 'tab_visible' | 'window_focus';
+        /** One per trip away; the same trip was saved live under this id (reportQuizAway). */
+        id?: string;
+        event_type: 'tab_hidden' | 'window_blur' | 'split_screen' | 'pointer_left' | 'copy_attempt' | 'paste_attempt' | 'tab_visible' | 'window_focus';
         timestamp: string;
         duration_seconds: number;
         details?: string;

@@ -17,6 +17,8 @@ import {
   Eye,
   AlertOctagon,
   RotateCcw,
+  Columns2,
+  MousePointer2,
 } from 'lucide-react';
 
 interface IntegrityAuditModalProps {
@@ -57,6 +59,10 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
         return <ClipboardPaste className="w-4 h-4 text-indigo-500" />;
       case 'quiz_reopened':
         return <RotateCcw className="w-4 h-4 text-rose-600" />;
+      case 'split_screen':
+        return <Columns2 className="w-4 h-4 text-orange-500" />;
+      case 'pointer_left':
+        return <MousePointer2 className="w-4 h-4 text-slate-500" />;
       default:
         return <Layers className="w-4 h-4 text-slate-500" />;
     }

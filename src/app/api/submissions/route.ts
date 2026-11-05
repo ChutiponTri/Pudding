@@ -13,13 +13,13 @@ import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
 import { maskSubmission, resultRelease, resultReleaseForSubmissions } from '@/lib/server/resultRelease';
 import { isRetake, retakeIncludes } from '@/lib/utils/retake';
 import { syncRetakeScores } from '@/lib/server/retake';
-import { readQuizAttempt, type QuizAttempt } from '@/lib/server/quizAttempts';
+import { mergeAwayEvents, readQuizAttempt, type QuizAttempt } from '@/lib/server/quizAttempts';
 import { quizOpenAction } from '@/lib/utils/quizExit';
 import type { Classroom, Question, Submission } from '@/types/database';
 
 /** What the student's browser sends; the body is untrusted, so only these fields are read. */
 type IncomingAnswer = { question_id: string; answer_text?: string; file_url?: string };
-type IncomingEvent = { event_type: string; timestamp?: string; duration_seconds?: number; details?: string };
+type IncomingEvent = { id?: string; event_type: string; timestamp?: string; duration_seconds?: number; details?: string };
 type SubmissionRow = Record<string, unknown> & { student_id: string; submitted_by?: string | null };
 type StudentProfile = { id: string; first_name?: string | null; last_name?: string | null; line_uid?: string | null };
 
@@ -215,8 +215,9 @@ export async function POST(request: NextRequest) {
     // Leaving the screen is tracked during quizzes only; homework may be done
     // alongside other apps (looking up references, taking photos).
     const tracked = !!assignment.is_exam;
-    const awaySeconds = tracked ? Number(antiCheating.away_time_seconds || 0) : 0;
-    const tabSwitchCount = tracked ? Number(antiCheating.tab_switch_count || 0) : 0;
+    // Replaced below by the trips saved live on the server merged with these (mergeAwayEvents).
+    let awaySeconds = tracked ? Number(antiCheating.away_time_seconds || 0) : 0;
+    let tabSwitchCount = tracked ? Number(antiCheating.tab_switch_count || 0) : 0;
 
     const firstName = proxyStudent?.first_name || student_first_name || (student_name ? student_name.split(' ')[0] : 'นักเรียน');
     const lastName = proxyStudent?.last_name || student_last_name || (student_name ? student_name.split(' ').slice(1).join(' ') : '');
@@ -256,6 +257,14 @@ export async function POST(request: NextRequest) {
         : Promise.resolve<QuizAttempt | null>(null),
     ]);
     const quizExits = quizAttempt?.exits || 0;
+    // Trips away: saved live during the quiz (they survive closing LINE) plus the phone's own report.
+    const awayMerged = tracked
+      ? mergeAwayEvents(quizAttempt?.awayEvents || [], (antiCheating.events || []) as IncomingEvent[], quizAttempt?.openedAt || [], new Date())
+      : null;
+    if (awayMerged) {
+      tabSwitchCount = Math.max(tabSwitchCount, awayMerged.count);
+      awaySeconds = Math.max(awaySeconds, awayMerged.seconds);
+    }
     const { data: previousAnswers } = existingSubmission
       ? await supabase.from('submission_answers').select('file_url, graded_at').eq('submission_id', existingSubmission.id)
       : { data: [] as Array<{ file_url: string | null; graded_at: string | null }> };
@@ -409,7 +418,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Closing the quiz and coming back is always suspicious, even within the warnings.
-    const isSuspicious = tracked && (quizExits > 0 || isSuspiciousActivity(tabSwitchCount, awaySeconds));
+    // A paste during a quiz (an answer brought in from elsewhere) is suspicious on its own too.
+    const isSuspicious = tracked && (quizExits > 0 || isSuspiciousActivity(tabSwitchCount, awaySeconds) || (awayMerged?.pastes || 0) > 0);
     const submittedAt = new Date();
     const submissionRecord = {
       id: subId,
@@ -492,15 +502,16 @@ export async function POST(request: NextRequest) {
         if (answerError) throw answerError;
       }
 
-      const events = tracked ? antiCheating.events || [] : [];
+      const events = awayMerged?.events || [];
       if (events.length > 0) {
-        const { error: eventsError } = await supabase.from('submission_events').insert(
-          events.map((evt: IncomingEvent, i: number) => ({
-            id: `evt-${subId}-${Date.now()}-${i}`,
+        // One row per trip (stable ids, so handing in again does not repeat them).
+        const { error: eventsError } = await supabase.from('submission_events').upsert(
+          events.map((evt) => ({
+            id: `evt-${subId}-away-${evt.id}`,
             submission_id: subId,
             event_type: evt.event_type,
             away_duration_seconds: evt.duration_seconds || 0,
-            created_at: evt.timestamp || new Date().toISOString(),
+            created_at: evt.started_at,
             details: evt.details || null,
           }))
         );
