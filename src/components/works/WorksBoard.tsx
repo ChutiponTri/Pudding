@@ -43,6 +43,7 @@ import { SemesterSelect } from '@/components/SemesterSelect';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
+import { ComboFilter } from '@/components/works/ComboFilter';
 import { DueDateDialog, MetricCells, Pill, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, BulkStatusDialog, groupStatus, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
@@ -112,9 +113,17 @@ export function WorksBoard() {
     setTab(next);
     setParam('tab', next === 'quiz' ? 'quiz' : null);
   };
+  const [classFilter, setClassFilter] = useState(() => search.get('class') || 'all');
   const selectCourse = (id: string) => {
     setCourseFilter(id);
     setParam('course', id === 'all' ? null : id);
+  };
+  /** The subject / class box: "course:<id>", "class:<id>" or "all". */
+  const selectPlace = (value: string) => {
+    const [kind, id] = value.split(':');
+    selectCourse(kind === 'course' ? id : 'all');
+    setClassFilter(kind === 'class' ? id : 'all');
+    setParam('class', kind === 'class' ? id : null);
   };
   const [setTabGroup, tabIndicator] = useSlidingIndicator(tab);
 
@@ -177,15 +186,23 @@ export function WorksBoard() {
     return courses.filter((c) => used.has(c.id)).sort((a, b) => a.code.localeCompare(b.code));
   }, [allGroups, courses]);
   const activeCourse = termCourses.some((c) => c.id === courseFilter) ? courseFilter : 'all';
+  // Classrooms that have work this term, for the subject / class box.
+  const termWorkClasses = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string; courseId: string }>();
+    for (const g of allGroups) for (const c of g.classes) if (!seen.has(c.classroom.id)) seen.set(c.classroom.id, { id: c.classroom.id, name: c.classroom.name, courseId: g.courseId });
+    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name, 'th', { numeric: true }));
+  }, [allGroups]);
+  const activeClass = termWorkClasses.some((c) => c.id === classFilter) ? classFilter : 'all';
 
   const q = query.trim().toLowerCase();
   const matches = useCallback(
     (g: WorkGroup) =>
       (activeCourse === 'all' || g.courseId === activeCourse) &&
+      (activeClass === 'all' || g.classes.some((c) => c.classroom.id === activeClass)) &&
       (acceptFilter === 'all' || acceptOf(g) === acceptFilter) &&
       (gradeFilter === 'all' || (gradeFilter === 'finished') === (workRank(g) === 2)) &&
       (!q || g.rep.title.toLowerCase().includes(q) || g.classes.some((c) => c.classroom.name.toLowerCase().includes(q))),
-    [activeCourse, acceptFilter, gradeFilter, q]
+    [activeCourse, activeClass, acceptFilter, gradeFilter, q]
   );
   const tabCounts = useMemo(
     () => ({
@@ -218,7 +235,7 @@ export function WorksBoard() {
   const works = byTab[tab];
   const workById = new Map(works.map((g) => [g.rep.id, g]));
   // Dragging only on the full list (not while searching or filtering a course).
-  const filtering = !!q || activeCourse !== 'all' || acceptFilter !== 'all' || gradeFilter !== 'all';
+  const filtering = !!q || activeCourse !== 'all' || activeClass !== 'all' || acceptFilter !== 'all' || gradeFilter !== 'all';
   const canDrag = !filtering && works.length > 1;
   const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps, recentlyDropped } = useDragReorder(
     works.map((g) => g.rep.id),
@@ -673,19 +690,15 @@ export function WorksBoard() {
 
         {/* Filters: subject, status, grading (dropdowns) + search */}
         <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
-          {termCourses.length > 1 && (
-            <FilterSelect
-              label={tr('วิชา', 'Subject')}
-              value={activeCourse}
-              active={activeCourse !== 'all'}
-              onChange={selectCourse}
-              className="col-span-2 sm:col-span-1 sm:w-64"
-              options={[
-                { value: 'all', label: tr('ทุกวิชา', 'All subjects') },
-                ...termCourses.map((c) => ({ value: c.id, label: `${c.code} ${c.name}`.trim() })),
-              ]}
-            />
-          )}
+          <ComboFilter
+            value={activeClass !== 'all' ? `class:${activeClass}` : activeCourse !== 'all' ? `course:${activeCourse}` : 'all'}
+            onChange={selectPlace}
+            className="col-span-2 sm:col-span-1 sm:w-72"
+            options={[
+              ...termCourses.map((c) => ({ value: `course:${c.id}`, label: `${c.code} ${c.name}`.trim(), kind: 'subject' as const })),
+              ...termWorkClasses.map((c) => ({ value: `class:${c.id}`, label: c.name, sub: courseById.get(c.courseId)?.code, kind: 'class' as const })),
+            ]}
+          />
           <FilterSelect
             label={tr('สถานะ', 'Status')}
             value={acceptFilter}
@@ -736,7 +749,7 @@ export function WorksBoard() {
                 setAcceptFilter('all');
                 setGradeFilter('all');
                 setQuery('');
-                selectCourse('all');
+                selectPlace('all');
                 setParam('status', null);
                 setParam('grading', null);
               }}
