@@ -220,7 +220,7 @@ export function WorksBoard() {
   // Dragging only on the full list (not while searching or filtering a course).
   const filtering = !!q || activeCourse !== 'all' || acceptFilter !== 'all' || gradeFilter !== 'all';
   const canDrag = !filtering && works.length > 1;
-  const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps } = useDragReorder(
+  const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps, recentlyDropped } = useDragReorder(
     works.map((g) => g.rep.id),
     (keys) => prefs.setOrder(keys)
   );
@@ -507,6 +507,7 @@ export function WorksBoard() {
         // A tap anywhere on the card (not on a button, link or the class list) opens or closes it.
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('a, button, input, select, textarea, label, [data-no-toggle]')) return;
+          if (recentlyDropped()) return;
           if (window.getSelection()?.toString()) return;
           toggleWork(g.rep.id);
         }}
@@ -670,92 +671,64 @@ export function WorksBoard() {
           })}
         </div>
 
-        {/* Course chips + search */}
-        <div className="flex flex-col sm:flex-row gap-2">
+        {/* Filters: subject, status, grading (dropdowns) + search */}
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
           {termCourses.length > 1 && (
-            <div className="-mx-4 px-4 sm:mx-0 sm:px-0 flex gap-1.5 overflow-x-auto scrollbar-none sm:flex-1 sm:min-w-0">
-              {[{ id: 'all', code: tr('ทุกวิชา', 'All courses'), name: '' }, ...termCourses].map((c) => {
-                const active = activeCourse === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => selectCourse(c.id)}
-                    title={c.name || undefined}
-                    className={`shrink-0 h-9 px-3 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
-                      active ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
-                    }`}
-                  >
-                    {c.code}
-                  </button>
-                );
-              })}
-            </div>
+            <FilterSelect
+              label={tr('วิชา', 'Subject')}
+              value={activeCourse}
+              active={activeCourse !== 'all'}
+              onChange={selectCourse}
+              className="col-span-2 sm:col-span-1 sm:w-64"
+              options={[
+                { value: 'all', label: tr('ทุกวิชา', 'All subjects') },
+                ...termCourses.map((c) => ({ value: c.id, label: `${c.code} ${c.name}`.trim() })),
+              ]}
+            />
           )}
-          <label className="relative block sm:w-64 sm:ml-auto shrink-0">
+          <FilterSelect
+            label={tr('สถานะ', 'Status')}
+            value={acceptFilter}
+            active={acceptFilter !== 'all'}
+            onChange={(v) => {
+              const next = v as AcceptFilter;
+              setAcceptFilter(next);
+              setParam('status', next === 'all' ? null : next);
+            }}
+            className="sm:w-44"
+            options={[
+              { value: 'all', label: tr('ทุกสถานะ', 'Any status') },
+              { value: 'open', label: tr('เปิดรับ', 'Open') },
+              { value: 'closed', label: tr('ปิดรับ', 'Closed') },
+              { value: 'hidden', label: tr('ยังไม่เผยแพร่', 'Not published') },
+            ]}
+          />
+          <FilterSelect
+            label={tr('การตรวจ', 'Grading')}
+            value={gradeFilter}
+            active={gradeFilter !== 'all'}
+            onChange={(v) => {
+              const next = v as GradeFilter;
+              setGradeFilter(next);
+              setParam('grading', next === 'all' ? null : next);
+            }}
+            className="sm:w-44"
+            options={[
+              { value: 'all', label: tr('ทั้งหมด', 'All') },
+              { value: 'unfinished', label: tr('ยังตรวจไม่ครบ', 'Not fully graded') },
+              { value: 'finished', label: tr('ตรวจครบแล้ว', 'Fully graded') },
+            ]}
+          />
+          <label className="relative block col-span-2 sm:col-span-1 sm:flex-1 sm:min-w-48">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={tr('ค้นหางานหรือห้อง', 'Search work or class')}
+              placeholder={tr('ค้นหาชื่องานหรือห้อง', 'Search work or class')}
               className="w-full h-10 pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
             />
           </label>
-        </div>
-
-        {/* Status and grading filters (tap again to clear) */}
-        <div className="-mx-4 px-4 sm:mx-0 sm:px-0 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-          {(
-            [
-              ['open', tr('เปิดรับ', 'Open')],
-              ['closed', tr('ปิดรับ', 'Closed')],
-              ['hidden', tr('ยังไม่เผยแพร่', 'Not published')],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={acceptFilter === id}
-              onClick={() => {
-                const next = acceptFilter === id ? 'all' : id;
-                setAcceptFilter(next);
-                setParam('status', next === 'all' ? null : next);
-              }}
-              className={`shrink-0 h-8 px-3 rounded-full text-xs font-bold transition-colors cursor-pointer ${
-                acceptFilter === id ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-          <span aria-hidden className="shrink-0 w-px h-5 mx-1 bg-slate-300 dark:bg-slate-700" />
-          {(
-            [
-              ['unfinished', tr('ยังตรวจไม่ครบ', 'Not fully graded')],
-              ['finished', tr('ตรวจครบแล้ว', 'Fully graded')],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={gradeFilter === id}
-              onClick={() => {
-                const next = gradeFilter === id ? 'all' : id;
-                setGradeFilter(next);
-                setParam('grading', next === 'all' ? null : next);
-              }}
-              className={`shrink-0 h-8 px-3 rounded-full text-xs font-bold transition-colors cursor-pointer ${
-                gradeFilter === id
-                  ? id === 'finished'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-amber-500 text-slate-950'
-                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
           {filtering && (
             <button
               type="button"
@@ -767,10 +740,10 @@ export function WorksBoard() {
                 setParam('status', null);
                 setParam('grading', null);
               }}
-              className="shrink-0 h-8 px-2.5 rounded-full text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white inline-flex items-center gap-1 cursor-pointer"
+              className="col-span-2 sm:col-span-1 h-10 px-3 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
-              {tr('ล้างตัวกรอง', 'Clear')}
+              {tr('ล้างตัวกรอง', 'Clear filters')}
             </button>
           )}
         </div>
@@ -880,5 +853,54 @@ export function WorksBoard() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A compact dropdown filter: the label sits inside the field ("สถานะ: เปิดรับ"),
+ * and the field turns dark while it filters. Native <select>, so phones and
+ * iPads get their own picker.
+ */
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+  active,
+  className = '',
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+  active: boolean;
+  className?: string;
+}) {
+  const current = options.find((o) => o.value === value)?.label || '';
+  return (
+    <label
+      className={`relative h-10 min-w-0 rounded-xl border flex items-center gap-1.5 pl-3 pr-8 text-xs transition-colors cursor-pointer ${
+        active
+          ? 'bg-slate-900 border-slate-900 text-white dark:bg-white dark:border-white dark:text-slate-900'
+          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:border-amber-400'
+      } ${className}`}
+    >
+      <span className={`shrink-0 font-semibold ${active ? 'opacity-70' : 'text-slate-400'}`}>{label}</span>
+      <span className="min-w-0 truncate font-black">{current}</span>
+      <ChevronDown className="w-4 h-4 absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60 pointer-events-none" />
+      {/* The real control covers the field, invisible, so the native picker opens on tap. */}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

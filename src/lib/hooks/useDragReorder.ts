@@ -20,8 +20,9 @@ export function useDragReorder(keys: string[], onCommit: (keys: string[]) => voi
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dragY, setDragY] = useState(0);
-  const drag = useRef<{ key: string; grab: number; lastY: number; raf: number } | null>(null);
+  const drag = useRef<{ key: string; grab: number; lastY: number; raf: number; order: string[]; stop: () => void } | null>(null);
   const prevTops = useRef(new Map<string, number>());
+  const droppedAt = useRef(0);
   const latest = useRef({ keys, onCommit, dragOrder });
   useEffect(() => {
     latest.current = { keys, onCommit, dragOrder };
@@ -46,7 +47,10 @@ export function useDragReorder(keys: string[], onCommit: (keys: string[]) => voi
       }
       if (order.indexOf(s.key) === index) return order;
       prevTops.current = new Map(others.map((k) => [k, items.current.get(k)?.offsetTop ?? 0]));
-      return [...others.slice(0, index), s.key, ...others.slice(index)];
+      const next = [...others.slice(0, index), s.key, ...others.slice(index)];
+      // Kept on the drag itself, so the drop commits it even before React re-renders.
+      s.order = next;
+      return next;
     });
   }, []);
 
@@ -74,9 +78,11 @@ export function useDragReorder(keys: string[], onCommit: (keys: string[]) => voi
     const s = drag.current;
     if (!s) return;
     cancelAnimationFrame(s.raf);
+    s.stop();
     drag.current = null;
-    const order = latest.current.dragOrder;
-    if (order && order.join('\u0000') !== latest.current.keys.join('\u0000')) latest.current.onCommit(order);
+    droppedAt.current = Date.now();
+    const order = s.order;
+    if (order.join('\u0000') !== latest.current.keys.join('\u0000')) latest.current.onCommit(order);
     setDragKey(null);
     setDragOrder(null);
     setDragY(0);
@@ -89,8 +95,30 @@ export function useDragReorder(keys: string[], onCommit: (keys: string[]) => voi
       const list = listEl.current;
       if (!el || !list) return;
       e.preventDefault();
-      e.currentTarget.setPointerCapture(e.pointerId);
-      const s = { key, grab: e.clientY - list.getBoundingClientRect().top - el.offsetTop, lastY: e.clientY, raf: 0 };
+      // Follow the pointer on the window, not by pointer capture: React moves the
+      // dragged item's DOM node while reordering, and a moved node loses its capture
+      // (the drop would then never arrive).
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId === e.pointerId) s.lastY = ev.clientY;
+      };
+      const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId === e.pointerId) end();
+      };
+      window.addEventListener('pointermove', onMove, { passive: true });
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+      const s = {
+        key,
+        grab: e.clientY - list.getBoundingClientRect().top - el.offsetTop,
+        lastY: e.clientY,
+        raf: 0,
+        order: latest.current.keys,
+        stop: () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+        },
+      };
       drag.current = s;
       setDragKey(key);
       setDragOrder(latest.current.keys);
@@ -104,8 +132,23 @@ export function useDragReorder(keys: string[], onCommit: (keys: string[]) => voi
       };
       s.raf = requestAnimationFrame(tick);
     },
-    [follow]
+    [follow, end]
   );
+
+  // Leaving the page mid-drag: stop listening.
+  useEffect(
+    () => () => {
+      const s = drag.current;
+      if (!s) return;
+      cancelAnimationFrame(s.raf);
+      s.stop();
+      drag.current = null;
+    },
+    []
+  );
+
+  /** For click handlers: true right after a drop (the release also fires a click). */
+  const recentlyDropped = useCallback(() => Date.now() - droppedAt.current < 400, []);
 
   const move = useCallback((e: React.PointerEvent) => {
     if (drag.current) drag.current.lastY = e.clientY;
@@ -137,8 +180,6 @@ export function useDragReorder(keys: string[], onCommit: (keys: string[]) => voi
     (key: string) => ({
       onPointerDown: (e: React.PointerEvent<HTMLElement>) => start(key, e),
       onPointerMove: move,
-      onPointerUp: end,
-      onPointerCancel: end,
       onKeyDown: (e: React.KeyboardEvent) => {
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault();
@@ -146,13 +187,13 @@ export function useDragReorder(keys: string[], onCommit: (keys: string[]) => voi
         }
       },
     }),
-    [start, move, end, nudge]
+    [start, move, nudge]
   );
 
   const itemStyle = (key: string): React.CSSProperties | undefined =>
     dragKey === key ? { transform: `translate3d(0, ${dragY}px, 0)`, transition: 'none', zIndex: 20, position: 'relative' } : undefined;
 
-  return { bindList, order: dragOrder ?? keys, dragKey, bindItem, itemStyle, handleProps };
+  return { bindList, order: dragOrder ?? keys, dragKey, bindItem, itemStyle, handleProps, recentlyDropped };
 }
 
 /** A list order kept in this browser (localStorage), per scope. */
