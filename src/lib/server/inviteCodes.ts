@@ -125,9 +125,21 @@ export function joinShareToken(classroomId: string): string {
   return `${JOIN_PREFIX}${classroomId}.${sig}`;
 }
 
-/** What a share token points at: a timeline post, a work to re-announce, a work's reminder or its score announcement, or a classroom's invitation. null if it was not made here. */
-export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind' | 'results' | 'join'; id: string } | null {
+/** Prefix of share tokens for a co-teacher invitation; the rest is the (already signed) teacher invite code. */
+const TEACHER_PREFIX = 'c:';
+
+/** Link token for sharing a co-teacher invitation to LINE by hand: `c:<teacherInviteCode>`. */
+export function teacherInviteShareToken(code: string): string {
+  return `${TEACHER_PREFIX}${code}`;
+}
+
+/** What a share token points at: a timeline post, a work to re-announce, a work's reminder or its score announcement, a classroom's invitation, or a co-teacher invitation (id = its invite code, checked when resolved). null if it was not made here. */
+export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind' | 'results' | 'join' | 'teacher'; id: string } | null {
   if (typeof token !== 'string' || token.length > 200) return null;
+  if (token.startsWith(TEACHER_PREFIX)) {
+    const code = normalizeInviteCode(token.slice(TEACHER_PREFIX.length));
+    return code.length === 12 ? { kind: 'teacher', id: code } : null;
+  }
   if (token.startsWith(JOIN_PREFIX)) {
     const dot = token.lastIndexOf('.');
     if (dot <= JOIN_PREFIX.length) return null;

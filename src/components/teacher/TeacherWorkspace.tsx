@@ -6,6 +6,7 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Avatar } from '@/components/Avatar';
+import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeacherPanel';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
@@ -46,24 +47,19 @@ import {
   Trash2,
   X,
   MessageCircle,
-  Mail,
   Copy,
   Check,
-  ChevronDown,
   Sliders,
   ArrowUp,
   ArrowDown,
   Layers,
   Award,
-  ShieldCheck,
   CheckCircle2,
   AlertCircle,
   FolderKanban,
-  FlaskConical,
   Search,
   GraduationCap,
   Building2,
-  Loader2,
   FileSpreadsheet,
   ClipboardList,
 } from 'lucide-react';
@@ -216,13 +212,6 @@ export function TeacherWorkspace({
   const [editingCourseCoTeachers, setEditingCourseCoTeachers] = useState<Course | null>(null);
   const [isCoTeachersModalOpen, setIsCoTeachersModalOpen] = useState(false);
   const [coTeachersDraft, setCoTeachersDraft] = useState<ClassroomTeacher[]>([]);
-  const [newCoTeacherRole, setNewCoTeacherRole] = useState<'assistant' | 'researcher'>('assistant');
-  const [coTeacherInviteStep, setCoTeacherInviteStep] = useState<1 | 2>(1);
-  const [isCoTeachingArchitectureOpen, setIsCoTeachingArchitectureOpen] = useState(false);
-  const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
-  const [teacherSearchResults, setTeacherSearchResults] = useState<User[]>([]);
-  const [isSearchingTeachers, setIsSearchingTeachers] = useState(false);
-  const [isCopiedTeacherLink, setIsCopiedTeacherLink] = useState(false);
 
   // Course Creation Modal state
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
@@ -1108,41 +1097,17 @@ export function TeacherWorkspace({
   const handleOpenCoTeachersModal = (course: Course) => {
     setEditingCourseCoTeachers(course);
     setCoTeachersDraft(course.teachers || []);
-    setNewCoTeacherRole('assistant');
-    setCoTeacherInviteStep(1);
-    setIsCoTeachingArchitectureOpen(false);
-    setTeacherSearchQuery('');
-    setTeacherSearchResults([]);
-    setIsCopiedTeacherLink(false);
     setIsCoTeachersModalOpen(true);
   };
 
-  const handleSearchTeachers = async (q: string) => {
-    setTeacherSearchQuery(q);
-    if (!q.trim()) {
-      setTeacherSearchResults([]);
-      return;
-    }
-    setIsSearchingTeachers(true);
-    try {
-      const instFilter = newCoTeacherRole === 'assistant' ? teacherProfile?.institution : undefined;
-      const res = await dataService.searchTeachers(q, instFilter);
-      setTeacherSearchResults(res);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSearchingTeachers(false);
-    }
-  };
-
-  const handleSelectFoundTeacher = (tchr: User) => {
+  const handleSelectFoundTeacher = (tchr: User, role: CoTeacherRole) => {
     const fullName = `${tchr.first_name || ''} ${tchr.last_name || ''}`.trim() || tchr.name || tr('ครูผู้สอน', 'Teacher');
     const newTeacher: ClassroomTeacher = {
       teacher_id: tchr.id,
       name: fullName,
       email: tchr.email || undefined,
       avatar_url: tchr.avatar_url,
-      role: newCoTeacherRole,
+      role,
       institution: tchr.institution,
     };
     if (coTeachersDraft.some((t) => t.teacher_id === newTeacher.teacher_id)) {
@@ -1150,8 +1115,6 @@ export function TeacherWorkspace({
       return;
     }
     setCoTeachersDraft([...coTeachersDraft, newTeacher]);
-    setTeacherSearchQuery('');
-    setTeacherSearchResults([]);
   };
 
   const handleRemoveCoTeacher = (teacherId: string) => {
@@ -1178,40 +1141,6 @@ export function TeacherWorkspace({
     }
   };
 
-  // Co-teacher invite link: a short signed code from the server (/teacher-invite?code=…).
-  const [teacherInviteCodes, setTeacherInviteCodes] = useState<Record<string, string>>({});
-  const inviteCourseId = isCoTeachersModalOpen ? editingCourseCoTeachers?.id : undefined;
-  useEffect(() => {
-    if (!inviteCourseId) return;
-    const key = `${inviteCourseId}:${newCoTeacherRole}`;
-    if (teacherInviteCodes[key]) return;
-    dataService
-      .getTeacherInviteCode(inviteCourseId, newCoTeacherRole)
-      .then((code) => setTeacherInviteCodes((prev) => ({ ...prev, [key]: code })))
-      .catch((error) => console.warn('Invite code unavailable:', error));
-  }, [inviteCourseId, newCoTeacherRole, teacherInviteCodes]);
-  const teacherInviteUrl = (courseId: string | undefined, role: 'assistant' | 'researcher') => {
-    const code = courseId ? teacherInviteCodes[`${courseId}:${role}`] : undefined;
-    if (!code) return '';
-    return `${typeof window !== 'undefined' ? window.location.origin : ''}/teacher-invite?code=${code}`;
-  };
-
-  const handleCopyTeacherInviteLink = async (course: Course, role: 'assistant' | 'researcher' = 'assistant') => {
-    let url = teacherInviteUrl(course.id, role);
-    if (!url) {
-      try {
-        const code = await dataService.getTeacherInviteCode(course.id, role);
-        setTeacherInviteCodes((prev) => ({ ...prev, [`${course.id}:${role}`]: code }));
-        url = `${window.location.origin}/teacher-invite?code=${code}`;
-      } catch (error) {
-        alert(error instanceof Error ? error.message : tr('สร้างลิงก์เชิญไม่สำเร็จ', 'Could not create the invite link'));
-        return;
-      }
-    }
-    navigator.clipboard.writeText(url);
-    setIsCopiedTeacherLink(true);
-    setTimeout(() => setIsCopiedTeacherLink(false), 2500);
-  };
 
   const yearOptions = getAcademicYearOptions(defaultPeriod.yearCE);
 
@@ -2257,318 +2186,14 @@ export function TeacherWorkspace({
               </button>
             </ModalSheetHeader>
 
-            <ModalSheetBody className="space-y-6">
-
-            {/* Role Definitions & Rules Banner */}
-            <div className="rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setIsCoTeachingArchitectureOpen((open) => !open)}
-                className="w-full p-4 flex items-center justify-between gap-3 text-left cursor-pointer"
-              >
-                <span className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-200">
-                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>{tr('บทบาทครูร่วมสอน', 'Co-teacher roles')}</span>
-                </span>
-                <ChevronDown className={`w-4 h-4 text-amber-600 transition-transform ${isCoTeachingArchitectureOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {isCoTeachingArchitectureOpen && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-4 pb-4 text-[11px] leading-relaxed">
-                  <div className="p-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-blue-950 dark:text-blue-200">
-                    <span className="font-bold block mb-1">{tr('👨‍🏫 ผู้ช่วยสอน (TA):', '👨‍🏫 Teaching assistant (TA):')}</span>
-                    <span>{tr(<>ตรวจและให้คะแนนได้ แต่<strong>แก้ไขรายวิชาไม่ได้</strong> ค้นหาได้เฉพาะครูสถาบันเดียวกัน</>, <>Can grade and score, but <strong>cannot edit the course</strong>. Only teachers at your institution can be found.</>)}</span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-purple-50/80 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/50 text-purple-950 dark:text-purple-200">
-                    <span className="font-bold block mb-1">{tr('🔬 ครูตรวจเพื่อวิจัย:', '🔬 Research grader:')}</span>
-                    <span>{tr('ใช้ประเมิน IRR เท่านั้น นักเรียนไม่เห็น และไม่นับเป็นคะแนนจริง', 'For IRR assessment only; students never see it and it does not count toward real scores')}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800">
-              <button type="button" onClick={() => setCoTeacherInviteStep(1)} className={`py-2 rounded-xl text-xs font-bold ${coTeacherInviteStep === 1 ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}>{tr('ค้นหาครูในระบบ', 'Search teachers')}</button>
-              <button type="button" onClick={() => setCoTeacherInviteStep(2)} className={`py-2 rounded-xl text-xs font-bold ${coTeacherInviteStep === 2 ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}>{tr('เชิญด้วยรหัส / QR', 'Invite by code / QR')}</button>
-            </div>
-
-            {/* Existing Teachers in this Course */}
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
-                {tr(`ครูในรายวิชา (${coTeachersDraft.length} ท่าน)`, `Course teachers (${coTeachersDraft.length})`)}
-              </span>
-              <div className="space-y-2">
-                {coTeachersDraft.map((tchr) => (
-                  <div
-                    key={tchr.teacher_id}
-                    className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar src={tchr.avatar_url} name={tchr.name} className="w-9 h-9 text-[10px]" />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
-                            {tchr.name}
-                          </span>
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                              tchr.role === 'primary'
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
-                                : tchr.role === 'researcher'
-                                ? 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border border-purple-300 dark:border-purple-800'
-                                : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-300 dark:border-blue-800'
-                            }`}
-                          >
-                            {tchr.role === 'primary'
-                              ? tr('👑 เจ้าของวิชา', '👑 Course owner')
-                              : tchr.role === 'researcher'
-                              ? tr('🔬 ตรวจเพื่อวิจัย', '🔬 Research grader')
-                              : tr('👨‍🏫 ผู้ช่วยสอน', '👨‍🏫 Teaching assistant')}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-[11px] text-slate-400 mt-0.5 flex-wrap">
-                          {tchr.institution && (
-                            <span className="text-slate-600 dark:text-slate-300">
-                              🏫 {institutionLabel(tchr.institution, language)}
-                            </span>
-                          )}
-                          <span className="font-mono">{tchr.email}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {tchr.role !== 'primary' && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCoTeacher(tchr.teacher_id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg cursor-pointer transition-colors"
-                        title={tr('นำครูท่านนี้ออกจากรายวิชา', 'Remove this teacher from the course')}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Add New Teacher Form & Autocomplete Search */}
-            {coTeacherInviteStep === 1 && (
-            <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 space-y-4">
-              <div>
-                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                  {tr('+ เพิ่มครูร่วมสอน', '+ Add co-teacher')}
-                </span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {tr('เลือกบทบาท แล้วค้นหาครู หรือส่งลิงก์เชิญ', 'Pick a role, then search for a teacher or send an invite link')}
-                </p>
-              </div>
-
-              {/* Role Toggle Switcher */}
-              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewCoTeacherRole('assistant');
-                    if (teacherSearchQuery) handleSearchTeachers(teacherSearchQuery);
-                  }}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                    newCoTeacherRole === 'assistant'
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <GraduationCap className="w-4 h-4" />
-                  <span>{tr('ครูผู้ช่วยสอน (TA)', 'Teaching assistant (TA)')}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewCoTeacherRole('researcher');
-                    if (teacherSearchQuery) handleSearchTeachers(teacherSearchQuery);
-                  }}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                    newCoTeacherRole === 'researcher'
-                      ? 'bg-purple-600 text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <FlaskConical className="w-4 h-4" />
-                  <span>{tr('ครูตรวจเพื่อวิจัย', 'Research grader')}</span>
-                </button>
-              </div>
-
-              {/* Role Context Notification */}
-              <div className="text-[11px] px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                {newCoTeacherRole === 'assistant' ? (
-                  <>
-                    <Search className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                    <span>{tr('ค้นหาเฉพาะครูใน', 'Only search teachers at')} <b>{institutionLabel(teacherProfile?.institution, language) || tr('สถาบันเดียวกับคุณ', 'your institution')}</b></span>
-                  </>
-                ) : (
-                  <>
-                    <Search className="w-3.5 h-3.5 text-purple-500 shrink-0" />
-                    <span>{tr('ค้นหาครูจากทุกสถาบัน (ผู้ประเมินภายนอก)', 'Search teachers at all institutions (external evaluators)')}</span>
-                  </>
-                )}
-              </div>
-
-              {/* Autocomplete Search Input */}
-              <div className="relative">
-                <div className="relative">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={teacherSearchQuery}
-                    onChange={(e) => handleSearchTeachers(e.target.value)}
-                    placeholder={
-                      newCoTeacherRole === 'assistant'
-                        ? tr('ค้นหาชื่อหรืออีเมล (สถาบันเดียวกัน)...', 'Search name or email (same institution)...')
-                        : tr('ค้นหาชื่อหรืออีเมล (ทุกสถาบัน)...', 'Search name or email (all institutions)...')
-                    }
-                    className="w-full pl-9 pr-9 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
-                  />
-                  {isSearchingTeachers && (
-                    <Loader2 className="w-4 h-4 text-amber-500 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
-                  )}
-                </div>
-
-                {/* Autocomplete Results Dropdown */}
-                {teacherSearchResults.length > 0 && (
-                  <div className="mt-2 p-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg space-y-1 max-h-48 overflow-y-auto">
-                    <span className="text-[10px] font-bold text-slate-400 px-2 block">
-                      {tr(`ผลการค้นหา (${teacherSearchResults.length} ท่าน)`, `Results (${teacherSearchResults.length})`)}
-                    </span>
-                    {teacherSearchResults.map((tchr) => (
-                      <div
-                        key={tchr.id}
-                        className="p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/80 flex items-center justify-between gap-2 transition-colors"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Avatar src={tchr.avatar_url} name={tchr.name} className="w-7 h-7 text-[10px]" />
-                          <div className="min-w-0">
-                            <span className="font-bold text-xs text-slate-900 dark:text-white block truncate">
-                              {`${tchr.first_name || ''} ${tchr.last_name || ''}`.trim() || tchr.name || tr('ครูผู้สอน', 'Teacher')}
-                            </span>
-                            <span className="text-[10px] text-slate-400 block truncate">
-                              {tchr.institution ? `🏫 ${institutionLabel(tchr.institution, language)} • ` : ''}{tchr.email}
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleSelectFoundTeacher(tchr)}
-                          className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-bold shrink-0 cursor-pointer"
-                        >
-                          {tr('+ เพิ่ม', '+ Add')}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-            </div>
-            )}
-
-            {/* Teacher Web & LINE Invite Link Section */}
-            {editingCourseCoTeachers && coTeacherInviteStep === 2 && (
-              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-300 dark:border-amber-800/80 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
-                    <FlaskConical className="w-3.5 h-3.5 text-amber-600" />
-                    <span>{tr('เชิญผ่านลิงก์ / LINE', 'Invite via link / LINE')}</span>
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-white/70 dark:bg-slate-900/70 border border-amber-200 dark:border-amber-900/60">
-                  <button
-                    type="button"
-                    onClick={() => setNewCoTeacherRole('assistant')}
-                    className={`py-2 rounded-xl text-xs font-bold transition-colors ${newCoTeacherRole === 'assistant' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
-                  >
-                    {tr('👨‍🏫 ครู TA', '👨‍🏫 TA')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewCoTeacherRole('researcher')}
-                    className={`py-2 rounded-xl text-xs font-bold transition-colors ${newCoTeacherRole === 'researcher' ? 'bg-purple-600 text-white' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'}`}
-                  >
-                    {tr('🔬 นักวิจัย', '🔬 Researcher')}
-                  </button>
-                </div>
-
-                <div className="inline-flex items-center gap-2 rounded-xl bg-white/70 dark:bg-slate-900/70 border border-amber-200 dark:border-amber-900/60 px-3 py-2 text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                  {newCoTeacherRole === 'assistant' ? tr('👨‍🏫 ลิงก์สำหรับผู้ช่วยสอน (TA)', '👨‍🏫 Link for teaching assistants (TA)') : tr('🔬 ลิงก์สำหรับครูตรวจเพื่อวิจัย', '🔬 Link for research graders')}
-                </div>
-
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  {newCoTeacherRole === 'assistant'
-                    ? tr('ผู้ช่วยสอนจะตรวจและให้คะแนนจริงได้', 'Teaching assistants can grade and give real scores')
-                    : tr('ครูตรวจเพื่อวิจัยประเมินความสอดคล้อง (IRR) ได้ โดยนักเรียนไม่เห็นคะแนนหรือชื่อ', 'Research graders assess agreement (IRR); students never see their scores or names')}
-                </p>
-
-                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 font-mono text-[11px] text-slate-700 dark:text-slate-300 break-all select-all">
-                  {teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole) || tr('กำลังสร้างลิงก์...', 'Creating link...')}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => handleCopyTeacherInviteLink(editingCourseCoTeachers, newCoTeacherRole)}
-                    className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>{isCopiedTeacherLink ? tr('คัดลอกลิงก์แล้ว!', 'Link copied!') : tr(`คัดลอกลิงก์เชิญ (${newCoTeacherRole === 'assistant' ? 'TA' : 'ผู้วิจัย'})`, `Copy invite link (${newCoTeacherRole === 'assistant' ? 'TA' : 'researcher'})`)}</span>
-                  </button>
-
-                  <a
-                    href={`https://line.me/R/msg/text/?${encodeURIComponent(
-                      tr(
-                        `ขอเชิญคุณครูเข้าร่วมเป็น${
-                          newCoTeacherRole === 'assistant'
-                            ? 'ครูผู้ช่วยสอน (Teaching Assistant - TA)'
-                            : 'ครูผู้ช่วยตรวจงานวิจัย (Research Evaluator)'
-                        } วิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}" ที่ลิงก์: ${teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole)}`,
-                        `You're invited to join as ${
-                          newCoTeacherRole === 'assistant' ? 'a Teaching Assistant (TA)' : 'a Research Evaluator'
-                        } for "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}": ${teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole)}`
-                      )
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    <span>{tr('แชร์คำเชิญไปยัง LINE', 'Share invite on LINE')}</span>
-                  </a>
-
-                  <a
-                    href={`mailto:?subject=${encodeURIComponent(
-                      tr(
-                        `คำเชิญเป็น${newCoTeacherRole === 'assistant' ? 'ครูผู้ช่วยสอน' : 'ครูตรวจงานวิจัย'} วิชา ${editingCourseCoTeachers.code}`,
-                        `Invitation: ${newCoTeacherRole === 'assistant' ? 'Teaching Assistant' : 'Research Evaluator'} for ${editingCourseCoTeachers.code}`
-                      )
-                    )}&body=${encodeURIComponent(
-                      tr(
-                        `เรียนคุณครู,\n\nขอเชิญเข้าร่วมเป็น${
-                          newCoTeacherRole === 'assistant'
-                            ? 'ครูผู้ช่วยสอน (Teaching Assistant - TA)'
-                            : 'ครูผู้ช่วยตรวจงานวิจัย (Research Evaluator)'
-                        } สำหรับรายวิชา "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}"\n\nท่านสามารถกดยืนยันคำเชิญได้ที่ลิงก์นี้:\n${teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole)}\n\nขอบคุณครับ/ค่ะ`,
-                        `Dear teacher,\n\nYou're invited to join as ${
-                          newCoTeacherRole === 'assistant' ? 'a Teaching Assistant (TA)' : 'a Research Evaluator'
-                        } for "${editingCourseCoTeachers.code} ${editingCourseCoTeachers.name}".\n\nAccept the invitation here:\n${teacherInviteUrl(editingCourseCoTeachers.id, newCoTeacherRole)}\n\nThank you`
-                      )
-                    )}`}
-                    className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Mail className="w-3.5 h-3.5" />
-                    <span>{tr('ส่งอีเมลเชิญ', 'Send email invite')}</span>
-                  </a>
-                </div>
-              </div>
-            )}
-
+            <ModalSheetBody>
+              <CoTeacherPanel
+                courseId={editingCourseCoTeachers.id}
+                institution={teacherProfile?.institution}
+                onAdd={handleSelectFoundTeacher}
+                teachers={coTeachersDraft}
+                onRemove={handleRemoveCoTeacher}
+              />
             </ModalSheetBody>
 
             <ModalSheetFooter>

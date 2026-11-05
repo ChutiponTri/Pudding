@@ -4,7 +4,7 @@ import { after } from 'next/server';
 import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
 import { postLineText, type PostActivityType, type PostLineFailure } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { joinShareToken, postShareToken, reannounceShareToken, remindShareToken, resultsShareToken } from '@/lib/server/inviteCodes';
+import { joinShareToken, postShareToken, teacherInviteShareToken, reannounceShareToken, remindShareToken, resultsShareToken } from '@/lib/server/inviteCodes';
 import type { LabelledClassroom } from '@/lib/utils/classroomLabel';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { rosterFor } from '@/lib/utils/retake';
@@ -203,6 +203,11 @@ export function resultsShare(assignmentId: string, text: string): PostShare {
 /** A classroom's join invitation ("เชิญในไลน์") the bot could not send: shared by hand like a post. */
 export function joinShare(classroomId: string, text: string): PostShare {
   return { text, url: shareUrl(joinShareToken(classroomId)) };
+}
+
+/** /liff/share page that sends a co-teacher invitation from the teacher's own LINE; null without a LIFF id. */
+export function teacherInviteShareUrl(code: string): string | null {
+  return shareUrl(teacherInviteShareToken(code));
 }
 
 /** The /liff/share page for a share token; null without a LIFF id. */

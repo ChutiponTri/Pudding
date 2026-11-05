@@ -5,7 +5,7 @@ import { forgetStudentActor, type Actor } from '@/lib/auth/actor';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import type { ClassroomSignal } from '@/lib/realtime/signals';
-import { ASSIGNMENT_POST_PREFIX, assignmentPostBody, assignmentPostMetadata, createClassroomPost } from '@/lib/server/classroomPosts';
+import { ASSIGNMENT_POST_PREFIX, assignmentPostBody, assignmentPostMetadata, createClassroomPost, teacherInviteShareUrl } from '@/lib/server/classroomPosts';
 import { assignmentIdFromTemplateToken, assignmentTemplateToken, newClassroomInviteCode, normalizeInviteCode, teacherInviteCode } from '@/lib/server/inviteCodes';
 import { isClerkUserId, needsTeacherRepair, repairTeacherRow } from '@/lib/line/legacyTeacherRows';
 import { THAI_INSTITUTIONS, canonicalInstitution, sameInstitution } from '@/lib/data/thaiInstitutions';
@@ -1001,6 +1001,16 @@ export const dataActions = {
     if (!course) throw new HttpError(404, 'ไม่พบรายวิชา');
     if (!isTeacherOf(course, me.userId)) throw FORBIDDEN();
     return teacherInviteCode(courseId, role === 'researcher' ? 'researcher' : 'assistant');
+  },
+
+  /** A co-teacher invite: its code, and the /liff/share page that sends it from the teacher's own LINE (null without a LIFF id). */
+  async getTeacherInviteShare({ supabase, actor }: Ctx, courseId: string, role: TeacherRole) {
+    const me = requireTeacher(actor);
+    const { data: course } = await supabase.from('courses').select('id, primary_teacher_id, teachers').eq('id', courseId).maybeSingle();
+    if (!course) throw new HttpError(404, 'ไม่พบรายวิชา');
+    if (!isTeacherOf(course, me.userId)) throw FORBIDDEN();
+    const code = teacherInviteCode(courseId, role === 'researcher' ? 'researcher' : 'assistant');
+    return { code, shareUrl: teacherInviteShareUrl(code) };
   },
 
   /** What the co-teacher invite page shows for a code: course name/code, role, and who invited. */
@@ -2484,7 +2494,7 @@ async function teacherInstitution(supabase: Supabase, teacherId: string): Promis
 }
 
 /** Finds the course and role a co-teacher invite code stands for (checks every course; codes are HMACs). */
-async function resolveTeacherInvite(supabase: Supabase, rawCode: string) {
+export async function resolveTeacherInvite(supabase: Supabase, rawCode: string) {
   const code = normalizeInviteCode(rawCode);
   if (code.length !== 12) return null;
   const { data: courses } = await supabase.from('courses').select('id, code, name, description, semester, year_ce, academic_year, indicators, primary_teacher_id, teachers');

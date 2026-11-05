@@ -276,6 +276,11 @@ export const dataService = {
     return call<string>('getTeacherInviteCode', courseId, role);
   },
 
+  /** A co-teacher invite code plus the LIFF page that shares it from the teacher's own LINE (null without a LIFF id). */
+  async getTeacherInviteShare(courseId: string, role: 'assistant' | 'researcher'): Promise<{ code: string; shareUrl: string | null }> {
+    return call('getTeacherInviteShare', courseId, role);
+  },
+
   async getCourseInvite(code: string): Promise<{ course: Course; role: 'assistant' | 'researcher'; inviterName: string } | null> {
     return call('getCourseInvite', code);
   },

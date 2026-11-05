@@ -4,6 +4,7 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { joinLineText, postLineText, reannounceLineText, resultsLineText, type PostActivityType } from '@/lib/line/classroomAnnouncement';
 import { lineMessagesForText } from '@/lib/line/messaging';
 import { parseShareToken } from '@/lib/server/inviteCodes';
+import { resolveTeacherInvite } from '@/lib/server/dataActions';
 import { clearUnsentReminder, missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import type { Assignment } from '@/types/database';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
@@ -22,6 +23,15 @@ export async function GET(request: NextRequest) {
   if (!target) return NextResponse.json({ error: 'ลิงก์แชร์ไม่ถูกต้อง' }, { status: 404 });
 
   const supabase = createServiceSupabaseClient();
+  if (target.kind === 'teacher') {
+    // A co-teacher invitation: the code itself is signed, so it only resolves for the course and role it was made for.
+    const invite = await resolveTeacherInvite(supabase, target.id);
+    if (!invite) return NextResponse.json({ error: 'ลิงก์เชิญไม่ถูกต้อง หรือรายวิชาถูกลบไปแล้ว' }, { status: 404 });
+    const course = `${invite.course.code || ''} ${invite.course.name || ''}`.trim();
+    const role = invite.role === 'researcher' ? 'ครูตรวจเพื่อวิจัย (IRR)' : 'ครูผู้ช่วยสอน (TA)';
+    const text = `👩‍🏫 เชิญร่วมสอน\n📘 ${course}\nบทบาท: ${role}\nกดปุ่มด้านล่างแล้วเข้าสู่ระบบเพื่อตอบรับคำเชิญ\n\n👉 ตอบรับคำเชิญ\n${request.nextUrl.origin}/teacher-invite?code=${target.id}`;
+    return NextResponse.json({ classroom: course, text, messages: lineMessagesForText(text) });
+  }
   if (target.kind === 'join') {
     // A classroom's invitation ("เชิญในไลน์"): rebuilt now, so it carries the current join code.
     const { data: room } = await supabase.from('classrooms').select('id, name, course_name, subject_code, invite_code').eq('id', target.id).maybeSingle();
