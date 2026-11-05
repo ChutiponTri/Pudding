@@ -32,7 +32,7 @@ import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { gradingCounts, isGraded, isHandedIn, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { roomLabel } from '@/lib/utils/classroomLabel';
-import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { getAssignmentWindow, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
 import { MobileText } from '@/components/MobileText';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
@@ -1015,8 +1015,9 @@ export default function ClassroomWorkspacePage() {
 
   // Collapsed categories, remembered per classroom. Default groups use a language-independent key.
   const { isOpen: isClassworkGroupOpen, toggle: toggleClassworkGroup } = useCollapsedGroups(`classwork:${classroomId}`);
+  const unpublishedGroupLabel = tr('ยังไม่เผยแพร่', 'Not published');
   const classworkFoldKey = (group: string) =>
-    group === tr('ข้อสอบ', 'Exam') ? '__exam' : group === tr('งานทั่วไป', 'General') ? '__general' : group;
+    group === tr('ข้อสอบ', 'Exam') ? '__exam' : group === tr('งานทั่วไป', 'General') ? '__general' : group === unpublishedGroupLabel ? '__unpublished' : group;
   const groupKeyOf = (item: Assignment) => item.group_name || (item.is_exam ? tr('ข้อสอบ', 'Exam') : tr('งานทั่วไป', 'General'));
   // Dragged order first (new work without a position on top), then newest first.
   const byClassworkOrder = (a: Assignment, b: Assignment) =>
@@ -1025,17 +1026,25 @@ export default function ClassroomWorkspacePage() {
 
   // Categories with their work (filtered), in the order the teacher dragged
   // them into (kept per classroom in this browser); new ones go last.
-  const classworkGroups = Object.entries(
-    assignments.reduce<Record<string, Assignment[]>>(
-      (groups, item) => {
-        (groups[groupKeyOf(item)] ||= []).push(item);
-        return groups;
-      },
-      Object.fromEntries(customGroups.map((name) => [name, [] as Assignment[]]))
-    )
-  )
+  // Drafts and scheduled work wait in "ยังไม่เผยแพร่" (first by default) and
+  // join their own category once published.
+  const unpublishedWork = assignments.filter((a) => !isAssignmentPublished(a, nowMs));
+  const classworkGroups = [
+    ...(unpublishedWork.length ? [[unpublishedGroupLabel, unpublishedWork] as [string, Assignment[]]] : []),
+    ...Object.entries(
+      assignments
+        .filter((a) => isAssignmentPublished(a, nowMs))
+        .reduce<Record<string, Assignment[]>>(
+          (groups, item) => {
+            (groups[groupKeyOf(item)] ||= []).push(item);
+            return groups;
+          },
+          Object.fromEntries(customGroups.map((name) => [name, [] as Assignment[]]))
+        )
+    ),
+  ]
     .map(([group, unsorted]) => [group, [...unsorted].sort(byClassworkOrder).filter((a) => matchesClassworkFilter(a.id))] as const)
-    .filter(([, items]) => classworkFilter === 'all' || items.length > 0);
+    .filter(([group, items]) => (classworkFilter === 'all' && classworkFoldKey(group) !== '__unpublished') || items.length > 0);
   const groupOrderScope = `classwork-groups:${classroomId}`;
   // Tagged with its classroom: moving to another classroom keeps this page mounted.
   const [groupOrderState, setGroupOrderState] = useState<{ scope: string; keys: string[] }>(() => ({
@@ -1044,7 +1053,13 @@ export default function ClassroomWorkspacePage() {
   }));
   if (groupOrderState.scope !== groupOrderScope) setGroupOrderState({ scope: groupOrderScope, keys: readLocalOrder(groupOrderScope) });
   const savedGroupOrder = groupOrderState.scope === groupOrderScope ? groupOrderState.keys : [];
-  const sortedClassworkGroups = applySavedOrder(classworkGroups, ([group]) => classworkFoldKey(group), savedGroupOrder);
+  const sortedClassworkGroups = applySavedOrder(
+    classworkGroups,
+    ([group]) => classworkFoldKey(group),
+    savedGroupOrder,
+    // Not dragged yet: "ยังไม่เผยแพร่" goes first, a new category last.
+    ([group]) => classworkFoldKey(group) === '__unpublished'
+  );
   const {
     bindList: bindGroupList,
     bindItem: bindGroupItem,
@@ -2127,13 +2142,15 @@ export default function ClassroomWorkspacePage() {
                 {orderedClassworkGroups.map(([group, items], groupIndex) => {
                   const accent = GROUP_ACCENTS[groupIndex % GROUP_ACCENTS.length];
                   const foldKey = classworkFoldKey(group);
+                  // Not a real category: nothing can be dropped in, and its cards stay put.
+                  const isUnpublishedGroup = foldKey === '__unpublished';
                   return (
                   <div
                     key={group}
                     ref={bindGroupItem(foldKey)}
                     style={groupItemStyle(foldKey)}
                     onDragOver={(e) => {
-                      if (!draggingAssignmentId) return;
+                      if (!draggingAssignmentId || isUnpublishedGroup) return;
                       e.preventDefault();
                       e.dataTransfer.dropEffect = 'move';
                       if (dragOverGroup !== group) setDragOverGroup(group);
@@ -2148,6 +2165,7 @@ export default function ClassroomWorkspacePage() {
                     }}
                     onDrop={(e) => {
                       e.preventDefault();
+                      if (isUnpublishedGroup) return;
                       const id = e.dataTransfer.getData('text/plain') || draggingAssignmentId;
                       const index = dropTarget?.group === group ? dropTarget.index : items.length;
                       setDragOverGroup(null);
@@ -2210,7 +2228,7 @@ export default function ClassroomWorkspacePage() {
                           dropTarget.index === index &&
                           (draggedIndex === -1 || (index !== draggedIndex && index !== draggedIndex + 1));
                         const itemWindow = getAssignmentWindow(item);
-                        const canDrag = classworkFilter === 'all';
+                        const canDrag = classworkFilter === 'all' && !isUnpublishedGroup;
                         return (
                           <div
                             key={item.id}
@@ -2226,7 +2244,7 @@ export default function ClassroomWorkspacePage() {
                               setDropTarget(null);
                             }}
                             onDragOver={(e) => {
-                              if (!draggingAssignmentId) return;
+                              if (!draggingAssignmentId || isUnpublishedGroup) return;
                               e.preventDefault();
                               e.stopPropagation();
                               e.dataTransfer.dropEffect = 'move';
@@ -2249,6 +2267,7 @@ export default function ClassroomWorkspacePage() {
                             <ClassworkRow
                               className="flex-1 min-w-0 hover:border-amber-400"
                               now={nowMs}
+                              tag={isUnpublishedGroup ? groupKeyOf(item) : undefined}
                               assignment={item}
                               counts={classworkCounts.get(item.id) || gradingCounts([], rosterSizeFor(item, classroom.students?.length || 0), item.is_exam)}
                               gradingHref={`/assignments/${item.id}/grading?from=classroom&classroomId=${classroomId}`}

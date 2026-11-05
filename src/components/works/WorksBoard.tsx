@@ -45,7 +45,7 @@ import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { DueDateDialog, MetricCells, Pill, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
-import { acceptStatus, BulkStatusDialog, StatusButton } from '@/components/works/StatusBits';
+import { acceptStatus, BulkStatusDialog, groupStatus, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
@@ -60,6 +60,12 @@ type Tab = 'homework' | 'quiz';
 type LocalEdits = { base: TeacherDashboardData | null; updated: Record<string, Partial<Assignment>>; deleted: string[] };
 
 const NO_EDITS: LocalEdits = { base: null, updated: {}, deleted: [] };
+
+/** 0 not published yet, 1 still being graded, 2 fully graded. */
+const workRank = (g: WorkGroup) => (!g.published ? 0 : g.totals.pending === 0 && g.totals.notSubmitted === 0 && g.totals.totalStudents > 0 ? 2 : 1);
+/** "<id>~<state>": the saved order entry; a different state means "place it by default again". */
+const orderEntry = (g: WorkGroup) =>
+  `${g.rep.id}~${workRank(g)}${[...new Set(g.classes.map((c) => (c.published ? (c.assignment.status_override || 'auto')[0] : 'h')))].sort().join('')}`;
 
 /**
  * Every assignment and quiz of the term, across classrooms: one card per work
@@ -100,7 +106,7 @@ export function WorksBoard() {
   };
   const [setTabGroup, tabIndicator] = useSlidingIndicator(tab);
 
-  // Works start closed; their classes show on tap (remembered in this browser).
+  // Works start closed; opening or closing one is remembered for it (this browser).
   const { isOpen: isWorkClosed, toggle: toggleWork } = useCollapsedGroups('works:expanded');
   const isWorkOpen = (key: string) => !isWorkClosed(key);
 
@@ -183,28 +189,28 @@ export function WorksBoard() {
   );
 
   // Both tabs are worked out together, so switching tabs only swaps what is shown.
-  // Default order: not published yet → still being graded → fully graded
-  // (latest deadline first inside each). A dragged order wins; work added
-  // since goes to the top of its own part.
+  // The default place of a work: not published yet → still being graded →
+  // fully graded (latest deadline first inside each). It only applies to work
+  // that is new or whose state just changed (published, closed/reopened,
+  // grading finished): the saved order records each work's state, and a work
+  // whose state still matches stays exactly where the teacher dragged it.
   const byTab = useMemo(() => {
-    const rank = (g: WorkGroup) =>
-      !g.published ? 0 : g.totals.pending === 0 && g.totals.notSubmitted === 0 && g.totals.totalStudents > 0 ? 2 : 1;
     const build = (isExam: boolean) => {
       const groups = allGroups
         .filter((g) => g.isExam === isExam && matches(g))
-        .sort((a, b) => rank(a) - rank(b) || b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th'));
-      return applySavedOrder(groups, (g) => g.rep.id, prefs.order, (item, other) => rank(item) <= rank(other));
+        .sort((a, b) => workRank(a) - workRank(b) || b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th'));
+      return applySavedOrder(groups, orderEntry, prefs.order, (item, other) => workRank(item) <= workRank(other));
     };
     return { homework: build(false), quiz: build(true) };
   }, [allGroups, matches, prefs.order]);
   const works = byTab[tab];
+  const workById = new Map(works.map((g) => [g.rep.id, g]));
   // Dragging only on the full list (not while searching or filtering a course).
   const canDrag = !q && activeCourse === 'all' && works.length > 1;
   const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps } = useDragReorder(
     works.map((g) => g.rep.id),
-    (keys) => prefs.setOrder(keys)
+    (keys) => prefs.setOrder(keys.map((id) => (workById.has(id) ? orderEntry(workById.get(id)!) : id)))
   );
-  const workById = new Map(works.map((g) => [g.rep.id, g]));
 
   // ---------------------------------------------------------------- actions
   const errorText = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
@@ -449,13 +455,7 @@ export function WorksBoard() {
       {tr('นักเรียนยังไม่เห็น', 'Hidden from students')}
     </span>
   );
-  /** Count chip that stands out next to a name ("3 ห้อง", "5 งาน"). */
-  const countChip = (n: number, th1: string, en1: string, enMany: string, icon: React.ReactNode) => (
-    <span className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-[11px] font-black tabular-nums">
-      {icon}
-      {n} {tr(th1, n === 1 ? en1 : enMany)}
-    </span>
-  );
+
   // ---- status: tap a class's pill, or ⋯ (class / work) → change status
   const classAccept = (c: WorkClass) => acceptStatus(c, th, language, now);
   const openWorkStatus = (g: WorkGroup) => {
@@ -497,7 +497,7 @@ export function WorksBoard() {
   );
 
   const workCard = (g: WorkGroup) => {
-    const open = isWorkOpen(g.key);
+    const open = isWorkOpen(g.rep.id);
     const color = prefs.colors[g.rep.id];
     const hidden = g.classes.filter((c) => !c.published);
     const subject = subjectLine(g);
@@ -527,8 +527,7 @@ export function WorksBoard() {
                   <GripVertical className="w-4 h-4" />
                 </button>
               )}
-              <button type="button" onClick={() => toggleWork(g.key)} aria-expanded={open} className="w-full min-w-0 flex items-center gap-2.5 text-left cursor-pointer group/work">
-                <ChevronDown className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
+              <button type="button" onClick={() => toggleWork(g.rep.id)} aria-expanded={open} className="w-full min-w-0 flex items-center gap-2.5 text-left cursor-pointer group/work">
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5 min-w-0">
                     <span className="min-w-0 truncate text-[15px] font-black text-slate-900 dark:text-white group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
@@ -555,9 +554,14 @@ export function WorksBoard() {
                     </span>
                   )}
                 </span>
-                {countChip(g.classes.length, 'ห้อง', 'class', 'classes', <School className="w-3 h-3" />)}
               </button>
               </span>
+            }
+            status={
+              <StatusButton
+                status={groupStatus(g.classes.map(classAccept), th)}
+                onClick={() => openWorkStatus(g)}
+              />
             }
             metrics={g.published ? <MetricCells totals={g.totals} /> : hiddenNote}
             action={g.published ? gradeButton(g.totals.pending, workGradeHref(g)) : publishButton(hidden)}
@@ -566,6 +570,23 @@ export function WorksBoard() {
           <Collapse open={open}>
             <ul className="pt-3 space-y-2">{g.classes.map((c) => classRow(c, g))}</ul>
           </Collapse>
+          {/* The fold: the number of classes, centred at the bottom of the card. */}
+          <div className="flex justify-center pt-2.5 -mb-1">
+            <button
+              type="button"
+              onClick={() => toggleWork(g.rep.id)}
+              aria-expanded={open}
+              className={`h-8 pl-3 pr-2.5 rounded-full text-xs font-black inline-flex items-center gap-1.5 tabular-nums cursor-pointer transition-colors ${
+                open
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
+              }`}
+            >
+              <School className="w-3.5 h-3.5" />
+              {g.classes.length} {tr('ห้อง', g.classes.length === 1 ? 'class' : 'classes')}
+              <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
         </div>
       </div>
     );

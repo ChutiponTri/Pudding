@@ -73,7 +73,10 @@ export function useWorkPrefs() {
   /** New order for some works (e.g. one tab's); the others keep their place after them. */
   const setOrder = useCallback(
     (keys: string[]) => {
-      const rest = latest.current.order.filter((k) => !keys.includes(k));
+      // Entries are "<id>~<state>": replace any older entry of the same work.
+      const idOf = (k: string) => k.split('~')[0];
+      const ids = new Set(keys.map(idOf));
+      const rest = latest.current.order.filter((k) => !ids.has(idOf(k)));
       commit({ ...latest.current, order: [...keys, ...rest] });
     },
     [commit]

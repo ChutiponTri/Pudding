@@ -21,7 +21,14 @@ const span = (ms: number, th: boolean) => {
 };
 
 /** Dot colour per acceptance state (same palette as the status badges elsewhere). */
-const STATUS_DOT: Record<AssignmentStatusTone, string> = {
+/** 'mixed': the classes of one work are not all in the same state. */
+type StatusTone = AssignmentStatusTone | 'mixed';
+const STATUS_CLASSES: Record<StatusTone, string> = {
+  ...ASSIGNMENT_STATUS_CLASSES,
+  mixed: 'bg-white text-slate-700 border-slate-300 dark:bg-slate-900 dark:text-slate-200 dark:border-slate-600',
+};
+const STATUS_DOT: Record<StatusTone, string> = {
+  mixed: 'bg-[conic-gradient(#10b981_0_50%,#f43f5e_50%_100%)]',
   draft: 'bg-slate-400',
   scheduled: 'bg-sky-500',
   open: 'bg-emerald-500',
@@ -29,7 +36,7 @@ const STATUS_DOT: Record<AssignmentStatusTone, string> = {
   closed: 'bg-rose-500',
 };
 
-export type AcceptStatus = { tone: AssignmentStatusTone; label: string; hint: string };
+export type AcceptStatus = { tone: StatusTone; label: string; hint: string };
 
 /** Whether a class's copy takes work (the main word) and the time that matters (the hint). */
 export function acceptStatus(c: Pick<WorkClass, 'assignment' | 'window' | 'counts'>, th: boolean, language: string, now: number): AcceptStatus {
@@ -48,17 +55,12 @@ export function acceptStatus(c: Pick<WorkClass, 'assignment' | 'window' | 'count
   return { tone: s.tone, label: s.label, hint };
 }
 
-/** Several copies at once: their state when they agree, else "Open · k/n". */
-export function combinedStatus(list: AcceptStatus[], unit: [string, string], th: boolean): AcceptStatus {
+/** One work's classes together: their state when they all agree, else "หลายสถานะ". */
+export function groupStatus(list: AcceptStatus[], th: boolean): AcceptStatus {
   if (!list.length) return { tone: 'draft', label: th ? 'ฉบับร่าง' : 'Draft', hint: '' };
-  if (new Set(list.map((s) => `${s.tone}|${s.hint}`)).size === 1) return list[0];
-  if (new Set(list.map((s) => s.tone)).size === 1) return { ...list[0], hint: th ? `${list.length} ${unit[0]}` : `${list.length} ${unit[1]}` };
-  const u = th ? unit[0] : unit[1];
+  if (new Set(list.map((s) => s.tone)).size === 1) return { ...list[0], hint: '' };
   const open = list.filter((s) => s.tone === 'open' || s.tone === 'late').length;
-  if (open > 0) return { tone: 'open', label: th ? 'เปิดรับ' : 'Open', hint: `${open}/${list.length} ${u}` };
-  const closed = list.filter((s) => s.tone === 'closed').length;
-  if (closed > 0) return { tone: 'closed', label: th ? 'ปิดรับ' : 'Closed', hint: `${closed}/${list.length} ${u}` };
-  return list[0];
+  return { tone: 'mixed', label: th ? 'หลายสถานะ' : 'Mixed', hint: th ? `เปิดรับ ${open}/${list.length} ห้อง` : `${open}/${list.length} classes open` };
 }
 
 /** The acceptance state as a pill: coloured dot, state, and a chevron when it can be changed (the time hint is in the tooltip). */
@@ -74,7 +76,7 @@ export function StatusButton({ status, onClick }: { status: AcceptStatus; onClic
       {onClick && <ChevronDown className="w-3 h-3 shrink-0 ml-auto opacity-60" />}
     </>
   );
-  const cls = `h-7 max-w-full min-w-0 px-2.5 rounded-full border text-[11px] inline-flex items-center gap-1.5 ${ASSIGNMENT_STATUS_CLASSES[status.tone]}`;
+  const cls = `h-7 max-w-full min-w-0 px-2.5 rounded-full border text-[11px] inline-flex items-center gap-1.5 ${STATUS_CLASSES[status.tone]}`;
   return onClick ? (
     <button
       type="button"
@@ -155,7 +157,9 @@ export function BulkStatusDialog({
       setError(failed);
       return;
     }
-    const done = kind === 'publish' ? tr('เผยแพร่แล้ว', 'Published') : tr('เปลี่ยนสถานะแล้ว', 'Status changed');
+    const done =
+      (kind === 'publish' ? tr('เผยแพร่แล้ว', 'Published') : tr('เปลี่ยนสถานะแล้ว', 'Status changed')) +
+      (changes.length > 1 ? tr(` · ${changes.length} ห้อง`, ` · ${changes.length} classes`) : '');
     onDone(changes, failed ? `${done} ${changes.length}/${list.length} · ${failed}` : done);
     onClose();
   };
@@ -198,6 +202,14 @@ export function BulkStatusDialog({
         </button>
       </ModalSheetHeader>
       <ModalSheetBody className="space-y-3">
+        {new Set(items.map((c) => c.classroom.id)).size > 1 && (
+          <p className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 text-xs font-bold text-amber-900 dark:text-amber-200">
+            {tr(
+              `เปลี่ยนพร้อมกันทุกห้อง (${new Set(items.map((c) => c.classroom.id)).size} ห้อง) · ถ้าจะเปลี่ยนห้องเดียว ให้กดที่สถานะของห้องนั้น`,
+              `Changes every class at once (${new Set(items.map((c) => c.classroom.id)).size}) · for one class, tap that class's status`
+            )}
+          </p>
+        )}
         {hidden.length > 0 && (
           <div className="p-3 rounded-2xl bg-sky-50 dark:bg-sky-950/40 flex items-center gap-3">
             <p className="flex-1 text-xs font-bold text-sky-800 dark:text-sky-200">{tr(`ยังไม่เผยแพร่ ${hidden.length} ห้อง`, `${hidden.length} not published yet`)}</p>

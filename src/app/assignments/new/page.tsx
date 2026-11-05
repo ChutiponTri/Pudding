@@ -870,6 +870,17 @@ function NewAssignmentContent() {
         ) {
           return;
         }
+        if (
+          siblings.length &&
+          !confirm(
+            tr(
+              `บันทึกการแก้ไขนี้ไปยังทุกห้อง (${siblings.length + 1} ห้อง)?\nถ้าจะแก้เฉพาะห้องเดียว ให้กลับไปแก้จากแถวของห้องนั้น`,
+              `Save these changes to every class (${siblings.length + 1})?\nTo change one class only, edit it from that class's row.`
+            )
+          )
+        ) {
+          return;
+        }
         const id = editingAssignment.id;
         await dataService.updateAssignment(id, {
           title,
@@ -1180,6 +1191,14 @@ function NewAssignmentContent() {
                 </button>
               }
             >
+              {siblings.length > 0 && (
+                <p className="px-3 py-2 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                  {tr(
+                    `การบันทึกจะเปลี่ยนงานนี้ในทุกห้อง (${siblings.length + 1} ห้อง) · กำหนดส่งของแต่ละห้องคงเดิม ถ้าไม่ได้เปลี่ยน`,
+                    `Saving changes this work in all ${siblings.length + 1} classes · each class keeps its due date unless you change it`
+                  )}
+                </p>
+              )}
               {editSubmissionCount > 0 && (
                 <p className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-[11px] font-semibold text-amber-900 dark:text-amber-200">
                   <MobileText

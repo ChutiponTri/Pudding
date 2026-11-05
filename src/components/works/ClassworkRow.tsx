@@ -31,6 +31,7 @@ export function ClassworkRow({
   onMoveGroup,
   leading,
   now,
+  tag,
   className = '',
 }: {
   assignment: Assignment;
@@ -45,6 +46,8 @@ export function ClassworkRow({
   /** E.g. a drag handle. */
   leading?: ReactNode;
   now: number;
+  /** Small label after the title, e.g. the category a draft will join. */
+  tag?: string;
   className?: string;
 }) {
   const { tr, language } = useLanguage();
@@ -94,6 +97,11 @@ export function ClassworkRow({
             >
               {assignment.title}
             </Link>
+            {tag && (
+              <span className="shrink-0 max-w-32 truncate px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-500 dark:text-slate-400" title={tag}>
+                {tag}
+              </span>
+            )}
             {counts.flagged > 0 && (
               <Pill tone="rose" className="shrink-0">
                 <ShieldAlert className="w-3 h-3" />
