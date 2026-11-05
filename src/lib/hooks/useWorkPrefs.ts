@@ -13,9 +13,13 @@ const METADATA_KEY = 'workPrefs';
 const MAX_COLORS = 100;
 const MAX_ORDER = 160;
 
-/** Assignment ids are stored without their "assign-" prefix to save space. */
+/**
+ * Assignment ids are stored without their "assign-" prefix to save space.
+ * Older ids are only "assign-<time>" (no random suffix), so a bare number of
+ * 10+ digits is one too; missing it lost those works' place on every load.
+ */
 const compact = (id: string) => (id.startsWith('assign-') ? id.slice(7) : id);
-const expand = (id: string) => (/^\d{10,}-/.test(id) ? `assign-${id}` : id);
+const expand = (id: string) => (/^\d{10,}(-|$)/.test(id) ? `assign-${id}` : id);
 
 export const WORK_COLORS = ['amber', 'rose', 'violet', 'sky', 'emerald', 'slate'] as const;
 export type WorkColor = (typeof WORK_COLORS)[number];

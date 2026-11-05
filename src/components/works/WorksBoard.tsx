@@ -223,23 +223,36 @@ export function WorksBoard() {
   // Where the teacher dragged a work, it stays. Only work that is not in the
   // saved order yet (new) gets a default place: not published → still being
   // graded → fully graded, latest deadline first.
-  const byTab = useMemo(() => {
+  // The whole tab in order (filters ignored): a filtered list is a view of it.
+  const fullByTab = useMemo(() => {
     const build = (isExam: boolean) => {
       const groups = allGroups
-        .filter((g) => g.isExam === isExam && matches(g))
+        .filter((g) => g.isExam === isExam)
         .sort((a, b) => workRank(a) - workRank(b) || b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th'));
       return applySavedOrder(groups, (g) => g.rep.id, prefs.order, (item, other) => workRank(item) <= workRank(other));
     };
     return { homework: build(false), quiz: build(true) };
-  }, [allGroups, matches, prefs.order]);
+  }, [allGroups, prefs.order]);
+  const byTab = useMemo(
+    () => ({ homework: fullByTab.homework.filter(matches), quiz: fullByTab.quiz.filter(matches) }),
+    [fullByTab, matches]
+  );
   const works = byTab[tab];
   const workById = new Map(works.map((g) => [g.rep.id, g]));
-  // Dragging only on the full list (not while searching or filtering a course).
   const filtering = !!q || activeCourse !== 'all' || activeClass !== 'all' || acceptFilter !== 'all' || gradeFilter !== 'all';
-  const canDrag = !filtering && works.length > 1;
+  const canDrag = works.length > 1;
+  /**
+   * A drag in a filtered list reorders only the works shown: they swap among
+   * the places they hold in the whole tab, and the hidden ones stay put.
+   */
+  const commitOrder = (shown: string[]) => {
+    const visible = new Set(shown);
+    let next = 0;
+    prefs.setOrder(fullByTab[tab].map((g) => (visible.has(g.rep.id) ? shown[next++] : g.rep.id)));
+  };
   const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps, recentlyDropped } = useDragReorder(
     works.map((g) => g.rep.id),
-    (keys) => prefs.setOrder(keys)
+    commitOrder
   );
 
   // ---------------------------------------------------------------- actions
