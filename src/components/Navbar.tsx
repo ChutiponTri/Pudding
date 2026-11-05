@@ -92,8 +92,14 @@ export const Navbar: React.FC = () => {
             className="flex items-center gap-3 group min-w-0"
           >
             <BrandLogo priority className="h-11 sm:h-12 w-auto shrink-0 group-hover:scale-105 group-hover:-rotate-2 transition-transform duration-300" />
-            <p className="hidden md:block min-w-0 max-w-56 text-[11px] leading-snug text-slate-500 dark:text-slate-400 font-medium line-clamp-2">
-              {t('brand.subtitle')}
+            {/* Two hand-split lines of similar width: Thai has no spaces to wrap on,
+                and the English phrase wraps lopsidedly when left to the browser. */}
+            <p
+              title={t('brand.subtitle')}
+              className={`hidden md:flex flex-col justify-center self-center border-l border-slate-200 dark:border-slate-700 pl-3 text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap ${language === 'th' ? 'leading-[1.45]' : 'leading-tight tracking-tight'}`}
+            >
+              <span>{tr('ระบบจัดการการเรียนรู้', 'Intelligent Learning')}</span>
+              <span>{tr('และตรวจประเมินอัจฉริยะ', 'Assessment & Grading Platform')}</span>
             </p>
           </Link>
         </div>
