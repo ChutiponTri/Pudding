@@ -6,6 +6,7 @@ import { useSidebar } from '@/components/SidebarContext';
 import { GlobalClassroomSidebar } from '@/components/GlobalClassroomSidebar';
 import { Navbar } from '@/components/Navbar';
 import { SessionCacheSync } from '@/components/SessionCacheSync';
+import { LineSharePopup } from '@/components/LineSharePopup';
 import { PENDING_APPROVAL_PATH, TeacherProfileGate } from '@/components/TeacherProfileGate';
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -46,6 +47,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
           and the admin has approved the account. */}
       <TeacherProfileGate />
       <GlobalClassroomSidebar />
+      {/* A post the bot could not send to LINE: share it from the teacher's own LINE. */}
+      <LineSharePopup />
       {/* The sidebar pushes content only on desktop; on phones and iPads it
           overlays the page so the workspace keeps its full width. */}
       <div className={`flex flex-col flex-1 min-w-0 transition-[padding] duration-300 ease-in-out ${isOpen ? 'lg:pl-80' : 'pl-0'}`}>

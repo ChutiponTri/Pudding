@@ -53,6 +53,7 @@ import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } fro
 import { MobileText } from '@/components/MobileText';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { reportLineUnsent, type LinePostStatus, type LineShare, type PostLineShare } from '@/lib/utils/lineShare';
 import { institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
 import {
   ArrowLeft,
@@ -163,6 +164,8 @@ type TimelineItem = {
   href?: string;
   badgeLabel: string;
   badgeColor: string;
+  /** The bot could not send this post to LINE: the teacher can share it by hand. */
+  lineShare?: PostLineShare;
 };
 type Post = {
   id: string;
@@ -170,6 +173,8 @@ type Post = {
   created_at: string;
   activity_type?: TimelineItem['type'];
   metadata?: { assignmentId?: string; groupName?: string; publishAt?: string; sessionId?: string };
+  /** Teachers only: the bot could not send it to LINE (see withLineShare). */
+  line_share?: PostLineShare;
 };
 
 /** A UI label in both languages, for module-level constants (pick with `[language]`). */
@@ -800,6 +805,7 @@ export default function ClassroomWorkspacePage() {
         badgeLabel,
         badgeColor,
         href: aId ? `/assignments/${aId}/grading?from=classroom&classroomId=${classroomId}` : undefined,
+        lineShare: post.line_share,
       });
     }
 
@@ -878,6 +884,16 @@ export default function ClassroomWorkspacePage() {
     [assignments]
   );
 
+  /** "<done>" plus what happened in LINE, for the notice banner. */
+  const lineNotice = (line: unknown, done: string) =>
+    line === 'quota'
+      ? `${done} ${tr('แต่ส่งเข้ากลุ่ม LINE ไม่ได้: โควตาข้อความ LINE ของเดือนนี้หมดแล้ว (ส่งเข้ากลุ่มนับ 1 ข้อความต่อสมาชิก 1 คน)', 'but not sent to LINE: this month’s LINE message quota is used up (a group message counts once per member)')}`
+      : line === 'failed'
+      ? `${done} ${tr('แต่ส่งเข้ากลุ่ม LINE ไม่สำเร็จ', 'but sending to the LINE group failed')}`
+      : line === 'no_group'
+      ? `${done} ${tr('(ห้องนี้ยังไม่ได้เชื่อมกลุ่ม LINE)', '(this class is not linked to a LINE group yet)')}`
+      : `${done} ${tr('และแจ้งเข้ากลุ่ม LINE แล้ว', 'and sent to the LINE group')}`;
+
   // ----------------------------------------------------
   // CRUD HANDLERS: POSTS
   // ----------------------------------------------------
@@ -897,13 +913,9 @@ export default function ClassroomWorkspacePage() {
       const result = await response.json().catch(() => ({}));
       setPostBody('');
       setIsPostExpanded(false);
-      setNotice(
-        result.line === 'failed'
-          ? tr('โพสต์แล้ว แต่ส่งเข้ากลุ่ม LINE ไม่สำเร็จ', 'Posted, but sending to the LINE group failed')
-          : result.line === 'no_group'
-            ? tr('โพสต์แล้ว (ห้องนี้ยังไม่ได้เชื่อมกลุ่ม LINE)', 'Posted (this class is not linked to a LINE group yet)')
-            : tr('โพสต์แล้ว และแจ้งเข้ากลุ่ม LINE แล้ว', 'Posted and sent to the LINE group')
-      );
+      setNotice(lineNotice(result.line, tr('โพสต์แล้ว', 'Posted')));
+      // The bot could not send it: offer to share it from the teacher's own LINE.
+      reportLineUnsent(result.line, result.share);
       await loadWorkspace();
     } catch {
       setNotice(tr('เกิดข้อผิดพลาดในการโพสต์', 'Something went wrong while posting'));
@@ -1364,8 +1376,10 @@ export default function ClassroomWorkspacePage() {
         setNotice(tr('สร้างคาบเช็คชื่อไม่สำเร็จ', 'Could not create the period'));
         return;
       }
-      const { session: created } = (await response.json()) as { session: AttendanceSession };
-      setNotice(tr('เปิดคาบเช็คชื่อแล้ว และแจ้งเข้ากลุ่ม LINE แล้ว', 'Attendance opened and sent to the LINE group'));
+      const { session: created, line, share } = (await response.json()) as { session: AttendanceSession; line?: LinePostStatus; share?: LineShare };
+      setNotice(lineNotice(line, tr('เปิดคาบเช็คชื่อแล้ว', 'Attendance opened')));
+      // The bot could not send it: offer to share it from the teacher's own LINE.
+      reportLineUnsent(line, share);
       // The response is the full session row, so show and select it without a refetch.
       attendanceVersionRef.current++;
       setSessions((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
@@ -2129,6 +2143,27 @@ export default function ClassroomWorkspacePage() {
                     <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
                       {item.body}
                     </p>
+
+                    {/* The bot could not send it to LINE: share it from the teacher's own LINE */}
+                    {item.lineShare && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60">
+                        <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                          {item.lineShare.reason === 'quota'
+                            ? tr('ยังไม่ได้ส่งเข้า LINE (โควตาหมด)', 'Not sent to LINE (quota used up)')
+                            : item.lineShare.reason === 'no_group'
+                            ? tr('ยังไม่ได้ส่งเข้า LINE (ไม่ได้เชื่อมกลุ่ม)', 'Not sent to LINE (no linked group)')
+                            : tr('ยังไม่ได้ส่งเข้า LINE', 'Not sent to LINE')}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => reportLineUnsent(item.lineShare!.reason, item.lineShare)}
+                          className="px-3 py-1.5 rounded-lg bg-[#06c755] hover:bg-[#05b34c] text-white font-black text-[11px] inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          {tr('แชร์ไป LINE เอง', 'Share to LINE yourself')}
+                        </button>
+                      </div>
+                    )}
 
                     {/* If attached link (e.g. assignment/exam card) */}
                     {item.href && (

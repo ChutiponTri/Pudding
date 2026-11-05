@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { pushLineGroupText } from '@/lib/line/messaging';
+import { createClassroomPost } from '@/lib/server/classroomPosts';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 import { getActor, type Actor } from '@/lib/auth/actor';
@@ -36,7 +36,7 @@ async function getTeacherContext(actor: Actor | null, classroomId: string) {
   if (actor?.kind !== 'teacher') return { userId: null, supabase, classroom: null };
   const { data: classroom } = await supabase
     .from('classrooms')
-    .select('id, name, teacher_id, teachers, line_group_id, invite_code')
+    .select('id, name, course_name, subject_code, teacher_id, teachers, line_group_id, invite_code')
     .eq('id', classroomId)
     .maybeSingle();
   return { userId: actor.userId, supabase, classroom: classroom && isTeacherOf(classroom, actor.userId) ? classroom : null };
@@ -281,39 +281,28 @@ export async function POST(request: NextRequest) {
     const { error } = await supabase.from('attendance_sessions').insert(session);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    // Timeline post (best effort).
-    const { error: postError } = await supabase.from('classroom_posts').insert({
-      id: `post-${Date.now()}-${randomUUID().slice(0, 6)}`,
-      classroom_id: classroomId,
-      author_id: userId,
-      body: `เปิดคาบเช็คชื่อ: ${sessionTitle} (ตรงเวลาใน ${onTimeUntilMinutes} นาที, สายได้ถึง ${lateUntilMinutes} นาที)`,
-      activity_type: 'attendance',
-      metadata: { sessionId: session.id },
-      created_at: createdAt,
-    });
-    if (postError) console.warn('Attendance timeline post failed:', postError.message);
-
-    // Push to LINE after responding so the teacher sees the new session immediately.
-    const lineGroupId = classroom.line_group_id;
-    if (lineGroupId) {
-      after(async () => {
-        try {
-          await pushLineGroupText(
-            lineGroupId,
-            withLiffLink(
-              `⏰ เปิดคาบเช็คชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
-              'กดเพื่อเช็คชื่อ',
-              { classroomId, inviteCode: classroom.invite_code, view: 'attendance' }
-            )
-          );
-        } catch (err) {
-          console.error('Attendance LINE push failed:', err);
-        }
-      });
+    // Timeline post + LINE message (best effort). Awaited so the teacher learns
+    // at once when LINE could not take it, and can share it by hand instead.
+    let line: Awaited<ReturnType<typeof createClassroomPost>>['line'];
+    let share: Awaited<ReturnType<typeof createClassroomPost>>['share'];
+    try {
+      ({ line, share } = await createClassroomPost(supabase, {
+        classroom,
+        authorId: userId,
+        body: `เปิดคาบเช็คชื่อ: ${sessionTitle} (ตรงเวลาใน ${onTimeUntilMinutes} นาที, สายได้ถึง ${lateUntilMinutes} นาที)`,
+        activityType: 'attendance',
+        metadata: { sessionId: session.id },
+        lineText: withLiffLink(
+          `⏰ เปิดคาบเช็คชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
+          'กดเพื่อเช็คชื่อ',
+          { classroomId, inviteCode: classroom.invite_code, view: 'attendance' }
+        ),
+      }));
+    } catch (postError) {
+      console.warn('Attendance timeline post failed:', postError);
     }
     signalAttendance(classroomId);
-    after(() => signalClassroom(classroomId, { type: 'timeline' }));
-    return NextResponse.json({ session }, { status: 201 });
+    return NextResponse.json({ session, line, share }, { status: 201 });
   }
 
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';

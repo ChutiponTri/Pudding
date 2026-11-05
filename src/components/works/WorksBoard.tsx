@@ -307,10 +307,17 @@ export function WorksBoard() {
   };
 
   const reannounce = async (c: WorkClass) => {
-    if (!confirm(tr(`ส่งลิงก์ "${c.assignment.title}" เข้ากลุ่ม LINE ของ ${c.classroom.name} อีกครั้ง?`, `Post "${c.assignment.title}" to the ${c.classroom.name} LINE group again?`))) return;
+    const lineReady = (c.classroom.line_connection_status || (c.classroom.line_group_id ? 'connected' : '')) === 'connected';
+    if (lineReady && !confirm(tr(`ส่งลิงก์ "${c.assignment.title}" เข้ากลุ่ม LINE ของ ${c.classroom.name} อีกครั้ง?`, `Post "${c.assignment.title}" to the ${c.classroom.name} LINE group again?`))) return;
     try {
-      await dataService.reannounceAssignment(c.assignment.id);
-      showToast(tr('ส่งเข้า LINE แล้ว', 'Posted to LINE'));
+      const line = await dataService.reannounceAssignment(c.assignment.id, c.assignment.title);
+      showToast(
+        line === 'sent'
+          ? tr('ส่งเข้า LINE แล้ว', 'Posted to LINE')
+          : line === 'no_group'
+          ? tr('ห้องนี้ยังไม่เชื่อมกลุ่ม LINE — แชร์เองได้จากหน้าต่างที่เปิดขึ้น', 'No linked LINE group — share it from the window that opened')
+          : tr('บอทส่งเข้า LINE ไม่ได้ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น', 'The bot could not post it — share it yourself from the window that opened')
+      );
     } catch (err) {
       showToast(errorText(err, tr('ส่งไม่สำเร็จ', 'Could not post')));
     }
@@ -345,10 +352,10 @@ export function WorksBoard() {
     return [
       { key: 'status', label: tr('เปลี่ยนสถานะการรับงาน', 'Change status'), icon: <Clock className="w-4 h-4" />, onSelect: () => setStatusOne(c) },
       !c.published && { key: 'publish', label: tr('เผยแพร่ตอนนี้', 'Publish now'), icon: <Rocket className="w-4 h-4" />, onSelect: () => publish([c]) },
-      c.published &&
-        lineReady && {
+      // No linked group: the same action opens the share popup (sent from the teacher's own LINE).
+      c.published && {
           key: 'line',
-          label: tr('ประกาศซ้ำใน LINE', 'Post to LINE again'),
+          label: lineReady ? tr('ประกาศซ้ำใน LINE', 'Post to LINE again') : tr('แชร์ลิงก์งานไป LINE', 'Share the link to LINE'),
           icon: <MessageCircle className="w-4 h-4" />,
           disabled: !c.window.acceptsSubmissions,
           onSelect: () => reannounce(c),

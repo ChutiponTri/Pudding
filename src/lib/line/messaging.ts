@@ -3,6 +3,21 @@ import 'server-only';
 const LINE_PUSH_ENDPOINT = 'https://api.line.me/v2/bot/message/push';
 const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply';
 
+/** A refused LINE API call; status 429 means the monthly message quota is used up (or too many requests). */
+export class LineApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+/**
+ * LINE refused the push because the plan's monthly messages are used up. A
+ * group push costs one message per member, so a big class fails while a
+ * small group may still get through.
+ */
+export const isLineQuotaError = (error: unknown) =>
+  error instanceof LineApiError && error.status === 429 && /monthly limit/i.test(error.message);
+
 async function sendLineMessage(endpoint: string, body: Record<string, unknown>): Promise<void> {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   if (!token) throw new Error('LINE_CHANNEL_ACCESS_TOKEN is not configured');
@@ -16,7 +31,7 @@ async function sendLineMessage(endpoint: string, body: Record<string, unknown>):
   if (!response.ok) {
     // LINE explains a 400 in the body (e.g. which message property is invalid).
     const detail = await response.text().catch(() => '');
-    throw new Error(`LINE message failed with status ${response.status}${detail ? `: ${detail.slice(0, 500)}` : ''}`);
+    throw new LineApiError(response.status, `LINE message failed with status ${response.status}${detail ? `: ${detail.slice(0, 500)}` : ''}`);
   }
 }
 
@@ -122,6 +137,13 @@ function linkCards(buttons: LinkButton[], cardText = 'แตะปุ่มด�
   }
   return cards;
 }
+
+/**
+ * The LINE messages the bot sends for this text: the text without its links,
+ * then a card of buttons. Also what a teacher shares by hand (shareTargetPicker
+ * accepts the same text and uri-button template messages).
+ */
+export const lineMessagesForText = (text: string) => textWithLinkButtons(text);
 
 /** A text message, without its links, followed by a button for each of them. */
 function textWithLinkButtons(text: string, cardText?: string): Record<string, unknown>[] {

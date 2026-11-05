@@ -57,3 +57,52 @@ export function assignmentIdFromTemplateToken(token: unknown): string | null {
   const given = Buffer.from(token);
   return expected.length === given.length && timingSafeEqual(expected, given) ? id : null;
 }
+
+/**
+ * Link token for sharing one timeline post to LINE by hand (when the bot
+ * cannot send it): `<postId>.<16-char HMAC>`. It only reveals that post's LINE
+ * message, which was meant for the class group anyway.
+ */
+export function postShareToken(postId: string): string {
+  const digest = createHmac('sha256', inviteSecret()).update(`post-share:${postId}`).digest();
+  let sig = '';
+  for (let i = 0; i < 16; i++) sig += ALPHABET[digest[i] & 31];
+  return `${postId}.${sig}`;
+}
+
+/** The post id a share token was made for, or null if it was not made here. */
+export function postIdFromShareToken(token: unknown): string | null {
+  if (typeof token !== 'string' || token.length > 200) return null;
+  const dot = token.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const id = token.slice(0, dot);
+  const expected = Buffer.from(postShareToken(id));
+  const given = Buffer.from(token);
+  return expected.length === given.length && timingSafeEqual(expected, given) ? id : null;
+}
+
+/** Prefix of share tokens for re-announcing a work (no timeline post behind them). */
+const REANNOUNCE_PREFIX = 'r:';
+
+/** Link token for re-announcing one work to LINE by hand: `r:<assignmentId>.<16-char HMAC>`. */
+export function reannounceShareToken(assignmentId: string): string {
+  const digest = createHmac('sha256', inviteSecret()).update(`reannounce-share:${assignmentId}`).digest();
+  let sig = '';
+  for (let i = 0; i < 16; i++) sig += ALPHABET[digest[i] & 31];
+  return `${REANNOUNCE_PREFIX}${assignmentId}.${sig}`;
+}
+
+/** What a share token points at: a timeline post, or a work to re-announce. null if it was not made here. */
+export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce'; id: string } | null {
+  if (typeof token !== 'string' || token.length > 200) return null;
+  if (token.startsWith(REANNOUNCE_PREFIX)) {
+    const dot = token.lastIndexOf('.');
+    if (dot <= REANNOUNCE_PREFIX.length) return null;
+    const id = token.slice(REANNOUNCE_PREFIX.length, dot);
+    const expected = Buffer.from(reannounceShareToken(id));
+    const given = Buffer.from(token);
+    return expected.length === given.length && timingSafeEqual(expected, given) ? { kind: 'reannounce', id } : null;
+  }
+  const id = postIdFromShareToken(token);
+  return id ? { kind: 'post', id } : null;
+}

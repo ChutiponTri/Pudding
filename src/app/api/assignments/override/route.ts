@@ -2,15 +2,12 @@ import { auth } from '@clerk/nextjs/server';
 import { getTeacherAccess, teacherBlockedResponse } from '@/lib/server/teacherProfileGuard';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
+import { announceScheduledPosts, reannounceLineText } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { assignmentPostBody, assignmentPostMetadata, createClassroomPost } from '@/lib/server/classroomPosts';
+import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, reannounceShare, withLineShare, type ClassroomPost } from '@/lib/server/classroomPosts';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { releaseLineTestSend, reserveLineTestSend } from '@/lib/server/lineTestQuota';
-import { pushLineGroupText } from '@/lib/line/messaging';
-import { withLiffLink } from '@/lib/line/liffLink';
-import { classroomTitle } from '@/lib/utils/classroomLabel';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 
 export const runtime = 'nodejs';
@@ -64,37 +61,30 @@ export async function POST(request: NextRequest) {
   if (!classroom || !isTeacher) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   // Posts the work's link to the class LINE group again (rationed: billed per group member).
+  // Whenever the bot cannot (no group, re-announce limit, LINE refused), the
+  // teacher gets the same message to share from their own LINE (costs no quota).
   if (reannounce) {
-    if (!classroom.line_group_id) return NextResponse.json({ error: 'ห้องนี้ยังไม่ได้เชื่อม LINE Group' }, { status: 409 });
     const win = getAssignmentWindow(previous);
     if (win.isDraft || win.isScheduled) return NextResponse.json({ error: 'งานนี้ยังไม่เผยแพร่' }, { status: 409 });
     if (!win.acceptsSubmissions) return NextResponse.json({ error: 'งานนี้ปิดรับแล้ว' }, { status: 409 });
+    const text = reannounceLineText(previous, classroom);
+    const share = reannounceShare(assignmentId, text);
+    if (!classroom.line_group_id) return NextResponse.json({ assignment: previous, line: 'no_group', share });
     const reservation = await reserveLineTestSend(supabase, { teacherId: userId, classroomId: classroom.id, source: 'reannounce' });
     if (!reservation.ok) {
       return NextResponse.json(
-        { error: reservation.message },
-        { status: 429, headers: reservation.retryAfterSeconds ? { 'Retry-After': String(reservation.retryAfterSeconds) } : undefined }
+        { assignment: previous, line: 'limit', share, message: reservation.message },
+        { headers: reservation.retryAfterSeconds ? { 'Retry-After': String(reservation.retryAfterSeconds) } : undefined }
       );
     }
-    const due = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), 'th', SCHOOL_TIME_ZONE) : '';
-    const text =
-      `🔔 ${previous.is_exam ? 'อย่าลืมทำข้อสอบ' : 'อย่าลืมส่งงาน'}\n📘 ${classroomTitle(classroom)}\n\n${previous.title}` +
-      (due ? `\n${previous.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due}` : '');
     try {
-      await pushLineGroupText(
-        classroom.line_group_id,
-        withLiffLink(text, previous.is_exam ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', {
-          classroomId: classroom.id,
-          inviteCode: classroom.invite_code,
-          assignmentId,
-        })
-      );
+      await pushLineGroupText(classroom.line_group_id, text);
     } catch (pushError) {
       await releaseLineTestSend(supabase, reservation.id);
       console.error('LINE re-announce failed:', pushError);
-      return NextResponse.json({ error: 'ส่งเข้า LINE ไม่สำเร็จ กรุณาตรวจว่าบอทยังอยู่ในกลุ่ม' }, { status: 502 });
+      return NextResponse.json({ assignment: previous, line: isLineQuotaError(pushError) ? 'quota' : 'failed', share });
     }
-    return NextResponse.json({ assignment: previous });
+    return NextResponse.json({ assignment: previous, line: 'sent' });
   }
 
   if (publishNow) {
@@ -117,19 +107,21 @@ export async function POST(request: NextRequest) {
     }
     if (wasDraft) {
       // Drafts have no timeline post yet: post and announce it in LINE now.
+      let line: Awaited<ReturnType<typeof createClassroomPost>>['line'];
+      let share: Awaited<ReturnType<typeof createClassroomPost>>['share'];
       try {
-        await createClassroomPost(supabase, {
+        ({ line, share } = await createClassroomPost(supabase, {
           classroom,
           authorId: userId,
           activityType: published.is_exam ? 'exam' : 'assignment',
           body: assignmentPostBody(published),
           metadata: assignmentPostMetadata(published, assignmentId),
-        });
+        }));
       } catch (postError) {
         console.warn('Unable to post published draft:', postError);
       }
       after(() => signalClassroom(classroom.id, { type: 'published', assignmentId }));
-      return NextResponse.json({ assignment: published });
+      return NextResponse.json({ assignment: published, line, share });
     }
     // Move the held-back timeline post to now; announceScheduledPosts then
     // sends its LINE message once and refreshes open student pages.
@@ -148,11 +140,21 @@ export async function POST(request: NextRequest) {
             .eq('id', post.id)
         )
     );
-    after(async () => {
-      await announceScheduledPosts(supabase, new Date(), classroom.id);
-      await signalClassroom(classroom.id, { type: 'published', assignmentId });
+    // Announced before replying, so the teacher learns at once when LINE could not take it.
+    await announceScheduledPosts(supabase, new Date(), classroom.id);
+    after(() => signalClassroom(classroom.id, { type: 'published', assignmentId }));
+    const { data: announced } = await supabase
+      .from('classroom_posts')
+      .select('*')
+      .eq('classroom_id', classroom.id)
+      .contains('metadata', { assignmentId })
+      .limit(1);
+    const unsent = announced?.[0] ? withLineShare(announced[0] as ClassroomPost, classroom).line_share : undefined;
+    return NextResponse.json({
+      assignment: published,
+      line: unsent ? unsent.reason : 'sent',
+      share: unsent ? { text: unsent.text, url: unsent.url } : undefined,
     });
-    return NextResponse.json({ assignment: published });
   }
 
   const patch: Partial<Assignment> = { status_override: status };

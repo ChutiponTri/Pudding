@@ -1,9 +1,12 @@
 import 'server-only';
 import { withLiffLink } from '@/lib/line/liffLink';
-import { pushLineGroupText } from '@/lib/line/messaging';
+import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
+import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import type { Assignment } from '@/types/database';
 
 export type PostActivityType = 'announcement' | 'assignment' | 'exam' | 'attendance';
 
@@ -38,6 +41,39 @@ export function buildPostLineMessage(
   return withLiffLink(message, 'เปิดห้องเรียนใน Pudding', { classroomId, inviteCode });
 }
 
+/** LINE text that posts a work's link to the class group again ("ส่งซ้ำ"). */
+export function reannounceLineText(
+  assignment: Assignment,
+  classroom: LabelledClassroom & { id: string; invite_code?: string | null }
+): string {
+  const win = getAssignmentWindow(assignment);
+  const due = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), 'th', SCHOOL_TIME_ZONE) : '';
+  const text =
+    `🔔 ${assignment.is_exam ? 'อย่าลืมทำข้อสอบ' : 'อย่าลืมส่งงาน'}\n📘 ${classroomTitle(classroom)}\n\n${assignment.title}` +
+    (due ? `\n${assignment.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due}` : '');
+  return withLiffLink(text, assignment.is_exam ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', {
+    classroomId: classroom.id,
+    inviteCode: classroom.invite_code,
+    assignmentId: assignment.id,
+  });
+}
+
+/** Why a post's LINE message did not go out; kept in its metadata (lineStatus) so the teacher can share it by hand. */
+export type PostLineFailure = 'failed' | 'quota' | 'no_group';
+
+/**
+ * A post's LINE text: its own wording when it was saved with one
+ * (metadata.lineText, e.g. attendance), otherwise built from the post.
+ */
+export function postLineText(
+  post: { activity_type: PostActivityType; body: string; metadata?: Record<string, unknown> | null },
+  classroom: LabelledClassroom & { id: string; invite_code?: string | null }
+): string {
+  const metadata = (post.metadata || {}) as Record<string, unknown>;
+  if (typeof metadata.lineText === 'string' && metadata.lineText) return metadata.lineText;
+  return buildPostLineMessage(post.activity_type, classroom, post.body, classroom.id, metadata, classroom.invite_code);
+}
+
 /**
  * Sends the LINE "new work" message for scheduled posts whose publish time has
  * passed (the posts API holds it back with metadata.pendingLine). Runs from the
@@ -53,6 +89,9 @@ export async function announceScheduledPosts(
     .from('classroom_posts')
     .select('id, classroom_id, body, activity_type, metadata')
     .contains('metadata', { pendingLine: true });
+  /** Marks a post the bot could not send, so the teacher's timeline offers to share it by hand. */
+  const markUnsent = (id: string, metadata: Record<string, unknown>, lineStatus: PostLineFailure) =>
+    supabase.from('classroom_posts').update({ metadata: { ...metadata, lineStatus } }).eq('id', id);
   if (classroomId) query = query.eq('classroom_id', classroomId);
   const { data: pending, error } = await query;
   if (error) {
@@ -85,23 +124,29 @@ export async function announceScheduledPosts(
       type: 'published',
       assignmentId: typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined,
     });
-    const { data: classroom } = await supabase.from('classrooms').select('name, course_name, subject_code, line_group_id, invite_code').eq('id', post.classroom_id).maybeSingle();
-    if (!classroom?.line_group_id) continue;
+    const { data: classroom } = await supabase.from('classrooms').select('id, name, course_name, subject_code, line_group_id, invite_code').eq('id', post.classroom_id).maybeSingle();
+    const claimedMetadata = { ...metadata, pendingLine: false, announcedAt: now.toISOString() };
+    if (!classroom) continue;
+    if (!classroom.line_group_id) {
+      await markUnsent(post.id, claimedMetadata, 'no_group');
+      continue;
+    }
     try {
-      await pushLineGroupText(
-        classroom.line_group_id,
-        buildPostLineMessage(post.activity_type, classroom, post.body, post.classroom_id, metadata, classroom.invite_code)
-      );
+      await pushLineGroupText(classroom.line_group_id, postLineText(post, classroom));
       count += 1;
     } catch (pushError) {
       console.error(`Scheduled LINE announcement failed for post ${post.id}:`, pushError);
       // Put it back in the queue for the next run; give up after three tries.
+      // Out of monthly messages: retrying this month cannot help, the teacher shares it by hand.
+      const quota = isLineQuotaError(pushError);
       const attempts = Number(metadata.lineAttempts || 0) + 1;
-      if (attempts < 3) {
+      if (!quota && attempts < 3) {
         await supabase
           .from('classroom_posts')
           .update({ metadata: { ...metadata, pendingLine: true, lineAttempts: attempts } })
           .eq('id', post.id);
+      } else {
+        await markUnsent(post.id, claimedMetadata, quota ? 'quota' : 'failed');
       }
     }
   }

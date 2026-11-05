@@ -4,7 +4,7 @@ import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { getActor } from '@/lib/auth/actor';
 import { classroomRole, errorResponse, FORBIDDEN, HttpError, loadClassroom, requireTeacherOfClassroom } from '@/lib/server/access';
-import { createClassroomPost, type ClassroomPost } from '@/lib/server/classroomPosts';
+import { createClassroomPost, withLineShare, type ClassroomPost } from '@/lib/server/classroomPosts';
 import type { PostActivityType } from '@/lib/line/classroomAnnouncement';
 
 export const runtime = 'nodejs';
@@ -33,8 +33,9 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     // Students don't see scheduled work before its publish time; teachers see everything.
     const now = Date.now();
+    // Teachers: posts the bot could not send carry how to share them by hand.
     const posts = role === 'teacher'
-      ? data || []
+      ? ((data || []) as ClassroomPost[]).map((post) => withLineShare(post, classroom))
       : (data || []).filter((post: ClassroomPost) => {
           const publishAt = typeof post.metadata?.publishAt === 'string' ? new Date(post.metadata.publishAt).getTime() : NaN;
           return Number.isNaN(publishAt) || publishAt <= now;
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
     const supabase = createServiceSupabaseClient();
     const actor = await getActor(request);
     const classroom = await requireTeacherOfClassroom(supabase, actor, classroomId);
-    const { post, deduplicated, line } = await createClassroomPost(supabase, {
+    const { post, deduplicated, line, share } = await createClassroomPost(supabase, {
       classroom,
       authorId: actor!.kind === 'teacher' ? actor!.userId : '',
       body: postBody,
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
       metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {},
       publishAt: typeof body.publishAt === 'string' ? body.publishAt : undefined,
     });
-    return NextResponse.json({ post, deduplicated, line }, { status: deduplicated ? 200 : 201 });
+    return NextResponse.json({ post, deduplicated, line, share }, { status: deduplicated ? 200 : 201 });
   } catch (error) {
     return errorResponse(error);
   }

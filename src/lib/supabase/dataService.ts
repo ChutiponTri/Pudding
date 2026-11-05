@@ -16,6 +16,7 @@ import {
 import { createClient, isSupabaseConfigured } from './client';
 import { authFetch } from '@/lib/auth/lineSession';
 import type { QuizOpenResult } from '@/lib/utils/quizExit';
+import { reportLineUnsent, type LinePostStatus, type LineShare } from '@/lib/utils/lineShare';
 import { invalidateSessionCache } from '@/lib/cache/sessionCache';
 import { classroomSignalChannel, type ClassroomSignal } from '@/lib/realtime/signals';
 
@@ -545,8 +546,15 @@ export const dataService = {
   async createAssignment(
     assignmentData: Omit<Assignment, 'id' | 'created_at'>,
     questionsData: Omit<Question, 'id' | 'assignment_id'>[]
-  ): Promise<{ assignment: Assignment; questions: Question[] }> {
-    return call('createAssignment', assignmentData, questionsData);
+  ): Promise<{ assignment: Assignment; questions: Question[]; line?: LinePostStatus; share?: LineShare; postId?: string }> {
+    const created = await call<{ assignment: Assignment; questions: Question[]; line?: LinePostStatus; share?: LineShare; postId?: string }>(
+      'createAssignment',
+      assignmentData,
+      questionsData
+    );
+    // LINE could not take the announcement: the teacher is offered to share it by hand.
+    reportLineUnsent(created.line, created.share, assignmentData.title);
+    return created;
   },
 
   async updateAssignment(id: string, data: Partial<Omit<Assignment, 'id' | 'created_at'>>): Promise<Assignment | null> {
@@ -591,11 +599,18 @@ export const dataService = {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    // LINE could not take the announcement: the teacher is offered to share it by hand.
+    reportLineUnsent(json.line, json.share);
     return (json.assignment as Assignment) || null;
   },
 
   /** Posts the work's link to the class LINE group again. */
-  async reannounceAssignment(assignmentId: string): Promise<void> {
+  /**
+   * Posts the work's link to the class LINE group again. When the bot cannot
+   * (no group, re-announce limit, LINE refused), the share popup opens instead
+   * and the result says why.
+   */
+  async reannounceAssignment(assignmentId: string, title?: string): Promise<LinePostStatus> {
     const res = await authFetch('/api/assignments/override', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -603,6 +618,8 @@ export const dataService = {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    reportLineUnsent(json.line, json.share, title, json.message);
+    return (json.line as LinePostStatus) || 'sent';
   },
 
   /** Share token so other teachers can copy this work (see /assignments/new?template=). */

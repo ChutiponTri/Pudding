@@ -5,6 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useUser } from '@clerk/nextjs';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { isUnsent } from '@/lib/utils/lineShare';
 import { dataService } from '@/lib/supabase/dataService';
 import { cachedCall, readCache, TEACHER_DASHBOARD_CACHE_KEY } from '@/lib/cache/sessionCache';
 import { Assignment, AssignmentAttachment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question, User } from '@/types/database';
@@ -940,6 +941,8 @@ function NewAssignmentContent() {
       }
 
       const createdIds: string[] = [];
+      // Classes whose LINE group did not get the announcement (a share popup opens for each).
+      let lineUnsent = 0;
       for (const classId of targetClassIds) {
         const created = await dataService.createAssignment(
           {
@@ -963,6 +966,7 @@ function NewAssignmentContent() {
           questionRows
         );
         createdIds.push(created.assignment.id);
+        if (isUnsent(created.line)) lineUnsent += 1;
       }
 
       const copiedTo = copySource && !retake
@@ -978,7 +982,7 @@ function NewAssignmentContent() {
             ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
             : `Scheduled for ${formatDateTime(publishAt, 'en')}. Students will see it then.`
           : retake
-          ? selectedClassroomsLineReady
+          ? selectedClassroomsLineReady && !lineUnsent
             ? tr(`สร้างข้อสอบซ่อมแล้ว · ส่งลิงก์เข้ากลุ่ม LINE แล้ว\nเปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก`, `Retake created · link sent to the LINE group\nOnly the ${retake.ids.length} chosen students can open it`)
             : tr(`สร้างข้อสอบซ่อมแล้ว · เปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก\nห้องนี้ยังไม่เชื่อม LINE จึงต้องส่งลิงก์เอง`, `Retake created · only the ${retake.ids.length} chosen students can open it\nThis class has no LINE group, so share the link yourself`)
           : isExam
@@ -987,7 +991,13 @@ function NewAssignmentContent() {
           ? (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')
           : language === 'th'
           ? 'สร้างการบ้านสำเร็จ! ตั้งเวลาเตือนส่งงานผ่าน LINE เรียบร้อย'
-          : 'Assignment created successfully! LINE reminder scheduled.')
+          : 'Assignment created successfully! LINE reminder scheduled.') +
+        (lineUnsent
+          ? tr(
+              `\n\n⚠️ ส่งประกาศเข้ากลุ่ม LINE ไม่ได้${lineUnsent > 1 ? ` (${lineUnsent} ห้อง)` : ''} — กด “แชร์ไป LINE” ในหน้าต่างถัดไปเพื่อส่งจาก LINE ของคุณครูเอง`,
+              `\n\n⚠️ The LINE announcement could not be sent${lineUnsent > 1 ? ` (${lineUnsent} classes)` : ''}. Use “Share to LINE” in the next window to send it from your own LINE.`
+            )
+          : '')
       );
 
       const targetClassId = primaryClassId || urlClassroomId || selectedClassroomIds[0];

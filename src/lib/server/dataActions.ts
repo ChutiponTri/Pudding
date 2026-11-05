@@ -1500,8 +1500,10 @@ export const dataActions = {
 
     // Timeline post + LINE notification; best effort so creation is not blocked.
     // A draft gets its post when the teacher publishes it.
+    // When LINE could not take it, the teacher is offered to share it by hand.
+    let lineResult: { line?: string; share?: unknown; postId?: string } = {};
     if (!isAssignmentDraft(row)) try {
-      await createClassroomPost(supabase, {
+      const posted = await createClassroomPost(supabase, {
         classroom,
         authorId: me.userId,
         activityType: assignmentData.is_exam ? 'exam' : 'assignment',
@@ -1510,10 +1512,11 @@ export const dataActions = {
         // Only when the database kept publish_at; otherwise the assignment is already visible.
         publishAt: row.publish_at || undefined,
       });
+      lineResult = { line: posted.line, share: posted.share, postId: posted.post.id };
     } catch (postError) {
       console.warn('Unable to publish assignment activity:', postError);
     }
-    return { assignment: newAssignment, questions: newQuestions };
+    return { assignment: newAssignment, questions: newQuestions, ...lineResult };
   },
 
   async updateAssignment({ supabase, actor }: Ctx, id: string, data: Partial<Omit<Assignment, 'id' | 'created_at'>>) {

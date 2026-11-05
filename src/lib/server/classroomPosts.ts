@@ -1,9 +1,10 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { after } from 'next/server';
-import { pushLineGroupText } from '@/lib/line/messaging';
-import { buildPostLineMessage, type PostActivityType } from '@/lib/line/classroomAnnouncement';
+import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
+import { postLineText, type PostActivityType, type PostLineFailure } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
+import { postShareToken, reannounceShareToken } from '@/lib/server/inviteCodes';
 import type { LabelledClassroom } from '@/lib/utils/classroomLabel';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import type { Assignment } from '@/types/database';
@@ -59,16 +60,23 @@ export async function createClassroomPost(
     activityType: PostActivityType;
     metadata?: Record<string, unknown>;
     publishAt?: string;
+    /** The LINE message's own wording; otherwise it is built from the post (buildPostLineMessage). */
+    lineText?: string;
   }
 ): Promise<{
   post: ClassroomPost;
   deduplicated: boolean;
-  /** 'sent' | 'failed' | 'no_group' (classroom not linked to LINE) | 'scheduled' (sent at publish time). */
-  line?: 'sent' | 'failed' | 'no_group' | 'scheduled';
+  /**
+   * 'sent' | 'failed' | 'quota' (the LINE plan's monthly messages are used up) |
+   * 'no_group' (classroom not linked to LINE) | 'scheduled' (sent at publish time).
+   */
+  line?: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled';
+  /** The bot could not send it: the teacher shares it to LINE by hand (see postShare). */
+  share?: PostShare;
 }> {
   const { classroom, activityType } = input;
   const body = input.body.trim();
-  const metadata: Record<string, unknown> = { ...(input.metadata || {}) };
+  const metadata: Record<string, unknown> = { ...(input.metadata || {}), ...(input.lineText ? { lineText: input.lineText } : {}) };
   const publishAtMs = input.publishAt ? new Date(input.publishAt).getTime() : NaN;
   const isScheduled = !Number.isNaN(publishAtMs) && publishAtMs > Date.now();
   if (isScheduled) {
@@ -100,20 +108,66 @@ export async function createClassroomPost(
   const { data: saved, error } = await supabase.from('classroom_posts').insert(newPost).select('*').single();
   if (error) throw new Error(error.message);
 
-  let line: 'sent' | 'failed' | 'no_group' | 'scheduled' = isScheduled ? 'scheduled' : 'no_group';
+  let line: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' = isScheduled ? 'scheduled' : 'no_group';
   if (!isScheduled) {
     const lineGroupId = classroom.line_group_id;
     if (lineGroupId) {
       try {
-        await pushLineGroupText(lineGroupId, buildPostLineMessage(activityType, classroom, body, classroom.id, metadata, classroom.invite_code));
+        await pushLineGroupText(lineGroupId, postLineText(newPost, classroom));
         line = 'sent';
       } catch (lineError) {
-        line = 'failed';
+        line = isLineQuotaError(lineError) ? 'quota' : 'failed';
         console.error(`Classroom post LINE push failed for ${saved.id}:`, lineError);
       }
     }
     // Scheduled posts stay hidden from students, so there is nothing to show them yet.
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
   }
-  return { post: saved as ClassroomPost, deduplicated: false, line };
+  let share: PostShare | undefined;
+  let result = saved as ClassroomPost;
+  if (line === 'failed' || line === 'quota' || line === 'no_group') {
+    share = postShare(saved.id, postLineText(newPost, classroom));
+    // Remembered on the post: the teacher's timeline keeps offering to share it by hand.
+    const marked = { ...metadata, lineStatus: line satisfies PostLineFailure };
+    const { error: markError } = await supabase.from('classroom_posts').update({ metadata: marked }).eq('id', saved.id);
+    if (!markError) result = { ...result, metadata: marked };
+  }
+  return { post: result, deduplicated: false, line, share };
+}
+
+/** Teachers' timeline: a post the bot could not send carries how to share it by hand. */
+export function withLineShare<T extends ClassroomPost>(
+  post: T,
+  classroom: LabelledClassroom & { id: string; invite_code?: string | null }
+): T & { line_share?: PostShare & { reason: PostLineFailure } } {
+  const reason = post.metadata?.lineStatus;
+  if (reason !== 'failed' && reason !== 'quota' && reason !== 'no_group') return post;
+  return { ...post, line_share: { reason, ...postShare(post.id, postLineText(post, classroom)) } };
+}
+
+export interface PostShare {
+  /** The full LINE text (with its link), to copy and paste. */
+  text: string;
+  /** LIFF page that shares the bot's message from the teacher's own LINE (/liff/share); null without a LIFF id. */
+  url: string | null;
+}
+
+/**
+ * A post the bot could not send (monthly quota used up, LINE error, or no
+ * linked group): the teacher sends the same message from their own LINE
+ * account, which costs the bot's quota nothing.
+ */
+export function postShare(postId: string, text: string): PostShare {
+  return { text, url: shareUrl(postShareToken(postId)) };
+}
+
+/** Re-announcing a work the bot could not send: shared by hand like a post. */
+export function reannounceShare(assignmentId: string, text: string): PostShare {
+  return { text, url: shareUrl(reannounceShareToken(assignmentId)) };
+}
+
+/** The /liff/share page for a share token; null without a LIFF id. */
+function shareUrl(token: string): string | null {
+  const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
+  return liffId ? `https://liff.line.me/${liffId}/share?t=${encodeURIComponent(token)}` : null;
 }
