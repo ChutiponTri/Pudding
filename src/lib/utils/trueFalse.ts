@@ -10,7 +10,13 @@ const FALSE_WORDS = new Set(['ผิด', 'เท็จ', 'ไม่ใช่', 
  * grade correctly. Returns null when the text is not a recognisable answer.
  */
 export function parseTrueFalse(text: string | null | undefined): boolean | null {
-  const value = (text || '').trim().toLowerCase();
+  // Imported keys may read "ตอบ ผิด", "คำตอบ: ถูก" or end with a full stop.
+  const value = (text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^(คำตอบ|ตอบ|answer)\s*[:：]?\s*/, '')
+    .replace(/[.!)]+$/, '')
+    .trim();
   if (!value) return null;
   if (TRUE_WORDS.has(value)) return true;
   if (FALSE_WORDS.has(value)) return false;

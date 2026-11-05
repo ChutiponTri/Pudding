@@ -45,7 +45,7 @@ import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { ComboFilter } from '@/components/works/ComboFilter';
-import { DueDateDialog, MetricCells, Pill, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
+import { DueDateDialog, MetricCells, Pill, RemindButton, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, BulkStatusDialog, groupStatus, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
@@ -441,6 +441,21 @@ export function WorksBoard() {
         icon: <Clock className="w-4 h-4" />,
         onSelect: () => openWorkStatus(g),
       },
+      g.published && (() => {
+        const missing = accepting.filter((c) => c.counts.notSubmitted > 0);
+        return {
+          key: 'remind',
+          label: g.classes.length > 1 ? tr('ทวงงานทุกห้อง', 'Remind (all classes)') : tr('ทวงงาน', 'Remind'),
+          hint: missing.length
+            ? g.classes.length > 1
+              ? tr(`${missing.length} ห้อง`, `${missing.length} classes`)
+              : tr(`ยังไม่ส่ง ${missing[0].counts.notSubmitted}`, `${missing[0].counts.notSubmitted} missing`)
+            : undefined,
+          icon: <BellRing className="w-4 h-4" />,
+          disabled: missing.length === 0,
+          onSelect: () => remind(missing),
+        };
+      })(),
       hidden.length > 0 && {
         key: 'publish',
         label: tr('เผยแพร่', 'Publish'),
@@ -493,21 +508,6 @@ export function WorksBoard() {
           ),
         },
       },
-      g.published && (() => {
-        const missing = accepting.filter((c) => c.counts.notSubmitted > 0);
-        return {
-          key: 'remind',
-          label: g.classes.length > 1 ? tr('ทวงงานทุกห้อง', 'Remind (all classes)') : tr('ทวงงาน', 'Remind'),
-          hint: missing.length
-            ? g.classes.length > 1
-              ? tr(`${missing.length} ห้อง`, `${missing.length} classes`)
-              : tr(`ยังไม่ส่ง ${missing[0].counts.notSubmitted}`, `${missing[0].counts.notSubmitted} missing`)
-            : undefined,
-          icon: <BellRing className="w-4 h-4" />,
-          disabled: missing.length === 0,
-          onSelect: () => remind(missing),
-        };
-      })(),
       g.published && {
         key: 'close',
         label: g.classes.length > 1 ? tr('ปิดรับทุกห้อง', 'Close in all classes') : tr('ปิดรับงาน', 'Close submissions'),
@@ -585,7 +585,16 @@ export function WorksBoard() {
         }
         status={<StatusButton status={classAccept(c)} onClick={() => setStatusOne(c)} />}
         metrics={c.published ? <MetricCells totals={c.counts} /> : hiddenNote}
-        action={c.published ? gradeButton(c.counts.pending, gradeHref(c.assignment.id)) : publishButton([c])}
+        action={
+          c.published ? (
+            <>
+              {c.window.acceptsSubmissions && c.counts.notSubmitted > 0 && <RemindButton missing={c.counts.notSubmitted} onClick={() => remind([c])} />}
+              {gradeButton(c.counts.pending, gradeHref(c.assignment.id))}
+            </>
+          ) : (
+            publishButton([c])
+          )
+        }
         menu={<ActionMenu size="sm" label={tr(`ตัวเลือกของ ${c.classroom.name}`, `Options for ${c.classroom.name}`)} items={classMenu(c, g)} />}
       />
     </li>
@@ -666,7 +675,29 @@ export function WorksBoard() {
               />
             }
             metrics={g.published ? <MetricCells totals={g.totals} /> : hiddenNote}
-            action={g.published ? gradeButton(g.totals.pending, workGradeHref(g)) : publishButton(hidden)}
+            action={
+              g.published ? (
+                (() => {
+                  // Classes still taking work with students who have not handed in.
+                  const missing = g.classes.filter((c) => c.published && c.window.acceptsSubmissions && c.counts.notSubmitted > 0);
+                  const count = missing.reduce((sum, c) => sum + c.counts.notSubmitted, 0);
+                  return (
+                    <>
+                      {count > 0 && (
+                        <RemindButton
+                          missing={count}
+                          onClick={() => remind(missing)}
+                          title={missing.length > 1 ? tr(`ทวงงาน ${missing.length} ห้อง • ยังไม่ส่ง ${count} คน`, `Remind ${missing.length} classes • ${count} not handed in`) : undefined}
+                        />
+                      )}
+                      {gradeButton(g.totals.pending, workGradeHref(g))}
+                    </>
+                  );
+                })()
+              ) : (
+                publishButton(hidden)
+              )
+            }
             menu={<ActionMenu label={tr(`ตัวเลือกของ ${g.rep.title}`, `Options for ${g.rep.title}`)} items={workMenu(g)} />}
           />
           <Collapse open={open}>

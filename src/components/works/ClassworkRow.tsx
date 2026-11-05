@@ -10,7 +10,7 @@ import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import type { GradingCounts } from '@/lib/utils/gradingStatus';
 import { isRetake } from '@/lib/utils/retake';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
-import { MetricCells, Pill, WorkRowLayout } from '@/components/works/WorkBits';
+import { MetricCells, Pill, RemindButton, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, StatusButton } from '@/components/works/StatusBits';
 
 /**
@@ -154,6 +154,8 @@ export function ClassworkRow({
               {tr('เผยแพร่', 'Publish')}
             </button>
           ) : (
+            <>
+            {onRemind && win.acceptsSubmissions && counts.notSubmitted > 0 && <RemindButton missing={counts.notSubmitted} onClick={onRemind} />}
             <Link
               href={gradingHref}
               draggable={false}
@@ -166,6 +168,7 @@ export function ClassworkRow({
               {tr('ตรวจงาน', 'Grade')}
               {counts.pending > 0 && <span className="min-w-5 px-1 rounded-full bg-slate-950/15 text-[11px] tabular-nums text-center">{counts.pending}</span>}
             </Link>
+            </>
           )
         }
         menu={menu.length > 0 ? <ActionMenu size="sm" label={tr(`ตัวเลือกของ ${assignment.title}`, `Options for ${assignment.title}`)} items={menu} /> : undefined}

@@ -11,6 +11,7 @@ import { cachedCall, readCache, TEACHER_DASHBOARD_CACHE_KEY } from '@/lib/cache/
 import { Assignment, AssignmentAttachment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question, User } from '@/types/database';
 import { isRetake } from '@/lib/utils/retake';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
+import { matchChoiceOption } from '@/lib/utils/autoGrade';
 import { DateTimeField } from '@/components/DateTimeField';
 import { Collapse } from '@/components/Collapse';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
@@ -503,7 +504,20 @@ function NewAssignmentContent() {
             setSiblings([]);
           }
           if (savedQuestions.length) {
-            setQuestions(savedQuestions.map((q) => ({
+            setQuestions(savedQuestions.map((q) => {
+              const options = q.type === 'multiple_choice'
+                ? [...(q.options || []), '', '', '', ''].slice(0, Math.max(4, (q.options || []).length))
+                : ['', '', '', ''];
+              // The editor marks the correct choice by exact text, but older or imported keys may be
+              // "ตอบ ข", a letter, or the text with stray tabs: point them at the option they mean.
+              const keyIndex = q.type === 'multiple_choice' ? matchChoiceOption(q.ideal_answer, q.options) : -1;
+              const tf = q.type === 'true_false' ? parseTrueFalse(q.ideal_answer) : null;
+              const idealAnswer = keyIndex >= 0
+                ? options[keyIndex]
+                : tf !== null
+                ? (tf ? 'ถูก' : 'ผิด')
+                : q.ideal_answer || '';
+              return {
               uid: newQuestionUid(),
               // A copy gets new questions of its own.
               id: editId ? q.id : undefined,
@@ -512,14 +526,13 @@ function NewAssignmentContent() {
                 : targetCourseId !== courseId ? remapIndicatorId(q.indicator_id || '', sourceCourse, targetCourse) : q.indicator_id || '',
               type: q.type,
               question_text: q.question_text || '',
-              options: q.type === 'multiple_choice'
-                ? [...(q.options || []), '', '', '', ''].slice(0, Math.max(4, (q.options || []).length))
-                : ['', '', '', ''],
-              ideal_answer: q.ideal_answer || '',
+              options,
+              ideal_answer: idealAnswer,
               rubric_criteria: q.rubric_criteria || '',
               max_score: Number(q.max_score) || defaultMaxScore(q.type),
               is_required: q.is_required !== false,
-            })));
+              };
+            }));
           }
         }
         // Retake: the original quiz and its classroom roster (a new retake, or editing one).
