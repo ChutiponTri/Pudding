@@ -155,7 +155,7 @@ export function ClassworkRow({
             </button>
           ) : (
             <>
-            {onRemind && win.acceptsSubmissions && counts.notSubmitted > 0 && <RemindButton missing={counts.notSubmitted} onClick={onRemind} />}
+            {onRemind && <RemindButton missing={counts.notSubmitted} closed={!win.acceptsSubmissions} onClick={onRemind} />}
             <Link
               href={gradingHref}
               draggable={false}

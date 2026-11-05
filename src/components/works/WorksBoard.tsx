@@ -588,7 +588,7 @@ export function WorksBoard() {
         action={
           c.published ? (
             <>
-              {c.window.acceptsSubmissions && c.counts.notSubmitted > 0 && <RemindButton missing={c.counts.notSubmitted} onClick={() => remind([c])} />}
+              <RemindButton missing={c.counts.notSubmitted} closed={!c.window.acceptsSubmissions} onClick={() => remind([c])} />
               {gradeButton(c.counts.pending, gradeHref(c.assignment.id))}
             </>
           ) : (
@@ -681,15 +681,16 @@ export function WorksBoard() {
                   // Classes still taking work with students who have not handed in.
                   const missing = g.classes.filter((c) => c.published && c.window.acceptsSubmissions && c.counts.notSubmitted > 0);
                   const count = missing.reduce((sum, c) => sum + c.counts.notSubmitted, 0);
+                  const anyOpen = g.classes.some((c) => c.published && c.window.acceptsSubmissions);
                   return (
                     <>
-                      {count > 0 && (
-                        <RemindButton
-                          missing={count}
-                          onClick={() => remind(missing)}
-                          title={missing.length > 1 ? tr(`ทวงงาน ${missing.length} ห้อง • ยังไม่ส่ง ${count} คน`, `Remind ${missing.length} classes • ${count} not handed in`) : undefined}
-                        />
-                      )}
+                      <RemindButton
+                        // Open: who can still hand in. Closed everywhere: greyed, with everyone still missing.
+                        missing={anyOpen ? count : g.totals.notSubmitted}
+                        closed={!anyOpen}
+                        onClick={() => remind(missing)}
+                        title={missing.length > 1 ? tr(`ทวงงาน ${missing.length} ห้อง • ยังไม่ส่ง ${count} คน`, `Remind ${missing.length} classes • ${count} not handed in`) : undefined}
+                      />
                       {gradeButton(g.totals.pending, workGradeHref(g))}
                     </>
                   );

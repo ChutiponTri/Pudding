@@ -206,21 +206,51 @@ export function MetricCells({ totals }: { totals: WorkTotals }) {
  * "ทวงงาน" beside "ตรวจงาน": how many students have not handed in sits in the
  * button's top-right corner (part of the button, not a separate badge).
  */
-export function RemindButton({ missing, onClick, title }: { missing: number; onClick: () => void; title?: string }) {
+export function RemindButton({
+  missing,
+  onClick,
+  title,
+  closed = false,
+}: {
+  missing: number;
+  onClick: () => void;
+  title?: string;
+  /** The work no longer takes hand-ins: shown, but greyed out. */
+  closed?: boolean;
+}) {
   const { tr } = useLanguage();
+  // Always shown on published work (so it is easy to find); greyed out when there is nobody to remind.
+  const disabled = closed || missing === 0;
+  const reason = closed
+    ? tr('ปิดรับงานแล้ว จึงทวงงานไม่ได้', 'Closed: nothing to remind')
+    : missing === 0
+    ? tr('นักเรียนส่งครบแล้ว', 'Everyone has handed in')
+    : title || tr(`ทวงงานในกลุ่ม LINE • ยังไม่ส่ง ${missing} คน`, `Remind in the LINE group • ${missing} not handed in`);
   return (
     <button
       type="button"
       draggable={false}
       onClick={onClick}
-      title={title || tr(`ทวงงานในกลุ่ม LINE • ยังไม่ส่ง ${missing} คน`, `Remind in the LINE group • ${missing} not handed in`)}
-      className="relative h-9 pl-2.5 pr-6 rounded-xl text-xs font-black inline-flex items-center gap-1 whitespace-nowrap bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 ring-1 ring-rose-200 dark:ring-rose-900 cursor-pointer transition-colors"
+      disabled={disabled}
+      title={reason}
+      aria-label={reason}
+      className={`relative h-9 pl-2.5 ${missing > 0 ? 'pr-6' : 'pr-2.5'} rounded-xl text-xs font-black inline-flex items-center gap-1 whitespace-nowrap ring-1 transition-colors ${
+        disabled
+          ? 'bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500 ring-slate-200 dark:ring-slate-700 cursor-not-allowed'
+          : 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 ring-rose-200 dark:ring-rose-900 cursor-pointer'
+      }`}
     >
       <BellRing className="w-3.5 h-3.5 shrink-0" />
       {tr('ทวงงาน', 'Remind')}
-      <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-rose-600 text-white text-[10px] leading-4 text-center tabular-nums">
-        {missing > 99 ? '99+' : missing}
-      </span>
+      {missing > 0 && (
+        <span
+          className={`absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center tabular-nums ${
+            disabled ? 'bg-slate-300 dark:bg-slate-600 text-white' : 'bg-rose-600 text-white'
+          }`}
+        >
+          {missing > 99 ? '99+' : missing}
+        </span>
+      )}
     </button>
   );
 }
@@ -260,7 +290,7 @@ export function WorkRowLayout({
       <div className="order-2 @4xl:order-6 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
       {status && <div className="order-3 @4xl:order-2 min-w-0 shrink-0 h-9 flex items-center">{status}</div>}
       <div aria-hidden className="hidden @4xl:block @4xl:order-3 flex-1" />
-      <div className="order-4 @4xl:order-5 ml-auto @4xl:ml-0 shrink-0 @4xl:w-48 h-9 flex items-center justify-end gap-1.5">{action}</div>
+      <div className="order-4 @4xl:order-5 ml-auto @4xl:ml-0 shrink-0 @4xl:w-52 h-9 flex items-center justify-end gap-1.5">{action}</div>
       <div className="order-5 @4xl:order-4 basis-full @4xl:basis-auto @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3">{metrics}</div>
     </div>
   );
