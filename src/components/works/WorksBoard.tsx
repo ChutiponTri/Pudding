@@ -768,11 +768,11 @@ export function WorksBoard() {
       {/* Desktop: tabs and filters stay pinned under the navbar while scrolling. */}
       <div className="md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 md:py-3 space-y-2 md:bg-slate-50/90 md:dark:bg-slate-950/90 md:backdrop-blur-xl md:border-b md:border-slate-200/80 md:dark:border-slate-800">
         {/* Two main tabs; the highlight slides between them. */}
-        <div ref={setTabGroup} role="tablist" className="hidden md:grid relative grid-cols-2 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/70">
+        <div ref={setTabGroup} role="tablist" className="hidden md:grid relative grid-cols-2 p-1 rounded-2xl bg-slate-200/70 dark:bg-slate-900 ring-1 ring-slate-300/70 dark:ring-slate-700">
           {tabIndicator && (
             <span
               aria-hidden
-              className="absolute top-0 left-0 rounded-xl bg-white dark:bg-slate-900 shadow-sm transition-[transform,width,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+              className="absolute top-0 left-0 rounded-xl bg-amber-500 shadow-md shadow-amber-500/30 dark:shadow-amber-950/60 transition-[transform,width,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
               style={indicatorStyle(tabIndicator)}
             />
           )}
@@ -787,11 +787,18 @@ export function WorksBoard() {
                 data-active={active}
                 onClick={() => selectTab(id)}
                 className={`relative h-11 rounded-xl text-sm font-black inline-flex items-center justify-center gap-2 transition-colors duration-300 cursor-pointer ${
-                  active ? `text-slate-900 dark:text-white ${tabIndicator ? '' : 'bg-white dark:bg-slate-900'}` : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                  // The active tab sits on the solid amber highlight; the other stays muted, so the current one reads at a glance.
+                  active ? `text-slate-950 ${tabIndicator ? '' : 'bg-amber-500'}` : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 hover:bg-white/60 dark:hover:text-slate-100 dark:hover:bg-slate-800/70'
                 }`}
               >
                 <span className="truncate">{label}</span>
-                <span className={`min-w-6 px-1.5 rounded-full text-[11px] tabular-nums ${tabPending[id] > 0 ? 'bg-amber-400 text-slate-950' : 'bg-slate-200/80 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                <span
+                  className={`min-w-6 px-1.5 rounded-full text-[11px] tabular-nums ${
+                    active
+                      ? tabPending[id] > 0 ? 'bg-slate-950 text-amber-300' : 'bg-slate-950/15 text-slate-950'
+                      : tabPending[id] > 0 ? 'bg-amber-400 text-slate-950' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
                   {tabCounts[id]}
                 </span>
               </button>
