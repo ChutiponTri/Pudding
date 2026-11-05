@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from '@/components/BrandLogo';
 import { isRetake } from '@/lib/utils/retake';
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Avatar } from '@/components/Avatar';
@@ -1787,9 +1788,7 @@ export default function LiffStudentPage() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-6 text-center gap-5 min-h-dvh">
         <div className="relative">
-          <div className="w-20 h-20 rounded-[1.75rem] bg-linear-to-br from-amber-300 to-amber-500 flex items-center justify-center text-4xl shadow-xl shadow-amber-500/25">
-            🍮
-          </div>
+          <BrandLogo priority className="h-24 w-auto" />
           <Loader2 className="w-7 h-7 text-line animate-spin absolute -bottom-1.5 -right-1.5 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md" />
         </div>
         <div className="space-y-1">
@@ -1839,9 +1838,7 @@ export default function LiffStudentPage() {
       <div className="flex-1 flex flex-col justify-between gap-8 px-6 pt-[max(env(safe-area-inset-top),2.5rem)] pb-[max(env(safe-area-inset-bottom),1.5rem)] min-h-dvh bg-radial-[at_50%_0%] from-emerald-500/15 via-transparent to-transparent">
         <div className="text-center space-y-5 pt-6">
           <div className="relative inline-block">
-            <div className="w-24 h-24 rounded-4xl bg-linear-to-br from-amber-300 to-amber-500 flex items-center justify-center text-5xl shadow-2xl shadow-amber-500/30 mx-auto">
-              🍮
-            </div>
+            <BrandLogo priority className="h-28 w-auto mx-auto" />
             <span className="absolute -bottom-2 -right-2 px-2.5 py-0.5 rounded-full bg-line text-white text-[11px] font-bold shadow-md ring-2 ring-white dark:ring-slate-950">
               LINE
             </span>
@@ -1989,8 +1986,7 @@ export default function LiffStudentPage() {
             className="flex items-center gap-2 min-w-0 cursor-pointer rounded-xl -ml-1 px-1 py-1 hover:bg-white/10 transition-colors"
             title="กลับหน้าภาพรวม"
           >
-            <span className="text-xl select-none">🍮</span>
-            <span className="font-bold text-base tracking-tight">พุดดิ้ง</span>
+            <BrandLogo className="h-10 w-auto" />
           </button>
           </div>
 
@@ -2096,7 +2092,7 @@ export default function LiffStudentPage() {
             <div className="bg-line text-white pt-[env(safe-area-inset-top)]">
               <div className="h-14 px-4 flex items-center justify-between">
                 <span className="flex items-center gap-2 font-bold">
-                  <span className="text-xl select-none">🍮</span>
+                  <BrandLogo className="h-9 w-auto" />
                   <span>รายวิชาของฉัน</span>
                 </span>
                 <button

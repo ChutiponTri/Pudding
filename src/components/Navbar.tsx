@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useSidebar } from '@/components/SidebarContext';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { BrandLogo } from './BrandLogo';
 import { ThemeToggle } from './ThemeToggle';
 import {
   Bell,
@@ -85,24 +86,15 @@ export const Navbar: React.FC = () => {
           </button>
 
           {/* Brand Logo - Pudding (พุดดิ้ง) */}
-          <Link href={isSignedIn ? "/dashboard" : "/"} className="flex items-center gap-2.5 sm:gap-3 group min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-md shadow-amber-500/25 group-hover:scale-105 group-hover:-rotate-3 transition-all duration-300 shrink-0">
-              <span className="text-xl sm:text-2xl select-none group-hover:scale-110 transition-transform">🍮</span>
-            </div>
-            {/* On narrow phones (< 420px) the logo alone identifies the app */}
-            <div className="min-w-0 hidden min-[420px]:block">
-              <div className="flex items-center gap-1.5">
-                <span className="font-black text-base sm:text-lg tracking-tight text-slate-900 dark:text-white truncate">
-                  {language === 'th' ? 'พุดดิ้ง' : 'Pudding'}
-                </span>
-                <span className="hidden sm:inline-block text-[10px] sm:text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/60">
-                  Platform
-                </span>
-              </div>
-              <p className="hidden md:block text-[11px] text-slate-500 dark:text-slate-400 font-medium line-clamp-1">
-                {t('brand.subtitle')}
-              </p>
-            </div>
+          <Link
+            href={isSignedIn ? "/dashboard" : "/"}
+            aria-label={language === 'th' ? 'พุดดิ้ง หน้าหลัก' : 'Pudding home'}
+            className="flex items-center gap-3 group min-w-0"
+          >
+            <BrandLogo priority className="h-11 sm:h-12 w-auto shrink-0 group-hover:scale-105 group-hover:-rotate-2 transition-transform duration-300" />
+            <p className="hidden md:block min-w-0 max-w-56 text-[11px] leading-snug text-slate-500 dark:text-slate-400 font-medium line-clamp-2">
+              {t('brand.subtitle')}
+            </p>
           </Link>
         </div>
 

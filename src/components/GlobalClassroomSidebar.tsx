@@ -21,6 +21,7 @@ import {
   CalendarCog,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { BrandLogo } from '@/components/BrandLogo';
 import { studentLoginUrl } from '@/lib/line/liffLink';
 import { dataService, CLASSROOMS_CHANGED_EVENT } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
@@ -356,9 +357,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
         <div className="h-16 px-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between shrink-0">
           {/* Same destination as the navbar brand logo */}
           <Link href={user ? '/dashboard' : '/'} onClick={handleItemClick} className="flex items-center gap-2.5 min-w-0 group">
-            <div className="w-9 h-9 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center font-bold text-base shadow-md shadow-amber-500/25 group-hover:scale-105 group-hover:-rotate-3 transition-all duration-300 shrink-0">
-              🍮
-            </div>
+            <BrandLogo className="h-11 w-auto shrink-0 group-hover:scale-105 group-hover:-rotate-2 transition-transform duration-300" />
             <div className="min-w-0">
               <h2 className="text-sm font-black text-slate-900 dark:text-white truncate">{isGuest ? tr('พุดดิ้ง', 'Pudding') : tr('ห้องเรียนและรายวิชา', 'Classrooms & courses')}</h2>
               <p className="text-[10px] text-slate-500 font-medium truncate">{isGuest ? tr('สำหรับคุณครูผู้สอน', 'For teachers') : tr('รายวิชาทั้งหมด', 'All courses')}</p>

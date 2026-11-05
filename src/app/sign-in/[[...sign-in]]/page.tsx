@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from '@/components/BrandLogo';
 import React from "react";
 import { SignIn } from "@clerk/nextjs";
 import Link from "next/link";
@@ -18,13 +19,8 @@ export default function SignInPage() {
           <ArrowLeft className="w-4 h-4" />
           <span>{tr('กลับสู่หน้าหลัก', 'Back to home')}</span>
         </Link>
-        <div className="flex items-center justify-center gap-2">
-          <div className="w-10 h-10 rounded-2xl bg-linear-to-tr from-amber-600 via-amber-500 to-yellow-400 flex items-center justify-center shadow-lg shadow-amber-500/25">
-            <span className="text-2xl select-none">🍮</span>
-          </div>
-          <span className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
-            {tr('พุดดิ้ง (Pudding)', 'Pudding')}
-          </span>
+        <div className="flex items-center justify-center">
+          <BrandLogo priority className="h-24 w-auto" />
         </div>
         <p className="text-xs text-slate-600 dark:text-slate-400">
           {tr('เข้าสู่ระบบสำหรับครูผู้สอนด้วยบัญชี LINE', 'Teacher sign-in with your LINE account')}

@@ -1,5 +1,6 @@
 'use client';
 
+import { BrandLogo } from '@/components/BrandLogo';
 import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useClerk, useUser } from '@clerk/nextjs';
@@ -286,9 +287,7 @@ export function TeacherProfileGate() {
     // Above every other popup and the sidebar; there is no way to close it.
     <ModalSheet onClose={() => undefined} size="sm:max-w-md" zIndex="z-90" labelledBy="teacher-profile-gate-title">
       <div className="shrink-0 text-center space-y-2 px-4 sm:px-6 pt-3 sm:pt-6 pb-1">
-        <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-amber-300 to-amber-500 text-3xl flex items-center justify-center mx-auto shadow-lg shadow-amber-500/25">
-          🍮
-        </div>
+        <BrandLogo className="h-20 w-auto mx-auto" />
         <h3 id="teacher-profile-gate-title" className="text-lg font-black text-slate-900 dark:text-white">
           {language === 'th' ? 'ยินดีต้อนรับสู่ Pudding!' : 'Welcome to Pudding!'}
         </h3>

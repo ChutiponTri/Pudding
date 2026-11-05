@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from '@/components/BrandLogo';
 import React from "react";
 import Link from "next/link";
 import {
@@ -102,7 +103,7 @@ export const TeacherLoggedOutView: React.FC = () => {
         <div className="relative grid lg:grid-cols-[minmax(0,1fr)_22rem] gap-10 lg:gap-12 items-center">
           <div className="space-y-5 sm:space-y-6 text-center lg:text-left">
             <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/40 backdrop-blur-md text-xs font-bold">
-              <span className="text-base select-none">🍮</span>
+              <BrandLogo className="h-6 w-auto -my-1" />
               {th ? "สำหรับคุณครูผู้สอน" : "For teachers"}
             </span>
 

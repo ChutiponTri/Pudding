@@ -1,4 +1,5 @@
 'use client';
+import { BrandLogo } from '@/components/BrandLogo';
 import { rosterSizeFor } from '@/lib/utils/retake';
 import { useUser } from '@clerk/nextjs';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
@@ -1303,7 +1304,7 @@ export function TeacherWorkspace({
         <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 w-72 h-72 rounded-full bg-white/20 blur-3xl" />
         <div className="relative space-y-2 min-w-0 xl:max-w-xl">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
-            <span className="text-sm">🍮</span>
+            <BrandLogo className="h-6 w-auto -my-1" />
             <span>Pudding Learning Intelligence</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-950 wrap-break-word">

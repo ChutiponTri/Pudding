@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { BrandLogo } from '@/components/BrandLogo';
 import type { ReactNode } from 'react';
 import { ArrowLeft, Database, FolderArchive, LayoutDashboard, Table2, UserCheck } from 'lucide-react';
 import { AdminPrefs } from '@/components/AdminPrefs';
@@ -35,8 +36,8 @@ export async function AdminHeader({
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6">
         <div className="py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex items-center gap-3">
-            <Link href="/admin" className="w-10 h-10 shrink-0 rounded-2xl bg-linear-to-br from-amber-300 to-amber-500 flex items-center justify-center text-xl shadow-lg shadow-amber-500/30">
-              🍮
+            <Link href="/admin" className="shrink-0" aria-label="Pudding Admin">
+              <BrandLogo className="h-11 w-auto" />
             </Link>
             <div className="min-w-0">
               <nav className="flex flex-wrap items-center gap-1.5 text-base font-black">
