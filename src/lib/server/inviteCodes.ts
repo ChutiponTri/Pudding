@@ -103,9 +103,28 @@ export function remindShareToken(assignmentId: string): string {
   return `${REMIND_PREFIX}${assignmentId}.${sig}`;
 }
 
-/** What a share token points at: a timeline post, a work to re-announce, or a work's reminder. null if it was not made here. */
-export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind'; id: string } | null {
+/** Prefix of share tokens for a work's score announcement ("ประกาศคะแนน"). */
+const RESULTS_PREFIX = 's:';
+
+/** Link token for a work's score announcement shared by hand: `s:<assignmentId>.<16-char HMAC>`. */
+export function resultsShareToken(assignmentId: string): string {
+  const digest = createHmac('sha256', inviteSecret()).update(`results-share:${assignmentId}`).digest();
+  let sig = '';
+  for (let i = 0; i < 16; i++) sig += ALPHABET[digest[i] & 31];
+  return `${RESULTS_PREFIX}${assignmentId}.${sig}`;
+}
+
+/** What a share token points at: a timeline post, a work to re-announce, a work's reminder or its score announcement. null if it was not made here. */
+export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind' | 'results'; id: string } | null {
   if (typeof token !== 'string' || token.length > 200) return null;
+  if (token.startsWith(RESULTS_PREFIX)) {
+    const dot = token.lastIndexOf('.');
+    if (dot <= RESULTS_PREFIX.length) return null;
+    const id = token.slice(RESULTS_PREFIX.length, dot);
+    const expected = Buffer.from(resultsShareToken(id));
+    const given = Buffer.from(token);
+    return expected.length === given.length && timingSafeEqual(expected, given) ? { kind: 'results', id } : null;
+  }
   if (token.startsWith(REMIND_PREFIX)) {
     const dot = token.lastIndexOf('.');
     if (dot <= REMIND_PREFIX.length) return null;

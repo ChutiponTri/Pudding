@@ -17,6 +17,7 @@ import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ClassworkRow } from '@/components/works/ClassworkRow';
+import { announceConfirmText } from '@/components/works/WorkBits';
 import { applySavedOrder, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
 
 import { CategoryDetailSheet, categoryLook, RenameCategoryDialog } from '@/components/works/CategoryTools';
@@ -1000,6 +1001,24 @@ export default function ClassroomWorkspacePage() {
       setNotice(line === 'none' ? tr('นักเรียนส่งงานนี้ครบแล้ว', 'Everyone has handed this in') : botNotice(line, tr('ทวงงานในกลุ่ม LINE แล้ว', 'Reminder sent to the LINE group')));
     } catch (err) {
       setNotice(err instanceof Error && err.message ? err.message : tr('ทวงงานไม่สำเร็จ', 'Could not send the reminder'));
+    }
+  };
+
+  /**
+   * "ประกาศคะแนน": work still taking hand-ins is closed first (results only show
+   * once it is closed), after the teacher confirms; then the bot posts to the
+   * group, or the share popup opens whenever it cannot.
+   */
+  const handleAnnounceResults = async (assignment: Assignment, counts: GradingCounts) => {
+    const accepting = getAssignmentWindow(assignment).acceptsSubmissions;
+    if (!confirm(announceConfirmText([{ title: assignment.title, acceptsSubmissions: accepting, counts }], tr))) return;
+    try {
+      const result = await dataService.announceResults(assignment.id, assignment.title);
+      if (result.assignment) setAssignments((prev) => prev.map((a) => (a.id === assignment.id ? { ...a, ...result.assignment } : a)));
+      const sent = botNotice(result.line, tr('ประกาศคะแนนในกลุ่ม LINE แล้ว', 'Scores announced in the LINE group'));
+      setNotice(result.closed ? `${tr('ปิดรับงานแล้ว', 'Closed')} • ${sent}` : sent);
+    } catch (err) {
+      setNotice(err instanceof Error && err.message ? err.message : tr('ประกาศคะแนนไม่สำเร็จ', 'Could not announce the scores'));
     }
   };
 
@@ -2515,6 +2534,7 @@ export default function ClassroomWorkspacePage() {
                               onDelete={() => handleDeleteAssignment(item.id)}
                               onPublishNow={itemWindow.isScheduled || itemWindow.isDraft ? () => handlePublishAssignmentNow(item) : undefined}
                               onRemind={() => handleRemindAssignment(item)}
+                              onAnnounceResults={() => handleAnnounceResults(item, classworkCounts.get(item.id) || gradingCounts([], rosterSizeFor(item, classroom.students?.length || 0), item.is_exam))}
                               onReannounce={() => handleReannounceAssignment(item)}
                               onMoveGroup={() => {
                                 setEditingAssignmentGroup(item);

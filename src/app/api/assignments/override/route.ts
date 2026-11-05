@@ -2,9 +2,9 @@ import { auth } from '@clerk/nextjs/server';
 import { getTeacherAccess, teacherBlockedResponse } from '@/lib/server/teacherProfileGuard';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { announceScheduledPosts, reannounceLineText } from '@/lib/line/classroomAnnouncement';
+import { announceScheduledPosts, reannounceLineText, resultsLineText } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, reannounceShare, remindShare, withLineShare, type ClassroomPost } from '@/lib/server/classroomPosts';
+import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, reannounceShare, remindShare, resultsShare, withLineShare, type ClassroomPost } from '@/lib/server/classroomPosts';
 import { botSendOrShare } from '@/lib/server/lineSend';
 import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
@@ -40,7 +40,8 @@ export async function POST(request: NextRequest) {
   const publishNow = body.action === 'publish_now';
   const reannounce = body.action === 'reannounce';
   const remind = body.action === 'remind';
-  if (!assignmentId || (!publishNow && !reannounce && !remind && !STATUSES.includes(status))) {
+  const announceResults = body.action === 'announce_results';
+  if (!assignmentId || (!publishNow && !reannounce && !remind && !announceResults && !STATUSES.includes(status))) {
     return NextResponse.json({ error: 'assignmentId and a valid status_override are required' }, { status: 400 });
   }
   const extendedMs = extendedUntil ? new Date(extendedUntil).getTime() : NaN;
@@ -84,6 +85,46 @@ export async function POST(request: NextRequest) {
     }
     const result = await botSendOrShare(supabase, { groupId: classroom.line_group_id, text, share, teacherId: userId, classroomId: classroom.id });
     return NextResponse.json({ assignment: previous, ...result });
+  }
+
+  // "ประกาศคะแนน": results only show once the work is closed (and no per-student
+  // permission still runs), so close it first, then tell the class group.
+  if (announceResults) {
+    const win = getAssignmentWindow(previous);
+    if (win.isDraft || win.isScheduled) return NextResponse.json({ error: 'งานนี้ยังไม่เผยแพร่' }, { status: 409 });
+    const { count: gradedCount } = await supabase
+      .from('submissions')
+      .select('id', { count: 'exact', head: true })
+      .eq('assignment_id', assignmentId)
+      .not('total_score', 'is', null);
+    if (!gradedCount) return NextResponse.json({ error: 'ยังไม่มีงานที่ตรวจเสร็จ จึงยังประกาศคะแนนไม่ได้' }, { status: 409 });
+    let assignment = previous;
+    const closed = win.acceptsSubmissions;
+    if (closed) {
+      const { data: updated, error: closeError } = await supabase
+        .from('assignments')
+        .update({ status_override: 'force_closed' })
+        .eq('id', assignmentId)
+        .select('*')
+        .maybeSingle<Assignment>();
+      if (closeError || !updated) {
+        console.error('Closing before announcing results failed:', closeError);
+        return NextResponse.json({ error: 'ปิดรับงานไม่สำเร็จ จึงยังไม่ได้ประกาศคะแนน' }, { status: 500 });
+      }
+      assignment = updated;
+    }
+    // A running "ให้แก้ไขงาน" / "ให้ส่งงาน" would keep every result hidden.
+    const clearedReopens = await clearReopens(supabase, assignmentId);
+    if (closed || clearedReopens) after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+    const text = resultsLineText(assignment, classroom);
+    const result = await botSendOrShare(supabase, {
+      groupId: classroom.line_group_id,
+      text,
+      share: resultsShare(assignmentId, text),
+      teacherId: userId,
+      classroomId: classroom.id,
+    });
+    return NextResponse.json({ assignment, closed, clearedReopens, ...result });
   }
 
   if (publishNow) {
@@ -178,21 +219,23 @@ export async function POST(request: NextRequest) {
   // handed-in work ("ให้แก้ไขงาน"): the latest teacher action wins. Letting one
   // student edit again after closing still works, since that comes later.
   // Extending or going back to the deadline leaves those permissions alone.
-  let clearedReopens = 0;
-  if (status === 'force_closed') {
-    const { data: cleared, error: clearError } = await supabase
-      .from('submissions')
-      .update({ reopened_at: null })
-      .eq('assignment_id', assignmentId)
-      .not('reopened_at', 'is', null)
-      .select('id');
-    // Databases without submissions.reopened_at have nothing to clear.
-    if (clearError && !clearError.message.includes('reopened_at')) console.warn('Clearing reopened submissions failed:', clearError.message);
-    clearedReopens = cleared?.length || 0;
-  }
+  const clearedReopens = status === 'force_closed' ? await clearReopens(supabase, assignmentId) : 0;
 
   // Open student pages pick up the new status.
   after(() => signalClassroom(classroom.id, { type: 'timeline' }));
 
   return NextResponse.json({ assignment: updated, clearedReopens });
+}
+
+/** Ends every running per-student permission ("ให้แก้ไขงาน" / "ให้ส่งงาน") on a work; returns how many. */
+async function clearReopens(supabase: ReturnType<typeof createServiceSupabaseClient>, assignmentId: string): Promise<number> {
+  const { data: cleared, error: clearError } = await supabase
+    .from('submissions')
+    .update({ reopened_at: null })
+    .eq('assignment_id', assignmentId)
+    .not('reopened_at', 'is', null)
+    .select('id');
+  // Databases without submissions.reopened_at have nothing to clear.
+  if (clearError && !clearError.message.includes('reopened_at')) console.warn('Clearing reopened submissions failed:', clearError.message);
+  return cleared?.length || 0;
 }

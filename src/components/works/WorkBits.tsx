@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { BellRing, Calendar, Check, Loader2, X } from 'lucide-react';
+import { BellRing, Calendar, Check, Loader2, Megaphone, X } from 'lucide-react';
 import type { Assignment } from '@/types/database';
+import type { GradingCounts } from '@/lib/utils/gradingStatus';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { GradingBar } from '@/components/AssignmentProgressCard';
 import { AttachmentList } from '@/components/AssignmentAttachments';
@@ -280,6 +281,76 @@ export function GradeButton({ pending, href }: { pending: number; href: string }
       )}
     </Link>
   );
+}
+
+/**
+ * "ทวงงาน" turns into "ประกาศคะแนน" once there is nobody left to remind:
+ * everyone handed in or has a score, or the work no longer takes hand-ins.
+ */
+export function announcesResults(counts: Pick<GradingCounts, 'notSubmitted'>, acceptsSubmissions: boolean): boolean {
+  return counts.notSubmitted === 0 || !acceptsSubmissions;
+}
+
+/**
+ * "ประกาศคะแนน" in RemindButton's place. Its label stays "ประกาศ" so the
+ * button is never wider than the bell + "ทวงงาน" (the full wording is its
+ * tooltip and the ⋯ menu item).
+ */
+export function AnnounceButton({ graded, onClick, title }: { graded: number; onClick: () => void; title?: string }) {
+  const { tr } = useLanguage();
+  const disabled = graded === 0;
+  const reason = disabled ? tr('ยังไม่มีงานที่ตรวจเสร็จ', 'Nothing graded yet') : title || tr('ประกาศคะแนนในกลุ่ม LINE', 'Announce scores in the LINE group');
+  return (
+    <button
+      type="button"
+      draggable={false}
+      onClick={onClick}
+      disabled={disabled}
+      title={reason}
+      aria-label={reason}
+      className={`h-9 px-2.5 rounded-xl text-xs font-black inline-flex items-center gap-1 whitespace-nowrap ring-1 transition-colors ${
+        disabled
+          ? 'bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500 ring-slate-200 dark:ring-slate-700 cursor-not-allowed'
+          : 'bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-900 cursor-pointer'
+      }`}
+    >
+      <Megaphone className="w-3.5 h-3.5 shrink-0" />
+      {tr('ประกาศ', 'Scores')}
+    </button>
+  );
+}
+
+/** One work in one class, as the "ประกาศคะแนน" confirmation describes it. */
+export type AnnounceTarget = { title: string; className?: string; acceptsSubmissions: boolean; counts: Pick<GradingCounts, 'pending' | 'notSubmitted'> };
+
+/**
+ * The confirmation before "ประกาศคะแนน": where it goes, that work still taking
+ * hand-ins gets closed first, and who will not see a score yet.
+ */
+export function announceConfirmText(targets: AnnounceTarget[], tr: (th: string, en: string) => string): string {
+  const one = targets[0];
+  const many = targets.length > 1;
+  const open = targets.filter((t) => t.acceptsSubmissions).length;
+  const pending = targets.reduce((n, t) => n + t.counts.pending, 0);
+  const missing = targets.reduce((n, t) => n + t.counts.notSubmitted, 0);
+  const lines = [
+    many
+      ? tr(`ประกาศคะแนน "${one.title}" ใน ${targets.length} ห้อง?`, `Announce the scores of "${one.title}" in ${targets.length} classes?`)
+      : tr(`ประกาศคะแนน "${one.title}"${one.className ? ` ในกลุ่ม LINE ของ ${one.className}` : ' ในกลุ่ม LINE'}?`, `Announce the scores of "${one.title}" in the LINE group?`),
+    '',
+  ];
+  if (open) {
+    lines.push(
+      many
+        ? tr(`⚠️ ยังเปิดรับอยู่ ${open} ห้อง — ระบบจะเปลี่ยนสถานะเป็น "ปิดรับงาน" ให้อัตโนมัติ`, `⚠️ ${open} classes still take hand-ins — they will be closed automatically`)
+        : tr('⚠️ งานนี้ยังเปิดรับอยู่ — ระบบจะเปลี่ยนสถานะเป็น "ปิดรับงาน" ให้อัตโนมัติ', '⚠️ This work still takes hand-ins — it will be closed automatically'),
+      tr('นักเรียนจะส่งหรือแก้ไขงานไม่ได้อีก และสิทธิ์ "ให้แก้ไขงาน" ที่ค้างอยู่จะถูกยกเลิก', 'Students can no longer hand in or edit, and running edit permissions end'),
+    );
+  }
+  if (pending) lines.push(tr(`• ยังตรวจไม่ครบ ${pending} คน — คนที่ยังไม่ได้ตรวจจะยังไม่เห็นคะแนน`, `• ${pending} not graded yet — they will not see a score yet`));
+  if (missing) lines.push(tr(`• ยังไม่ส่ง ${missing} คน`, `• ${missing} have not handed in`));
+  lines.push(tr('นักเรียนจะเห็นคะแนนและความเห็นของคุณครูใน Pudding', 'Students then see their scores and your comments in Pudding'));
+  return lines.join('\n');
 }
 
 export const ROW_INSET = {

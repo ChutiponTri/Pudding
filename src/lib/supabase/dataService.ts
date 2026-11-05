@@ -639,6 +639,23 @@ export const dataService = {
     return (json.line as LinePostStatus) || 'sent';
   },
 
+  /**
+   * "ประกาศคะแนน": closes the work if it still takes hand-ins (results only show
+   * once it is closed), then the bot tells the class group; whenever it cannot,
+   * the share popup opens instead (same fallback as remindAssignment).
+   */
+  async announceResults(assignmentId: string, title?: string): Promise<{ line: LinePostStatus; closed: boolean; assignment: Assignment | null }> {
+    const res = await authFetch('/api/assignments/override', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignmentId, action: 'announce_results' }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    reportLineUnsent(json.line, json.share, title ? `ประกาศคะแนน: ${title}` : undefined, json.message);
+    return { line: (json.line as LinePostStatus) || 'sent', closed: !!json.closed, assignment: (json.assignment as Assignment) || null };
+  },
+
   /** A timeline post sent to the class LINE group again (same fallback as remindAssignment). */
   async resendPost(postId: string, title?: string): Promise<LinePostStatus> {
     const res = await authFetch('/api/classrooms/posts', {

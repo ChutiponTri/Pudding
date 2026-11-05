@@ -62,6 +62,17 @@ export function reannounceLineText(
   });
 }
 
+/** LINE text announcing a work's scores ("ประกาศคะแนน"); the link opens the student's own result. */
+export function resultsLineText(
+  assignment: Pick<Assignment, 'id' | 'title' | 'is_exam'>,
+  classroom: LabelledClassroom & { id: string; invite_code?: string | null }
+): string {
+  const text =
+    `📣 ประกาศคะแนน\n📘 ${classroomTitle(classroom)}\n📋 ${assignment.title}\n\n` +
+    `คุณครูประกาศคะแนน${assignment.is_exam ? 'ข้อสอบ' : 'งาน'}นี้แล้ว ดูคะแนนและความเห็นของคุณครูได้ที่ลิงก์ด้านล่าง`;
+  return withLiffLink(text, 'กดเพื่อดูคะแนน', { classroomId: classroom.id, inviteCode: classroom.invite_code, assignmentId: assignment.id });
+}
+
 /** Why a post's LINE message did not go out; kept in its metadata (lineStatus) so the teacher can share it by hand. */
 export type PostLineFailure = 'failed' | 'quota' | 'no_group';
 

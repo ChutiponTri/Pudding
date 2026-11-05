@@ -3,34 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import {
-  ArrowLeft,
-  BookOpen,
-  Calendar,
-  Check,
-  ChevronDown,
-  Clock,
-  Copy,
-  Edit2,
-  Eye,
-  GripVertical,
-  ListChecks,
-  NotebookPen,
-  EyeOff,
-  FileText,
-  Lock,
-  MessageCircle,
-  Palette,
-  Plus,
-  Rocket,
-  School,
-  Search,
-  ShieldAlert,
-  Trash2,
-  Unlock,
-  X,
-  BellRing,
-} from 'lucide-react';
+import { ArrowLeft, BellRing, BookOpen, Calendar, Check, ChevronDown, Clock, Copy, Edit2, Eye, EyeOff, FileText, GripVertical, ListChecks, Lock, Megaphone, MessageCircle, NotebookPen, Palette, Plus, Rocket, School, Search, ShieldAlert, Trash2, Unlock, X } from 'lucide-react';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useTeacherDashboardData, type TeacherDashboardData } from '@/lib/hooks/useTeacherDashboardData';
@@ -45,7 +18,7 @@ import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { ComboFilter } from '@/components/works/ComboFilter';
-import { DueDateDialog, GradeButton, MetricCells, Pill, RemindButton, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
+import { AnnounceButton, announceConfirmText, announcesResults, DueDateDialog, GradeButton, MetricCells, Pill, RemindButton, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, BulkStatusDialog, groupStatus, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
@@ -373,6 +346,46 @@ export function WorksBoard() {
     );
   };
 
+  /** Classes where "ทวงงาน" has turned into "ประกาศคะแนน" (see announcesResults). */
+  const resultsMode = (c: WorkClass) => c.published && announcesResults(c.counts, c.window.acceptsSubmissions);
+
+  /**
+   * "ประกาศคะแนน": after the teacher confirms, classes still taking hand-ins are
+   * closed (results only show once closed), then the bot posts to each class
+   * group; whenever it cannot, the share popup opens for that class.
+   */
+  const announce = async (items: WorkClass[]) => {
+    const list = items.filter((c) => c.published && c.counts.graded > 0);
+    if (!list.length) return;
+    const targets = list.map((c) => ({ title: c.assignment.title, className: c.classroom.name, acceptsSubmissions: c.window.acceptsSubmissions, counts: c.counts }));
+    if (!confirm(announceConfirmText(targets, tr))) return;
+    let sent = 0;
+    let manual = 0;
+    let closed = 0;
+    let firstError = '';
+    for (const c of list) {
+      try {
+        const result = await dataService.announceResults(c.assignment.id, list.length > 1 ? `${c.assignment.title} · ${c.classroom.name}` : c.assignment.title);
+        if (result.closed) {
+          closed++;
+          patch(c.assignment.id, { status_override: result.assignment?.status_override || 'force_closed' });
+        }
+        if (result.line === 'sent') sent++;
+        else manual++;
+      } catch (err) {
+        firstError ||= errorText(err, tr('ประกาศคะแนนไม่สำเร็จ', 'Could not announce the scores'));
+      }
+    }
+    showToast(
+      firstError ||
+        [
+          closed && tr(`ปิดรับแล้ว${list.length > 1 ? ` ${closed} ห้อง` : ''}`, `Closed${list.length > 1 ? ` ${closed} classes` : ''}`),
+          sent && tr(`ประกาศคะแนนแล้ว${list.length > 1 ? ` ${sent} ห้อง` : ''}`, `Scores announced${list.length > 1 ? ` in ${sent} classes` : ''}`),
+          manual && tr(`บอทส่งไม่ได้ ${manual} ห้อง — แชร์เองจากหน้าต่าง`, `${manual} need sharing yourself`),
+        ].filter(Boolean).join(' • ')
+    );
+  };
+
   const saveDue = async (target: WorkClass, group: WorkGroup, due: string, all: boolean) => {
     const list = all ? group.classes : [target];
     for (const c of list) {
@@ -410,14 +423,23 @@ export function WorksBoard() {
           disabled: !c.window.acceptsSubmissions,
           onSelect: () => reannounce(c),
         },
-      c.published && {
-        key: 'remind',
-        label: tr('ทวงงาน', 'Remind'),
-        hint: c.counts.notSubmitted > 0 ? tr(`ยังไม่ส่ง ${c.counts.notSubmitted}`, `${c.counts.notSubmitted} missing`) : undefined,
-        icon: <BellRing className="w-4 h-4" />,
-        disabled: !c.window.acceptsSubmissions || c.counts.notSubmitted === 0,
-        onSelect: () => remind([c]),
-      },
+      c.published &&
+        (resultsMode(c)
+          ? {
+              key: 'results',
+              label: tr('ประกาศคะแนน', 'Announce scores'),
+              hint: c.counts.pending > 0 ? tr(`รอตรวจ ${c.counts.pending}`, `${c.counts.pending} to grade`) : undefined,
+              icon: <Megaphone className="w-4 h-4" />,
+              disabled: c.counts.graded === 0,
+              onSelect: () => announce([c]),
+            }
+          : {
+              key: 'remind',
+              label: tr('ทวงงาน', 'Remind'),
+              hint: tr(`ยังไม่ส่ง ${c.counts.notSubmitted}`, `${c.counts.notSubmitted} missing`),
+              icon: <BellRing className="w-4 h-4" />,
+              onSelect: () => remind([c]),
+            }),
       { key: 'edit', label: tr('แก้ไขเฉพาะห้องนี้', 'Edit this class only'), icon: <Edit2 className="w-4 h-4" />, onSelect: () => router.push(editorHref('edit', c.assignment)) },
       { key: 'due', label: tr('เปลี่ยนกำหนดส่ง', 'Change due date'), icon: <Calendar className="w-4 h-4" />, onSelect: () => setDueTarget({ item: c, group: g }) },
       c.published &&
@@ -442,6 +464,19 @@ export function WorksBoard() {
         onSelect: () => openWorkStatus(g),
       },
       g.published && (() => {
+        const shown = g.classes.filter((c) => c.published);
+        // Every class past reminding: the card announces scores instead.
+        if (shown.every(resultsMode)) {
+          const ready = shown.filter((c) => c.counts.graded > 0);
+          return {
+            key: 'results',
+            label: g.classes.length > 1 ? tr('ประกาศคะแนนทุกห้อง', 'Announce scores (all classes)') : tr('ประกาศคะแนน', 'Announce scores'),
+            hint: g.classes.length > 1 && ready.length ? tr(`${ready.length} ห้อง`, `${ready.length} classes`) : undefined,
+            icon: <Megaphone className="w-4 h-4" />,
+            disabled: ready.length === 0,
+            onSelect: () => announce(ready),
+          };
+        }
         const missing = accepting.filter((c) => c.counts.notSubmitted > 0);
         return {
           key: 'remind',
@@ -574,7 +609,11 @@ export function WorksBoard() {
         action={
           c.published ? (
             <>
-              <RemindButton missing={c.counts.notSubmitted} closed={!c.window.acceptsSubmissions} onClick={() => remind([c])} />
+              {resultsMode(c) ? (
+                <AnnounceButton graded={c.counts.graded} onClick={() => announce([c])} />
+              ) : (
+                <RemindButton missing={c.counts.notSubmitted} closed={!c.window.acceptsSubmissions} onClick={() => remind([c])} />
+              )}
               {gradeButton(c.counts.pending, gradeHref(c.assignment.id))}
             </>
           ) : (
@@ -668,6 +707,20 @@ export function WorksBoard() {
                   const missing = g.classes.filter((c) => c.published && c.window.acceptsSubmissions && c.counts.notSubmitted > 0);
                   const count = missing.reduce((sum, c) => sum + c.counts.notSubmitted, 0);
                   const anyOpen = g.classes.some((c) => c.published && c.window.acceptsSubmissions);
+                  const shown = g.classes.filter((c) => c.published);
+                  if (shown.every(resultsMode)) {
+                    const ready = shown.filter((c) => c.counts.graded > 0);
+                    return (
+                      <>
+                        <AnnounceButton
+                          graded={ready.length}
+                          onClick={() => announce(ready)}
+                          title={ready.length > 1 ? tr(`ประกาศคะแนน ${ready.length} ห้อง`, `Announce scores in ${ready.length} classes`) : undefined}
+                        />
+                        {gradeButton(g.totals.pending, workGradeHref(g))}
+                      </>
+                    );
+                  }
                   return (
                     <>
                       <RemindButton
