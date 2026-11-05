@@ -94,6 +94,9 @@ interface ClassroomPost {
   activity_type?: "announcement" | "assignment" | "exam" | "attendance";
   metadata?: { assignmentId?: string; groupName?: string; retake?: boolean };
 }
+/** The timeline label of a teacher's post. */
+const postLabel = (post: ClassroomPost) =>
+  post.activity_type === "exam" ? (post.metadata?.retake ? "สอบซ่อม" : "ข้อสอบใหม่") : post.activity_type === "assignment" ? "งานใหม่" : post.activity_type === "attendance" ? "เช็คชื่อ" : "ประกาศจากครู";
 /** A classmate this phone is being lent to, verified by the server (same school, same classroom). */
 interface ProxyFriend {
   classroomId: string;
@@ -727,7 +730,11 @@ export default function LiffStudentPage() {
   const processedEnrollRef = useRef<string | null>(null);
   // Deep link from a LINE message (?assignmentId=…, ?view=attendance), applied
   // once the student's classrooms, work and submissions have loaded.
-  const pendingDeepLinkRef = useRef<{ classroomId?: string; assignmentId?: string; view?: "timeline" | "work" | "attendance" } | null>(null);
+  const pendingDeepLinkRef = useRef<{ classroomId?: string; assignmentId?: string; view?: "timeline" | "work" | "attendance"; postId?: string } | null>(null);
+  // An announcement opened from its LINE link: shown in a popup once that classroom's posts load.
+  const pendingPostRef = useRef<string | null>(null);
+  // The announcement shown in a popup (tapped in the timeline, or opened from LINE).
+  const [viewingPost, setViewingPost] = useState<{ label: string; body: string; created_at: string } | null>(null);
   // A LINE link into a classroom the teacher has not admitted this student to
   // yet: the progress ring shows until they are accepted, then the link opens.
   const [joinWait, setJoinWait] = useState<{
@@ -1029,8 +1036,9 @@ export default function LiffStudentPage() {
           const assignmentParam = params.get("assignmentId") || undefined;
           const viewParam = params.get("view");
           const view = viewParam === "attendance" || viewParam === "work" || viewParam === "timeline" ? viewParam : undefined;
+          const postParam = params.get("post") || undefined;
           if (assignmentParam || view || linkedClass || classIdParam) {
-            pendingDeepLinkRef.current = { classroomId: linkedClass?.id || classIdParam || undefined, assignmentId: assignmentParam, view };
+            pendingDeepLinkRef.current = { classroomId: linkedClass?.id || classIdParam || undefined, assignmentId: assignmentParam, view, postId: postParam };
           }
         }
 
@@ -1332,6 +1340,8 @@ export default function LiffStudentPage() {
     );
 
   const handleEditSubmission = (a: Assignment, s: Submission, answers: Record<string, SubmissionAnswer>) => {
+    // Only while the teacher allows it ("ให้แก้ไขงาน"); quizzes never.
+    if (!canEditWork(a, s)) return;
     setViewingGradedSub(null);
     handleOpenAssignment(a, undefined, { submission: s, answers });
   };
@@ -1349,6 +1359,17 @@ export default function LiffStudentPage() {
     );
     if (isPendingHere || isSelectedClassroomPending) {
       alert("รอคุณครูอนุมัติเข้าห้องก่อน จึงจะทำงานได้");
+      return;
+    }
+    // Handed-in work (own phone) is view-only until the teacher allows an edit: show it instead of a blank sheet.
+    const ownHandedIn = forFriend ? undefined : submissions[a.id];
+    if (!edit && ownHandedIn && isHandedIn(ownHandedIn)) {
+      handleOpenGradedDetail(a, ownHandedIn);
+      return;
+    }
+    // A classmate's work already handed in from this phone stays handed in.
+    if (forFriend?.submittedAssignmentIds.includes(a.id)) {
+      alert(`${forFriend.first_name} ส่ง “${a.title}” แล้ว — แก้ไขไม่ได้จนกว่าคุณครูจะเปิดให้แก้ไข`);
       return;
     }
     const openWindow = getAssignmentWindow(a);
@@ -1834,6 +1855,8 @@ export default function LiffStudentPage() {
     // Still waiting for the teacher: show the ring and open the link once admitted.
     const targetClassroomId = link.classroomId || assignments.find((item) => item.id === link.assignmentId)?.classroom_id;
     const targetClassroom = classrooms.find((c) => c.id === targetClassroomId);
+    // An announcement link: its popup opens once the classroom's timeline has loaded (after admission too).
+    if (link.postId) pendingPostRef.current = link.postId;
     if (targetClassroom && isAwaitingApproval(targetClassroom)) {
       setJoinWait({ classroomId: targetClassroom.id, assignmentId: link.assignmentId, view: link.view });
       return;
@@ -1855,6 +1878,17 @@ export default function LiffStudentPage() {
       setCourseTab(link.view);
     }
   }, [isLoadingData, assignments, classrooms, submissions]);
+
+  // The announcement a LINE link pointed at, once its classroom's posts are here.
+  useEffect(() => {
+    const postId = pendingPostRef.current;
+    if (!postId) return;
+    const post = classroomPosts.find((p) => p.id === postId);
+    if (!post) return;
+    pendingPostRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setViewingPost({ label: postLabel(post), body: post.body, created_at: post.created_at });
+  }, [classroomPosts]);
 
   // The teacher's answer to the join request (classrooms reload when it changes):
   // admitted → the ring fills, then what the link pointed at opens.
@@ -2042,9 +2076,10 @@ export default function LiffStudentPage() {
     ...classroomPosts.map((post) => ({
       id: `post-${post.id}`,
       kind: post.activity_type || 'announcement',
-      label: post.activity_type === 'exam' ? (post.metadata?.retake ? 'สอบซ่อม' : 'ข้อสอบใหม่') : post.activity_type === 'assignment' ? 'งานใหม่' : post.activity_type === 'attendance' ? 'เช็คชื่อ' : 'ประกาศจากครู',
+      label: postLabel(post),
       body: post.body,
-      created_at: post.created_at || new Date().toISOString()
+      created_at: post.created_at || new Date().toISOString(),
+      isAnnouncement: !post.activity_type || post.activity_type === 'announcement',
     })),
     ...filteredAssignments.map((assignment) => ({
       id: `assignment-${assignment.id}`,
@@ -2610,6 +2645,23 @@ export default function LiffStudentPage() {
                           <span className="absolute left-[7px] top-5 bottom-0 w-px bg-slate-200 dark:bg-slate-800" />
                         )}
                         <span className={`absolute left-0 top-1.5 w-[15px] h-[15px] rounded-full ring-4 ${TIMELINE_DOT[item.kind] || TIMELINE_DOT.announcement}`} />
+                        {"isAnnouncement" in item && item.isAnnouncement ? (
+                          // Announcements open in a popup (the full message, with an OK button).
+                          <button
+                            type="button"
+                            onClick={() => setViewingPost({ label: item.label, body: item.body, created_at: item.created_at })}
+                            className="w-full text-left space-y-1 -mx-2 px-2 py-1 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer active:scale-[0.99] transition-transform"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                              <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{item.label}</span>
+                              <time className="text-[11px] text-slate-400 whitespace-nowrap">
+                                {new Date(item.created_at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })}
+                              </time>
+                            </div>
+                            <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed wrap-break-word line-clamp-3">{item.body}</p>
+                            <span className="text-[11px] font-bold text-line flex items-center gap-0.5">อ่านประกาศ <ChevronRight className="w-3 h-3" /></span>
+                          </button>
+                        ) : (
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                             <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{item.label}</span>
@@ -2619,6 +2671,7 @@ export default function LiffStudentPage() {
                           </div>
                           <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed wrap-break-word">{item.body}</p>
                         </div>
+                        )}
                       </li>
                     ))}
                   </ol>
@@ -3000,13 +3053,14 @@ export default function LiffStudentPage() {
                   </p>
                 </div>
               ) : null}
-              {submittedResult && submittedResult.autoScored > 0 && activeAssignment && (
+              {/* Homework too: the student can read back what they handed in before it is graded. */}
+              {submittedResult && activeAssignment && (
                 <button
                   type="button"
                   onClick={() => handleOpenGradedDetail(activeAssignment, submittedResult.submission)}
                   className="w-full h-11 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
                 >
-                  ดูคะแนนรายข้อ
+                  {submittedResult.autoScored > 0 ? "ดูคะแนนรายข้อ" : "ดูงานที่ส่ง"}
                 </button>
               )}
               {isTrackingAway && (
@@ -3676,13 +3730,42 @@ export default function LiffStudentPage() {
       )}
 
       {/* GRADED RESULT DETAIL MODAL */}
+      {/* An announcement, tapped in the timeline or opened from its LINE link */}
+      {viewingPost && (
+        <Sheet size="sm" onClose={() => setViewingPost(null)}>
+          <div className="flex items-start gap-3">
+            <span className="w-11 h-11 rounded-2xl bg-amber-100 dark:bg-amber-950 text-xl flex items-center justify-center shrink-0">📢</span>
+            <div className="min-w-0">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">{viewingPost.label}</h3>
+              <p className="text-xs text-slate-500">
+                {selectedClassroom ? `${subjectName(selectedClassroom)} • ` : ""}
+                {new Date(viewingPost.created_at).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}
+              </p>
+            </div>
+          </div>
+          <p className="text-sm text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed wrap-break-word max-h-[55dvh] overflow-y-auto">
+            {viewingPost.body}
+          </p>
+          <button
+            type="button"
+            autoFocus
+            onClick={() => setViewingPost(null)}
+            className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+          >
+            ตกลง
+          </button>
+        </Sheet>
+      )}
+
       {viewingGradedSub && (
         <Sheet onClose={() => setViewingGradedSub(null)}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-11 h-11 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-xl flex items-center justify-center shrink-0">🏆</span>
               <div className="min-w-0">
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">ผลการประเมิน</h3>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  {gradedSubmissionIds.has(viewingGradedSub.submission.id) ? "ผลการประเมิน" : "งานที่ส่ง"}
+                </h3>
                 <p className="text-xs text-slate-500 truncate">{viewingGradedSub.assignment.title}</p>
               </div>
             </div>
@@ -3717,7 +3800,9 @@ export default function LiffStudentPage() {
           )}
 
           <div className="space-y-3">
-            <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">คะแนนและข้อเสนอแนะรายข้อ</h4>
+            <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">
+              {gradedSubmissionIds.has(viewingGradedSub.submission.id) ? "คะแนนและข้อเสนอแนะรายข้อ" : "คำตอบที่ส่ง"}
+            </h4>
             {viewingGradedSub.questions === null && viewingGradedSub.loadFailed ? (
               <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 ring-1 ring-rose-200 dark:ring-rose-900 text-center space-y-2">
                 <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">โหลดรายละเอียดไม่สำเร็จ</p>

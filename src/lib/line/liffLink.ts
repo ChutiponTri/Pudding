@@ -6,13 +6,16 @@
  * The LIFF page reads these params: classId opens the classroom; code is the
  * classroom's invite code, which lets a classmate who has not joined yet send
  * a join request (classId alone is not enough); assignmentId opens that
- * assignment or its result; view=attendance opens the check-in tab.
+ * assignment or its result; view=attendance opens the check-in tab; post
+ * shows that announcement in a popup.
  */
 export function buildLiffUrl(options: {
   classroomId?: string | null;
   inviteCode?: string | null;
   assignmentId?: string | null;
   view?: 'attendance' | 'work' | 'timeline';
+  /** An announcement: the LIFF opens the classroom timeline and shows it in a popup. */
+  postId?: string | null;
 } = {}): string | null {
   const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
   if (!liffId) return null;
@@ -21,6 +24,7 @@ export function buildLiffUrl(options: {
   if (options.inviteCode) params.set('code', options.inviteCode);
   if (options.assignmentId) params.set('assignmentId', options.assignmentId);
   if (options.view) params.set('view', options.view);
+  if (options.postId) params.set('post', options.postId);
   const query = params.toString();
   return `https://liff.line.me/${liffId}${query ? `?${query}` : ''}`;
 }

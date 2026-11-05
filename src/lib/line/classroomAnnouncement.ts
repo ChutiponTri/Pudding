@@ -18,7 +18,9 @@ export function buildPostLineMessage(
   classroomId: string,
   metadata: Record<string, unknown> = {},
   /** Lets group members who have not joined yet request to join from the link. */
-  inviteCode?: string | null
+  inviteCode?: string | null,
+  /** The post itself: an announcement's link opens it in a popup in the LIFF. */
+  postId?: string
 ): string {
   let icon = '📢';
   let title = 'ประกาศจากครู';
@@ -38,6 +40,8 @@ export function buildPostLineMessage(
   if ((activityType === 'assignment' || activityType === 'exam') && assignmentId) {
     return withLiffLink(message, activityType === 'exam' ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', { classroomId, inviteCode, assignmentId });
   }
+  // An announcement's button opens it in a popup in the LIFF.
+  if (postId) return withLiffLink(message, 'อ่านประกาศใน Pudding', { classroomId, inviteCode, view: 'timeline', postId });
   return withLiffLink(message, 'เปิดห้องเรียนใน Pudding', { classroomId, inviteCode });
 }
 
@@ -66,12 +70,12 @@ export type PostLineFailure = 'failed' | 'quota' | 'no_group';
  * (metadata.lineText, e.g. attendance), otherwise built from the post.
  */
 export function postLineText(
-  post: { activity_type: PostActivityType; body: string; metadata?: Record<string, unknown> | null },
+  post: { id?: string; activity_type: PostActivityType; body: string; metadata?: Record<string, unknown> | null },
   classroom: LabelledClassroom & { id: string; invite_code?: string | null }
 ): string {
   const metadata = (post.metadata || {}) as Record<string, unknown>;
   if (typeof metadata.lineText === 'string' && metadata.lineText) return metadata.lineText;
-  return buildPostLineMessage(post.activity_type, classroom, post.body, classroom.id, metadata, classroom.invite_code);
+  return buildPostLineMessage(post.activity_type, classroom, post.body, classroom.id, metadata, classroom.invite_code, post.id);
 }
 
 /**

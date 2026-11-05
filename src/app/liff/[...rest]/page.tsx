@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 /** Query params the student portal reads; anything else is dropped. */
-const KEPT_PARAMS = ["code", "classId", "assignmentId", "view"] as const;
+const KEPT_PARAMS = ["code", "classId", "assignmentId", "view", "post"] as const;
 
 /**
  * Students inside LINE who hit an unknown /liff/... path go back to the student
