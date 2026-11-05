@@ -251,3 +251,34 @@ export async function leaveGroup(groupId: string): Promise<void> {
   });
   if (!response.ok && response.status !== 404) throw new Error(`LINE leave group failed with status ${response.status}`);
 }
+
+async function lineGet<T>(path: string): Promise<T | null> {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!token) return null;
+  try {
+    const response = await fetch(`https://api.line.me${path}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    return response.ok ? ((await response.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the plan's messages left this month cover one push to this group
+ * (LINE bills a group push once per member). Three reads run side by side:
+ * the plan's limit, this month's usage and the group's member count.
+ * - true: enough left (or the plan has no limit)
+ * - false: not enough; pushing would fail with "monthly limit", so don't
+ * - null: could not tell (a read failed); try the push and let LINE decide
+ */
+export async function groupPushAffordable(groupId: string): Promise<{ affordable: boolean | null; remaining?: number; members?: number }> {
+  const [quota, usage, members] = await Promise.all([
+    lineGet<{ type: 'none' | 'limited'; value?: number }>('/v2/bot/message/quota'),
+    lineGet<{ totalUsage: number }>('/v2/bot/message/quota/consumption'),
+    lineGet<{ count: number }>(`/v2/bot/group/${encodeURIComponent(groupId)}/members/count`),
+  ]);
+  if (quota?.type === 'none') return { affordable: true };
+  if (!quota || quota.value == null || !usage || !members) return { affordable: null };
+  const remaining = Math.max(0, quota.value - usage.totalUsage);
+  return { affordable: remaining >= members.count, remaining, members: members.count };
+}

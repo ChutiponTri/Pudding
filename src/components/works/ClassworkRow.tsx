@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Clock, Copy, Edit2, EyeOff, Rocket, ShieldAlert, Tag, Trash2 } from 'lucide-react';
+import { BellRing, Clock, Copy, Edit2, EyeOff, MessageCircle, Rocket, ShieldAlert, Tag, Trash2 } from 'lucide-react';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
@@ -29,6 +29,8 @@ export function ClassworkRow({
   onDelete,
   onPublishNow,
   onMoveGroup,
+  onRemind,
+  onReannounce,
   leading,
   now,
   tag,
@@ -43,6 +45,10 @@ export function ClassworkRow({
   onDelete?: () => void;
   onPublishNow?: () => void;
   onMoveGroup?: () => void;
+  /** "ทวงงาน": the bot names who has not handed in (share popup when it cannot). */
+  onRemind?: () => void;
+  /** Post the work's link to the LINE group again. */
+  onReannounce?: () => void;
   /** E.g. a drag handle. */
   leading?: ReactNode;
   now: number;
@@ -61,6 +67,21 @@ export function ClassworkRow({
   const menu: ActionMenuItem[] = [
     onStatusClick && { key: 'status', label: tr('เปลี่ยนสถานะการรับงาน', 'Change status'), icon: <Clock className="w-4 h-4" />, onSelect: onStatusClick },
     hidden && onPublishNow && { key: 'publish', label: tr('เผยแพร่ตอนนี้', 'Publish now'), icon: <Rocket className="w-4 h-4" />, onSelect: onPublishNow },
+    !hidden && onRemind && {
+      key: 'remind',
+      label: tr('ทวงงาน', 'Remind'),
+      hint: counts.notSubmitted > 0 ? tr(`ยังไม่ส่ง ${counts.notSubmitted}`, `${counts.notSubmitted} missing`) : undefined,
+      icon: <BellRing className="w-4 h-4" />,
+      disabled: !win.acceptsSubmissions || counts.notSubmitted === 0,
+      onSelect: onRemind,
+    },
+    !hidden && onReannounce && {
+      key: 'line',
+      label: tr('ประกาศซ้ำใน LINE', 'Post to LINE again'),
+      icon: <MessageCircle className="w-4 h-4" />,
+      disabled: !win.acceptsSubmissions,
+      onSelect: onReannounce,
+    },
     editHref && { key: 'edit', label: tr('แก้ไข', 'Edit'), icon: <Edit2 className="w-4 h-4" />, onSelect: () => router.push(editHref) },
     copyHref && { key: 'copy', label: tr('คัดลอกไปห้องอื่น', 'Copy to classes'), icon: <Copy className="w-4 h-4" />, onSelect: () => router.push(copyHref) },
     onMoveGroup && {

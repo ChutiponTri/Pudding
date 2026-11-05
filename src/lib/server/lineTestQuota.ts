@@ -107,7 +107,8 @@ export async function reserveLineTestSend(
   input: { teacherId: string; classroomId: string; source: 'web' | 'line' | 'reannounce' }
 ): Promise<LineTestReservation> {
   const kind: LinePushKind = input.source === REANNOUNCE_SOURCE ? 'reannounce' : 'test';
-  const what = kind === 'reannounce' ? 'ประกาศซ้ำ' : 'ทดสอบส่งข้อความ';
+  // Re-announcing a work or post and reminding about it ("ทวงงาน") share one budget.
+  const what = kind === 'reannounce' ? 'ส่งซ้ำ/ทวงงาน' : 'ทดสอบส่งข้อความ';
   const { data: inserted, error } = await supabase
     .from('line_test_sends')
     .insert({ teacher_id: input.teacherId, classroom_id: input.classroomId, source: input.source })

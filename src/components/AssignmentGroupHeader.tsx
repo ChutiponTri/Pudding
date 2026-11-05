@@ -7,7 +7,8 @@ import type { GradingCounts } from '@/lib/utils/gradingStatus';
 import { isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 
 export type GroupChipTone = 'amber' | 'rose' | 'slate' | 'emerald' | 'sky';
-export type GroupChip = { tone: GroupChipTone; label: string; icon?: React.ReactNode };
+/** `short` replaces `label` on phones (the full label stays as the tooltip). */
+export type GroupChip = { tone: GroupChipTone; label: string; short?: string; icon?: React.ReactNode };
 
 const CHIP_CLASSES: Record<GroupChipTone, string> = {
   amber: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300',
@@ -58,6 +59,7 @@ export function teacherGroupChips(
       tone: 'amber',
       icon: <Clock className="w-3 h-3" />,
       label: th ? `ครูกำลังตรวจ ${graded}/${checkable} · รอตรวจ ${pending}` : `Grading ${graded}/${checkable} · ${pending} to grade`,
+      short: th ? `ตรวจ ${graded}/${checkable} · รอ ${pending}` : `${graded}/${checkable} · ${pending} to grade`,
     });
   }
   if (missing > 0) {
@@ -65,6 +67,7 @@ export function teacherGroupChips(
       tone: 'rose',
       icon: <UserX className="w-3 h-3" />,
       label: th ? `นักเรียนยังส่งไม่ครบ ${missing} คน (${missingTasks} งาน)` : `Not all handed in: ${missing} missing (${missingTasks} tasks)`,
+      short: th ? `ค้างส่ง ${missing} · ${missingTasks} งาน` : `${missing} missing · ${missingTasks}`,
     });
   }
   if (unpublished > 0) {
@@ -126,10 +129,18 @@ export function AssignmentGroupHeader({
         {chips.map((chip) => (
           <span
             key={chip.label}
-            className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${CHIP_CLASSES[chip.tone]}`}
+            title={chip.short ? chip.label : undefined}
+            className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 whitespace-nowrap ${CHIP_CLASSES[chip.tone]}`}
           >
             {chip.icon}
-            {chip.label}
+            {chip.short ? (
+              <>
+                <span className="sm:hidden">{chip.short}</span>
+                <span className="hidden sm:inline">{chip.label}</span>
+              </>
+            ) : (
+              chip.label
+            )}
           </span>
         ))}
         <span className="w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-slate-500 dark:text-slate-400 bg-white/80 dark:bg-slate-800 ring-1 ring-slate-200 dark:ring-slate-700 group-hover/grouphead:ring-amber-400 group-hover/grouphead:text-amber-600 transition-colors">

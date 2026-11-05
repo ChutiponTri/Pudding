@@ -982,6 +982,49 @@ export default function ClassroomWorkspacePage() {
   };
 
   // The class reached the topic before the scheduled time: release it now.
+  /** What the bot did, for the notice; when it could not, the share popup is already open. */
+  const botNotice = (line: string, sent: string) =>
+    line === 'sent'
+      ? sent
+      : line === 'no_group'
+      ? tr('ห้องนี้ยังไม่เชื่อมกลุ่ม LINE — แชร์เองได้จากหน้าต่างที่เปิดขึ้น', 'No linked LINE group — share it from the window that opened')
+      : line === 'quota'
+      ? tr('โควตา LINE เดือนนี้ไม่พอ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น', 'Not enough LINE quota this month — share it from the window that opened')
+      : tr('บอทส่งไม่ได้ตอนนี้ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น', 'The bot could not send it — share it from the window that opened');
+
+  /** "ทวงงาน": the bot names who has not handed in; the share popup opens whenever it cannot send. */
+  const handleRemindAssignment = async (assignment: Assignment) => {
+    if (!confirm(tr(`ทวงงาน "${assignment.title}" ในกลุ่ม LINE ของห้องนี้?`, `Remind about "${assignment.title}" in this class's LINE group?`))) return;
+    try {
+      const line = await dataService.remindAssignment(assignment.id, assignment.title);
+      setNotice(line === 'none' ? tr('นักเรียนส่งงานนี้ครบแล้ว', 'Everyone has handed this in') : botNotice(line, tr('ทวงงานในกลุ่ม LINE แล้ว', 'Reminder sent to the LINE group')));
+    } catch (err) {
+      setNotice(err instanceof Error && err.message ? err.message : tr('ทวงงานไม่สำเร็จ', 'Could not send the reminder'));
+    }
+  };
+
+  const handleReannounceAssignment = async (assignment: Assignment) => {
+    if (!confirm(tr(`ส่งลิงก์ "${assignment.title}" เข้ากลุ่ม LINE อีกครั้ง?`, `Post "${assignment.title}" to the LINE group again?`))) return;
+    try {
+      const line = await dataService.reannounceAssignment(assignment.id, assignment.title);
+      setNotice(botNotice(line, tr('ส่งเข้า LINE แล้ว', 'Posted to LINE')));
+    } catch (err) {
+      setNotice(err instanceof Error && err.message ? err.message : tr('ส่งไม่สำเร็จ', 'Could not post'));
+    }
+  };
+
+  /** A timeline post sent to the LINE group again by the bot (share popup when it cannot). */
+  const handleResendPost = async (postId: string, title?: string) => {
+    if (!confirm(tr('ส่งโพสต์นี้เข้ากลุ่ม LINE อีกครั้ง?', 'Send this post to the LINE group again?'))) return;
+    try {
+      const line = await dataService.resendPost(postId, title);
+      setNotice(botNotice(line, tr('ส่งเข้า LINE อีกครั้งแล้ว', 'Sent to LINE again')));
+      if (line === 'sent') await loadWorkspace();
+    } catch (err) {
+      setNotice(err instanceof Error && err.message ? err.message : tr('ส่งไม่สำเร็จ', 'Could not send'));
+    }
+  };
+
   const handlePublishAssignmentNow = async (assignment: Assignment) => {
     const kind = assignment.is_exam ? tr('ข้อสอบ', 'exam') : tr('งาน', 'assignment');
     if (!confirm(tr(`เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`, `Publish the ${kind} "${assignment.title}" now?\nStudents will see it, can start right away, and get a LINE notification.`))) return;
@@ -2184,11 +2227,39 @@ export default function ClassroomWorkspacePage() {
                       </Link>
                     )}
 
-                    {/* Post Footer note */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
-                      <span>{tr('📢 ประกาศในกลุ่ม LINE แล้ว', '📢 Announced in the LINE group')}</span>
-                      <span>{item.badgeLabel}</span>
-                    </div>
+                    {/* Post Footer: what LINE got, and "send again" (the bot checks the quota first; share popup when it cannot) */}
+                    {(() => {
+                      const work = item.assignmentId ? assignments.find((a) => a.id === item.assignmentId) : undefined;
+                      // A work: its link again with the current deadline, while it still takes work. Other posts: the same post again.
+                      const canResend = !item.scheduledAt && (work ? getAssignmentWindow(work).acceptsSubmissions && !getAssignmentWindow(work).isDraft : item.isPost);
+                      return (
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 text-[10px] text-slate-400">
+                          <span className="min-w-0 truncate">
+                            {item.scheduledAt
+                              ? tr('⏰ ส่งเข้า LINE เมื่อถึงเวลาเผยแพร่', '⏰ Sent to LINE when it is published')
+                              : item.lineShare
+                              ? tr('⚠️ ยังไม่ได้ส่งเข้า LINE', '⚠️ Not in LINE yet')
+                              : item.isPost
+                              ? tr('📢 ส่งเข้ากลุ่ม LINE แล้ว', '📢 Sent to the LINE group')
+                              : ''}
+                          </span>
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            {canResend && (
+                              <button
+                                type="button"
+                                onClick={() => (work ? handleReannounceAssignment(work) : handleResendPost(item.rawId!, item.title))}
+                                title={tr('ให้บอทส่งเข้ากลุ่ม LINE อีกครั้ง (ถ้าโควตาไม่พอ จะเปิดให้แชร์เอง)', 'Ask the bot to send it to the LINE group again (share it yourself if the quota is short)')}
+                                className="h-6 px-2 rounded-lg bg-[#06c755]/10 hover:bg-[#06c755]/20 text-[#06a347] dark:text-[#3ddc84] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors"
+                              >
+                                <Share2 className="w-3 h-3" />
+                                {tr('ส่งซ้ำ LINE', 'Resend')}
+                              </button>
+                            )}
+                            <span>{item.badgeLabel}</span>
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </article>
                 ))}
 
@@ -2443,6 +2514,8 @@ export default function ClassroomWorkspacePage() {
                               onStatusClick={() => setStatusAssignment(item)}
                               onDelete={() => handleDeleteAssignment(item.id)}
                               onPublishNow={itemWindow.isScheduled || itemWindow.isDraft ? () => handlePublishAssignmentNow(item) : undefined}
+                              onRemind={() => handleRemindAssignment(item)}
+                              onReannounce={() => handleReannounceAssignment(item)}
                               onMoveGroup={() => {
                                 setEditingAssignmentGroup(item);
                                 setTargetGroupForAssignment(item.group_name || '');

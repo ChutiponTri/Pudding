@@ -92,9 +92,28 @@ export function reannounceShareToken(assignmentId: string): string {
   return `${REANNOUNCE_PREFIX}${assignmentId}.${sig}`;
 }
 
-/** What a share token points at: a timeline post, or a work to re-announce. null if it was not made here. */
-export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce'; id: string } | null {
+/** Prefix of share tokens for a work's reminder ("ทวงงาน": who has not handed in yet). */
+const REMIND_PREFIX = 'm:';
+
+/** Link token for a work's reminder shared by hand: `m:<assignmentId>.<16-char HMAC>`. */
+export function remindShareToken(assignmentId: string): string {
+  const digest = createHmac('sha256', inviteSecret()).update(`remind-share:${assignmentId}`).digest();
+  let sig = '';
+  for (let i = 0; i < 16; i++) sig += ALPHABET[digest[i] & 31];
+  return `${REMIND_PREFIX}${assignmentId}.${sig}`;
+}
+
+/** What a share token points at: a timeline post, a work to re-announce, or a work's reminder. null if it was not made here. */
+export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind'; id: string } | null {
   if (typeof token !== 'string' || token.length > 200) return null;
+  if (token.startsWith(REMIND_PREFIX)) {
+    const dot = token.lastIndexOf('.');
+    if (dot <= REMIND_PREFIX.length) return null;
+    const id = token.slice(REMIND_PREFIX.length, dot);
+    const expected = Buffer.from(remindShareToken(id));
+    const given = Buffer.from(token);
+    return expected.length === given.length && timingSafeEqual(expected, given) ? { kind: 'remind', id } : null;
+  }
   if (token.startsWith(REANNOUNCE_PREFIX)) {
     const dot = token.lastIndexOf('.');
     if (dot <= REANNOUNCE_PREFIX.length) return null;

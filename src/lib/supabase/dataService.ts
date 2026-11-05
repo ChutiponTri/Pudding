@@ -604,7 +604,6 @@ export const dataService = {
     return (json.assignment as Assignment) || null;
   },
 
-  /** Posts the work's link to the class LINE group again. */
   /**
    * Posts the work's link to the class LINE group again. When the bot cannot
    * (no group, re-announce limit, LINE refused), the share popup opens instead
@@ -615,6 +614,37 @@ export const dataService = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ assignmentId, action: 'reannounce' }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    reportLineUnsent(json.line, json.share, title, json.message);
+    return (json.line as LinePostStatus) || 'sent';
+  },
+
+  /**
+   * "ทวงงาน": the bot posts to the class group who has not handed this work in.
+   * Checks the LINE quota first; whenever the bot cannot send (quota, no group,
+   * rationing, LINE refused) the share popup opens instead. 'none' = everyone handed in.
+   */
+  async remindAssignment(assignmentId: string, title?: string): Promise<LinePostStatus | 'none'> {
+    const res = await authFetch('/api/assignments/override', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignmentId, action: 'remind' }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    if (json.line === 'none') return 'none';
+    reportLineUnsent(json.line, json.share, title ? `ทวงงาน: ${title}` : undefined, json.message);
+    return (json.line as LinePostStatus) || 'sent';
+  },
+
+  /** A timeline post sent to the class LINE group again (same fallback as remindAssignment). */
+  async resendPost(postId: string, title?: string): Promise<LinePostStatus> {
+    const res = await authFetch('/api/classrooms/posts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'resend', id: postId }),
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);

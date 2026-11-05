@@ -1,10 +1,11 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
+import { announceScheduledPosts, postLineText } from '@/lib/line/classroomAnnouncement';
+import { botSendOrShare } from '@/lib/server/lineSend';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { getActor } from '@/lib/auth/actor';
 import { classroomRole, errorResponse, FORBIDDEN, HttpError, loadClassroom, requireTeacherOfClassroom } from '@/lib/server/access';
-import { createClassroomPost, withLineShare, type ClassroomPost } from '@/lib/server/classroomPosts';
+import { createClassroomPost, postShare, withLineShare, type ClassroomPost } from '@/lib/server/classroomPosts';
 import type { PostActivityType } from '@/lib/line/classroomAnnouncement';
 
 export const runtime = 'nodejs';
@@ -49,6 +50,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
+    if (body.action === 'resend') return resendPost(request, typeof body.id === 'string' ? body.id : '');
     const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
     const postBody = typeof body.body === 'string' ? body.body.trim() : '';
     const activityType = (typeof body.activityType === 'string' ? body.activityType : 'announcement') as PostActivityType;
@@ -69,6 +71,41 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return errorResponse(error);
   }
+}
+
+/**
+ * POST { action: 'resend', id }: the teacher asks the bot to send a timeline
+ * post to the class LINE group again. Falls back to sharing it by hand when the
+ * bot cannot (see botSendOrShare: no group, monthly quota, rationing, LINE error).
+ */
+async function resendPost(request: NextRequest, id: string) {
+  if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
+  const supabase = createServiceSupabaseClient();
+  const actor = await getActor(request);
+  const { data: post } = await supabase.from('classroom_posts').select('*').eq('id', id).maybeSingle<ClassroomPost>();
+  if (!post) throw new HttpError(404, 'ไม่พบโพสต์');
+  const classroom = await requireTeacherOfClassroom(supabase, actor, post.classroom_id);
+  const metadata = (post.metadata || {}) as Record<string, unknown>;
+  const publishAt = typeof metadata.publishAt === 'string' ? new Date(metadata.publishAt).getTime() : NaN;
+  if (metadata.pendingLine || publishAt > Date.now()) {
+    return NextResponse.json({ error: 'โพสต์นี้ยังไม่ถึงเวลาเผยแพร่ ระบบจะส่งเข้า LINE ให้เองเมื่อถึงเวลา' }, { status: 409 });
+  }
+  const text = postLineText({ ...post, activity_type: post.activity_type as PostActivityType }, classroom);
+  const result = await botSendOrShare(supabase, {
+    groupId: classroom.line_group_id,
+    text,
+    share: postShare(post.id, text),
+    teacherId: actor!.kind === 'teacher' ? actor!.userId : '',
+    classroomId: classroom.id,
+  });
+  if (result.line === 'sent' && metadata.lineStatus) {
+    // It reached the group now: the timeline stops offering to share it by hand.
+    const rest = { ...metadata };
+    delete rest.lineStatus;
+    await supabase.from('classroom_posts').update({ metadata: rest }).eq('id', id);
+    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+  }
+  return NextResponse.json(result);
 }
 
 /** Load a post and confirm the caller teaches its classroom. */

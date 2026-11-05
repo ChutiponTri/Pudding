@@ -4,7 +4,7 @@ import { after } from 'next/server';
 import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
 import { postLineText, type PostActivityType, type PostLineFailure } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { postShareToken, reannounceShareToken } from '@/lib/server/inviteCodes';
+import { postShareToken, reannounceShareToken, remindShareToken } from '@/lib/server/inviteCodes';
 import type { LabelledClassroom } from '@/lib/utils/classroomLabel';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import type { Assignment } from '@/types/database';
@@ -164,6 +164,11 @@ export function postShare(postId: string, text: string): PostShare {
 /** Re-announcing a work the bot could not send: shared by hand like a post. */
 export function reannounceShare(assignmentId: string, text: string): PostShare {
   return { text, url: shareUrl(reannounceShareToken(assignmentId)) };
+}
+
+/** A work's reminder ("ทวงงาน") the bot could not send: shared by hand like a post. */
+export function remindShare(assignmentId: string, text: string): PostShare {
+  return { text, url: shareUrl(remindShareToken(assignmentId)) };
 }
 
 /** The /liff/share page for a share token; null without a LIFF id. */

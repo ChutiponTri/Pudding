@@ -29,6 +29,7 @@ import {
   Trash2,
   Unlock,
   X,
+  BellRing,
 } from 'lucide-react';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -336,6 +337,42 @@ export function WorksBoard() {
     }
   };
 
+  /**
+   * "ทวงงาน": the bot names who has not handed in, in each class's LINE group.
+   * The server checks the LINE quota first; whenever the bot cannot send, the
+   * share popup opens so the teacher sends it from their own LINE.
+   */
+  const remind = async (list: WorkClass[]) => {
+    if (!list.length) return;
+    const one = list[0];
+    const ask = list.length > 1
+      ? tr(`ทวงงาน "${one.assignment.title}" ใน ${list.length} ห้อง?`, `Remind about "${one.assignment.title}" in ${list.length} classes?`)
+      : tr(`ทวงงาน "${one.assignment.title}" ในกลุ่ม LINE ของ ${one.classroom.name}?`, `Remind about "${one.assignment.title}" in the ${one.classroom.name} LINE group?`);
+    if (!confirm(ask)) return;
+    let sent = 0;
+    let manual = 0;
+    let done = 0;
+    let firstError = '';
+    for (const c of list) {
+      try {
+        const line = await dataService.remindAssignment(c.assignment.id, list.length > 1 ? `${c.assignment.title} · ${c.classroom.name}` : c.assignment.title);
+        if (line === 'none') done++;
+        else if (line === 'sent') sent++;
+        else manual++;
+      } catch (err) {
+        firstError ||= errorText(err, tr('ทวงงานไม่สำเร็จ', 'Could not send the reminder'));
+      }
+    }
+    showToast(
+      firstError ||
+        [
+          sent && tr(`ทวงงานแล้ว ${list.length > 1 ? `${sent} ห้อง` : ''}`.trim(), `Reminded${list.length > 1 ? ` ${sent} classes` : ''}`),
+          manual && tr(`บอทส่งไม่ได้ ${manual} ห้อง — แชร์เองจากหน้าต่าง`, `${manual} need sharing yourself`),
+          done && tr(`ส่งครบแล้ว ${done} ห้อง`, `${done} all handed in`),
+        ].filter(Boolean).join(' • ')
+    );
+  };
+
   const saveDue = async (target: WorkClass, group: WorkGroup, due: string, all: boolean) => {
     const list = all ? group.classes : [target];
     for (const c of list) {
@@ -373,6 +410,14 @@ export function WorksBoard() {
           disabled: !c.window.acceptsSubmissions,
           onSelect: () => reannounce(c),
         },
+      c.published && {
+        key: 'remind',
+        label: tr('ทวงงาน', 'Remind'),
+        hint: c.counts.notSubmitted > 0 ? tr(`ยังไม่ส่ง ${c.counts.notSubmitted}`, `${c.counts.notSubmitted} missing`) : undefined,
+        icon: <BellRing className="w-4 h-4" />,
+        disabled: !c.window.acceptsSubmissions || c.counts.notSubmitted === 0,
+        onSelect: () => remind([c]),
+      },
       { key: 'edit', label: tr('แก้ไขเฉพาะห้องนี้', 'Edit this class only'), icon: <Edit2 className="w-4 h-4" />, onSelect: () => router.push(editorHref('edit', c.assignment)) },
       { key: 'due', label: tr('เปลี่ยนกำหนดส่ง', 'Change due date'), icon: <Calendar className="w-4 h-4" />, onSelect: () => setDueTarget({ item: c, group: g }) },
       c.published &&
@@ -448,6 +493,21 @@ export function WorksBoard() {
           ),
         },
       },
+      g.published && (() => {
+        const missing = accepting.filter((c) => c.counts.notSubmitted > 0);
+        return {
+          key: 'remind',
+          label: g.classes.length > 1 ? tr('ทวงงานทุกห้อง', 'Remind (all classes)') : tr('ทวงงาน', 'Remind'),
+          hint: missing.length
+            ? g.classes.length > 1
+              ? tr(`${missing.length} ห้อง`, `${missing.length} classes`)
+              : tr(`ยังไม่ส่ง ${missing[0].counts.notSubmitted}`, `${missing[0].counts.notSubmitted} missing`)
+            : undefined,
+          icon: <BellRing className="w-4 h-4" />,
+          disabled: missing.length === 0,
+          onSelect: () => remind(missing),
+        };
+      })(),
       g.published && {
         key: 'close',
         label: g.classes.length > 1 ? tr('ปิดรับทุกห้อง', 'Close in all classes') : tr('ปิดรับงาน', 'Close submissions'),

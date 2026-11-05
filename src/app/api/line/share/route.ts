@@ -4,6 +4,7 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { postLineText, reannounceLineText, type PostActivityType } from '@/lib/line/classroomAnnouncement';
 import { lineMessagesForText } from '@/lib/line/messaging';
 import { parseShareToken } from '@/lib/server/inviteCodes';
+import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import type { Assignment } from '@/types/database';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 
@@ -21,6 +22,21 @@ export async function GET(request: NextRequest) {
   if (!target) return NextResponse.json({ error: 'ลิงก์แชร์ไม่ถูกต้อง' }, { status: 404 });
 
   const supabase = createServiceSupabaseClient();
+  if (target.kind === 'remind') {
+    // A work's reminder ("ทวงงาน"): rebuilt now, so it names only who still has not handed in.
+    const { data: assignment } = await supabase.from('assignments').select('*').eq('id', target.id).maybeSingle<Assignment>();
+    if (!assignment) return NextResponse.json({ error: 'ไม่พบงานนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
+    const { data: room } = await supabase
+      .from('classrooms')
+      .select('id, name, course_name, subject_code, invite_code, students')
+      .eq('id', assignment.classroom_id)
+      .maybeSingle();
+    if (!room) return NextResponse.json({ error: 'ไม่พบห้องเรียนของงานนี้' }, { status: 404 });
+    const names = await missingStudentNames(supabase, assignment, room);
+    if (!names.length) return NextResponse.json({ error: 'นักเรียนส่งงานนี้ครบแล้ว ไม่ต้องทวงแล้ว' }, { status: 409 });
+    const text = reminderLineText(assignment, room, names);
+    return NextResponse.json({ classroom: classroomTitle(room), text, messages: lineMessagesForText(text) });
+  }
   if (target.kind === 'reannounce') {
     // A work's link posted again ("ส่งซ้ำ"): rebuilt from the work, so it shows the current deadline.
     const { data: assignment } = await supabase.from('assignments').select('*').eq('id', target.id).maybeSingle<Assignment>();

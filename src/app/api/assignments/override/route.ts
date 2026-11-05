@@ -4,10 +4,10 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { announceScheduledPosts, reannounceLineText } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, reannounceShare, withLineShare, type ClassroomPost } from '@/lib/server/classroomPosts';
+import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, reannounceShare, remindShare, withLineShare, type ClassroomPost } from '@/lib/server/classroomPosts';
+import { botSendOrShare } from '@/lib/server/lineSend';
+import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
-import { releaseLineTestSend, reserveLineTestSend } from '@/lib/server/lineTestQuota';
-import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 
 export const runtime = 'nodejs';
@@ -38,7 +38,8 @@ export async function POST(request: NextRequest) {
   const extendedUntil = typeof body.extended_until === 'string' ? body.extended_until : undefined;
   const publishNow = body.action === 'publish_now';
   const reannounce = body.action === 'reannounce';
-  if (!assignmentId || (!publishNow && !reannounce && !STATUSES.includes(status))) {
+  const remind = body.action === 'remind';
+  if (!assignmentId || (!publishNow && !reannounce && !remind && !STATUSES.includes(status))) {
     return NextResponse.json({ error: 'assignmentId and a valid status_override are required' }, { status: 400 });
   }
   const extendedMs = extendedUntil ? new Date(extendedUntil).getTime() : NaN;
@@ -52,7 +53,8 @@ export async function POST(request: NextRequest) {
 
   const { data: classroom } = await supabase
     .from('classrooms')
-    .select('id, name, course_name, subject_code, teacher_id, teachers, line_group_id, invite_code')
+    // students: a reminder names who has not handed in.
+    .select('id, name, course_name, subject_code, teacher_id, teachers, line_group_id, invite_code, students')
     .eq('id', previous.classroom_id)
     .maybeSingle();
   const isTeacher =
@@ -63,28 +65,24 @@ export async function POST(request: NextRequest) {
   // Posts the work's link to the class LINE group again (rationed: billed per group member).
   // Whenever the bot cannot (no group, re-announce limit, LINE refused), the
   // teacher gets the same message to share from their own LINE (costs no quota).
-  if (reannounce) {
+  if (reannounce || remind) {
     const win = getAssignmentWindow(previous);
     if (win.isDraft || win.isScheduled) return NextResponse.json({ error: 'งานนี้ยังไม่เผยแพร่' }, { status: 409 });
     if (!win.acceptsSubmissions) return NextResponse.json({ error: 'งานนี้ปิดรับแล้ว' }, { status: 409 });
-    const text = reannounceLineText(previous, classroom);
-    const share = reannounceShare(assignmentId, text);
-    if (!classroom.line_group_id) return NextResponse.json({ assignment: previous, line: 'no_group', share });
-    const reservation = await reserveLineTestSend(supabase, { teacherId: userId, classroomId: classroom.id, source: 'reannounce' });
-    if (!reservation.ok) {
-      return NextResponse.json(
-        { assignment: previous, line: 'limit', share, message: reservation.message },
-        { headers: reservation.retryAfterSeconds ? { 'Retry-After': String(reservation.retryAfterSeconds) } : undefined }
-      );
+    let text: string;
+    let share: ReturnType<typeof reannounceShare>;
+    if (remind) {
+      // "ทวงงาน": names who still has not handed in (the retake's list, if any).
+      const names = await missingStudentNames(supabase, previous, classroom);
+      if (!names.length) return NextResponse.json({ assignment: previous, line: 'none', missing: 0 });
+      text = reminderLineText(previous, classroom, names);
+      share = remindShare(assignmentId, text);
+    } else {
+      text = reannounceLineText(previous, classroom);
+      share = reannounceShare(assignmentId, text);
     }
-    try {
-      await pushLineGroupText(classroom.line_group_id, text);
-    } catch (pushError) {
-      await releaseLineTestSend(supabase, reservation.id);
-      console.error('LINE re-announce failed:', pushError);
-      return NextResponse.json({ assignment: previous, line: isLineQuotaError(pushError) ? 'quota' : 'failed', share });
-    }
-    return NextResponse.json({ assignment: previous, line: 'sent' });
+    const result = await botSendOrShare(supabase, { groupId: classroom.line_group_id, text, share, teacherId: userId, classroomId: classroom.id });
+    return NextResponse.json({ assignment: previous, ...result });
   }
 
   if (publishNow) {
