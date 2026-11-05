@@ -1405,14 +1405,15 @@ export default function LiffStudentPage() {
     try {
       // One data-service call loads the assignment and its questions together.
       // A quiz opening is counted on the server at the same time (quizExit.ts).
-      const [{ questions }, opened] = await Promise.all([
-        dataService.getAssignmentById(a.id),
-        a.is_exam && !edit ? dataService.openQuizAttempt(a.id, forFriend?.studentNumber) : Promise.resolve(null),
-      ]);
+      const questionsRequest = dataService.getAssignmentById(a.id);
+      // A forfeit is decided (and its blank sheet handed in) by the opening alone: show it without waiting for the questions.
+      questionsRequest.catch(() => {});
+      const opened = a.is_exam && !edit ? await dataService.openQuizAttempt(a.id, forFriend?.studentNumber) : null;
       if (opened?.action === "forfeit") {
         await forfeitQuiz(a, forFriend || null, opened);
         return;
       }
+      const { questions } = await questionsRequest;
       setQuizOpen(opened);
       setActiveQuestions(questions);
       if (opened?.action === "warn") setIsQuizExitWarningOpen(true);
@@ -1431,7 +1432,8 @@ export default function LiffStudentPage() {
    */
   const forfeitQuiz = async (a: Assignment, forFriend: ProxyFriend | null, opened: QuizOpenResult) => {
     if (!currentStudent) return;
-    const sub = await dataService.submitStudentWork({
+    // The server already handed the blank sheet in with the opening; older servers did not.
+    const sub = opened.submission ?? await dataService.submitStudentWork({
       assignment_id: a.id,
       student_id: currentStudent.student_id || currentStudent.id,
       student_name: currentStudent.name,
@@ -2620,19 +2622,7 @@ export default function LiffStudentPage() {
                   {[subjectCode(selectedClassroom), roomLabel(selectedClassroom)].filter(Boolean).join(' • ')}
                 </p>
               </div>
-              {isSelectedClassroomPending ? (
-                <Pill tone="amber">รออนุมัติ</Pill>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setIsProxySheetOpen(true)}
-                  title="เพื่อนโทรศัพท์มีปัญหา? ให้เพื่อนยืมเครื่องนี้ส่งงาน/เช็คชื่อ"
-                  className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-sky-50 dark:bg-sky-950/60 ring-1 ring-sky-200 dark:ring-sky-900 text-sky-700 dark:text-sky-300 text-xs font-semibold hover:bg-sky-100 dark:hover:bg-sky-950 transition-colors cursor-pointer"
-                >
-                  <Users className="w-4 h-4" />
-                  <span>ส่งแทนเพื่อน</span>
-                </button>
-              )}
+              {isSelectedClassroomPending && <Pill tone="amber">รออนุมัติ</Pill>}
             </div>
 
             {isSelectedClassroomPending && (
@@ -2931,23 +2921,26 @@ export default function LiffStudentPage() {
 
             {/* Bottom tab bar */}
             <nav className={`fixed bottom-0 inset-x-0 z-40 mx-auto w-full ${FRAME} bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]`}>
-              <div className="grid grid-cols-3 px-2 py-1.5">
+              <div className={`grid ${isSelectedClassroomPending ? 'grid-cols-3' : 'grid-cols-4'} px-1 py-1.5`}>
                 {([
                   { key: 'timeline', label: 'ไทม์ไลน์', icon: Megaphone },
                   { key: 'work', label: 'งาน / ข้อสอบ', icon: BookOpen },
                   { key: 'attendance', label: 'เช็คชื่อ', icon: CalendarCheck },
+                  // Not a page: opens the lending sheet (a classmate's phone has a problem). Admitted students only.
+                  ...(isSelectedClassroomPending ? [] : [{ key: 'proxy', label: 'ส่งแทนเพื่อน', icon: Users }] as const),
                 ] as const).map(({ key, label, icon: Icon }) => {
-                  const isActive = courseTab === key;
+                  const isActive = key === 'proxy' ? isProxySheetOpen : courseTab === key;
                   return (
                     <button
                       key={key}
-                      onClick={() => setCourseTab(key)}
-                      aria-current={isActive ? 'page' : undefined}
-                      className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl text-[11px] font-semibold transition-colors cursor-pointer ${
+                      onClick={() => (key === 'proxy' ? setIsProxySheetOpen(true) : setCourseTab(key))}
+                      title={key === 'proxy' ? 'เพื่อนโทรศัพท์มีปัญหา? ให้เพื่อนยืมเครื่องนี้ส่งงาน/เช็คชื่อ' : undefined}
+                      aria-current={isActive && key !== 'proxy' ? 'page' : undefined}
+                      className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                         isActive ? 'text-line' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
                       }`}
                     >
-                      <span className={`px-4 py-1 rounded-full transition-colors duration-300 ${isActive ? 'bg-emerald-50 dark:bg-emerald-950/60' : ''}`}>
+                      <span className={`px-3.5 py-1 rounded-full transition-colors duration-300 ${isActive ? 'bg-emerald-50 dark:bg-emerald-950/60' : ''}`}>
                         <Icon key={isActive ? 'on' : 'off'} className={`w-5 h-5 ${isActive ? 'liff-nudge' : ''}`} />
                       </span>
                       <span>{label}</span>

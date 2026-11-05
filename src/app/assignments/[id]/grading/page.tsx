@@ -39,7 +39,6 @@ import {
   ArrowLeft,
   Award,
   ChevronRight,
-  ExternalLink,
   Sparkles,
   UserCheck,
   FileText,
@@ -1165,22 +1164,13 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               totalTimeAwaySeconds={sub.total_time_away_seconds}
                               quizExitCount={sub.quiz_exit_count}
                               autoForfeited={sub.auto_forfeited}
+                              onClick={() => handleOpenAudit(sub)}
                             />
                           )}
                           {sub.submitted_by && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px] font-bold">
                               📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
                             </span>
-                          )}
-                          {isSuspicious(sub) && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenAudit(sub)}
-                              className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-0.5 cursor-pointer"
-                            >
-                              <span>{t('grading.actions.view_audit')}</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </button>
                           )}
                         </div>
                       )}
@@ -1252,6 +1242,15 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                             <p className="text-[11px] text-slate-400 font-mono">
                               {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ไม่มีรหัสนักเรียน' : 'No student ID')}
                             </p>
+                            {/* Borrowed phone: who sent it, under the name (not an integrity signal). */}
+                            {sub?.submitted_by && isHandedIn(sub) && (
+                              <p
+                                className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-48"
+                                title={th ? 'นักเรียนส่งด้วยโทรศัพท์ของเพื่อนร่วมห้อง' : "Sent from a classmate's phone"}
+                              >
+                                📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -1340,7 +1339,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                       </td>
 
                       <td className="py-3.5 px-3 lg:px-6">
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center">
                           {tracksAway ? (
                             <AntiCheatingBadge
                               isFlagged={sub.is_flagged_suspicious}
@@ -1348,27 +1347,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               totalTimeAwaySeconds={sub.total_time_away_seconds}
                               quizExitCount={sub.quiz_exit_count}
                               autoForfeited={sub.auto_forfeited}
+                              onClick={() => handleOpenAudit(sub)}
                             />
                           ) : (
-                            !sub.submitted_by && <span className="text-slate-400">-</span>
-                          )}
-                          {sub.submitted_by && (
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px] font-bold whitespace-nowrap"
-                              title={th ? 'นักเรียนส่งด้วยโทรศัพท์ของเพื่อนร่วมห้อง' : "Sent from a classmate's phone"}
-                            >
-                              📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
-                            </span>
-                          )}
-                          {isSuspicious(sub) && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenAudit(sub)}
-                              className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-0.5 cursor-pointer"
-                            >
-                              <span>{t('grading.actions.view_audit')}</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </button>
+                            <span className="text-slate-400">-</span>
                           )}
                         </div>
                       </td>

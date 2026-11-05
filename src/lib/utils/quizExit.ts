@@ -32,4 +32,6 @@ export interface QuizOpenResult {
   warnings: number;
   /** false: not tracked (homework, or the database has no quiz_attempts table yet). */
   tracked: boolean;
+  /** action 'forfeit': the blank sheet the server already handed in (student copy). */
+  submission?: import('@/types/database').Submission;
 }
