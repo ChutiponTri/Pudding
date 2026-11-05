@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'คุณยังไม่ได้อยู่ในห้องเรียนนี้ หรือยังรอคุณครูอนุมัติ' }, { status: 403 });
     }
     if (!session || session.status === 'closed') {
-      return NextResponse.json({ error: 'ขณะนี้ไม่มีคาบเช็คชื่อที่เปิดอยู่' }, { status: 400 });
+      return NextResponse.json({ error: 'ขณะนี้ไม่มีคาบเช็กชื่อที่เปิดอยู่' }, { status: 400 });
     }
     // Borrowed phone: check in the classmate; the phone's owner is recorded as the sender.
     let proxyStudent: ProxyStudent | null = null;
@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
     const now = Date.now();
     const startTime = new Date(session.starts_at).getTime();
     if (now < startTime) {
-      return NextResponse.json({ error: 'ยังไม่ถึงเวลาเช็คชื่อของคาบนี้' }, { status: 400 });
+      return NextResponse.json({ error: 'ยังไม่ถึงเวลาเช็กชื่อของคาบนี้' }, { status: 400 });
     }
     const onTimeLimit = startTime + (session.on_time_until_minutes || 10) * 60 * 1000;
     const lateLimit = startTime + (session.late_until_minutes || 30) * 60 * 1000;
@@ -218,7 +218,7 @@ export async function POST(request: NextRequest) {
 
     // Never create a placeholder student profile.
     if (!firstName || !lastName) {
-      return NextResponse.json({ error: 'ยังไม่พบชื่อและนามสกุลจาก LIFF กรุณาซิงค์โปรไฟล์นักเรียนแล้วลองเช็คชื่ออีกครั้ง' }, { status: 409 });
+      return NextResponse.json({ error: 'ยังไม่พบชื่อและนามสกุลจาก LIFF กรุณาซิงค์โปรไฟล์นักเรียนแล้วลองเช็กชื่ออีกครั้ง' }, { status: 409 });
     }
 
     const record: Record<string, unknown> = {
@@ -249,7 +249,7 @@ export async function POST(request: NextRequest) {
     if (attendanceError) {
       // Without the database row the teacher never sees this check-in.
       console.error('Attendance check-in failed:', attendanceError);
-      return NextResponse.json({ error: 'บันทึกการเช็คชื่อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' }, { status: 503 });
+      return NextResponse.json({ error: 'บันทึกการเช็กชื่อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' }, { status: 503 });
     }
     signalAttendance(classroomId);
     return NextResponse.json({ success: true, status: computedStatus, record, session, proxyStudent: proxyStudent ? { first_name: firstName, last_name: lastName } : undefined });
@@ -291,12 +291,12 @@ export async function POST(request: NextRequest) {
       ({ line, share } = await createClassroomPost(supabase, {
         classroom,
         authorId: userId,
-        body: `เปิดคาบเช็คชื่อ: ${sessionTitle} (ตรงเวลาใน ${onTimeUntilMinutes} นาที, สายได้ถึง ${lateUntilMinutes} นาที)`,
+        body: `เปิดคาบเช็กชื่อ: ${sessionTitle} (ตรงเวลาใน ${onTimeUntilMinutes} นาที, สายได้ถึง ${lateUntilMinutes} นาที)`,
         activityType: 'attendance',
         metadata: { sessionId: session.id },
         lineText: withLiffLink(
-          `⏰ เปิดคาบเช็คชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${sessionTitle}\n\n⏱️ เช็คชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
-          'กดเพื่อเช็คชื่อ',
+          `⏰ เปิดคาบเช็กชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${sessionTitle}\n\n⏱️ เช็กชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
+          'กดเพื่อเช็กชื่อ',
           { classroomId, inviteCode: classroom.invite_code, view: 'attendance' }
         ),
       }));
@@ -409,8 +409,8 @@ export async function POST(request: NextRequest) {
       .eq('id', sessionId)
       .eq('classroom_id', classroomId)
       .maybeSingle();
-    if (!current) return NextResponse.json({ error: 'ไม่พบคาบเช็คชื่อนี้' }, { status: 404 });
-    if (current.status !== 'open') return NextResponse.json({ error: 'คาบเช็คชื่อนี้ปิดรับแล้ว' }, { status: 409 });
+    if (!current) return NextResponse.json({ error: 'ไม่พบคาบเช็กชื่อนี้' }, { status: 404 });
+    if (current.status !== 'open') return NextResponse.json({ error: 'คาบเช็กชื่อนี้ปิดรับแล้ว' }, { status: 409 });
     const text = attendanceLineText(current, classroom);
     const result = await botSendOrShare(supabase, {
       groupId: classroom.line_group_id,

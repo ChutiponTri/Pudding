@@ -44,7 +44,7 @@ export const metadata: Metadata = {
     'สั่งการบ้านผ่าน LINE',
     'ควิซออนไลน์',
     'ข้อสอบออนไลน์',
-    'เช็คชื่อนักเรียน',
+    'เช็กชื่อนักเรียน',
     'ระบบจัดการห้องเรียน',
     'LINE สำหรับครู',
     'SIIT',
@@ -54,7 +54,7 @@ export const metadata: Metadata = {
   // 4. Open Graph: the card shown when the link is shared on Facebook / LINE.
   openGraph: {
     title: TITLE,
-    description: 'สั่งการบ้าน ทำควิซ เช็คชื่อ และตรวจงานนักเรียนได้ง่ายๆ ผ่าน LINE',
+    description: 'สั่งการบ้าน ทำควิซ เช็กชื่อ และตรวจงานนักเรียนได้ง่ายๆ ผ่าน LINE',
     url: '/',
     siteName: SITE_NAME,
     images: [

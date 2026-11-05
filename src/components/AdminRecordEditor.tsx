@@ -23,10 +23,10 @@ const toDraft = (value: unknown, kind: Kind) =>
 
 /** Deleting these takes rows below them with it. */
 const CASCADE_WARNING: Record<string, [string, string]> = {
-  classrooms: ['งาน คำตอบ การเช็คชื่อ และไฟล์ของห้องนี้จะถูกลบไปด้วย', "This classroom's work, answers, attendance and files are deleted too"],
+  classrooms: ['งาน คำตอบ การเช็กชื่อ และไฟล์ของห้องนี้จะถูกลบไปด้วย', "This classroom's work, answers, attendance and files are deleted too"],
   assignments: ['คำถาม งานที่นักเรียนส่ง และไฟล์ของงานนี้จะถูกลบไปด้วย', "This assignment's questions, submissions and files are deleted too"],
   courses: ['ห้องเรียนที่ผูกกับรายวิชานี้อาจได้รับผลกระทบ', 'Classrooms linked to this course may be affected'],
-  users: ['ข้อมูลที่อ้างถึงผู้ใช้นี้ (งานที่ส่ง การเช็คชื่อ) อาจถูกลบหรือค้างอยู่', 'Rows pointing at this user (submissions, attendance) may be deleted or left dangling'],
+  users: ['ข้อมูลที่อ้างถึงผู้ใช้นี้ (งานที่ส่ง การเช็กชื่อ) อาจถูกลบหรือค้างอยู่', 'Rows pointing at this user (submissions, attendance) may be deleted or left dangling'],
   submissions: ['คำตอบและบันทึกการออกจากหน้าจอของงานนี้จะถูกลบไปด้วย', 'Its answers and leaving-the-screen events are deleted too'],
 };
 

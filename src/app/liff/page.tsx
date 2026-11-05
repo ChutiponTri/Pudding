@@ -97,7 +97,7 @@ interface ClassroomPost {
 }
 /** The timeline label of a teacher's post. */
 const postLabel = (post: ClassroomPost) =>
-  post.activity_type === "exam" ? (post.metadata?.retake ? "สอบซ่อม" : "ข้อสอบใหม่") : post.activity_type === "assignment" ? "งานใหม่" : post.activity_type === "attendance" ? "เช็คชื่อ" : "ประกาศจากครู";
+  post.activity_type === "exam" ? (post.metadata?.retake ? "สอบซ่อม" : "ข้อสอบใหม่") : post.activity_type === "assignment" ? "งานใหม่" : post.activity_type === "attendance" ? "เช็กชื่อ" : "ประกาศจากครู";
 /** A classmate this phone is being lent to, verified by the server (same school, same classroom). */
 interface ProxyFriend {
   classroomId: string;
@@ -119,7 +119,7 @@ const statusLabels: Record<string, string> = {
   late: "มาสาย 🟡",
   absent: "ขาด 🔴",
   excused: "ลา 🔵",
-  idle: "รอเช็คชื่อ (IDLE) ⚪",
+  idle: "รอเช็กชื่อ (IDLE) ⚪",
 };
 
 // ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ const TONE_CLASSES: Record<Tone, string> = {
   slate: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
 };
 const ATTENDANCE_TONE: Record<string, Tone> = { on_time: "emerald", late: "amber", absent: "rose", excused: "sky", idle: "slate" };
-const ATTENDANCE_SHORT: Record<string, string> = { on_time: "ตรงเวลา", late: "มาสาย", absent: "ขาด", excused: "ลา", idle: "รอเช็คชื่อ" };
+const ATTENDANCE_SHORT: Record<string, string> = { on_time: "ตรงเวลา", late: "มาสาย", absent: "ขาด", excused: "ลา", idle: "รอเช็กชื่อ" };
 const TIMELINE_DOT: Record<string, string> = {
   announcement: "bg-amber-400 ring-amber-100 dark:ring-amber-950",
   assignment: "bg-line ring-emerald-100 dark:ring-emerald-950",
@@ -531,21 +531,21 @@ export default function LiffStudentPage() {
       });
       const json = await res.json();
       if (!res.ok) {
-        alert(json.error || "เช็คชื่อไม่สำเร็จ");
+        alert(json.error || "เช็กชื่อไม่สำเร็จ");
         return;
       }
       const statusText = statusLabels[json.status] || json.status;
       if (forFriend) {
         // The classmate's attendance, not this phone owner's: only the lending sheet changes.
         const friendName = `${forFriend.first_name} ${forFriend.last_name}`;
-        alert(json.alreadyCheckedIn ? `${friendName} เช็คชื่อคาบนี้ไปแล้ว สถานะ: ${statusText}` : `เช็คชื่อให้ ${friendName} สำเร็จ! สถานะ: ${statusText}`);
+        alert(json.alreadyCheckedIn ? `${friendName} เช็กชื่อคาบนี้ไปแล้ว สถานะ: ${statusText}` : `เช็กชื่อให้ ${friendName} สำเร็จ! สถานะ: ${statusText}`);
         const checkedSessionId = json.session?.id || sessionId;
         if (checkedSessionId) {
           setProxyFriend((prev) => (prev ? { ...prev, checkedSessionIds: [...prev.checkedSessionIds, checkedSessionId] } : prev));
         }
         return;
       }
-      alert(json.alreadyCheckedIn ? `คุณเช็คชื่อคาบนี้ไปแล้ว สถานะ: ${statusText}` : `เช็คชื่อสำเร็จ! สถานะของคุณ: ${statusText}`);
+      alert(json.alreadyCheckedIn ? `คุณเช็กชื่อคาบนี้ไปแล้ว สถานะ: ${statusText}` : `เช็กชื่อสำเร็จ! สถานะของคุณ: ${statusText}`);
 
       // Update the UI from the response right away instead of re-fetching
       // attendance for every classroom.
@@ -570,7 +570,7 @@ export default function LiffStudentPage() {
       }
 
     } catch {
-      alert("เกิดข้อผิดพลาดในการเช็คชื่อ");
+      alert("เกิดข้อผิดพลาดในการเช็กชื่อ");
     } finally {
       setIsCheckingIn(false);
     }
@@ -2136,7 +2136,7 @@ export default function LiffStudentPage() {
     ...courseAttendance.map((attendance) => ({
       id: `attendance-${attendance.id}`,
       kind: 'attendance',
-      label: 'คาบเช็คชื่อ',
+      label: 'คาบเช็กชื่อ',
       body: attendance.title,
       created_at: attendance.starts_at || new Date().toISOString()
     })),
@@ -2488,7 +2488,7 @@ export default function LiffStudentPage() {
                         <span className="relative inline-flex w-3 h-3 rounded-full bg-line" />
                       </span>
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">เปิดรับเช็คชื่ออยู่ตอนนี้</p>
+                        <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">เปิดรับเช็กชื่ออยู่ตอนนี้</p>
                         <h3 className="text-base font-bold text-slate-900 dark:text-white truncate">{item.session.title}</h3>
                         <p className="text-xs text-slate-500 truncate">
                           {subjectName(item.classroom)} • เริ่ม {new Date(item.session.starts_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
@@ -2502,7 +2502,7 @@ export default function LiffStudentPage() {
                       className="h-12 px-5 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md shadow-emerald-500/25 transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 active:scale-[0.98] disabled:opacity-60"
                     >
                       {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
-                      <span>{isCheckingIn ? 'กำลังเช็คชื่อ...' : 'เช็คชื่อเลย'}</span>
+                      <span>{isCheckingIn ? 'กำลังเช็กชื่อ...' : 'เช็กชื่อเลย'}</span>
                     </button>
                   </div>
                 ))}
@@ -2875,7 +2875,7 @@ export default function LiffStudentPage() {
                       <div className={`${CARD} p-4 sm:p-5 space-y-3`}>
                         <SectionTitle
                           icon={<CalendarCheck className="w-4 h-4 text-emerald-600" />}
-                          title="การเช็คชื่อปัจจุบัน"
+                          title="การเช็กชื่อปัจจุบัน"
                           action={pending.length > 0 ? <Pill tone="emerald">เปิดรับอยู่ {pending.length} คาบ</Pill> : undefined}
                         />
 
@@ -2894,7 +2894,7 @@ export default function LiffStudentPage() {
                                   <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white font-black text-[10px] shadow-xs">
-                                        กำลังเปิดรับเช็คชื่อ
+                                        กำลังเปิดรับเช็กชื่อ
                                       </span>
                                       <p className="text-base font-bold text-slate-900 dark:text-white">{openSession.title}</p>
                                     </div>
@@ -2912,19 +2912,19 @@ export default function LiffStudentPage() {
                                     className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
                                   >
                                     {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
-                                    {isCheckingIn ? 'กำลังเช็คชื่อ...' : 'กดเช็คชื่อตอนนี้'}
+                                    {isCheckingIn ? 'กำลังเช็กชื่อ...' : 'กดเช็กชื่อตอนนี้'}
                                   </button>
                                 </div>
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <EmptyState icon="🕒" text="ไม่มีคาบเช็คชื่อตอนนี้" />
+                          <EmptyState icon="🕒" text="ไม่มีคาบเช็กชื่อตอนนี้" />
                         )}
                       </div>
 
                       <div className={`${CARD} p-4 sm:p-5 space-y-3`}>
-                        <SectionTitle icon={<CalendarDays className="w-4 h-4 text-slate-500" />} title="ประวัติการเช็คชื่อ" count={history.length} />
+                        <SectionTitle icon={<CalendarDays className="w-4 h-4 text-slate-500" />} title="ประวัติการเช็กชื่อ" count={history.length} />
                         {history.length > 0 ? (
                           <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                             {history.map((attendance) => {
@@ -2945,7 +2945,7 @@ export default function LiffStudentPage() {
                             })}
                           </ul>
                         ) : (
-                          <EmptyState icon="📅" text="ยังไม่มีประวัติการเช็คชื่อ" />
+                          <EmptyState icon="📅" text="ยังไม่มีประวัติการเช็กชื่อ" />
                         )}
                       </div>
                     </>
@@ -2960,7 +2960,7 @@ export default function LiffStudentPage() {
                 {([
                   { key: 'timeline', label: 'ไทม์ไลน์', icon: Megaphone },
                   { key: 'work', label: 'งาน / ข้อสอบ', icon: BookOpen },
-                  { key: 'attendance', label: 'เช็คชื่อ', icon: CalendarCheck },
+                  { key: 'attendance', label: 'เช็กชื่อ', icon: CalendarCheck },
                   // Not a page: opens the lending sheet (a classmate's phone has a problem). Admitted students only.
                   ...(isSelectedClassroomPending ? [] : [{ key: 'proxy', label: 'ส่งแทนเพื่อน', icon: Users }] as const),
                 ] as const).map(({ key, label, icon: Icon }) => {
@@ -2969,7 +2969,7 @@ export default function LiffStudentPage() {
                     <button
                       key={key}
                       onClick={() => (key === 'proxy' ? setIsProxySheetOpen(true) : setCourseTab(key))}
-                      title={key === 'proxy' ? 'เพื่อนโทรศัพท์มีปัญหา? ให้เพื่อนยืมเครื่องนี้ส่งงาน/เช็คชื่อ' : undefined}
+                      title={key === 'proxy' ? 'เพื่อนโทรศัพท์มีปัญหา? ให้เพื่อนยืมเครื่องนี้ส่งงาน/เช็กชื่อ' : undefined}
                       aria-current={isActive && key !== 'proxy' ? 'page' : undefined}
                       className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                         isActive ? 'text-line' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
@@ -3513,31 +3513,31 @@ export default function LiffStudentPage() {
                 const openSessions = courseAttendance.filter((session) => session.status === "open");
                 const openWork = assignments.filter((a) => a.classroom_id === proxyFriend.classroomId && getAssignmentWindow(a).acceptsSubmissions);
                 if (!openSessions.length && !openWork.length) {
-                  return <EmptyState icon="🎉" text="ตอนนี้ไม่มีงานหรือคาบเช็คชื่อที่เปิดอยู่" />;
+                  return <EmptyState icon="🎉" text="ตอนนี้ไม่มีงานหรือคาบเช็กชื่อที่เปิดอยู่" />;
                 }
                 return (
                   <>
                     {openSessions.length > 0 && (
                       <div className="space-y-2">
-                        <p className="text-xs font-bold text-slate-500">เช็คชื่อ</p>
+                        <p className="text-xs font-bold text-slate-500">เช็กชื่อ</p>
                         {openSessions.map((session) => {
                           const done = proxyFriend.checkedSessionIds.includes(session.id);
                           return (
                             <div key={session.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700">
                               <p className="min-w-0 text-sm font-semibold text-slate-900 dark:text-white truncate">{session.title}</p>
                               {done ? (
-                                <Pill tone="emerald">เช็คชื่อแล้ว</Pill>
+                                <Pill tone="emerald">เช็กชื่อแล้ว</Pill>
                               ) : (
                                 <button
                                   type="button"
                                   disabled={isCheckingIn}
                                   onClick={() => {
-                                    if (!confirm(`ยืนยันเช็คชื่อ “${session.title}” ให้ ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nคุณครูจะเห็นว่าเช็คชื่อจากเครื่องของคุณ`)) return;
+                                    if (!confirm(`ยืนยันเช็กชื่อ “${session.title}” ให้ ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nคุณครูจะเห็นว่าเช็กชื่อจากเครื่องของคุณ`)) return;
                                     handleStudentCheckIn(session.id, undefined, proxyFriend);
                                   }}
                                   className="shrink-0 h-9 px-3.5 rounded-xl bg-line hover:bg-line-dark text-white text-xs font-bold disabled:opacity-60 cursor-pointer"
                                 >
-                                  เช็คชื่อให้เพื่อน
+                                  เช็กชื่อให้เพื่อน
                                 </button>
                               )}
                             </div>
@@ -3707,7 +3707,7 @@ export default function LiffStudentPage() {
         const target = assignment
           ? `${assignment.is_exam ? "ข้อสอบ" : "งาน"} “${assignment.title}”`
           : joinWait.view === "attendance"
-          ? "หน้าเช็คชื่อ"
+          ? "หน้าเช็กชื่อ"
           : undefined;
         return (
           <div className="fixed inset-0 z-50 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-sm flex items-center justify-center p-6 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))] animate-fade">

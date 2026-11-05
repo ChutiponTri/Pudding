@@ -2760,7 +2760,7 @@ export function TeacherWorkspace({
                 <p className="font-bold">
                   {lineConnection.groupName ? tr(`เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว`, `Connected to “${lineConnection.groupName}”`) : tr('เชื่อมกับกลุ่ม LINE แล้ว', 'Connected to a LINE group')}
                 </p>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">{tr('กลุ่มนี้จะได้รับแจ้งเตือนงาน ครู/TA พิมพ์', 'This group gets work notifications. Teachers/TAs type')} <b>พุดดิ้ง</b> {tr('เพื่อดูคำสั่ง (บอทไม่ตอบนักเรียน) เช่น', 'to see commands (the bot does not reply to students), e.g.')} <b>พุดดิ้ง เข้าห้อง</b> <b>พุดดิ้ง งาน</b> <b>พุดดิ้ง เช็คชื่อ</b></p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">{tr('กลุ่มนี้จะได้รับแจ้งเตือนงาน ครู/TA พิมพ์', 'This group gets work notifications. Teachers/TAs type')} <b>พุดดิ้ง</b> {tr('เพื่อดูคำสั่ง (บอทไม่ตอบนักเรียน) เช่น', 'to see commands (the bot does not reply to students), e.g.')} <b>พุดดิ้ง เข้าห้อง</b> <b>พุดดิ้ง งาน</b> <b>พุดดิ้ง เช็กชื่อ</b></p>
                 <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">{tr('หากนำบอทออกจากกลุ่ม การเชื่อมต่อจะยกเลิกเอง', 'Removing the bot from the group disconnects it automatically')}</p>
               </div>
             ) : (

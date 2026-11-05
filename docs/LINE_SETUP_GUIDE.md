@@ -119,7 +119,7 @@ Add `LINE_BOT_BASIC_ID` to the production environment too, then redeploy.
 
 1. Open the join link (from the group, the QR code, or `#pudding join`). It opens Pudding inside LINE.
 2. The first time, fill in name, student number and school.
-3. Wait for the teacher to approve (**Admit**). Then use **งาน / ข้อสอบ** to do work, **เช็คชื่อ** to check in, and **ไทม์ไลน์** for announcements.
+3. Wait for the teacher to approve (**Admit**). Then use **งาน / ข้อสอบ** to do work, **เช็กชื่อ** to check in, and **ไทม์ไลน์** for announcements.
 
 ---
 

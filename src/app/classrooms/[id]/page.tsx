@@ -208,7 +208,7 @@ type WorkspaceSnapshot = {
 const tabs: Array<{ id: Tab; label: Bilingual; shortLabel: Bilingual; icon: typeof BookOpen }> = [
   { id: 'overview', label: { th: 'ภาพรวม', en: 'Overview' }, shortLabel: { th: 'ภาพรวม', en: 'Overview' }, icon: ClipboardList },
   { id: 'classwork', label: { th: 'งานและเนื้อหา', en: 'Classwork' }, shortLabel: { th: 'งาน', en: 'Work' }, icon: BookOpen },
-  { id: 'attendance', label: { th: 'เช็คชื่อ', en: 'Attendance' }, shortLabel: { th: 'เช็คชื่อ', en: 'Attend' }, icon: CalendarCheck },
+  { id: 'attendance', label: { th: 'เช็กชื่อ', en: 'Attendance' }, shortLabel: { th: 'เช็กชื่อ', en: 'Attend' }, icon: CalendarCheck },
   { id: 'people', label: { th: 'ผู้สอนและผู้เรียน', en: 'People' }, shortLabel: { th: 'สมาชิก', en: 'People' }, icon: Users },
   { id: 'grades', label: { th: 'คะแนน', en: 'Grades' }, shortLabel: { th: 'คะแนน', en: 'Grades' }, icon: FileText },
 ];
@@ -295,7 +295,7 @@ export default function ClassroomWorkspacePage() {
   const [isUpdatingPost, setIsUpdatingPost] = useState(false);
 
   // Attendance form & edit session state
-  const [attendanceTitle, setAttendanceTitle] = useState(tr('เช็คชื่อประจำคาบ', 'Period attendance'));
+  const [attendanceTitle, setAttendanceTitle] = useState(tr('เช็กชื่อประจำคาบ', 'Period attendance'));
   const [attendanceStartsAt, setAttendanceStartsAt] = useState('');
   const [onTimeMinutes, setOnTimeMinutes] = useState(10);
   const [lateMinutes, setLateMinutes] = useState(30);
@@ -722,13 +722,13 @@ export default function ClassroomWorkspacePage() {
         badgeLabel = tr('ข้อสอบ', 'Exam');
         badgeColor = 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300';
       } else if (post.activity_type === 'attendance') {
-        title = tr('เปิดคาบเช็คชื่อ', 'Attendance opened');
-        badgeLabel = tr('เช็คชื่อ', 'Attendance');
+        title = tr('เปิดคาบเช็กชื่อ', 'Attendance opened');
+        badgeLabel = tr('เช็กชื่อ', 'Attendance');
         badgeColor = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300';
       }
 
       // Check content key to avoid duplicate identical messages
-      const normalizedBody = post.body.replace(/^(ข้อสอบใหม่:|งานใหม่:|เปิดคาบเช็คชื่อ:)\s*/, '').trim().toLowerCase();
+      const normalizedBody = post.body.replace(/^(ข้อสอบใหม่:|งานใหม่:|เปิดคาบเช็กชื่อ:)\s*/, '').trim().toLowerCase();
       const contentKey = `${post.activity_type || 'announcement'}-${normalizedBody.slice(0, 40)}`;
       if (seenContentKeys.has(contentKey)) continue;
       seenContentKeys.add(contentKey);
@@ -792,10 +792,10 @@ export default function ClassroomWorkspacePage() {
         id: `attendance-${item.id}`,
         rawId: item.id,
         isPost: false,
-        title: tr('เปิดคาบเช็คชื่อ', 'Attendance opened'),
+        title: tr('เปิดคาบเช็กชื่อ', 'Attendance opened'),
         body: `${item.title} (${tr('สถานะ', 'Status')}: ${item.status === 'open' ? tr('เปิดรับอยู่', 'open') : tr('ปิดแล้ว', 'closed')})`,
         type: 'attendance' as const,
-        badgeLabel: tr('เช็คชื่อ', 'Attendance'),
+        badgeLabel: tr('เช็กชื่อ', 'Attendance'),
         badgeColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
         created_at: item.starts_at,
       });
@@ -974,7 +974,7 @@ export default function ClassroomWorkspacePage() {
 
   /** An open attendance period called again in the LINE group (share popup when the bot cannot). */
   const handleReannounceSession = async (sessionId: string, title: string) => {
-    if (!confirm(tr(`ส่งข้อความเช็คชื่อ "${title}" เข้ากลุ่ม LINE อีกครั้ง?`, `Send the check-in for "${title}" to the LINE group again?`))) return;
+    if (!confirm(tr(`ส่งข้อความเช็กชื่อ "${title}" เข้ากลุ่ม LINE อีกครั้ง?`, `Send the check-in for "${title}" to the LINE group again?`))) return;
     try {
       const res = await fetch('/api/attendance', {
         method: 'POST',
@@ -1335,7 +1335,7 @@ export default function ClassroomWorkspacePage() {
           attendanceVersionRef.current++;
           setAllRecords((prev) => records.reduce(upsertRecord, prev));
         }
-        setNotice(tr('อัปเดตคาบเช็คชื่อแล้ว', 'Attendance period updated'));
+        setNotice(tr('อัปเดตคาบเช็กชื่อแล้ว', 'Attendance period updated'));
         patchSession(sessionId, {
           title: newTitle,
           ...(newStatus ? { status: newStatus, closed_at: newStatus === 'closed' ? new Date().toISOString() : null } : {}),
@@ -1347,34 +1347,34 @@ export default function ClassroomWorkspacePage() {
         // Reopening clears the automatic absences on the server; pick that up.
         if (newStatus === 'open') loadAttendance();
       } else {
-        setNotice(tr('อัปเดตคาบเช็คชื่อไม่สำเร็จ', 'Could not update the period'));
+        setNotice(tr('อัปเดตคาบเช็กชื่อไม่สำเร็จ', 'Could not update the period'));
       }
     } catch {
-      setNotice(tr('เกิดข้อผิดพลาดในการอัปเดตคาบเช็คชื่อ', 'Something went wrong while updating the period'));
+      setNotice(tr('เกิดข้อผิดพลาดในการอัปเดตคาบเช็กชื่อ', 'Something went wrong while updating the period'));
     } finally {
       setIsUpdatingSession(false);
     }
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (!confirm(tr('ลบคาบเช็คชื่อนี้และบันทึกทั้งหมด?', 'Delete this period and all its records?'))) return;
+    if (!confirm(tr('ลบคาบเช็กชื่อนี้และบันทึกทั้งหมด?', 'Delete this period and all its records?'))) return;
     try {
       const res = await fetch(
         `/api/attendance?sessionId=${encodeURIComponent(sessionId)}&classroomId=${encodeURIComponent(classroomId)}`,
         { method: 'DELETE' }
       );
       if (res.ok) {
-        setNotice(tr('ลบคาบเช็คชื่อแล้ว', 'Period deleted'));
+        setNotice(tr('ลบคาบเช็กชื่อแล้ว', 'Period deleted'));
         attendanceVersionRef.current++;
         const remaining = sessions.filter((s) => s.id !== sessionId);
         setSessions(remaining);
         setAllRecords((prev) => prev.filter((r) => r.session_id !== sessionId));
         if (selectedSessionId === sessionId) setSelectedSessionId(remaining[0]?.id || null);
       } else {
-        setNotice(tr('ลบคาบเช็คชื่อไม่สำเร็จ', 'Could not delete the period'));
+        setNotice(tr('ลบคาบเช็กชื่อไม่สำเร็จ', 'Could not delete the period'));
       }
     } catch {
-      setNotice(tr('เกิดข้อผิดพลาดในการลบคาบเช็คชื่อ', 'Something went wrong while deleting the period'));
+      setNotice(tr('เกิดข้อผิดพลาดในการลบคาบเช็กชื่อ', 'Something went wrong while deleting the period'));
     }
   };
 
@@ -1393,11 +1393,11 @@ export default function ClassroomWorkspacePage() {
         }),
       });
       if (!response.ok) {
-        setNotice(tr('สร้างคาบเช็คชื่อไม่สำเร็จ', 'Could not create the period'));
+        setNotice(tr('สร้างคาบเช็กชื่อไม่สำเร็จ', 'Could not create the period'));
         return;
       }
       const { session: created, line, share } = (await response.json()) as { session: AttendanceSession; line?: LinePostStatus; share?: LineShare };
-      setNotice(lineNotice(line, tr('เปิดคาบเช็คชื่อแล้ว', 'Attendance opened')));
+      setNotice(lineNotice(line, tr('เปิดคาบเช็กชื่อแล้ว', 'Attendance opened')));
       // The bot could not send it: offer to share it from the teacher's own LINE.
       reportLineUnsent(line, share);
       // The response is the full session row, so show and select it without a refetch.
@@ -1409,7 +1409,7 @@ export default function ClassroomWorkspacePage() {
         .then((json) => json && setPosts(json.posts || []))
         .catch(() => {});
     } catch {
-      setNotice(tr('เกิดข้อผิดพลาดในการเปิดคาบเช็คชื่อ', 'Something went wrong while opening attendance'));
+      setNotice(tr('เกิดข้อผิดพลาดในการเปิดคาบเช็กชื่อ', 'Something went wrong while opening attendance'));
     }
   };
 
@@ -1498,7 +1498,7 @@ export default function ClassroomWorkspacePage() {
     } catch {
       patchSession(sessionId, target);
       if (pendingAbsent.length) setAllRecords(withoutPending);
-      setNotice(action === 'close' ? tr('ปิดรับเช็คชื่อไม่สำเร็จ', 'Could not close attendance') : tr('ขยายเวลาไม่สำเร็จ', 'Could not extend the time'));
+      setNotice(action === 'close' ? tr('ปิดรับเช็กชื่อไม่สำเร็จ', 'Could not close attendance') : tr('ขยายเวลาไม่สำเร็จ', 'Could not extend the time'));
     }
   };
 
@@ -1992,7 +1992,7 @@ export default function ClassroomWorkspacePage() {
                             ['announcement', tr('📢 ประกาศ', '📢 Announcement')],
                             ['assignment', tr('📋 งาน', '📋 Assignment')],
                             ['exam', tr('📝 ข้อสอบ', '📝 Exam')],
-                            ['attendance', tr('⏰ เช็คชื่อ', '⏰ Attendance')],
+                            ['attendance', tr('⏰ เช็กชื่อ', '⏰ Attendance')],
                           ] as const
                         ).map(([type, label]) => (
                           <button
@@ -2458,7 +2458,7 @@ export default function ClassroomWorkspacePage() {
           )}
 
           {/* ============================================================ */}
-          {/* TAB 3: ATTENDANCE (เช็คชื่อ) */}
+          {/* TAB 3: ATTENDANCE (เช็กชื่อ) */}
           {/* ============================================================ */}
           {tab === 'attendance' && (
             <AttendancePanel
@@ -3318,10 +3318,10 @@ function AttendancePanel({
         <div>
           <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
             <CalendarCheck className="w-5 h-5 text-amber-500" />
-            <span>{tr('เช็คชื่อรายคาบ', 'Attendance by period')}</span>
+            <span>{tr('เช็กชื่อรายคาบ', 'Attendance by period')}</span>
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            <MobileText short={tr('เปิดคาบและเช็คชื่อแบบเรียลไทม์', 'Open periods and take attendance live')} full={tr('เปิดคาบเรียน เช็คชื่อแบบเรียลไทม์ และแก้สถานะรายคนได้ตลอด', 'Open a period, take attendance in real time, and adjust any student at any time')} />
+            <MobileText short={tr('เปิดคาบและเช็กชื่อแบบเรียลไทม์', 'Open periods and take attendance live')} full={tr('เปิดคาบเรียน เช็กชื่อแบบเรียลไทม์ และแก้สถานะรายคนได้ตลอด', 'Open a period, take attendance in real time, and adjust any student at any time')} />
           </p>
         </div>
 
@@ -3330,7 +3330,7 @@ function AttendancePanel({
             <button
               type="button"
               onClick={exportAllCsv}
-              title={tr('ส่งออกการเช็คชื่อทุกคาบ (แถว = นักเรียน, คอลัมน์ = คาบเรียน)', 'Export every period (rows = students, columns = periods)')}
+              title={tr('ส่งออกการเช็กชื่อทุกคาบ (แถว = นักเรียน, คอลัมน์ = คาบเรียน)', 'Export every period (rows = students, columns = periods)')}
               className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Download className="w-3.5 h-3.5 text-slate-500" />
@@ -3344,7 +3344,7 @@ function AttendancePanel({
             className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>{showCreateForm ? tr('ปิดแบบฟอร์ม', 'Close form') : tr('เปิดคาบเช็คชื่อใหม่', 'New attendance period')}</span>
+            <span>{showCreateForm ? tr('ปิดแบบฟอร์ม', 'Close form') : tr('เปิดคาบเช็กชื่อใหม่', 'New attendance period')}</span>
           </button>
         </div>
       </div>
@@ -3355,7 +3355,7 @@ function AttendancePanel({
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
             <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
               <CalendarCheck className="w-4 h-4 text-amber-500" />
-              <span>{tr('คาบเช็คชื่อใหม่', 'New attendance period')}</span>
+              <span>{tr('คาบเช็กชื่อใหม่', 'New attendance period')}</span>
             </h3>
             <button
               type="button"
@@ -3427,7 +3427,7 @@ function AttendancePanel({
               className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20"
             >
               <Plus className="w-4 h-4" />
-              <span>{tr('เปิดเช็คชื่อและแจ้งเตือน LINE', 'Open attendance & notify LINE')}</span>
+              <span>{tr('เปิดเช็กชื่อและแจ้งเตือน LINE', 'Open attendance & notify LINE')}</span>
             </button>
           </div>
         </div>
@@ -3438,7 +3438,7 @@ function AttendancePanel({
         {[
           ['on_time', tr('ตรงเวลา', 'On time'), counts['on_time'] || 0, 'bg-emerald-500', 'text-emerald-600 dark:text-emerald-400'],
           ['late', tr('มาสาย', 'Late'), counts['late'] || 0, 'bg-amber-400', 'text-amber-600 dark:text-amber-400'],
-          ['absent', tr('ขาด / ยังไม่เช็ค', 'Absent / unchecked'), counts['absent'] || 0, 'bg-rose-500', 'text-rose-600 dark:text-rose-400'],
+          ['absent', tr('ขาด / ยังไม่เช็ก', 'Absent / unchecked'), counts['absent'] || 0, 'bg-rose-500', 'text-rose-600 dark:text-rose-400'],
           ['excused', tr('ลา', 'Excused'), counts['excused'] || 0, 'bg-sky-500', 'text-sky-600 dark:text-sky-400'],
         ].map(([key, label, count, dotCls, numberCls]) => (
           <div key={key} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
@@ -3501,7 +3501,7 @@ function AttendancePanel({
                     <div className="flex flex-wrap items-center gap-2">
                       {isOpen && (
                         <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px] shadow-xs">
-                          {tr('กำลังเปิดรับเช็คชื่อ', 'Taking attendance')}
+                          {tr('กำลังเปิดรับเช็กชื่อ', 'Taking attendance')}
                         </span>
                       )}
                       <h4 className="text-sm font-black text-slate-900 dark:text-white">{item.title}</h4>
@@ -3513,8 +3513,8 @@ function AttendancePanel({
                             setEditing(item);
                           }}
                           className="-ml-1 p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:text-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                          title={tr('แก้ไขคาบเช็คชื่อ', 'Edit period')}
-                          aria-label={tr('แก้ไขคาบเช็คชื่อ', 'Edit period')}
+                          title={tr('แก้ไขคาบเช็กชื่อ', 'Edit period')}
+                          aria-label={tr('แก้ไขคาบเช็กชื่อ', 'Edit period')}
                         >
                           <Pencil className="w-3 h-3" />
                         </button>
@@ -3556,7 +3556,7 @@ function AttendancePanel({
                         onClick={() => action(item.id, 'close')}
                         className="flex-1 sm:flex-none whitespace-nowrap px-3 py-2 sm:py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 cursor-pointer shadow-xs"
                       >
-                        {tr('ปิดรับเช็คชื่อ', 'Close attendance')}
+                        {tr('ปิดรับเช็กชื่อ', 'Close attendance')}
                       </button>
                     </>
                   )}
@@ -3568,8 +3568,8 @@ function AttendancePanel({
                       onClick={() => onReannounceSession(item.id, item.title)}
                       title={
                         isOpen
-                          ? tr('ส่งข้อความเช็คชื่อเข้ากลุ่ม LINE อีกครั้ง', 'Send the check-in message to the LINE group again')
-                          : tr('คาบนี้ปิดรับเช็คชื่อแล้ว เปิดรับใหม่ก่อนจึงส่งซ้ำได้', 'This period is closed; reopen it to post it again')
+                          ? tr('ส่งข้อความเช็กชื่อเข้ากลุ่ม LINE อีกครั้ง', 'Send the check-in message to the LINE group again')
+                          : tr('คาบนี้ปิดรับเช็กชื่อแล้ว เปิดรับใหม่ก่อนจึงส่งซ้ำได้', 'This period is closed; reopen it to post it again')
                       }
                       className="flex-1 sm:flex-none whitespace-nowrap px-3 py-2 sm:py-1.5 rounded-xl bg-line hover:bg-line-dark text-white text-xs font-bold inline-flex items-center justify-center gap-1 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-line"
                     >
@@ -3581,22 +3581,25 @@ function AttendancePanel({
                   <button
                     type="button"
                     onClick={() => toggleSession(item.id)}
-                    className={`flex-1 sm:flex-none whitespace-nowrap px-3 py-2 sm:py-1.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer ${
+                    aria-expanded={isExpanded}
+                    aria-label={isExpanded ? tr('ย่อกลับ', 'Collapse') : tr('ดูรายชื่อ', 'View roster')}
+                    title={isExpanded ? tr('ย่อกลับ', 'Collapse') : tr('ดูรายชื่อ', 'View roster')}
+                    className={`shrink-0 sm:flex-none whitespace-nowrap w-9 h-9 sm:w-auto sm:h-auto px-0 sm:px-3 sm:py-1.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer ${
                       isOpen
                         ? 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-200 text-white dark:text-slate-900 shadow-xs'
                         : 'border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
                     }`}
                   >
-                    <span>{isExpanded ? tr('ย่อกลับ', 'Collapse') : tr('ดูรายชื่อ', 'View roster')}</span>
-                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
+                    <span className="hidden sm:inline">{isExpanded ? tr('ย่อกลับ', 'Collapse') : tr('ดูรายชื่อ', 'View roster')}</span>
+                    <ChevronDown className={`w-4 h-4 sm:w-3.5 sm:h-3.5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
                   </button>
 
                   {onDeleteSession && (
                     <button
                       type="button"
                       onClick={() => onDeleteSession(item.id)}
-                      className="shrink-0 p-2 sm:p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                      title={tr('ลบคาบเช็คชื่อนี้', 'Delete this period')}
+                      className="shrink-0 w-9 h-9 sm:w-auto sm:h-auto flex items-center justify-center sm:p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      title={tr('ลบคาบเช็กชื่อนี้', 'Delete this period')}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -3623,8 +3626,8 @@ function AttendancePanel({
         {!sessions.length && (
           <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400 space-y-2">
             <CalendarCheck className="w-8 h-8 text-slate-300 mx-auto" />
-            <p className="font-bold">{tr('ยังไม่มีประวัติคาบเช็คชื่อ', 'No attendance periods yet')}</p>
-            <p className="text-[11px]">{tr('กด "เปิดคาบเช็คชื่อใหม่" ด้านบนเพื่อเริ่ม', 'Tap "New attendance period" above to start')}</p>
+            <p className="font-bold">{tr('ยังไม่มีประวัติคาบเช็กชื่อ', 'No attendance periods yet')}</p>
+            <p className="text-[11px]">{tr('กด "เปิดคาบเช็กชื่อใหม่" ด้านบนเพื่อเริ่ม', 'Tap "New attendance period" above to start')}</p>
           </div>
         )}
       </div>
@@ -3738,7 +3741,7 @@ function SessionSettingsSheet({
         <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800">
           <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
             <Pencil className="w-4 h-4 text-amber-500" />
-            <span>{tr('แก้ไขคาบเช็คชื่อ', 'Edit period')}</span>
+            <span>{tr('แก้ไขคาบเช็กชื่อ', 'Edit period')}</span>
           </h3>
           <button type="button" onClick={onClose} aria-label={tr('ปิด', 'Close')} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
             <X className="w-4 h-4" />
@@ -3797,7 +3800,7 @@ function SessionSettingsSheet({
           </div>
 
           <div className="space-y-1.5">
-            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('การรับเช็คชื่อ', 'Check-ins')}</span>
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('การรับเช็กชื่อ', 'Check-ins')}</span>
             <div className="grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800">
               {[
                 [true, tr('🟢 เปิดรับ', '🟢 Open')],
@@ -3819,8 +3822,8 @@ function SessionSettingsSheet({
             {statusChanged && (
               <p className="text-[11px] text-amber-700 dark:text-amber-300 animate-in fade-in slide-in-from-top-1">
                 {accepting
-                  ? tr('เปิดรับอีกครั้ง: นักเรียนที่ถูกตั้งเป็น "ขาด" อัตโนมัติจะกลับเป็นยังไม่เช็ค และเช็คชื่อได้', 'Reopening: students marked absent automatically go back to unchecked and can check in')
-                  : tr('ปิดรับ: นักเรียนที่ยังไม่เช็คชื่อจะถูกตั้งเป็น "ขาด"', 'Closing: students who have not checked in are marked absent')}
+                  ? tr('เปิดรับอีกครั้ง: นักเรียนที่ถูกตั้งเป็น "ขาด" อัตโนมัติจะกลับเป็นยังไม่เช็ก และเช็กชื่อได้', 'Reopening: students marked absent automatically go back to unchecked and can check in')
+                  : tr('ปิดรับ: นักเรียนที่ยังไม่เช็กชื่อจะถูกตั้งเป็น "ขาด"', 'Closing: students who have not checked in are marked absent')}
               </p>
             )}
           </div>
@@ -3875,7 +3878,7 @@ const ROSTER_FILTERS: { id: RosterFilter; label: Bilingual; dot: string; pill: s
   { id: 'late', label: { th: 'มาสาย', en: 'Late' }, dot: 'bg-amber-400', pill: 'bg-amber-400', text: 'text-slate-950' },
   { id: 'excused', label: { th: 'ลา', en: 'Excused' }, dot: 'bg-sky-500', pill: 'bg-sky-500', text: 'text-white' },
   { id: 'absent', label: { th: 'ขาด', en: 'Absent' }, dot: 'bg-rose-500', pill: 'bg-rose-500', text: 'text-white' },
-  { id: 'idle', label: { th: 'ยังไม่เช็ค', en: 'Unchecked' }, dot: 'bg-slate-300 dark:bg-slate-600', pill: 'bg-slate-500', text: 'text-white' },
+  { id: 'idle', label: { th: 'ยังไม่เช็ก', en: 'Unchecked' }, dot: 'bg-slate-300 dark:bg-slate-600', pill: 'bg-slate-500', text: 'text-white' },
 ];
 
 const STATUS_CHOICES = [
@@ -4008,16 +4011,16 @@ function SessionRoster({
                   {currentStatus === 'idle' && (
                     <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-50 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-600 shrink-0">
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-500" />
-                      {isSessionOpen ? tr('รอเช็คชื่อ', 'Waiting') : tr('ไม่ได้เช็คชื่อ', 'Not checked')}
+                      {isSessionOpen ? tr('รอเช็กชื่อ', 'Waiting') : tr('ไม่ได้เช็กชื่อ', 'Not checked')}
                     </span>
                   )}
                 </div>
                 <span className="text-[10px] text-slate-400 font-mono">
                   {tr('รหัส', 'ID')}: {student.student_id || '-'}
-                  {record?.checked_at && ` • ${tr('เช็คเมื่อ', 'checked at')} ${new Date(record.checked_at).toLocaleTimeString(tr('th-TH', 'en-US'))}`}
+                  {record?.checked_at && ` • ${tr('เช็กเมื่อ', 'checked at')} ${new Date(record.checked_at).toLocaleTimeString(tr('th-TH', 'en-US'))}`}
                   {record?.checked_in_by && (
-                    <span className="font-sans font-bold text-sky-600 dark:text-sky-400" title={tr('นักเรียนเช็คชื่อด้วยโทรศัพท์ของเพื่อนร่วมห้อง', 'Checked in using a classmate\'s phone')}>
-                      {tr(` • 📱 เช็คชื่อจากเครื่องของ ${senderName(record.checked_in_by)}`, ` • 📱 checked in on ${senderName(record.checked_in_by)}'s phone`)}
+                    <span className="font-sans font-bold text-sky-600 dark:text-sky-400" title={tr('นักเรียนเช็กชื่อด้วยโทรศัพท์ของเพื่อนร่วมห้อง', 'Checked in using a classmate\'s phone')}>
+                      {tr(` • 📱 เช็กชื่อจากเครื่องของ ${senderName(record.checked_in_by)}`, ` • 📱 checked in on ${senderName(record.checked_in_by)}'s phone`)}
                     </span>
                   )}
                 </span>
@@ -4033,7 +4036,7 @@ function SessionRoster({
                 >
                   {currentStatus === 'idle' && (
                     <option value="idle" disabled>
-                      {isSessionOpen ? tr('รอเช็ค', 'Waiting') : tr('ไม่ได้เช็ค', 'Unchecked')}
+                      {isSessionOpen ? tr('รอเช็ก', 'Waiting') : tr('ไม่ได้เช็ก', 'Unchecked')}
                     </option>
                   )}
                   {STATUS_CHOICES.map(([stKey, stLabel]) => (

@@ -70,7 +70,7 @@ function cleanLabel(value: string) {
   return value.replace(/👉/g, '').replace(/^\s*\d+[.)]\s*/, '').replace(/[:：]\s*$/, '').trim();
 }
 
-/** A button already says "tap", so "กดเพื่อเช็คชื่อ" becomes "เช็คชื่อ" (and fits LINE's 20 characters). */
+/** A button already says "tap", so "กดเพื่อเช็กชื่อ" becomes "เช็กชื่อ" (and fits LINE's 20 characters). */
 function buttonLabel(label: string) {
   return label.replace(/^(นักเรียน)?กด(ลิงก์นี้)?(เพื่อ)?\s*/, '').replace(/\s*ใน Pudding$/, '') || label;
 }
@@ -79,7 +79,7 @@ function buttonLabel(label: string) {
  * Turns every link in a message into a button and takes it out of the text,
  * since the button already carries it. A button is labelled from the text in
  * front of the link on the same line ("เปิด Pudding: <url>") or from the line
- * above ("👉 กดเพื่อเช็คชื่อ\n<url>"); that label text leaves the message too.
+ * above ("👉 กดเพื่อเช็กชื่อ\n<url>"); that label text leaves the message too.
  * Links beyond what the cards can hold stay in the text.
  */
 export function splitLinkButtons(text: string): { text: string; buttons: LinkButton[] } {

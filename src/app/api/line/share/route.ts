@@ -39,8 +39,8 @@ export async function GET(request: NextRequest) {
       .select('id, classroom_id, title, starts_at, on_time_until_minutes, late_until_minutes, status')
       .eq('id', target.id)
       .maybeSingle();
-    if (!session) return NextResponse.json({ error: 'ไม่พบคาบเช็คชื่อนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
-    if (session.status !== 'open') return NextResponse.json({ error: 'คาบเช็คชื่อนี้ปิดรับแล้ว' }, { status: 409 });
+    if (!session) return NextResponse.json({ error: 'ไม่พบคาบเช็กชื่อนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
+    if (session.status !== 'open') return NextResponse.json({ error: 'คาบเช็กชื่อนี้ปิดรับแล้ว' }, { status: 409 });
     const { data: room } = await supabase.from('classrooms').select('id, name, course_name, subject_code, invite_code').eq('id', session.classroom_id).maybeSingle();
     if (!room) return NextResponse.json({ error: 'ไม่พบห้องเรียนของคาบนี้' }, { status: 404 });
     const text = attendanceLineText(session, room);

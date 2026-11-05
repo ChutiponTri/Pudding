@@ -125,7 +125,7 @@ export function joinShareToken(classroomId: string): string {
   return `${JOIN_PREFIX}${classroomId}.${sig}`;
 }
 
-/** Prefix of share tokens for an attendance period's check-in call ("เช็คชื่อ"). */
+/** Prefix of share tokens for an attendance period's check-in call ("เช็กชื่อ"). */
 const ATTENDANCE_PREFIX = 'a:';
 
 /** Link token for an open attendance period shared by hand: `a:<sessionId>.<16-char HMAC>`. */

@@ -43,7 +43,7 @@ function normalizeCommand(command: string | undefined) {
     ลิงค์: 'link',
     attendance: 'attendance',
     'เช็กชื่อ': 'attendance',
-    'เช็คชื่อ': 'attendance',
+    'เช็คชื่อ': 'attendance', // old spelling people still type
     join: 'join',
     code: 'join',
     'ขอรหัส': 'join',
@@ -484,14 +484,14 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
       .order('starts_at', { ascending: false })
       .limit(3);
     if (!sessions?.length) {
-      await replySafely(replyToken, `⏰ ${title}\nตอนนี้ยังไม่มีคาบเช็คชื่อที่เปิดอยู่ค่ะ`);
+      await replySafely(replyToken, `⏰ ${title}\nตอนนี้ยังไม่มีคาบเช็กชื่อที่เปิดอยู่ค่ะ`);
       return;
     }
     const lines = sessions.map((session) => {
       const closesAt = new Date(new Date(session.starts_at).getTime() + (session.late_until_minutes || 30) * 60000).toISOString();
-      return `• ${session.title} (เช็คได้ถึง ${formatDateTime(closesAt, 'th', SCHOOL_TIME_ZONE)})`;
+      return `• ${session.title} (เช็กได้ถึง ${formatDateTime(closesAt, 'th', SCHOOL_TIME_ZONE)})`;
     });
-    await replySafely(replyToken, withLiffLink(`⏰ เช็คชื่อ\n📘 ${title}\n\n${lines.join('\n')}`, 'กดเพื่อเช็คชื่อ', link({ view: 'attendance' })));
+    await replySafely(replyToken, withLiffLink(`⏰ เช็กชื่อ\n📘 ${title}\n\n${lines.join('\n')}`, 'กดเพื่อเช็กชื่อ', link({ view: 'attendance' })));
   } else {
     const open = await openWork(supabase, classroom.id);
     if (!open.length) {

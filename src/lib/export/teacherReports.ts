@@ -174,7 +174,7 @@ function attendance(data: ExportData, lang: Lang): Sheet[] {
       ];
     });
     return {
-      name: sheetLabel(t(lang, 'เช็คชื่อ', 'Attend'), c),
+      name: sheetLabel(t(lang, 'เช็กชื่อ', 'Attend'), c),
       header: [
         t(lang, 'รหัสนักเรียน', 'Student ID'),
         t(lang, 'ชื่อ-นามสกุล', 'Full name'),
@@ -191,7 +191,7 @@ function attendance(data: ExportData, lang: Lang): Sheet[] {
   });
   return [
     {
-      name: t(lang, 'สรุปเช็คชื่อ', 'Attendance summary'),
+      name: t(lang, 'สรุปเช็กชื่อ', 'Attendance summary'),
       header: [t(lang, 'ห้องเรียน', 'Classroom'), t(lang, 'รหัสนักเรียน', 'Student ID'), t(lang, 'ชื่อ-นามสกุล', 'Full name'), ATTENDANCE.on_time[lang], ATTENDANCE.late[lang], ATTENDANCE.absent[lang], ATTENDANCE.excused[lang], t(lang, 'คาบทั้งหมด', 'Periods'), t(lang, '% มาเรียน', '% present')],
       rows: summary,
     },

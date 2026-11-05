@@ -126,7 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_classroom_posts_classroom ON public.classroom_pos
 CREATE TABLE IF NOT EXISTS public.attendance_sessions (
   id TEXT PRIMARY KEY,
   classroom_id TEXT NOT NULL REFERENCES public.classrooms(id) ON DELETE CASCADE,
-  title TEXT NOT NULL DEFAULT 'เช็คชื่อ',
+  title TEXT NOT NULL DEFAULT 'เช็กชื่อ',
   starts_at TIMESTAMPTZ NOT NULL,
   on_time_until_minutes INTEGER NOT NULL DEFAULT 10,
   late_until_minutes INTEGER NOT NULL DEFAULT 30,

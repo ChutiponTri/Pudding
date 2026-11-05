@@ -127,7 +127,7 @@ function ExportsContent() {
   // What the file will contain, for the summary panel.
   const sheetPreview = [
     ...(reports.has('gradebook') ? [tr('สรุปคะแนน', 'Grade summary'), ...selected.map((c) => `${tr('คะแนน', 'Grades')} · ${classroomTitle(c)}`)] : []),
-    ...(reports.has('attendance') ? [tr('สรุปเช็คชื่อ', 'Attendance summary'), ...selected.map((c) => `${tr('เช็คชื่อ', 'Attendance')} · ${classroomTitle(c)}`)] : []),
+    ...(reports.has('attendance') ? [tr('สรุปเช็กชื่อ', 'Attendance summary'), ...selected.map((c) => `${tr('เช็กชื่อ', 'Attendance')} · ${classroomTitle(c)}`)] : []),
     ...REPORTS.filter((r) => ['submissions', 'question_scores', 'missing', 'roster'].includes(r.id) && reports.has(r.id)).map((r) => r.title),
   ];
 

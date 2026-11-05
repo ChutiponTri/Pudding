@@ -32,13 +32,13 @@ export function buildPostLineMessage(
     title = metadata.retake ? 'สอบซ่อม' : 'ข้อสอบใหม่';
   } else if (activityType === 'attendance') {
     icon = '⏰';
-    title = 'เปิดคาบเช็คชื่อ';
+    title = 'เปิดคาบเช็กชื่อ';
   }
   // A retake's LINE wording (deadline and names) differs from its one-line timeline card.
   const text = typeof metadata.lineBody === 'string' && metadata.lineBody ? metadata.lineBody : body;
   const message = `${icon} ${title}\n📘 ${classroomTitle(classroom)}\n\n${text}`;
   const assignmentId = typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined;
-  if (activityType === 'attendance') return withLiffLink(message, 'กดเพื่อเช็คชื่อ', { classroomId, inviteCode, view: 'attendance' });
+  if (activityType === 'attendance') return withLiffLink(message, 'กดเพื่อเช็กชื่อ', { classroomId, inviteCode, view: 'attendance' });
   if ((activityType === 'assignment' || activityType === 'exam') && assignmentId) {
     return withLiffLink(message, activityType === 'exam' ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', { classroomId, inviteCode, assignmentId });
   }
@@ -76,9 +76,9 @@ export function attendanceLineText(
   const at = (minutes: number) =>
     new Date(start + minutes * 60_000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: SCHOOL_TIME_ZONE });
   const text =
-    `⏰ อย่าลืมเช็คชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${session.title}\n\n` +
-    `⏱️ ตรงเวลาถึง ${at(session.on_time_until_minutes)} น.\nเช็คชื่อได้ (สาย) ถึง ${at(session.late_until_minutes)} น.`;
-  return withLiffLink(text, 'กดเพื่อเช็คชื่อ', { classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'attendance' });
+    `⏰ อย่าลืมเช็กชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${session.title}\n\n` +
+    `⏱️ ตรงเวลาถึง ${at(session.on_time_until_minutes)} น.\nเช็กชื่อได้ (สาย) ถึง ${at(session.late_until_minutes)} น.`;
+  return withLiffLink(text, 'กดเพื่อเช็กชื่อ', { classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'attendance' });
 }
 
 /** LINE text announcing a work's scores ("ประกาศคะแนน"); the link opens the student's own result. */

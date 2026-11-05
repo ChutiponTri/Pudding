@@ -62,7 +62,7 @@ export const TeacherLoggedOutView: React.FC = () => {
     {
       icon: <Send className="w-5 h-5" />,
       title: th ? "ส่งลิงก์ให้นักเรียนผ่าน LINE" : "Share the LINE link",
-      body: th ? "เพิ่มบอทเข้ากลุ่ม LINE ของห้อง นักเรียนกดลิงก์เพื่อเข้าห้อง ส่งงาน และเช็คชื่อในแอป LINE" : "Add the bot to your class group. Students join, submit and check in inside LINE.",
+      body: th ? "เพิ่มบอทเข้ากลุ่ม LINE ของห้อง นักเรียนกดลิงก์เพื่อเข้าห้อง ส่งงาน และเช็กชื่อในแอป LINE" : "Add the bot to your class group. Students join, submit and check in inside LINE.",
     },
   ];
 
@@ -82,8 +82,8 @@ export const TeacherLoggedOutView: React.FC = () => {
     {
       icon: <CalendarCheck className="w-5 h-5" />,
       tint: "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300",
-      title: th ? "เช็คชื่อออนไลน์" : "Attendance",
-      body: th ? "เปิดคาบเช็คชื่อ นักเรียนกดเช็คชื่อใน LINE ระบบแยกตรงเวลา/สายให้อัตโนมัติ" : "Open a session; students check in on LINE, on-time or late is automatic.",
+      title: th ? "เช็กชื่อออนไลน์" : "Attendance",
+      body: th ? "เปิดคาบเช็กชื่อ นักเรียนกดเช็กชื่อใน LINE ระบบแยกตรงเวลา/สายให้อัตโนมัติ" : "Open a session; students check in on LINE, on-time or late is automatic.",
     },
     {
       icon: <MessageCircle className="w-5 h-5" />,
@@ -111,7 +111,7 @@ export const TeacherLoggedOutView: React.FC = () => {
               {th ? (
                 <>
                   จัดการห้องเรียน
-                  <br className="hidden sm:block" /> ตรวจงาน และเช็คชื่อ
+                  <br className="hidden sm:block" /> ตรวจงาน และเช็กชื่อ
                   <span className="block text-slate-950/70">ในที่เดียว</span>
                 </>
               ) : (

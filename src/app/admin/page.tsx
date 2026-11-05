@@ -106,9 +106,9 @@ export default async function AdminOverviewPage() {
     { label: tr('ห้องเรียน', 'Classrooms'), value: countOf.classrooms, tone: 'emerald', icon: <BookOpen className="w-4 h-4" />, href: '/admin/classrooms' },
     { label: tr('งาน/ข้อสอบ', 'Assignments'), value: countOf.assignments, tone: 'sky', icon: <ClipboardList className="w-4 h-4" />, href: '/admin/assignments' },
     { label: tr('งานที่ส่ง', 'Submissions'), value: countOf.submissions, tone: 'violet', icon: <Inbox className="w-4 h-4" />, href: '/admin/submissions' },
-    { label: tr('บันทึกเช็คชื่อ', 'Attendance records'), value: countOf.attendance_records, tone: 'teal', icon: <CalendarCheck className="w-4 h-4" />, href: '/admin/attendance_records' },
+    { label: tr('บันทึกเช็กชื่อ', 'Attendance records'), value: countOf.attendance_records, tone: 'teal', icon: <CalendarCheck className="w-4 h-4" />, href: '/admin/attendance_records' },
     { label: tr('ครูที่บอท LINE ยังติดต่อไม่ได้', 'Teachers the LINE bot cannot reach'), value: unlinkedTeachers.count ?? 0, tone: 'orange', icon: <MessageCircleOff className="w-4 h-4" />, href: '/admin/users?col=role&val=teacher' },
-    { label: tr('ส่ง/เช็คชื่อแทนเพื่อน', "From a classmate's phone"), value: proxyActivity.length, tone: 'cyan', icon: <Smartphone className="w-4 h-4" />, href: '#proxy' },
+    { label: tr('ส่ง/เช็กชื่อแทนเพื่อน', "From a classmate's phone"), value: proxyActivity.length, tone: 'cyan', icon: <Smartphone className="w-4 h-4" />, href: '#proxy' },
     { label: tr('งานน่าสงสัย', 'Flagged work'), value: flaggedCount.count ?? 0, tone: 'rose', icon: <AlertTriangle className="w-4 h-4" />, href: '/admin/submissions?col=is_flagged_suspicious&val=true' },
   ];
 
@@ -182,9 +182,9 @@ export default async function AdminOverviewPage() {
         </section>
 
         <section id="proxy" className="space-y-3 scroll-mt-28">
-          <AdminSectionTitle icon={<Smartphone className="w-4 h-4" />} tone="sky" title={tr('ส่งงาน / เช็คชื่อแทนเพื่อน (ล่าสุด)', "From a classmate's phone (latest)")} />
+          <AdminSectionTitle icon={<Smartphone className="w-4 h-4" />} tone="sky" title={tr('ส่งงาน / เช็กชื่อแทนเพื่อน (ล่าสุด)', "From a classmate's phone (latest)")} />
           {proxyActivity.length === 0 ? (
-            <p className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500">{tr('ยังไม่มีการใช้เครื่องของเพื่อนส่งงานหรือเช็คชื่อ', "Nobody has used a classmate's phone yet")}</p>
+            <p className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500">{tr('ยังไม่มีการใช้เครื่องของเพื่อนส่งงานหรือเช็กชื่อ', "Nobody has used a classmate's phone yet")}</p>
           ) : (
             <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
               <table className="w-full text-xs">
@@ -201,7 +201,7 @@ export default async function AdminOverviewPage() {
                       <td className="px-3 py-2 whitespace-nowrap font-mono">{row.at ? new Date(row.at).toLocaleString(lang === 'en' ? 'en-GB' : 'th-TH', { timeZone: 'Asia/Bangkok' }) : '-'}</td>
                       <td className="px-3 py-2">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${row.kind === 'submission' ? 'bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300' : 'bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300'}`}>
-                          {row.kind === 'submission' ? tr('ส่งงาน', 'Work') : tr('เช็คชื่อ', 'Check-in')}
+                          {row.kind === 'submission' ? tr('ส่งงาน', 'Work') : tr('เช็กชื่อ', 'Check-in')}
                         </span>
                       </td>
                       <td className="px-3 py-2">{row.classroom}</td>
