@@ -23,6 +23,7 @@ export function CoTeacherPanel({
   onAdd,
   teachers,
   onRemove,
+  hideList,
 }: {
   /** The course the LINE invite joins; without one the LINE button is hidden. */
   courseId?: string | null;
@@ -31,6 +32,8 @@ export function CoTeacherPanel({
   onAdd: (teacher: User, role: CoTeacherRole) => void;
   teachers?: ClassroomTeacher[];
   onRemove?: (teacherId: string) => void;
+  /** Still marks search results already added, but does not list the teachers (the page shows them). */
+  hideList?: boolean;
 }) {
   const { tr, language } = useLanguage();
   const [role, setRole] = useState<CoTeacherRole>('assistant');
@@ -183,7 +186,7 @@ export function CoTeacherPanel({
         </div>
       )}
 
-      {teachers && (
+      {teachers && !hideList && (
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800">
           {teachers.map((teacher) => {
             const badge = roleBadge(teacher.role);

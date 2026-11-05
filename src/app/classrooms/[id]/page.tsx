@@ -315,6 +315,7 @@ export default function ClassroomWorkspacePage() {
   const [dropTarget, setDropTarget] = useState<{ group: string; index: number } | null>(null);
 
   // People Tab: Add Teacher & Add Student Modals
+  const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
 
   const [showInviteModal, setShowInviteModal] = useState(false);
   // Accept all / reject all join requests: asks in its own box before acting.
@@ -1633,6 +1634,7 @@ export default function ClassroomWorkspacePage() {
     await dataService.updateClassroom(classroom.id, { teachers: updated });
     setClassroom((prev) => (prev ? { ...prev, teachers: updated } : prev));
     setNotice(tr('เพิ่มผู้สอนแล้ว', 'Teacher added'));
+    setShowAddTeacherModal(false);
   };
 
   const [editingStudent, setEditingStudent] = useState<User | null>(null);
@@ -2468,19 +2470,72 @@ export default function ClassroomWorkspacePage() {
           {/* ============================================================ */}
           {tab === 'people' && (
             <section className="max-w-4xl mx-auto space-y-6">
-              {/* 1. Teachers: role, search, LINE invite and the list in one compact card */}
-              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 shadow-xs space-y-2.5">
-                <h2 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-amber-500" />
-                  <span>{tr('ผู้สอน', 'Teachers')} ({teachersList.length})</span>
-                </h2>
-                <CoTeacherPanel
-                  courseId={classroom.course_id}
-                  institution={teacherInstitution}
-                  onAdd={handleSelectFoundTeacher}
-                  teachers={teachersList}
-                  onRemove={handleRemoveTeacher}
-                />
+              {/* 1. Instructors Section (แสดงรายชื่อผู้สอน ละเอียดทุกท่าน พร้อมหน้าที่) */}
+              <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                  <h2 className="font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <UserCheck className="w-4 h-4 text-amber-500" />
+                    <span>{tr('รายชื่อผู้สอน', 'Teachers')} ({teachersList.length})</span>
+                  </h2>
+                  <button
+                    onClick={() => setShowAddTeacherModal(true)}
+                    className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black inline-flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>{tr('+ เพิ่มผู้สอน', '+ Add teacher')}</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2.5">
+                  {teachersList.map((teacher) => {
+                    const isPrimary = teacher.role === 'primary';
+                    const isResearcher = teacher.role === 'researcher';
+                    const roleLabel = isPrimary
+                      ? tr('ครูประจำวิชา', 'Primary teacher')
+                      : isResearcher
+                      ? tr('ผู้ตรวจเพื่อวิจัย (IRR)', 'Research grader (IRR)')
+                      : tr('TA (ผู้ช่วยสอน)', 'TA (teaching assistant)');
+                    const roleBadgeClass = isPrimary
+                      ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300'
+                      : isResearcher
+                      ? 'bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border-purple-300'
+                      : 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border-blue-300';
+
+                    return (
+                      <div
+                        key={teacher.teacher_id}
+                        className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-between gap-3 border border-slate-100 dark:border-slate-700/60"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-200 font-bold flex items-center justify-center text-sm shrink-0">
+                            {teacher.name?.[0] || 'T'}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                              {teacher.name || teacher.teacher_id}
+                            </p>
+                            <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                              {teacher.email || tr('ไม่มีอีเมล', 'No email')}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-[10px] font-black px-2.5 py-1 rounded-full border ${roleBadgeClass}`}>
+                            {roleLabel}
+                          </span>
+                          <button
+                            onClick={() => handleRemoveTeacher(teacher.teacher_id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                            title={tr('ลบผู้สอนออกจากห้องเรียน', 'Remove teacher from classroom')}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Pending Approvals Notice Banner */}
@@ -2809,6 +2864,29 @@ export default function ClassroomWorkspacePage() {
           onClose={() => setEditingStudent(null)}
           onSaved={handleStudentEdited}
         />
+      )}
+
+      {/* MODAL: ADD TEACHER (same compact panel as the dashboard's co-teacher popup) */}
+      {showAddTeacherModal && (
+        <ModalSheet onClose={() => setShowAddTeacherModal(false)} size="sm:max-w-2xl">
+          <ModalSheetHeader>
+            <div className="flex items-center gap-2 min-w-0">
+              <UserPlus className="w-5 h-5 text-amber-500 shrink-0" />
+              <h3 className="text-base font-bold text-slate-900 dark:text-white line-clamp-2">{tr('เพิ่มผู้สอน', 'Add teacher')}</h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAddTeacherModal(false)}
+              className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg cursor-pointer shrink-0"
+              aria-label={tr('ปิด', 'Close')}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </ModalSheetHeader>
+          <ModalSheetBody>
+            <CoTeacherPanel courseId={classroom.course_id} institution={teacherInstitution} onAdd={handleSelectFoundTeacher} teachers={teachersList} hideList />
+          </ModalSheetBody>
+        </ModalSheet>
       )}
 
       {/* MODAL: STUDENTS & JOIN REQUESTS (invite in LINE) */}
