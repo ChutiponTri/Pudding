@@ -56,6 +56,8 @@ import { getAssignmentWindow, isAssignmentPublished, QUIZ_LATE_GRACE_MS } from "
 import { formatDateTime } from "@/lib/utils/datetime";
 import { SubmitConfirmSheet, type SubmitReview } from "@/components/liff/SubmitConfirmSheet";
 import { QuizTimer } from "@/components/liff/QuizTimer";
+import { quizExitRule, quizLeaveWarning, QuizExitWarningSheet, SuspiciousLabel } from "@/components/liff/QuizExitNotice";
+import type { QuizOpenResult } from "@/lib/utils/quizExit";
 import { canEditSubmission, isHandInAllowed, isHandedIn, isReopenActive, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { assignmentAttachments } from "@/lib/utils/referenceWork";
@@ -682,6 +684,10 @@ export default function LiffStudentPage() {
   >([]);
   const awayStartRef = useRef<number | null>(null);
   const tabSwitchCountRef = useRef(0);
+  // The open quiz's server-side count of times it was closed and opened again
+  // (closing LINE resets everything above, so leaving is counted at each opening).
+  const [quizOpen, setQuizOpen] = useState<QuizOpenResult | null>(null);
+  const [isQuizExitWarningOpen, setIsQuizExitWarningOpen] = useState(false);
 
 
 
@@ -1363,27 +1369,74 @@ export default function LiffStudentPage() {
     setSubmissionSuccess(false);
     setSubmittedResult(null);
     setActiveQuestions([]);
+    setQuizOpen(null);
+    setIsQuizExitWarningOpen(false);
     setActiveAssignment(a);
     setActiveProxy(forFriend || null);
     setIsLoadingQuestions(true);
     try {
       // One data-service call loads the assignment and its questions together.
-      const { questions } = await dataService.getAssignmentById(a.id);
+      // A quiz opening is counted on the server at the same time (quizExit.ts).
+      const [{ questions }, opened] = await Promise.all([
+        dataService.getAssignmentById(a.id),
+        a.is_exam && !edit ? dataService.openQuizAttempt(a.id, forFriend?.studentNumber) : Promise.resolve(null),
+      ]);
+      if (opened?.action === "forfeit") {
+        await forfeitQuiz(a, forFriend || null, opened);
+        return;
+      }
+      setQuizOpen(opened);
       setActiveQuestions(questions);
+      if (opened?.action === "warn") setIsQuizExitWarningOpen(true);
     } catch (error) {
       console.error("Failed to load assignment questions:", error);
       setActiveAssignment(null);
-      alert("โหลดข้อสอบไม่สำเร็จ ลองใหม่อีกครั้ง");
+      alert(error instanceof Error && error.message.startsWith("หมดเวลา") ? error.message : "โหลดข้อสอบไม่สำเร็จ ลองใหม่อีกครั้ง");
     } finally {
       setIsLoadingQuestions(false);
     }
   };
 
+  /**
+   * Opened again after leaving more often than warned: the server hands in a
+   * blank sheet (it does so for any hand-in from now on, whatever is sent).
+   */
+  const forfeitQuiz = async (a: Assignment, forFriend: ProxyFriend | null, opened: QuizOpenResult) => {
+    if (!currentStudent) return;
+    const sub = await dataService.submitStudentWork({
+      assignment_id: a.id,
+      student_id: currentStudent.student_id || currentStudent.id,
+      student_name: currentStudent.name,
+      student_first_name: currentStudent.first_name,
+      student_last_name: currentStudent.last_name,
+      student_avatar: currentStudent.avatar,
+      line_uid: currentStudent.line_uid,
+      proxy_student_number: forFriend?.studentNumber,
+      answers: [],
+      antiCheating: { tab_switch_count: 0, away_time_seconds: 0, events: [] },
+    });
+    draftUploadKeysRef.current.clear();
+    if (forFriend) {
+      setProxyFriend((prev) => (prev ? { ...prev, submittedAssignmentIds: [...prev.submittedAssignmentIds, a.id] } : prev));
+    } else {
+      setSubmissions((prev) => ({ ...prev, [a.id]: sub }));
+    }
+    setQuizOpen(opened);
+  };
+  const isQuizForfeited = quizOpen?.action === "forfeit";
+
+  /** Leaving the work screen before handing in asks first; for a quiz, it says what reopening costs. */
+  const confirmLeaveWork = () =>
+    !activeAssignment ||
+    submissionSuccess ||
+    isQuizForfeited ||
+    confirm(editingSubmission ? "ออกโดยไม่บันทึกการแก้ไข? (งานเดิมยังอยู่)" : activeAssignment.is_exam ? quizLeaveWarning(quizOpen) : "ออกจากหน้านี้? (คำตอบจะยังไม่ถูกส่ง)");
+
   // 3. Real-Time Anti-Cheating Listener ("ตรวจจับเวลาแอบกดออกจอ")
   // Quizzes only: homework may be done alongside other apps (references, camera).
   // Quizzes take no photos or files, so every moment off the quiz counts, however
   // short: looking an answer up in an AI chat app takes only seconds.
-  const isTrackingAway = Boolean(activeAssignment?.is_exam);
+  const isTrackingAway = Boolean(activeAssignment?.is_exam) && !isQuizForfeited;
   useEffect(() => {
     // Each assignment starts a fresh away-tracking session before listening.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -2033,6 +2086,7 @@ export default function LiffStudentPage() {
           <button
             type="button"
             onClick={() => {
+              if (!confirmLeaveWork()) return;
               setSelectedClassroom(null);
               setActiveAssignment(null);
             }}
@@ -2229,6 +2283,11 @@ export default function LiffStudentPage() {
             </div>
           </aside>
         </div>
+      )}
+
+      {/* Opened again after closing the quiz: must be acknowledged */}
+      {isQuizExitWarningOpen && quizOpen && activeAssignment && (
+        <QuizExitWarningSheet result={quizOpen} onClose={() => setIsQuizExitWarningOpen(false)} />
       )}
 
       {/* Floating away-from-screen warning */}
@@ -2845,7 +2904,7 @@ export default function LiffStudentPage() {
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={() => {
-                if (submissionSuccess || confirm(editingSubmission ? "ออกโดยไม่บันทึกการแก้ไข? (งานเดิมยังอยู่)" : "ออกจากหน้านี้? (คำตอบจะยังไม่ถูกส่ง)")) {
+                if (confirmLeaveWork()) {
                   if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
                   setActiveAssignment(null);
                 }
@@ -2857,7 +2916,7 @@ export default function LiffStudentPage() {
             </button>
 
             {/* Live anti-cheating status (quizzes only) */}
-            {isTrackingAway && (
+            {isTrackingAway && !isQuizForfeited && (
               <div
                 className={`flex items-center gap-2 h-9 px-3.5 rounded-full text-xs font-semibold ring-1 ${tabSwitchCount > 0
                   ? "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:ring-rose-900"
@@ -2887,6 +2946,30 @@ export default function LiffStudentPage() {
               <div className="h-40 rounded-3xl bg-slate-200/70 dark:bg-slate-800 animate-pulse" />
               <p className="text-center text-sm text-slate-500">กำลังเตรียมข้อสอบ...</p>
             </div>
+          ) : isQuizForfeited && quizOpen ? (
+            <div className={`${CARD} text-center space-y-5 p-6 sm:p-8 mt-6 animate-in fade-in zoom-in-95`}>
+              <div className="w-20 h-20 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 mx-auto flex! items-center justify-center">
+                <ShieldAlert className="w-10 h-10" />
+              </div>
+              <div className="space-y-1.5">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">ระบบส่งกระดาษเปล่าแล้ว</h2>
+                <p className="text-sm text-slate-500 max-w-xs mx-auto leading-relaxed">
+                  คุณปิดหรือออกจากข้อสอบนี้ก่อนส่ง {quizOpen.exits} ครั้ง
+                  {quizOpen.warnings > 0 ? ` (เกิน ${quizOpen.warnings} ครั้งที่เตือนไว้)` : ""} จึงได้ 0 คะแนน และทำข้อสอบนี้ต่อไม่ได้
+                </p>
+              </div>
+              <SuspiciousLabel />
+              <p className="text-xs text-slate-500">หากมีเหตุจำเป็น (เช่น แอปค้าง) ติดต่อคุณครู</p>
+              <button
+                onClick={() => {
+                  if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
+                  setActiveAssignment(null);
+                }}
+                className="w-full h-12 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+              >
+                {activeProxy && proxyFriend ? "กลับไปหน้าส่งแทนเพื่อน" : "กลับสู่หน้าหลัก"}
+              </button>
+            </div>
           ) : submissionSuccess ? (
             <div className={`${CARD} text-center space-y-5 p-6 sm:p-8 mt-6 animate-in fade-in zoom-in-95`}>
               <div className="liff-pop w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-950 text-line mx-auto flex! items-center justify-center">
@@ -2898,6 +2981,7 @@ export default function LiffStudentPage() {
                   {isTrackingAway ? "ส่งคำตอบและรายงานถึงคุณครูแล้ว" : "ส่งงานถึงคุณครูแล้ว"}
                 </p>
               </div>
+              {isTrackingAway && !!quizOpen?.exits && <SuspiciousLabel />}
               {submittedResult?.submission.results_hidden ? (
                 <ResultsHiddenNote isExam={!!activeAssignment?.is_exam} />
               ) : submittedResult && submittedResult.total !== null ? (
@@ -3016,10 +3100,28 @@ export default function LiffStudentPage() {
 
               <ReferenceWork assignment={activeAssignment} />
 
+              {isTrackingAway && quizOpen?.tracked && quizOpen.exits > 0 && (
+                <div role="status" className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200 text-xs leading-relaxed space-y-2">
+                  <SuspiciousLabel className="justify-start!" />
+                  <p>
+                    <b>ปิดหรือออกจากข้อสอบก่อนส่ง {quizOpen.exits} ครั้ง</b> (เตือนครั้งที่ {quizOpen.exits}/{quizOpen.warnings}) • {quizExitRule(quizOpen)}
+                  </p>
+                </div>
+              )}
               {isTrackingAway && (
                 <div role="note" className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-amber-900 dark:text-amber-200 text-xs leading-relaxed">
                   <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-                  <p>ข้อสอบนี้แนบไฟล์ไม่ได้ และทุกครั้งที่ออกจากหน้าจอจะถูกรายงานให้คุณครูทราบ</p>
+                  <p>
+                    ข้อสอบนี้แนบไฟล์ไม่ได้ และทุกครั้งที่ออกจากหน้าจอจะถูกรายงานให้คุณครูทราบ
+                    {quizOpen?.tracked && quizOpen.exits === 0 && (
+                      <span className="block mt-1 font-bold">
+                        ห้ามปิดหน้าข้อสอบ (กด X) หรือกดออกก่อนส่ง —{" "}
+                        {quizOpen.warnings === 0
+                          ? "ถ้าเปิดใหม่ ระบบจะส่งกระดาษเปล่าทันที (0 คะแนน)"
+                          : `ถ้าเปิดใหม่จะถูกเตือน ${quizOpen.warnings} ครั้ง ครั้งถัดไประบบจะส่งกระดาษเปล่า (0 คะแนน)`}
+                      </span>
+                    )}
+                  </p>
                 </div>
               )}
 

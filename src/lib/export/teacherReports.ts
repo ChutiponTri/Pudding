@@ -225,7 +225,11 @@ function submissionLog(data: ExportData, lang: Lang): Sheet {
           sub?.reopened_at ? t(lang, 'เปิดให้แก้ไขอยู่', 'Editing allowed') : '',
           sub?.submitted_by ? nameById.get(sub.submitted_by) || sub.submitted_by : '',
           a.is_exam && sub ? sub.tab_switch_count || 0 : null,
-          a.is_exam && sub?.is_flagged_suspicious ? t(lang, 'น่าสงสัย', 'Flagged') : '',
+          a.is_exam && sub?.is_flagged_suspicious
+            ? t(lang, 'น่าสงสัย', 'Flagged') +
+              (sub.quiz_exit_count ? t(lang, ` (ปิดข้อสอบ ${sub.quiz_exit_count} ครั้ง)`, ` (closed quiz ${sub.quiz_exit_count}×)`) : '') +
+              (sub.auto_forfeited ? t(lang, ' ส่งเปล่าอัตโนมัติ', ' auto blank') : '')
+            : '',
         ]);
       }
     }

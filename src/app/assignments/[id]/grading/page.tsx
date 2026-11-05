@@ -1163,6 +1163,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               isFlagged={sub.is_flagged_suspicious}
                               tabSwitchCount={sub.tab_switch_count}
                               totalTimeAwaySeconds={sub.total_time_away_seconds}
+                              quizExitCount={sub.quiz_exit_count}
+                              autoForfeited={sub.auto_forfeited}
                             />
                           )}
                           {sub.submitted_by && (
@@ -1344,6 +1346,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               isFlagged={sub.is_flagged_suspicious}
                               tabSwitchCount={sub.tab_switch_count}
                               totalTimeAwaySeconds={sub.total_time_away_seconds}
+                              quizExitCount={sub.quiz_exit_count}
+                              autoForfeited={sub.auto_forfeited}
                             />
                           ) : (
                             !sub.submitted_by && <span className="text-slate-400">-</span>

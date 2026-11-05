@@ -89,6 +89,17 @@ interface QuestionGradeState {
 type Preset = FeedbackPreset;
 
 const roundHalf = (n: number) => Math.round(n * 2) / 2;
+
+/** Why a quiz submission is flagged: leaving the screen, and closing the quiz and coming back. */
+const integrityText = (sub: Submission, th: boolean) => {
+  const away = th
+    ? `สลับแท็บ ${sub.tab_switch_count} ครั้ง (${sub.total_time_away_seconds} วินาที)`
+    : `${sub.tab_switch_count} tab switches (${sub.total_time_away_seconds}s)`;
+  if (!sub.quiz_exit_count) return away;
+  const closed = th ? ` • ปิดข้อสอบแล้วเปิดใหม่ ${sub.quiz_exit_count} ครั้ง` : ` • closed & reopened the quiz ${sub.quiz_exit_count}×`;
+  const blank = sub.auto_forfeited ? (th ? ' • ระบบส่งกระดาษเปล่าอัตโนมัติ (0 คะแนน)' : ' • blank sheet handed in automatically (0)') : '';
+  return away + closed + blank;
+};
 /** Badge colour of each score level (suggestion chips and the manage dialog). */
 const LEVEL_TONE: Record<PresetLevel, string> = {
   full: 'bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300',
@@ -598,9 +609,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
               <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 space-y-0.5">
                 <span className="font-bold flex items-center gap-1">
                   <AlertCircle className="w-3.5 h-3.5" />
-                  {th ? 'พฤติกรรมน่าสงสัย' : 'Integrity alert'}
+                  {th ? 'น่าสงสัยว่าทุจริต' : 'Suspected cheating'}
                 </span>
-                <p>{th ? `สลับแท็บ ${submission.tab_switch_count} ครั้ง (${submission.total_time_away_seconds} วินาที)` : `${submission.tab_switch_count} tab switches (${submission.total_time_away_seconds}s)`}</p>
+                <p>{integrityText(submission, th)}</p>
               </div>
             )}
           </div>
@@ -616,8 +627,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                   <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-px" />
                     <span>
-                      <span className="font-bold block">{th ? 'พฤติกรรมน่าสงสัย' : 'Integrity alert'}</span>
-                      {th ? `สลับแท็บ ${submission.tab_switch_count} ครั้ง (${submission.total_time_away_seconds} วินาที)` : `${submission.tab_switch_count} tab switches (${submission.total_time_away_seconds}s)`}
+                      <span className="font-bold block">{th ? 'น่าสงสัยว่าทุจริต' : 'Suspected cheating'}</span>
+                      {integrityText(submission, th)}
                     </span>
                   </div>
                 )}

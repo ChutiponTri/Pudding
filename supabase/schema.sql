@@ -247,6 +247,8 @@ CREATE TABLE IF NOT EXISTS public.submissions (
   reopen_until TIMESTAMPTZ, -- End of that permission (NULL = no time limit)
   retake_submission_id TEXT, -- Original quiz row: the retake submission whose score replaced this one
   retake_previous JSONB, -- Values before the retake replaced them (restored if the retake is deleted)
+  quiz_exit_count INTEGER DEFAULT 0, -- Times the student closed the quiz and opened it again before handing in
+  auto_forfeited BOOLEAN DEFAULT FALSE, -- A blank sheet handed in by the system after too many exits
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(assignment_id, student_id)
@@ -286,13 +288,25 @@ CREATE INDEX IF NOT EXISTS idx_answers_submission ON public.submission_answers(s
 CREATE TABLE IF NOT EXISTS public.submission_events (
   id TEXT PRIMARY KEY DEFAULT ('evt_' || substr(md5(random()::text), 1, 12)),
   submission_id TEXT NOT NULL REFERENCES public.submissions(id) ON DELETE CASCADE,
-  event_type TEXT NOT NULL CHECK (event_type IN ('tab_hidden', 'window_blur', 'tab_visible', 'window_focus', 'copy_attempt', 'paste_attempt')),
+  event_type TEXT NOT NULL CHECK (event_type IN ('tab_hidden', 'window_blur', 'tab_visible', 'window_focus', 'copy_attempt', 'paste_attempt', 'quiz_reopened')),
   away_duration_seconds INTEGER DEFAULT 0,
   details TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_submission ON public.submission_events(submission_id);
+
+-- Every opening of a quiz before it is handed in (a reopen = the student left it; see quizExit.ts)
+CREATE TABLE IF NOT EXISTS public.quiz_attempts (
+  id TEXT PRIMARY KEY,
+  assignment_id TEXT NOT NULL REFERENCES public.assignments(id) ON DELETE CASCADE,
+  student_id TEXT NOT NULL,
+  open_count INTEGER NOT NULL DEFAULT 0,
+  opened_at JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (assignment_id, student_id)
+);
+CREATE INDEX IF NOT EXISTS idx_quiz_attempts_assignment ON public.quiz_attempts(assignment_id);
 
 -- ==============================================================================
 -- 12. ROW LEVEL SECURITY (RLS) POLICIES
@@ -308,6 +322,7 @@ ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submission_answers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.submission_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quiz_attempts ENABLE ROW LEVEL SECURITY;
 
 -- No policies: the browser never reaches these tables with the public key.
 -- All access goes through the app's server routes (service_role key, which

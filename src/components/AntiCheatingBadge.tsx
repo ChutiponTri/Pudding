@@ -9,6 +9,10 @@ interface AntiCheatingBadgeProps {
   isFlagged: boolean;
   tabSwitchCount: number;
   totalTimeAwaySeconds: number;
+  /** Times the student closed the quiz and opened it again before handing in. */
+  quizExitCount?: number | null;
+  /** The system handed in a blank sheet after too many exits. */
+  autoForfeited?: boolean | null;
   onClick?: () => void;
   showDetails?: boolean;
 }
@@ -17,13 +21,16 @@ export const AntiCheatingBadge: React.FC<AntiCheatingBadgeProps> = ({
   isFlagged,
   tabSwitchCount,
   totalTimeAwaySeconds,
+  quizExitCount,
+  autoForfeited,
   onClick,
   showDetails = true,
 }) => {
   const { t, language } = useLanguage();
 
   // Same limits as every count (isIntegrityFlagged): flagged means "suspicious"; any lesser activity is a watch.
-  const isSevere = isFlagged || isSuspiciousActivity(tabSwitchCount || 0, totalTimeAwaySeconds || 0);
+  const exits = quizExitCount || 0;
+  const isSevere = isFlagged || exits > 0 || isSuspiciousActivity(tabSwitchCount || 0, totalTimeAwaySeconds || 0);
   const isModerate = !isSevere && (tabSwitchCount > 0 || totalTimeAwaySeconds > 0);
 
   if (!isSevere && !isModerate) {
@@ -49,7 +56,14 @@ export const AntiCheatingBadge: React.FC<AntiCheatingBadgeProps> = ({
         title={t('grading.audit_modal.title')}
       >
         <ShieldAlert className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 animate-pulse" />
-        <span>{language === 'th' ? 'พฤติกรรมน่าสงสัย' : 'Flagged Suspicious'}</span>
+        <span>{language === 'th' ? 'น่าสงสัยว่าทุจริต' : 'Suspected cheating'}</span>
+        {exits > 0 && (
+          <span className="bg-rose-600 text-white px-1.5 py-0.5 rounded text-[11px]">
+            {autoForfeited
+              ? language === 'th' ? `ปิดข้อสอบ ${exits} ครั้ง • ส่งเปล่าอัตโนมัติ` : `Closed quiz ${exits}× • auto blank`
+              : language === 'th' ? `ปิดข้อสอบ ${exits} ครั้ง` : `Closed quiz ${exits}×`}
+          </span>
+        )}
         {showDetails && (
           <span className="bg-rose-200/80 dark:bg-rose-900 text-rose-800 dark:text-rose-200 px-1.5 py-0.5 rounded text-[11px]">
             {tabSwitchCount} {language === 'th' ? 'ครั้ง' : 'switches'} ({totalTimeAwaySeconds}s)

@@ -15,6 +15,7 @@ import {
 } from '@/types/database';
 import { createClient, isSupabaseConfigured } from './client';
 import { authFetch } from '@/lib/auth/lineSession';
+import type { QuizOpenResult } from '@/lib/utils/quizExit';
 import { invalidateSessionCache } from '@/lib/cache/sessionCache';
 import { classroomSignalChannel, type ClassroomSignal } from '@/lib/realtime/signals';
 
@@ -631,6 +632,21 @@ export const dataService = {
   // ==============================================================================
   // SUBMISSIONS
   // ==============================================================================
+  /**
+   * The student is opening a quiz: counted on the server, so closing LINE and
+   * coming back cannot hide having left. Says whether to start, warn, or hand in blank.
+   */
+  async openQuizAttempt(assignmentId: string, proxyStudentNumber?: string): Promise<QuizOpenResult> {
+    const res = await authFetch('/api/quiz-attempts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignment_id: assignmentId, proxy_student_number: proxyStudentNumber || undefined }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `เปิดข้อสอบไม่สำเร็จ (${res.status})`);
+    return json as QuizOpenResult;
+  },
+
   async submitStudentWork(payload: {
     assignment_id: string;
     student_id: string;

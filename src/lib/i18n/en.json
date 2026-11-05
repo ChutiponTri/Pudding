@@ -315,7 +315,8 @@
         "tab_visible": "Returned to assessment tab",
         "window_focus": "Regained window focus",
         "copy_attempt": "Highlight copy attempt",
-        "paste_attempt": "External paste attempt"
+        "paste_attempt": "External paste attempt",
+        "quiz_reopened": "Closed the quiz and reopened it"
       }
     }
   },

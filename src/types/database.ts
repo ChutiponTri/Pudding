@@ -182,6 +182,10 @@ export interface Submission {
   tab_switch_count: number;
   total_time_away_seconds: number;
   is_flagged_suspicious: boolean;
+  /** Quizzes: times the student closed the quiz and opened it again before handing in (see quizExit.ts). */
+  quiz_exit_count?: number | null;
+  /** Quizzes: the system handed in a blank sheet (0) after the student left more often than warned. */
+  auto_forfeited?: boolean | null;
   total_score?: number;
   max_total_score?: number;
   /** users.id of the classmate whose phone sent this work (borrowed phone); missing = the student's own phone. */
@@ -230,7 +234,7 @@ export interface SubmissionAnswer {
   graded_at?: string;
 }
 
-export type SubmissionEventType = 'tab_hidden' | 'window_blur' | 'tab_visible' | 'window_focus' | 'copy_attempt' | 'paste_attempt';
+export type SubmissionEventType = 'tab_hidden' | 'window_blur' | 'tab_visible' | 'window_focus' | 'copy_attempt' | 'paste_attempt' | 'quiz_reopened';
 
 export interface SubmissionEvent {
   id: string;

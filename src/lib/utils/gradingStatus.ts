@@ -79,7 +79,8 @@ export function hasAnyAnswer(answers: Array<{ answer_text?: string | null; file_
   return answers.some((a) => !!String(a.answer_text || '').trim() || !!String(a.file_url || '').trim());
 }
 
-type IntegrityFields = Pick<Submission, 'status' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'>;
+type IntegrityFields = Pick<Submission, 'status' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'> &
+  Partial<Pick<Submission, 'quiz_exit_count'>>;
 
 /**
  * The one rule for "left the screen during a quiz", used by every count and
@@ -88,7 +89,7 @@ type IntegrityFields = Pick<Submission, 'status' | 'is_flagged_suspicious' | 'ta
  */
 export function isIntegrityFlagged(sub: IntegrityFields, isExam?: boolean): boolean {
   if (!isExam || !isHandedIn(sub)) return false;
-  return !!sub.is_flagged_suspicious || isSuspiciousActivity(sub.tab_switch_count || 0, sub.total_time_away_seconds || 0);
+  return !!sub.is_flagged_suspicious || (sub.quiz_exit_count || 0) > 0 || isSuspiciousActivity(sub.tab_switch_count || 0, sub.total_time_away_seconds || 0);
 }
 
 export type GradingCounts = {

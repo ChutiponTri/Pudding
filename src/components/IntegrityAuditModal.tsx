@@ -16,6 +16,7 @@ import {
   EyeOff,
   Eye,
   AlertOctagon,
+  RotateCcw,
 } from 'lucide-react';
 
 interface IntegrityAuditModalProps {
@@ -37,6 +38,7 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
 
   const isHighRisk =
     submission.is_flagged_suspicious ||
+    (submission.quiz_exit_count || 0) > 0 ||
     isSuspiciousActivity(submission.tab_switch_count, submission.total_time_away_seconds);
 
   const getEventIcon = (type: string) => {
@@ -53,6 +55,8 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
         return <Copy className="w-4 h-4 text-purple-500" />;
       case 'paste_attempt':
         return <ClipboardPaste className="w-4 h-4 text-indigo-500" />;
+      case 'quiz_reopened':
+        return <RotateCcw className="w-4 h-4 text-rose-600" />;
       default:
         return <Layers className="w-4 h-4 text-slate-500" />;
     }
@@ -150,6 +154,29 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Closed the quiz (LINE's X or leaving it) and opened it again before handing in */}
+          {(submission.quiz_exit_count || 0) > 0 && (
+            <div className="flex items-start gap-3 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-200 text-sm">
+              <RotateCcw className="w-5 h-5 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-bold">
+                  {language === 'th'
+                    ? `น่าสงสัยว่าทุจริต: ปิดข้อสอบแล้วเปิดใหม่ ${submission.quiz_exit_count} ครั้ง`
+                    : `Suspected cheating: closed and reopened the quiz ${submission.quiz_exit_count}×`}
+                </p>
+                <p className="text-xs opacity-80">
+                  {submission.auto_forfeited
+                    ? language === 'th'
+                      ? 'เกินจำนวนครั้งที่เตือนไว้ ระบบจึงส่งกระดาษเปล่าอัตโนมัติ (0 คะแนน)'
+                      : 'More than the warnings allowed, so a blank sheet was handed in automatically (0 points).'
+                    : language === 'th'
+                    ? 'นักเรียนได้รับคำเตือนแล้ว และต้องเริ่มตอบใหม่ทุกครั้งที่เปิดใหม่ (สถิติสลับหน้าจอก่อนปิดอาจไม่ถูกนับ)'
+                    : 'The student was warned and had to start the answers again each time (screen switches before closing may be missing).'}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Timeline of events */}
           <div>

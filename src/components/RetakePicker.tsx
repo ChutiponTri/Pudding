@@ -320,6 +320,8 @@ export function RetakePicker({
                               <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
                                 <ShieldAlert className="w-3 h-3" />
                                 {tr(`ออกจอ ${sub?.tab_switch_count || 0}`, `Left ${sub?.tab_switch_count || 0}×`)}
+                                {!!sub?.quiz_exit_count && tr(` • ปิดข้อสอบ ${sub.quiz_exit_count}`, ` • closed ${sub.quiz_exit_count}×`)}
+                                {sub?.auto_forfeited && tr(' • ส่งเปล่าอัตโนมัติ', ' • auto blank')}
                               </span>
                             )}
                           </button>

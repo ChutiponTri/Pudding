@@ -13,6 +13,8 @@ import { normalizeLink, onBehalfTag } from '@/lib/storage/uploadRules';
 import { maskSubmission, resultRelease, resultReleaseForSubmissions } from '@/lib/server/resultRelease';
 import { isRetake, retakeIncludes } from '@/lib/utils/retake';
 import { syncRetakeScores } from '@/lib/server/retake';
+import { readQuizAttempt, type QuizAttempt } from '@/lib/server/quizAttempts';
+import { quizOpenAction } from '@/lib/utils/quizExit';
 import type { Classroom, Question, Submission } from '@/types/database';
 
 /** What the student's browser sends; the body is untrusted, so only these fields are read. */
@@ -215,7 +217,6 @@ export async function POST(request: NextRequest) {
     const tracked = !!assignment.is_exam;
     const awaySeconds = tracked ? Number(antiCheating.away_time_seconds || 0) : 0;
     const tabSwitchCount = tracked ? Number(antiCheating.tab_switch_count || 0) : 0;
-    const isSuspicious = tracked && isSuspiciousActivity(tabSwitchCount, awaySeconds);
 
     const firstName = proxyStudent?.first_name || student_first_name || (student_name ? student_name.split(' ')[0] : 'นักเรียน');
     const lastName = proxyStudent?.last_name || student_last_name || (student_name ? student_name.split(' ').slice(1).join(' ') : '');
@@ -239,12 +240,22 @@ export async function POST(request: NextRequest) {
     // (assignment_id, student_id) constraint, so a new id for the same student
     // (e.g. after editing their student number) would make the upsert fail.
     // `*` so databases without reopened_at yet still work.
-    const { data: existingSubmission } = await supabase
-      .from('submissions')
-      .select('*')
-      .eq('assignment_id', assignment_id)
-      .eq('student_id', targetUserDbId)
-      .maybeSingle();
+    // Quizzes: how often the student closed the quiz and opened it again (counted at each opening).
+    const [{ data: existingSubmission }, quizAttempt] = await Promise.all([
+      supabase
+        .from('submissions')
+        .select('*')
+        .eq('assignment_id', assignment_id)
+        .eq('student_id', targetUserDbId)
+        .maybeSingle(),
+      tracked
+        ? readQuizAttempt(supabase, assignment_id, targetUserDbId).catch((attemptError): QuizAttempt | null => {
+            console.warn('[POST /api/submissions] quiz attempt lookup failed:', attemptError);
+            return null;
+          })
+        : Promise.resolve<QuizAttempt | null>(null),
+    ]);
+    const quizExits = quizAttempt?.exits || 0;
     const { data: previousAnswers } = existingSubmission
       ? await supabase.from('submission_answers').select('file_url, graded_at').eq('submission_id', existingSubmission.id)
       : { data: [] as Array<{ file_url: string | null; graded_at: string | null }> };
@@ -324,10 +335,12 @@ export async function POST(request: NextRequest) {
       .eq('assignment_id', assignment_id);
 
     const qsList = (questions || []) as Question[];
+    // Left the quiz more often than warned about: whatever arrives, a blank sheet is handed in (0 points).
+    const forfeited = tracked && quizOpenAction(quizExits, qsList.length) === 'forfeit';
 
     // A sheet with nothing on it is never saved: it would lock a quiz (or
     // homework) with 0 points, e.g. after a stray tap on the hand-in button.
-    if (qsList.length > 0) {
+    if (qsList.length > 0 && !forfeited) {
       const ownAnswers = ((answers as IncomingAnswer[]) || []).filter((a) => qsList.some((q) => q.id === a.question_id));
       const usable = ownAnswers.map((a) => ({
         answer_text: a.answer_text,
@@ -363,11 +376,14 @@ export async function POST(request: NextRequest) {
       for (const q of qsList) {
         totalMax += Number(q.max_score || 0);
         const studentAns = (answers as IncomingAnswer[] || []).find((a) => a.question_id === q.id);
-        const studentText = (studentAns?.answer_text || '').trim();
+        const studentText = forfeited ? '' : (studentAns?.answer_text || '').trim();
 
         let questionScore: number | undefined = undefined;
 
-        if (isObjectiveQuestion(q)) {
+        if (forfeited) {
+          // The blank sheet is fully scored: nothing left for the teacher to grade.
+          questionScore = 0;
+        } else if (isObjectiveQuestion(q)) {
           // Choice and true/false answers are scored from the answer key right away.
           questionScore = scoreObjectiveAnswer(q, studentText);
           runningScore += questionScore;
@@ -392,6 +408,8 @@ export async function POST(request: NextRequest) {
       if (allGraded) calculatedTotalScore = Math.round(runningScore * 10) / 10;
     }
 
+    // Closing the quiz and coming back is always suspicious, even within the warnings.
+    const isSuspicious = tracked && (quizExits > 0 || isSuspiciousActivity(tabSwitchCount, awaySeconds));
     const submittedAt = new Date();
     const submissionRecord = {
       id: subId,
@@ -410,6 +428,8 @@ export async function POST(request: NextRequest) {
       tab_switch_count: tabSwitchCount,
       total_time_away_seconds: awaySeconds,
       is_flagged_suspicious: isSuspicious,
+      quiz_exit_count: quizExits,
+      auto_forfeited: forfeited,
       total_score: calculatedTotalScore,
       max_total_score: assignmentMaxScore,
       answers: scoredAnswers,
@@ -430,6 +450,8 @@ export async function POST(request: NextRequest) {
         is_flagged_suspicious: submissionRecord.is_flagged_suspicious,
         total_score: calculatedTotalScore !== undefined ? calculatedTotalScore : null,
         max_total_score: assignmentMaxScore,
+        // Only written once the student has left a quiz: the columns exist wherever quiz_attempts does.
+        ...(quizExits > 0 ? { quiz_exit_count: quizExits, auto_forfeited: forfeited } : {}),
         // Only borrowed-phone work names a sender, so databases without the column are unaffected otherwise.
         ...(submissionRecord.submitted_by ? { submitted_by: submissionRecord.submitted_by } : {}),
         // Handing in ends a reopen (only touched where the columns exist).
@@ -484,6 +506,24 @@ export async function POST(request: NextRequest) {
         );
         // Audit events are supplementary; the submission itself is already saved.
         if (eventsError) console.warn('[POST /api/submissions] Event log write warning:', eventsError);
+      }
+      // Each reopening of the quiz (the first opening is the start, not an exit).
+      const reopenedAt = quizAttempt?.openedAt.slice(1) || [];
+      if (reopenedAt.length > 0) {
+        const { error: reopenError } = await supabase.from('submission_events').insert(
+          reopenedAt.map((at, i) => ({
+            id: `evt-${subId}-reopen-${i + 1}`,
+            submission_id: subId,
+            event_type: 'quiz_reopened',
+            away_duration_seconds: 0,
+            created_at: at,
+            details:
+              forfeited && i === reopenedAt.length - 1
+                ? `ปิดข้อสอบแล้วเปิดใหม่ ครั้งที่ ${i + 1} — เกินจำนวนที่เตือนไว้ ระบบส่งกระดาษเปล่าอัตโนมัติ (0 คะแนน)`
+                : `ปิดข้อสอบแล้วเปิดใหม่ ครั้งที่ ${i + 1} (เตือนแล้ว)`,
+          }))
+        );
+        if (reopenError) console.warn('[POST /api/submissions] Reopen event write warning:', reopenError);
       }
       console.log('[POST /api/submissions] Supabase answer write completed:', subId);
     } catch (dbErr) {
