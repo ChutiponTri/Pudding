@@ -7,6 +7,7 @@ import { canonicalInstitution } from '@/lib/data/thaiInstitutions';
 import { joinLineText } from '@/lib/line/classroomAnnouncement';
 import { joinShare } from '@/lib/server/classroomPosts';
 import { botSendOrShare } from '@/lib/server/lineSend';
+import { reconcileRosterSnapshot } from '@/lib/server/dataActions';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -108,6 +109,8 @@ export async function PATCH(request: NextRequest) {
         .eq('id', row.id)
     )
   );
+  // Each rewrite may have raced an admit / join in the same classroom.
+  await Promise.all([...rows.keys()].map((id) => reconcileRosterSnapshot(supabase, id)));
 
   return NextResponse.json({ success: true, student: { id: studentKey, ...fields } });
 }

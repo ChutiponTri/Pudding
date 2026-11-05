@@ -278,6 +278,92 @@ async function hydrateClassrooms(supabase: Supabase, rows: Classroom[]): Promise
  * keeps only their own entry). `links` are the student's own enrollment rows
  * and `ownUsers` their account(s), both loaded alongside the classrooms.
  */
+/**
+ * The classroom row keeps its roster as JSON arrays (students / pending_students)
+ * that every join, admit, removal and profile edit rewrites whole from what it
+ * read. Two of them at once (e.g. the teacher admitting two students a second
+ * apart, or a new student fixing their name while being admitted) can
+ * overwrite each other: an admitted student stays in pending_students, or a
+ * removed one comes back. classroom_students is written per student, so it
+ * cannot lose updates; it is the source of truth (access checks use it).
+ * Run after each roster write: the snapshot is rebuilt to match it — active →
+ * students, pending → pending_students, no enrolment → dropped. The last write
+ * is always followed by this, so the final state is consistent.
+ */
+export async function reconcileRosterSnapshot(supabase: Supabase, classroomId: string) {
+  try {
+    const [rowResult, linkResult] = await Promise.all([
+      supabase.from('classrooms').select('id, students, pending_students').eq('id', classroomId).maybeSingle(),
+      supabase.from('classroom_students').select('student_id, status').eq('classroom_id', classroomId),
+    ]);
+    const row = rowResult.data as Pick<Classroom, 'id' | 'students' | 'pending_students'> | null;
+    if (!row || rowResult.error || linkResult.error) return;
+    const links = (linkResult.data || []) as Array<{ student_id: string; status: string }>;
+    const before = [...((row.students || []) as User[]), ...((row.pending_students || []) as User[])].filter((s) => !!s?.id);
+    // Safety: never empty a roster because enrolments could not be read (or predate classroom_students).
+    if (!links.length) return;
+    const linkOf = (s: User) => links.find((l) => l.student_id === s.id || (!!s.line_uid && l.student_id === s.line_uid));
+    const has = (list: User[], key: string) => list.some((s) => s.id === key || (!!s.line_uid && s.line_uid === key));
+
+    const students: User[] = [];
+    const pending: User[] = [];
+    for (const s of before) {
+      const link = linkOf(s);
+      if (!link) continue;
+      const target = link.status === 'active' ? students : pending;
+      if (has(students, link.student_id) || has(pending, link.student_id)) continue;
+      target.push({ ...s, enrollment_status: link.status === 'active' ? 'active' : 'pending_approval' });
+    }
+    // Enrolled but missing from the snapshot altogether: rebuilt from the users table.
+    const absent = links.filter((l) => !has(students, l.student_id) && !has(pending, l.student_id));
+    if (absent.length) {
+      const users = await fetchUsersByKeys(supabase, absent.map((l) => l.student_id));
+      for (const l of absent) {
+        const u = users.get(l.student_id);
+        if (!u) continue;
+        const entry: User = { ...u, role: 'student', enrollment_status: l.status === 'active' ? 'active' : 'pending_approval', is_line_connected: !!u.line_uid };
+        if (l.status === 'active') students.unshift(entry);
+        else pending.unshift(entry);
+      }
+    }
+
+    const ids = (list: User[]) => list.map((s) => `${s.id}:${s.enrollment_status || ''}`).sort().join(',');
+    const unchanged =
+      ids(students) === ids(((row.students || []) as User[]).filter((s) => !!s?.id).map((s) => ({ ...s, enrollment_status: 'active' }))) &&
+      ids(pending) === ids(((row.pending_students || []) as User[]).filter((s) => !!s?.id).map((s) => ({ ...s, enrollment_status: 'pending_approval' })));
+    if (unchanged) return;
+    // Safety: a rebuild that would drop many students points at bad data, not a race; leave it for a person.
+    const dropped = before.length - students.length - pending.length;
+    if (dropped > 3 && dropped > before.length / 4) {
+      console.warn(`reconcileRosterSnapshot skipped ${classroomId}: would drop ${dropped} of ${before.length}`);
+      return;
+    }
+    // Keep the snapshot's order for students who were already in it.
+    const order = new Map(((row.students || []) as User[]).map((s, i) => [s.id, i]));
+    students.sort((x, y) => (order.get(x.id) ?? -1) - (order.get(y.id) ?? -1));
+    const { error } = await supabase.from('classrooms').update({ students, pending_students: pending, student_count: students.length }).eq('id', classroomId);
+    if (error) console.warn('reconcileRosterSnapshot failed:', error.message);
+  } catch (error) {
+    // A repair pass must never fail the teacher's or student's action.
+    console.warn('reconcileRosterSnapshot error:', error);
+  }
+}
+
+/**
+ * A classroom's students with the ids the teacher's pages use (users table +
+ * classroom_students), which retake_student_ids are saved with. The JSON
+ * snapshot alone can carry other ids for the same student.
+ */
+export async function hydratedStudents(supabase: Supabase, classroom: Classroom): Promise<User[]> {
+  const [hydrated] = await hydrateClassrooms(supabase, [classroom]);
+  return hydrated?.students || classroom.students || [];
+}
+
+/** The roster a retake's student list is matched against: hydrated for a retake, the snapshot otherwise. */
+async function studentsFor(supabase: Supabase, assignment: Pick<Assignment, 'retake_student_ids'>, classroom: Classroom): Promise<User[]> {
+  return isRetake(assignment) ? hydratedStudents(supabase, classroom) : classroom.students || [];
+}
+
 async function hydrateClassroomsForStudent(
   supabase: Supabase,
   rows: Classroom[],
@@ -479,11 +565,27 @@ async function checkedRetake<T extends Partial<Assignment>>(supabase: Supabase, 
   const source = original as Assignment | null;
   if (!source || source.classroom_id !== classroom.id) throw new HttpError(400, 'ไม่พบข้อสอบเดิมในห้องเรียนนี้');
   if (!source.is_exam || isRetake(source)) throw new HttpError(400, 'สอบซ่อมได้จากข้อสอบปกติเท่านั้น');
+  // The teacher picks from the hydrated roster (getAssignmentById / getClassroomRoster):
+  // ids come from the users table there, which can differ from the classroom's JSON
+  // snapshot (a hand-added student later matched to their LINE account by student
+  // number), and students enrolled only through classroom_students are not in the
+  // snapshot at all. Checking against the raw snapshot refused such a pick with
+  // "choose at least 1 student". So match the hydrated roster, keeping its ids.
+  const [hydrated] = await hydrateClassrooms(supabase, [classroom]);
   const roster = new Map<string, string>();
+  const add = (key: string | null | undefined, id: string) => {
+    if (key && !roster.has(key)) roster.set(key, id);
+  };
+  for (const s of hydrated?.students || []) {
+    if (!s?.id) continue;
+    add(s.id, s.id);
+    add(s.line_uid, s.id);
+  }
+  // Snapshot ids (older pages, retakes saved before this) still count.
   for (const s of classroom.students || []) {
     if (!s?.id) continue;
-    roster.set(s.id, s.id);
-    if (s.line_uid) roster.set(s.line_uid, s.id);
+    add(s.id, s.id);
+    add(s.line_uid, s.id);
   }
   const ids = [...new Set((Array.isArray(data.retake_student_ids) ? data.retake_student_ids : []).map((id) => roster.get(String(id))).filter((id): id is string => !!id))];
   if (!ids.length) throw new HttpError(400, 'กรุณาเลือกนักเรียนที่ต้องสอบซ่อมอย่างน้อย 1 คน');
@@ -607,6 +709,8 @@ export const dataActions = {
           .eq('id', cls.id)
       )
     );
+    // Each rewrite above may have raced an admit / join in the same classroom.
+    await Promise.all(classrooms.map((cls) => reconcileRosterSnapshot(supabase, cls.id)));
     for (const cls of classrooms) signalRoster(cls.id, { action: 'updated' });
     registeredInstitutionsCache = null;
     return true;
@@ -1063,7 +1167,10 @@ export const dataActions = {
     if (patch.teachers) patch.teachers = await withRealTeacherEmails(supabase, patch.teachers);
     const { data: updated, error } = await supabase.from('classrooms').update(patch).eq('id', id).select().maybeSingle();
     if (error) throw toDatabaseError(error, 'classrooms');
-    if (patch.students || patch.pending_students) signalRoster(id, { action: 'updated' });
+    if (patch.students || patch.pending_students) {
+      await reconcileRosterSnapshot(supabase, id);
+      signalRoster(id, { action: 'updated' });
+    }
     return (updated as Classroom) || null;
   },
 
@@ -1172,6 +1279,8 @@ export const dataActions = {
     }
     const { error } = await supabase.from('classrooms').update({ students, pending_students: pending, student_count: students.length }).eq('id', classroomId);
     if (error) throw toDatabaseError(error, 'classrooms');
+    // A teacher admitting someone while this student joined may have overwritten one of the two writes.
+    await reconcileRosterSnapshot(supabase, classroomId);
 
     signalRoster(classroomId, {
       action: 'joined',
@@ -1193,12 +1302,29 @@ export const dataActions = {
     const students = current.some((s) => s.id === student.id || (!!s.line_uid && s.line_uid === student.line_uid))
       ? current
       : [{ ...student, enrollment_status: 'active' as const }, ...current];
-    const [linkResult, classResult] = await Promise.all([
-      supabase.from('classroom_students').update({ status: 'active' }).match({ classroom_id: classroomId, student_id: student.id }),
-      supabase.from('classrooms').update({ students, pending_students: remaining, student_count: students.length }).eq('id', classroomId),
-    ]);
+    // The enrolment is the source of truth (see reconcileRosterSnapshot), so it must exist and say active.
+    const keys = [...new Set([student.id, student.line_uid].filter((k): k is string => !!k))];
+    const { data: updatedLinks, error: linkError } = await supabase
+      .from('classroom_students')
+      .update({ status: 'active' })
+      .eq('classroom_id', classroomId)
+      .in('student_id', keys)
+      .select('id');
+    if (linkError) throw toDatabaseError(linkError, 'classroom_students');
+    if (!updatedLinks?.length) {
+      const { error: insertError } = await supabase.from('classroom_students').upsert({
+        id: `cs_${classroomId}_${student.id}`,
+        classroom_id: classroomId,
+        student_id: student.id,
+        status: 'active',
+        joined_via: student.line_uid ? 'line_liff' : 'invite_code',
+      });
+      if (insertError) throw toDatabaseError(insertError, 'classroom_students');
+    }
+    const classResult = await supabase.from('classrooms').update({ students, pending_students: remaining, student_count: students.length }).eq('id', classroomId);
     if (classResult.error) throw toDatabaseError(classResult.error, 'classrooms');
-    if (linkResult.error) console.warn('admitStudentToClassroom link warning:', linkResult.error.message);
+    // Another roster write at the same moment may have overwritten this one.
+    await reconcileRosterSnapshot(supabase, classroomId);
     signalRoster(classroomId, { action: 'admitted', student: { id: student.id, first_name: student.first_name, last_name: student.last_name } });
     return true;
   },
@@ -1212,6 +1338,7 @@ export const dataActions = {
     ]);
     if (classResult.error) throw toDatabaseError(classResult.error, 'classrooms');
     if (linkResult.error) console.warn('rejectStudentFromClassroom link warning:', linkResult.error.message);
+    await reconcileRosterSnapshot(supabase, classroomId);
     signalRoster(classroomId, { action: 'rejected', student: { id: studentId } });
     return true;
   },
@@ -1227,6 +1354,7 @@ export const dataActions = {
     ]);
     if (classResult.error) throw toDatabaseError(classResult.error, 'classrooms');
     if (linkResult.error) console.warn('removeStudentFromClassroom link warning:', linkResult.error.message);
+    await reconcileRosterSnapshot(supabase, classroomId);
     signalRoster(classroomId, { action: 'removed', student: { id: studentId } });
   },
 
@@ -1513,7 +1641,7 @@ export const dataActions = {
         authorId: me.userId,
         activityType: assignmentData.is_exam ? 'exam' : 'assignment',
         body: assignmentPostBody(assignmentData),
-        metadata: assignmentPostMetadata(assignmentData, id, classroom.students),
+        metadata: assignmentPostMetadata(assignmentData, id, await studentsFor(supabase, assignmentData, classroom)),
         // Only when the database kept publish_at; otherwise the assignment is already visible.
         publishAt: row.publish_at || undefined,
       });
@@ -1585,7 +1713,7 @@ export const dataActions = {
             authorId: requireTeacher(actor).userId,
             activityType: next.is_exam ? 'exam' : 'assignment',
             body: assignmentPostBody(next),
-            metadata: assignmentPostMetadata(next, id, classroom.students),
+            metadata: assignmentPostMetadata(next, id, await studentsFor(supabase, next, classroom)),
             publishAt: new Date(nextPublishMs).toISOString(),
           });
         }
@@ -1607,6 +1735,7 @@ export const dataActions = {
     const dueChanged = patch.due_date && new Date(patch.due_date).getTime() !== new Date(previous.due_date).getTime();
     // A retake's post is always refreshed: older ones still carry the earlier wording.
     if (dueChanged || (patch.title && patch.title !== previous.title) || isRetake(previous)) {
+      const retakeStudents = isRetake(next) ? await hydratedStudents(supabase, ownClassroom) : null;
       const { data: posts } = await supabase.from('classroom_posts').select('id, body, metadata').contains('metadata', { assignmentId: id });
       await Promise.all(
         (posts || [])
@@ -1619,7 +1748,7 @@ export const dataActions = {
                 metadata: {
                   ...(p.metadata || {}),
                   dueDate: next.due_date,
-                  ...(isRetake(next) ? { lineBody: assignmentPostMetadata(next, id, ownClassroom.students).lineBody } : {}),
+                  ...(retakeStudents ? { lineBody: assignmentPostMetadata(next, id, retakeStudents).lineBody } : {}),
                 },
               })
               .eq('id', p.id)
@@ -2062,7 +2191,7 @@ export const dataActions = {
     const { assignment, classroom } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
     const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
     if (role === 'researcher') throw FORBIDDEN();
-    const rosterEntry = rosterFor(assignment, classroom.students || []).find((s) => s && s.id === rosterId);
+    const rosterEntry = rosterFor(assignment, await studentsFor(supabase, assignment, classroom)).find((s) => s && s.id === rosterId);
     if (!rosterEntry) throw new HttpError(404, 'ไม่พบนักเรียนคนนี้ในห้องเรียน');
     const keys = [...new Set([rosterEntry.id, rosterEntry.line_uid].filter((k): k is string => !!k))];
     const quoted = keys.map(pgValue).join(',');
@@ -2147,7 +2276,7 @@ export const dataActions = {
 
     const wanted = new Set((Array.isArray(rosterIds) ? rosterIds : []).filter((id): id is string => typeof id === 'string' && !!id));
     // A retake records only its own students.
-    const roster = rosterFor(assignment, classroom.students || []).filter((s) => s && wanted.has(s.id));
+    const roster = rosterFor(assignment, await studentsFor(supabase, assignment, classroom)).filter((s) => s && wanted.has(s.id));
     const keys = [...new Set(roster.flatMap((s) => [s.id, s.line_uid]).filter((k): k is string => !!k))];
     if (!keys.length) return [];
     const users: Array<{ id: string; line_uid?: string | null }> = [];

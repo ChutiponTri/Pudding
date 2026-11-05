@@ -9,7 +9,9 @@ import { botSendOrShare } from '@/lib/server/lineSend';
 import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { questionsMissingKey } from '@/lib/utils/autoGrade';
-import type { Assignment, Question, SubmissionOverrideStatus } from '@/types/database';
+import type { Assignment, Classroom, Question, SubmissionOverrideStatus } from '@/types/database';
+import { hydratedStudents } from '@/lib/server/dataActions';
+import { isRetake } from '@/lib/utils/retake';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -165,7 +167,7 @@ export async function POST(request: NextRequest) {
           authorId: userId,
           activityType: published.is_exam ? 'exam' : 'assignment',
           body: assignmentPostBody(published),
-          metadata: assignmentPostMetadata(published, assignmentId, classroom.students),
+          metadata: assignmentPostMetadata(published, assignmentId, isRetake(published) ? await hydratedStudents(supabase, classroom as Classroom) : classroom.students),
         }));
       } catch (postError) {
         console.warn('Unable to post published draft:', postError);

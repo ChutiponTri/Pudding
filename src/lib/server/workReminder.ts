@@ -5,8 +5,9 @@ import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { isHandedIn } from '@/lib/utils/gradingStatus';
-import { rosterFor } from '@/lib/utils/retake';
-import type { Assignment, User } from '@/types/database';
+import { isRetake, rosterFor } from '@/lib/utils/retake';
+import { hydratedStudents } from '@/lib/server/dataActions';
+import type { Assignment, Classroom, User } from '@/types/database';
 
 type Supabase = ReturnType<typeof createServiceSupabaseClient>;
 type ReminderClassroom = LabelledClassroom & { id: string; invite_code?: string | null; students?: User[] | null };
@@ -15,7 +16,9 @@ const nameOf = (s: Partial<User> & { name?: string }) => `${s.first_name || ''} 
 
 /** Students who take this work (the retake's list, if any) and have not handed it in. */
 export async function missingStudentNames(supabase: Supabase, assignment: Assignment, classroom: ReminderClassroom): Promise<string[]> {
-  const roster = rosterFor(assignment, (classroom.students || []).filter((s): s is User => !!s?.id));
+  // A retake's list holds the ids the teacher's pages use; match it against the same roster.
+  const students = isRetake(assignment) ? await hydratedStudents(supabase, classroom as Classroom) : classroom.students || [];
+  const roster = rosterFor(assignment, students.filter((s): s is User => !!s?.id));
   if (!roster.length) return [];
   const { data } = await supabase.from('submissions').select('student_id, status').eq('assignment_id', assignment.id);
   const handedIn = new Set((data || []).filter((row) => isHandedIn(row)).map((row) => row.student_id as string));
