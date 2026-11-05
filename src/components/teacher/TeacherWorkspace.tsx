@@ -42,16 +42,13 @@ import {
   BookOpen,
   Sparkles,
   UserPlus,
-  Share2,
   Edit2,
   Trash2,
   X,
   MessageCircle,
   Mail,
-  QrCode,
   Copy,
   Check,
-  Send,
   ChevronDown,
   Sliders,
   ArrowUp,
@@ -65,8 +62,6 @@ import {
   FlaskConical,
   Search,
   GraduationCap,
-  UserCheck,
-  UserX,
   Building2,
   Loader2,
   FileSpreadsheet,
@@ -80,6 +75,7 @@ import { canonicalInstitution, institutionLabel, sameInstitution } from '@/lib/d
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { EditStudentModal } from '@/components/EditStudentModal';
+import { StudentRosterModal } from '@/components/StudentRosterModal';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader, MODAL_SHEET_FORM } from '@/components/ModalSheet';
 import { MobileText } from '@/components/MobileText';
 import { buildWorkGroups } from '@/lib/utils/workGroups';
@@ -191,12 +187,8 @@ export function TeacherWorkspace({
   const [managingClassroom, setManagingClassroom] = useState<Classroom | null>(null);
   const [lineConnectionClassroom, setLineConnectionClassroom] = useState<Classroom | null>(null);
   const [lineConnectionStatuses, setLineConnectionStatuses] = useState<Record<string, 'disconnected' | 'waiting' | 'connected'>>({});
-  const [studentTab, setStudentTab] = useState<'roster' | 'pending' | 'line' | 'line-group' | 'email'>('roster');
-  const [studentSearchQuery, setStudentSearchQuery] = useState('');
-  const [studentSearchResults, setStudentSearchResults] = useState<User[]>([]);
-  const [isSearchingStudents, setIsSearchingStudents] = useState(false);
+  const [studentTab, setStudentTab] = useState<'roster' | 'pending'>('roster');
   const [emailInviteList, setEmailInviteList] = useState('');
-  const [isCopied, setIsCopied] = useState(false);
   const [lineConnection, setLineConnection] = useState<{
     status: 'disconnected' | 'waiting' | 'connected';
     groupName?: string;
@@ -330,7 +322,7 @@ export function TeacherWorkspace({
     }
   };
 
-  const handleOpenManagingClassroom = async (cls: Classroom, tab: 'roster' | 'pending' | 'line' | 'line-group' | 'email' = 'roster') => {
+  const handleOpenManagingClassroom = async (cls: Classroom, tab: 'roster' | 'pending' = 'roster') => {
     setManagingClassroom(cls);
     setStudentTab(tab);
     setLineConnection({
@@ -933,55 +925,6 @@ export function TeacherWorkspace({
     }
   };
 
-  // Quick search registered students from same school
-  const handleSearchStudents = async (q: string) => {
-    setStudentSearchQuery(q);
-    if (!q.trim()) {
-      setStudentSearchResults([]);
-      return;
-    }
-    if (!teacherProfile?.institution) {
-      setStudentSearchResults([]);
-      return;
-    }
-    setIsSearchingStudents(true);
-    try {
-      const res = await dataService.searchStudentsByInstitution(q, teacherProfile?.institution);
-      setStudentSearchResults(res);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSearchingStudents(false);
-    }
-  };
-
-  const handleSelectFoundStudent = async (std: User) => {
-    if (!managingClassroom) return;
-    const alreadyEnrolled = [...(managingClassroom.students || []), ...(managingClassroom.pending_students || [])]
-      .some((student) => student.id === std.id || (student.student_id && std.student_id && student.student_id === std.student_id));
-    if (alreadyEnrolled) {
-      showToast(language === 'th' ? 'นักเรียนคนนี้อยู่ในห้องเรียนแล้ว' : 'This student is already in the classroom');
-      return;
-    }
-    await dataService.addStudentToClassroom(
-      managingClassroom.id,
-      {
-        id: std.id,
-        first_name: std.first_name,
-        last_name: std.last_name,
-        student_id: std.student_id,
-        email: std.email,
-        avatar_url: std.avatar_url,
-        institution: std.institution || teacherProfile?.institution,
-      },
-      { autoAdmit: true }
-    );
-    showToast(language === 'th' ? `เพิ่ม ${std.first_name} ${std.last_name} สำเร็จ` : 'Student added');
-    setStudentSearchQuery('');
-    setStudentSearchResults([]);
-    await loadAllData();
-  };
-
   // Teacher profile saving handler (name + institution)
   const handleOpenTeacherProfile = () => {
     const values = profileFormValues(teacherProfile, clerkUser);
@@ -1063,21 +1006,6 @@ export function TeacherWorkspace({
     return () => window.removeEventListener('focus', onFocus);
   }, [clerkUser?.id, isInstitutionModalOpen]);
 
-  const getRealLiffUrl = (cls: Classroom) => {
-    const liffId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || '2011818142-BznwnWyj';
-    return `https://liff.line.me/${liffId}?code=${cls.invite_code || ''}`;
-  };
-
-  const getWebInviteUrl = (cls: Classroom) => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    return `${origin}/liff?code=${cls.invite_code || ''}`;
-  };
-
-  const handleCopyLiff = (cls: Classroom) => {
-    navigator.clipboard.writeText(getRealLiffUrl(cls));
-    setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
-  };
 
   // Open Learning Indicators Modal
   const handleOpenIndicatorsModal = async (course: Course) => {
@@ -3249,425 +3177,16 @@ export function TeacherWorkspace({
       )}
 
       {managingClassroom && (
-        <ModalSheet onClose={() => setManagingClassroom(null)} size="sm:max-w-2xl">
-            <ModalSheetHeader>
-              <div className="min-w-0">
-                <h3 className="text-base font-bold text-slate-900 dark:text-white truncate">
-                  {managingClassroom.name}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                  {managingClassroom.subject_code} • {managingClassroom.academic_year}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setManagingClassroom(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg shrink-0"
-                aria-label={t('common.close')}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </ModalSheetHeader>
-
-            <ModalSheetBody className="space-y-6">
-
-            {/* Tabs */}
-            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2 overflow-x-auto scrollbar-none -mx-1 px-1 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
-              <button
-                type="button"
-                onClick={() => setStudentTab('roster')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
-                  studentTab === 'roster'
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                }`}
-              >
-                {t('classroom_mgmt.students_tab')} ({managingClassroom.students?.length || 0})
-              </button>
-              <button
-                type="button"
-                onClick={() => setStudentTab('pending')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
-                  studentTab === 'pending'
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                }`}
-              >
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>{tr('คำขอรออนุมัติ (Admit)', 'Pending requests')}</span>
-                {(managingClassroom.pending_students?.length || 0) > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
-                    {managingClassroom.pending_students?.length}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setStudentTab('line')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
-                  studentTab === 'line'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                }`}
-              >
-                <MessageCircle className="w-3.5 h-3.5" />
-                <span>{t('classroom_mgmt.invite_line_title')}</span>
-              </button>
-            </div>
-
-            {/* Student Roster Tab */}
-            {studentTab === 'roster' && (
-              <div className="space-y-4">
-                {/* Search existing students from institution */}
-                <div className="relative">
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={studentSearchQuery}
-                      onChange={(e) => handleSearchStudents(e.target.value)}
-                      placeholder={language === 'th' ? '🔍 ค้นหานักเรียน (ชื่อ หรือรหัส นร.)...' : 'Search student by name or ID...'}
-                      className="w-full pl-8 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:border-amber-500 font-medium"
-                    />
-                    {isSearchingStudents && (
-                      <Loader2 className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-amber-500 animate-spin" />
-                    )}
-                  </div>
-
-                  {studentSearchResults.length > 0 && (
-                    <div className="absolute z-20 left-0 right-0 mt-1 p-2 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 space-y-1 max-h-48 overflow-y-auto">
-                      {studentSearchResults.map((found) => (
-                        <button
-                          key={found.id}
-                          type="button"
-                          onClick={() => {
-                            handleSelectFoundStudent(found);
-                            setStudentSearchQuery('');
-                            setStudentSearchResults([]);
-                          }}
-                          className="w-full p-2 rounded-xl text-left text-xs hover:bg-amber-50 dark:hover:bg-amber-950/60 flex items-center justify-between gap-2 transition-colors cursor-pointer"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Avatar src={found.avatar_url} firstName={found.first_name} lastName={found.last_name} className="w-6 h-6 text-[10px]" />
-                            <div>
-                              <span className="font-bold text-slate-900 dark:text-white block">
-                                {found.first_name} {found.last_name}
-                              </span>
-                              <span className="text-[10px] text-slate-400">
-                                ID: {found.student_id || '-'} • 🏫 {institutionLabel(found.institution, language) || '-'}
-                              </span>
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
-                            {tr('+ เลือก', '+ Select')}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Students list */}
-                <div className="space-y-2">
-                  {managingClassroom.students?.map((std) => (
-                    <div
-                      key={std.id}
-                      className="p-3 rounded-xl bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Avatar src={std.avatar_url} firstName={std.first_name} lastName={std.last_name} className="w-7 h-7 text-[10px]" />
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-bold text-xs text-slate-900 dark:text-white">
-                                {std.first_name || std.last_name
-                                  ? `${std.first_name || ''} ${std.last_name || ''}`.trim()
-                                  : std.name || tr('นักเรียน', 'Student')}
-                              </span>
-                              {std.name && (std.first_name || std.last_name) && std.name.trim() !== `${std.first_name || ''} ${std.last_name || ''}`.trim() && (
-                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
-                                  LINE: {std.name}
-                                </span>
-                              )}
-                              <span className="font-mono text-[10px] text-slate-400">
-                                ID: {std.student_id || '-'}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono mt-0.5 flex-wrap">
-                              {std.institution && (
-                                <span className="text-slate-600 dark:text-slate-300">🏫 {institutionLabel(std.institution, language)}</span>
-                              )}
-                              {std.email && <span>• {std.email}</span>}
-                            </div>
-                          </div>
-                      </div>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setEditingStudent(std)}
-                          className="p-1 text-slate-400 hover:text-amber-600 rounded cursor-pointer"
-                          title={language === 'th' ? 'แก้ไขชื่อ นามสกุล และรหัสนักเรียน' : 'Edit student'}
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveStudent(std.id)}
-                          className="p-1 text-slate-400 hover:text-rose-500 rounded cursor-pointer"
-                          title="Remove student"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Pending Admit Requests Tab */}
-            {studentTab === 'pending' && (
-              <div className="space-y-4">
-                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
-                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="leading-relaxed">
-                    {tr('นักเรียนที่สแกน QR หรือใช้รหัสห้อง ต้องรอคุณครูอนุมัติก่อน เพื่อกันคนนอกเข้าห้อง', 'Students who scan the QR or use the class code wait for your approval, so outsiders can\'t join')}
-                  </p>
-                </div>
-
-                {(!managingClassroom.pending_students || managingClassroom.pending_students.length === 0) ? (
-                  <div className="py-12 text-center text-xs text-slate-400 space-y-2">
-                    <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto text-xl">
-                      ✅
-                    </div>
-                    <p className="font-medium text-slate-600 dark:text-slate-300">
-                      {tr('ไม่มีคำขอที่รออนุมัติ', 'No pending requests')}
-                    </p>
-                    <p className="text-[11px] text-slate-400">
-                      {tr('คำขอใหม่จะแสดงที่นี่ทันที', 'New requests show up here right away')}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {managingClassroom.pending_students.map((std) => (
-                      <div
-                        key={std.id}
-                        className="p-3.5 rounded-2xl bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-900/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                      >
-                        <div className="flex items-center gap-3">
-                          <Avatar src={std.avatar_url} firstName={std.first_name} lastName={std.last_name} className="w-10 h-10 rounded-2xl ring-2 ring-amber-400 text-[10px]" />
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-bold text-xs text-slate-900 dark:text-white">
-                                {`${std.first_name || ''} ${std.last_name || ''}`.trim() || std.name || tr('นักเรียน', 'Student')}
-                              </span>
-                              {std.name && (std.first_name || std.last_name) && std.name.trim() !== `${std.first_name || ''} ${std.last_name || ''}`.trim() && (
-                                <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-950/60 rounded border border-emerald-200/60 dark:border-emerald-800/60">
-                                  LINE: {std.name}
-                                </span>
-                              )}
-                              {std.student_id && (
-                                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                                  ID: {std.student_id}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
-                              <span>🏫 {institutionLabel(std.institution, language) || tr('ไม่ระบุสถานศึกษา', 'No institution')}</span>
-                              {std.line_uid && (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                                  <Check className="w-3 h-3" /> LINE Verified
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleAdmitStudent(std.id)}
-                            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            <span>{tr('อนุมัติ (Admit)', 'Admit')}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRejectStudent(std.id)}
-                            className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 font-semibold text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                            <span>{tr('ปฏิเสธ', 'Decline')}</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* LINE LIFF Invite / LINE Group tabs */}
-            {(studentTab === 'line' || studentTab === 'line-group') && (
-              <div className={studentTab === 'line' ? '' : 'space-y-5 text-center p-3 sm:p-5'}>
-                {/* LINE Group connection for assignment reminders */}
-                {studentTab === 'line-group' && (
-                <div className="max-w-lg mx-auto w-full text-left p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-black text-slate-900 dark:text-white">{tr('เชื่อมต่อ LINE Group', 'Connect LINE group')}</div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{tr('ใช้กลุ่มนี้ส่งแจ้งเตือนรายชื่อนักเรียนที่ยังไม่ส่งงาน', 'This group receives reminders listing students who haven\'t submitted')}</p>
-                    </div>
-                    <span className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-black ${lineConnection.status === 'connected' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300' : lineConnection.status === 'waiting' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
-                      {lineConnection.status === 'connected' ? tr('เชื่อมต่อแล้ว', 'Connected') : lineConnection.status === 'waiting' ? tr('รอยืนยัน', 'Pending') : tr('ยังไม่เชื่อมต่อ', 'Not connected')}
-                    </span>
-                  </div>
-
-                  {lineConnection.status === 'connected' ? (
-                    <p className="text-[11px] text-emerald-800 dark:text-emerald-200 font-semibold">
-                      {lineConnection.groupName ? tr(`เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว`, `Connected to “${lineConnection.groupName}”`) : tr('เชื่อมกับกลุ่ม LINE แล้ว', 'Connected to a LINE group')} • {tr('หากนำบอทออก การเชื่อมต่อจะยกเลิกเอง', 'Removing the bot disconnects automatically')}
-                    </p>
-                  ) : (
-                    <LineGroupConnectSteps
-                      status={lineConnection.status}
-                      botFriend={teacherLineLink.botFriend}
-                      addFriendUrl={teacherLineLink.addFriendUrl}
-                    />
-                  )}
-
-                  <div className="flex flex-wrap gap-2">
-                    {lineConnection.status !== 'connected' && (
-                      <button type="button" onClick={() => handleLineConnection('create')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black disabled:opacity-50">
-                        {lineConnection.status === 'waiting' ? tr('เริ่มรอใหม่ (15 นาที)', 'Restart wait (15 min)') : tr('เชื่อม LINE Group', 'Connect LINE group')}
-                      </button>
-                    )}
-                    {lineConnection.status === 'connected' && (
-                      <>
-                        <button type="button" onClick={() => handleLineConnection('test')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black disabled:opacity-50">{tr('ทดสอบส่งข้อความ', 'Send test message')}</button>
-                        <button type="button" onClick={() => handleLineConnection('disconnect')} disabled={isLineConnectionLoading} className="px-3 py-1.5 rounded-xl bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-[11px] font-bold disabled:opacity-50">{tr('ยกเลิกการเชื่อมต่อ', 'Disconnect')}</button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                )}
-
-                {studentTab === 'line' && (
-                <div className="space-y-3">
-                  <div className="flex items-start gap-2.5">
-                    <span className="w-9 h-9 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-                      <MessageCircle className="w-4.5 h-4.5" />
-                    </span>
-                    <div className="min-w-0">
-                      <h4 className="font-bold text-sm text-slate-900 dark:text-white">{t('classroom_mgmt.invite_line_title')}</h4>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{t('classroom_mgmt.invite_line_desc')}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-3 sm:gap-4">
-                    {/* QR Code */}
-                    <div className="shrink-0 flex flex-col items-center gap-1">
-                      <div className="p-2 bg-white rounded-2xl shadow-xs border border-slate-200">
-                        <img
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(getRealLiffUrl(managingClassroom))}`}
-                          alt="LINE LIFF QR Code"
-                          className="w-32 h-32 object-contain rounded-lg"
-                        />
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-medium text-center">
-                        {language === 'th' ? 'สแกนด้วยแอป LINE เพื่อเข้าห้องทันที' : 'Scan with LINE to join instantly'}
-                      </span>
-                    </div>
-
-                    <div className="flex-1 min-w-0 w-full space-y-2">
-                      {/* Invite code */}
-                      {managingClassroom.invite_code && (
-                        <div className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                              {language === 'th' ? 'รหัสเข้าห้องเรียน' : 'Classroom Code'}
-                            </div>
-                            <div className="text-lg leading-tight font-black font-mono tracking-widest text-slate-900 dark:text-white">
-                              {managingClassroom.invite_code}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(managingClassroom.invite_code || '');
-                              setIsCopied(true);
-                              setTimeout(() => setIsCopied(false), 2000);
-                            }}
-                            className="shrink-0 px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 flex items-center gap-1 cursor-pointer"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                            <span>{isCopied ? t('classroom_mgmt.copied') : (language === 'th' ? 'คัดลอกรหัส' : 'Copy')}</span>
-                          </button>
-                        </div>
-                      )}
-
-                      {/* LIFF URL (full link on hover / select) */}
-                      <div
-                        className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 font-mono text-[11px] text-slate-700 dark:text-slate-300 truncate select-all"
-                        title={getRealLiffUrl(managingClassroom)}
-                      >
-                        {getRealLiffUrl(managingClassroom)}
-                      </div>
-
-                      {/* Actions */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleCopyLiff(managingClassroom)}
-                          className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-                        >
-                          <Copy className="w-3.5 h-3.5 shrink-0" />
-                          <span className="truncate">{isCopied ? t('classroom_mgmt.copied') : t('classroom_mgmt.copy_liff_link')}</span>
-                        </button>
-                        <a
-                          href={`https://line.me/R/msg/text/?${encodeURIComponent(
-                            `${language === 'th' ? 'เข้าร่วมห้องเรียน Pudding' : 'Join Pudding Classroom'}: ${managingClassroom.name} (${courses.find((c) => c.id === managingClassroom.course_id)?.name || managingClassroom.subject_code || ''})\n\n${tr('กดลิงก์นี้ใน LINE', 'Open this link in LINE')}: ${getRealLiffUrl(managingClassroom)}\n${tr('รหัสห้องเรียน', 'Class code')}: ${managingClassroom.invite_code || ''}`
-                          )}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-                        >
-                          <Share2 className="w-3.5 h-3.5 shrink-0" />
-                          <span className="truncate">{language === 'th' ? 'แชร์เข้าแชท LINE' : 'Share to LINE'}</span>
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(getWebInviteUrl(managingClassroom));
-                            setIsCopied(true);
-                            setTimeout(() => setIsCopied(false), 2000);
-                          }}
-                          className="col-span-2 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <Copy className="w-3 h-3" />
-                          <span>{language === 'th' ? 'คัดลอกลิงก์เว็บตรง' : 'Copy Web Link'}</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                )}
-              </div>
-            )}
-
-            </ModalSheetBody>
-
-            {/* Footer Close */}
-            <ModalSheetFooter>
-              <button
-                type="button"
-                onClick={() => setManagingClassroom(null)}
-                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
-              >
-                {t('common.close')}
-              </button>
-            </ModalSheetFooter>
-        </ModalSheet>
+        <StudentRosterModal
+          key={managingClassroom.id}
+          classroom={managingClassroom}
+          initialTab={studentTab === 'pending' ? 'pending' : 'roster'}
+          onClose={() => setManagingClassroom(null)}
+          onEditStudent={setEditingStudent}
+          onRemoveStudent={handleRemoveStudent}
+          onAdmitStudent={handleAdmitStudent}
+          onRejectStudent={handleRejectStudent}
+        />
       )}
 
       {/* TEACHER PROFILE MODAL (editing; first-time setup is TeacherProfileGate) */}

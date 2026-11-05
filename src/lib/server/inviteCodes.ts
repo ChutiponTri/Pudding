@@ -114,9 +114,28 @@ export function resultsShareToken(assignmentId: string): string {
   return `${RESULTS_PREFIX}${assignmentId}.${sig}`;
 }
 
-/** What a share token points at: a timeline post, a work to re-announce, a work's reminder or its score announcement. null if it was not made here. */
-export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind' | 'results'; id: string } | null {
+/** Prefix of share tokens for a classroom's join invitation ("เชิญในไลน์"). */
+const JOIN_PREFIX = 'j:';
+
+/** Link token for a classroom's join invitation shared by hand: `j:<classroomId>.<16-char HMAC>`. */
+export function joinShareToken(classroomId: string): string {
+  const digest = createHmac('sha256', inviteSecret()).update(`join-share:${classroomId}`).digest();
+  let sig = '';
+  for (let i = 0; i < 16; i++) sig += ALPHABET[digest[i] & 31];
+  return `${JOIN_PREFIX}${classroomId}.${sig}`;
+}
+
+/** What a share token points at: a timeline post, a work to re-announce, a work's reminder or its score announcement, or a classroom's invitation. null if it was not made here. */
+export function parseShareToken(token: unknown): { kind: 'post' | 'reannounce' | 'remind' | 'results' | 'join'; id: string } | null {
   if (typeof token !== 'string' || token.length > 200) return null;
+  if (token.startsWith(JOIN_PREFIX)) {
+    const dot = token.lastIndexOf('.');
+    if (dot <= JOIN_PREFIX.length) return null;
+    const id = token.slice(JOIN_PREFIX.length, dot);
+    const expected = Buffer.from(joinShareToken(id));
+    const given = Buffer.from(token);
+    return expected.length === given.length && timingSafeEqual(expected, given) ? { kind: 'join', id } : null;
+  }
   if (token.startsWith(RESULTS_PREFIX)) {
     const dot = token.lastIndexOf('.');
     if (dot <= RESULTS_PREFIX.length) return null;

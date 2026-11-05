@@ -656,6 +656,22 @@ export const dataService = {
     return { line: (json.line as LinePostStatus) || 'sent', closed: !!json.closed, assignment: (json.assignment as Assignment) || null };
   },
 
+  /**
+   * "เชิญในไลน์": the bot posts the classroom's join invitation to its LINE
+   * group (same fallback as remindAssignment: share popup whenever it cannot).
+   */
+  async inviteStudentsInLine(classroomId: string, title?: string): Promise<LinePostStatus> {
+    const res = await authFetch('/api/classrooms/students', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'invite_line', classroomId }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    reportLineUnsent(json.line, json.share, title ? `เชิญเข้าห้อง: ${title}` : undefined, json.message);
+    return (json.line as LinePostStatus) || 'sent';
+  },
+
   /** A timeline post sent to the class LINE group again (same fallback as remindAssignment). */
   async resendPost(postId: string, title?: string): Promise<LinePostStatus> {
     const res = await authFetch('/api/classrooms/posts', {

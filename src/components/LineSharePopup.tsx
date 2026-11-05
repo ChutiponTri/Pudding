@@ -95,9 +95,27 @@ export function LineSharePopup() {
             {copied ? tr('คัดลอกแล้ว', 'Copied') : tr('คัดลอก', 'Copy')}
           </button>
         </div>
-        <p className="text-[10px] text-slate-400 leading-relaxed">
-          {tr('ส่งจาก LINE ของคุณครู ไม่ใช้โควตาบอท • แชร์ภายหลังได้จากไทม์ไลน์', 'Sent from your own LINE, no bot quota • you can share later from the timeline')}
-        </p>
+        {current.onDismiss ? (
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              {tr('ส่งจาก LINE ของคุณครู ไม่ใช้โควตาบอท • ปิดไว้ก่อน จะเตือนอีกครั้งเมื่อเปิดเว็บครั้งหน้า', 'Sent from your own LINE, no bot quota • close it and you are asked again next visit')}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                current.onDismiss?.();
+                next();
+              }}
+              className="shrink-0 text-[11px] font-bold text-slate-500 hover:text-rose-600 underline underline-offset-2 cursor-pointer"
+            >
+              {tr('ไม่ต้องส่งแล้ว', 'No need to send')}
+            </button>
+          </div>
+        ) : (
+          <p className="text-[10px] text-slate-400 leading-relaxed">
+            {tr('ส่งจาก LINE ของคุณครู ไม่ใช้โควตาบอท • แชร์ภายหลังได้จากไทม์ไลน์', 'Sent from your own LINE, no bot quota • you can share later from the timeline')}
+          </p>
+        )}
       </ModalSheetBody>
     </ModalSheet>
   );

@@ -4,6 +4,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { personNameError } from '@/lib/utils/studentName';
 import { canonicalInstitution } from '@/lib/data/thaiInstitutions';
+import { joinLineText } from '@/lib/line/classroomAnnouncement';
+import { joinShare } from '@/lib/server/classroomPosts';
+import { botSendOrShare } from '@/lib/server/lineSend';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -107,4 +110,42 @@ export async function PATCH(request: NextRequest) {
   );
 
   return NextResponse.json({ success: true, student: { id: studentKey, ...fields } });
+}
+
+/**
+ * POST { action: 'invite_line', classroomId }: "เชิญในไลน์" — the bot posts the
+ * classroom's join invitation (code + join button) to the class LINE group, the
+ * same message as the group command "พุดดิ้ง เข้าห้อง". Checks the monthly
+ * quota and rationing first (botSendOrShare); whenever the bot cannot send,
+ * the teacher gets the same message to share from their own LINE.
+ */
+export async function POST(request: NextRequest) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const access = await getTeacherAccess(userId);
+  if (access !== 'ok') return teacherBlockedResponse(access);
+
+  const body = await request.json().catch(() => ({}));
+  const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
+  if (body.action !== 'invite_line' || !classroomId) return NextResponse.json({ error: 'classroomId and action are required' }, { status: 400 });
+
+  const supabase = createServiceSupabaseClient();
+  const { data: classroom } = await supabase
+    .from('classrooms')
+    .select('id, name, course_name, subject_code, invite_code, line_group_id, teacher_id, teachers')
+    .eq('id', classroomId)
+    .maybeSingle();
+  const isTeacher =
+    classroom?.teacher_id === userId || ((classroom?.teachers || []) as Array<{ teacher_id?: string }>).some((teacher) => teacher.teacher_id === userId);
+  if (!classroom || !isTeacher) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  const text = joinLineText(classroom);
+  const result = await botSendOrShare(supabase, {
+    groupId: classroom.line_group_id,
+    text,
+    share: joinShare(classroom.id, text),
+    teacherId: userId,
+    classroomId: classroom.id,
+  });
+  return NextResponse.json(result);
 }

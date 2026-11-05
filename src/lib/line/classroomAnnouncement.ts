@@ -76,6 +76,14 @@ export function resultsLineText(
 }
 
 /** Why a post's LINE message did not go out; kept in its metadata (lineStatus) so the teacher can share it by hand. */
+/** "เชิญในไลน์": the classroom's join invitation (code + a button that opens the join form in LINE). */
+export function joinLineText(classroom: LabelledClassroom & { id: string; invite_code?: string | null }): string {
+  const lines = [`🎓 เชิญเข้าห้องเรียน\n📘 ${classroomTitle(classroom)}`];
+  if (classroom.invite_code) lines.push(`รหัสเข้าห้อง: ${classroom.invite_code}`);
+  lines.push('นักเรียนที่ยังไม่ได้เข้าห้อง กดปุ่มด้านล่าง กรอกชื่อ แล้วรอคุณครูอนุมัติ');
+  return withLiffLink(lines.join('\n'), 'กดเพื่อเข้าร่วมห้องเรียน', { classroomId: classroom.id, inviteCode: classroom.invite_code });
+}
+
 export type PostLineFailure = 'failed' | 'quota' | 'no_group';
 
 /**

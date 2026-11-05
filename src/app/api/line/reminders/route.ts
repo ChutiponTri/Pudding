@@ -1,13 +1,11 @@
 import type { Assignment } from '@/types/database';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { pushLineGroupText } from '@/lib/line/messaging';
-import { withLiffLink } from '@/lib/line/liffLink';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import { groupPushAffordable, isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
+import { missingStudentNames, REMINDER_TRIES, reminderLineText, saveReminderOutcome, type UnsentReminder } from '@/lib/server/workReminder';
 import { getAssignmentWindow, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
 import { deleteExpiredAssignmentDrafts } from '@/lib/server/assignmentDrafts';
-import { classroomTitle } from '@/lib/utils/classroomLabel';
 
 export const runtime = 'nodejs';
 
@@ -22,6 +20,7 @@ type ReminderRow = {
   reminder_offsets_minutes?: number[] | null;
   classroom_id: string;
   line_last_reminded_at: string | null;
+  line_reminder_unsent?: UnsentReminder | null;
   publish_at?: string;
 };
 export const dynamic = 'force-dynamic';
@@ -30,6 +29,10 @@ export const dynamic = 'force-dynamic';
  * Run from a scheduler every five minutes (see supabase_reminder_cron.sql).
  * Also releases the LINE message for scheduled assignments and deletes drafts
  * that were never published within DRAFT_RETENTION_DAYS.
+ * A reminder the bot cannot send (monthly LINE quota short for the group's
+ * size, no linked group, or LINE refusing it REMINDER_TRIES times) is not
+ * retried: it is saved on the work (line_reminder_unsent) and the teacher's
+ * pages offer to share it from their own LINE (UnsentReminderNotice).
  * Accepts GET (Vercel Cron, which sends `Authorization: Bearer $CRON_SECRET`)
  * and POST (pg_cron / any external scheduler).
  */
@@ -74,6 +77,7 @@ async function runReminders(request: NextRequest) {
 
   let sent = 0;
   const failed: string[] = [];
+  const unsentIds: string[] = [];
   for (const assignment of assignments) {
     // Follow the teacher's extension, if any, so the reminders move with the deadline.
     const dueAt = getAssignmentWindow(assignment).deadline;
@@ -87,45 +91,50 @@ async function runReminders(request: NextRequest) {
     if (!Number.isFinite(reminderAt)) continue;
     if (assignment.line_last_reminded_at && new Date(assignment.line_last_reminded_at).getTime() >= reminderAt) continue;
 
+    const unsent = (assignment.line_reminder_unsent || null) as UnsentReminder | null;
     const { data: classroom } = await supabase
       .from('classrooms')
-      .select('name, course_name, subject_code, line_group_id, students, invite_code')
+      .select('id, name, course_name, subject_code, line_group_id, students, invite_code')
       .eq('id', assignment.classroom_id)
       .maybeSingle();
-    if (!classroom?.line_group_id) continue;
-
-    const roster = (classroom.students || []) as Array<{ id?: string; first_name?: string; last_name?: string; name?: string }>;
-    const ids = roster.map((student) => student.id).filter(Boolean);
-    const { data: submissions } = await supabase
-      .from('submissions')
-      .select('student_id')
-      .eq('assignment_id', assignment.id)
-      .in('student_id', ids.length ? ids : ['__none__']);
-    const submitted = new Set((submissions || []).map((submission) => submission.student_id));
-    const missing = roster.filter((student) => student.id && !submitted.has(student.id));
-    if (!missing.length) continue;
-
-    const names = missing.map((student) => `${student.first_name || ''} ${student.last_name || ''}`.trim() || student.name || 'ไม่ระบุชื่อ');
-    // The server clock is UTC; LINE readers are in Thailand.
-    const dueLabel = formatDateTime(new Date(dueAt).toISOString(), 'th', SCHOOL_TIME_ZONE);
+    if (!classroom) continue;
+    // Retakes remind only their students; reopened / "no submission" rows still count as missing.
+    const names = await missingStudentNames(supabase, assignment as unknown as Assignment, classroom);
+    if (!names.length) continue;
+    // The bot cannot send it: the teacher's pages offer to share it by hand (UnsentReminderNotice).
+    const giveUp = async (reason: UnsentReminder['reason']) => {
+      await saveReminderOutcome(supabase, assignment.id, { reason, at: now.toISOString() }, true, now);
+      unsentIds.push(assignment.id);
+    };
+    if (!classroom.line_group_id) {
+      await giveUp('no_group');
+      continue;
+    }
+    // Out of monthly messages for a group this size (billed per member): don't even try.
+    const budget = await groupPushAffordable(classroom.line_group_id);
+    if (budget.affordable === false) {
+      await giveUp('quota');
+      continue;
+    }
     try {
-      await pushLineGroupText(
-        classroom.line_group_id,
-        withLiffLink(
-          `🔔 แจ้งเตือนส่งงาน\n📘 ${classroomTitle(classroom)}\n📋 ${assignment.title}\nกำหนดส่ง: ${dueLabel}\n\nยังไม่ส่งงาน (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`,
-          'กดเพื่อส่งงาน',
-          { classroomId: assignment.classroom_id, inviteCode: classroom.invite_code, assignmentId: assignment.id }
-        )
-      );
+      await pushLineGroupText(classroom.line_group_id, reminderLineText(assignment as unknown as Assignment, classroom, names));
     } catch (pushError) {
       // One failed group (bot removed, quota) must not stop the others.
       console.error(`LINE reminder failed for assignment ${assignment.id}:`, pushError);
       failed.push(assignment.id);
+      if (isLineQuotaError(pushError)) {
+        await giveUp('quota');
+        continue;
+      }
+      // Another LINE error may pass: the next runs (5 min apart) try again a few times.
+      const attempts = (unsent?.reason === 'retry' ? Number(unsent.attempts || 0) : 0) + 1;
+      if (attempts >= REMINDER_TRIES) await giveUp('failed');
+      else await saveReminderOutcome(supabase, assignment.id, { reason: 'retry', at: now.toISOString(), attempts }, false, now);
       continue;
     }
-    await supabase.from('assignments').update({ line_last_reminded_at: now.toISOString() }).eq('id', assignment.id);
+    await saveReminderOutcome(supabase, assignment.id, null, true, now);
     sent += 1;
   }
-  return NextResponse.json({ ok: true, checked: assignments.length, sent, failed, announced, expiredDrafts });
+  return NextResponse.json({ ok: true, checked: assignments.length, sent, failed, unsent: unsentIds, announced, expiredDrafts });
 }
 

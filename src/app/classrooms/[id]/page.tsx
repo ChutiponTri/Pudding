@@ -15,6 +15,7 @@ import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
+import { StudentRosterModal, type StudentRosterTab } from '@/components/StudentRosterModal';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ClassworkRow } from '@/components/works/ClassworkRow';
 import { announceConfirmText } from '@/components/works/WorkBits';
@@ -61,13 +62,11 @@ import {
   AlertCircle,
   BookOpen,
   CalendarCheck,
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   ClipboardList,
   Clock,
-  Copy,
   Download,
   Edit2,
   ExternalLink,
@@ -79,7 +78,6 @@ import {
   MessageSquare,
   Pencil,
   Plus,
-  QrCode,
   RefreshCw,
   Search,
   Send,
@@ -322,22 +320,11 @@ export default function ClassroomWorkspacePage() {
   const [teacherSearchResults, setTeacherSearchResults] = useState<User[]>([]);
   const [isSearchingTeachers, setIsSearchingTeachers] = useState(false);
 
-  const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   // Accept all / reject all join requests: asks in its own box before acting.
   const [bulkPendingAction, setBulkPendingAction] = useState<'admit' | 'reject' | null>(null);
   const [bulkPendingBusy, setBulkPendingBusy] = useState(false);
-  const [inviteTab, setInviteTab] = useState<'search' | 'link' | 'pending'>('search');
-  const [studentSearchQuery, setStudentSearchQuery] = useState('');
-  const [studentSearchResults, setStudentSearchResults] = useState<User[]>([]);
-  const [isSearchingStudents, setIsSearchingStudents] = useState(false);
-  const [isCopiedLiff, setIsCopiedLiff] = useState(false);
-  const [isCopiedCode, setIsCopiedCode] = useState(false);
-
-  const [newStudentFirst, setNewStudentFirst] = useState('');
-  const [newStudentLast, setNewStudentLast] = useState('');
-  const [newStudentId, setNewStudentId] = useState('');
-  const [newStudentEmail, setNewStudentEmail] = useState('');
+  const [inviteTab, setInviteTab] = useState<StudentRosterTab>('roster');
 
   // LINE Group Connection Modal state
   const [showLineConnectModal, setShowLineConnectModal] = useState(false);
@@ -381,18 +368,6 @@ export default function ClassroomWorkspacePage() {
     return () => clearInterval(interval);
   }, [lineConnection.status, classroomId, tr]);
 
-  const getRealLiffUrl = (cls?: Classroom | null) => {
-    if (!cls) return '';
-    const liffId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || '2011818142-BznwnWyj';
-    return `https://liff.line.me/${liffId}?code=${cls.invite_code || ''}`;
-  };
-
-  const getWebInviteUrl = (cls?: Classroom | null) => {
-    if (!cls) return '';
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    return `${origin}/liff?code=${cls.invite_code || ''}`;
-  };
-
   const handleLineConnection = async (action: 'create' | 'test' | 'disconnect') => {
     if (!classroom) return;
     setIsLineLoading(true);
@@ -421,23 +396,6 @@ export default function ClassroomWorkspacePage() {
       setNotice((error as { message?: string } | null)?.message || tr('ไม่สามารถเชื่อมต่อ LINE Group ได้', 'Could not connect the LINE group'));
     } finally {
       setIsLineLoading(false);
-    }
-  };
-
-  const handleSearchStudents = async (q: string) => {
-    setStudentSearchQuery(q);
-    if (!q.trim()) {
-      setStudentSearchResults([]);
-      return;
-    }
-    setIsSearchingStudents(true);
-    try {
-      const res = await dataService.searchStudentsByInstitution(q);
-      setStudentSearchResults(res);
-    } catch (e) {
-      console.error('Search students error:', e);
-    } finally {
-      setIsSearchingStudents(false);
     }
   };
 
@@ -1621,34 +1579,6 @@ export default function ClassroomWorkspacePage() {
     setNotice(tr('นำครูผู้สอนออกแล้ว', 'Teacher removed'));
   };
 
-  const handleSelectFoundStudent = async (std: User) => {
-    if (!classroom) return;
-    const alreadyEnrolled = [...(classroom.students || []), ...(classroom.pending_students || [])]
-      .some((student) => student.id === std.id || (student.student_id && std.student_id && student.student_id === std.student_id));
-    if (alreadyEnrolled) {
-      setNotice(tr('นักเรียนคนนี้อยู่ในห้องเรียนแล้ว', 'This student is already in the classroom'));
-      return;
-    }
-    if (!confirmOtherSchool([std])) return;
-    await dataService.addStudentToClassroom(
-      classroom.id,
-      {
-        id: std.id,
-        first_name: std.first_name,
-        last_name: std.last_name,
-        student_id: std.student_id,
-        email: std.email,
-        avatar_url: std.avatar_url,
-        institution: std.institution,
-      },
-      { autoAdmit: true }
-    );
-    setNotice(tr(`เพิ่ม ${std.first_name} ${std.last_name} สำเร็จ`, `Added ${std.first_name} ${std.last_name}`));
-    setStudentSearchQuery('');
-    setStudentSearchResults([]);
-    await loadWorkspace();
-  };
-
   const handleAdmitStudent = async (studentId: string) => {
     if (!classroom) return;
     const pending = (classroom.pending_students || []).find((student) => student.id === studentId);
@@ -1727,35 +1657,6 @@ export default function ClassroomWorkspacePage() {
     setTeacherSearchQuery('');
     setTeacherSearchResults([]);
     setShowAddTeacherModal(false);
-  };
-
-  const handleAddStudent = async (first_name: string, last_name: string, student_id: string, email: string) => {
-    if (!first_name.trim() || !classroom) return;
-    // Enrolled like any other student (with a user record), so their work and
-    // check-ins match, and they merge with their LINE account when they join.
-    try {
-      await dataService.addStudentToClassroom(
-        classroom.id,
-        {
-          first_name: first_name.trim(),
-          last_name: last_name.trim(),
-          student_id: student_id.trim() || undefined,
-          email: email.trim() || undefined,
-          institution: teacherInstitution || undefined,
-        },
-        { autoAdmit: true }
-      );
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : tr('เพิ่มผู้เรียนไม่สำเร็จ', 'Could not add the student'));
-      return;
-    }
-    await loadWorkspace();
-    setNotice(tr(`เพิ่มผู้เรียน "${first_name.trim()} ${last_name.trim()}" เรียบร้อยแล้ว`, `Added student "${first_name.trim()} ${last_name.trim()}"`));
-    setShowAddStudentModal(false);
-    setNewStudentFirst('');
-    setNewStudentLast('');
-    setNewStudentId('');
-    setNewStudentEmail('');
   };
 
   const [editingStudent, setEditingStudent] = useState<User | null>(null);
@@ -1915,7 +1816,7 @@ export default function ClassroomWorkspacePage() {
                 type="button"
                 onClick={() => {
                   setShowInviteModal(true);
-                  setInviteTab('search');
+                  setInviteTab('roster');
                 }}
                 className="min-w-0 h-9 sm:h-auto px-2 sm:px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] sm:text-xs font-bold inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-xs transition-all cursor-pointer"
               >
@@ -2691,7 +2592,7 @@ export default function ClassroomWorkspacePage() {
                 classroom={classroom}
                 onOpenAddStudent={() => {
                   setShowInviteModal(true);
-                  setInviteTab('search');
+                  setInviteTab('roster');
                 }}
                 onRemoveStudent={handleRemoveStudent}
                 onEditStudent={setEditingStudent}
@@ -3077,352 +2978,19 @@ export default function ClassroomWorkspacePage() {
         </div>
       )}
 
-      {/* ============================================================== */}
-      {/* MODAL: INVITE & MANAGE STUDENTS (Liff Link, QR, Search, Pending) */}
-      {/* ============================================================== */}
+      {/* MODAL: STUDENTS & JOIN REQUESTS (invite in LINE) */}
       {showInviteModal && (
-        <ModalSheet onClose={() => setShowInviteModal(false)} size="sm:max-w-xl">
-            <ModalSheetHeader>
-              <div className="min-w-0">
-                <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <UserPlus className="w-5 h-5 text-amber-500" />
-                  <span>{tr('เชิญและเพิ่มนักเรียน', 'Invite & add students')}</span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5 truncate">
-                  {classroom.name} • {classroom.subject_code}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowInviteModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer shrink-0"
-                aria-label={tr('ปิด', 'Close')}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </ModalSheetHeader>
-
-            <ModalSheetBody>
-            {/* Modal Navigation Tabs */}
-            <div className="flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800 pb-2 overflow-x-auto scrollbar-none -mx-1 px-1 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
-              <button
-                type="button"
-                onClick={() => setInviteTab('search')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                  inviteTab === 'search'
-                    ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <Search className="w-3.5 h-3.5" />
-                <span>{tr('ค้นหาและเพิ่มด่วน', 'Quick add')}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setInviteTab('link')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                  inviteTab === 'link'
-                    ? 'bg-emerald-600 text-white font-black shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <QrCode className="w-3.5 h-3.5" />
-                <span>{tr('ลิงก์เชิญ & QR Code', 'Invite link & QR')}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setInviteTab('pending')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                  inviteTab === 'pending'
-                    ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>{tr('คำขอรออนุมัติ', 'Pending requests')}</span>
-                {(classroom.pending_students?.length || 0) > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
-                    {classroom.pending_students?.length}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {/* TAB 1: Search & Quick Add */}
-            {inviteTab === 'search' && (
-              <div className="space-y-4">
-                <div className="relative">
-                  <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-                  <input
-                    value={studentSearchQuery}
-                    onChange={(e) => handleSearchStudents(e.target.value)}
-                    placeholder={tr('🔍 ค้นหานักเรียนในโรงเรียน (ชื่อ หรือรหัส)...', '🔍 Search students at your school (name or ID)...')}
-                    className="w-full pl-9 pr-8 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium outline-none focus:ring-2 focus:ring-amber-500 text-slate-900 dark:text-white"
-                  />
-                  {isSearchingStudents && (
-                    <Loader2 className="w-4 h-4 absolute right-3 top-3 text-amber-500 animate-spin" />
-                  )}
-                </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">
-                  {teacherInstitution
-                    ? tr(`ค้นหาได้เฉพาะนักเรียนของ ${institutionLabel(teacherInstitution, language)} — ถ้าชื่อโรงเรียนไม่ตรง ให้เข้าผ่านลิงก์เชิญแล้วแก้ภายหลัง`, `Only students of ${institutionLabel(teacherInstitution, language)} can be found — if the school name differs, have them join by invite link and fix it later`)
-                    : tr('ระบุโรงเรียนของคุณครูที่แดชบอร์ดก่อน จึงจะค้นหานักเรียนได้', 'Set your school on the dashboard first to search students')}
-                </p>
-
-                {studentSearchResults.length > 0 && (
-                  <div className="p-2 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-700/60 space-y-1.5 max-h-56 overflow-y-auto">
-                    {studentSearchResults.map((found) => (
-                      <div
-                        key={found.id}
-                        className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-900 dark:text-white truncate">
-                            {found.first_name} {found.last_name}
-                          </p>
-                          <p className="text-[10px] text-slate-400 font-mono">
-                            {tr('รหัส', 'ID')}: {found.student_id || '-'} • {found.email || tr('ไม่มีอีเมล', 'No email')}
-                          </p>
-                          <InstitutionTag institution={found.institution} otherSchool={isOtherSchool(found.institution)} />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleSelectFoundStudent(found)}
-                          className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs cursor-pointer shadow-xs whitespace-nowrap"
-                        >
-                          {tr('+ เพิ่มเข้าห้อง', '+ Add')}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Collapsible Manual Addition Form */}
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <p className="text-[11px] font-bold text-slate-400 mb-2.5">
-                    {tr('หรือกรอกเอง (นักเรียนที่ยังไม่เคยลงทะเบียน)', 'Or enter manually (students who have not registered)')}
-                  </p>
-                  <div className="space-y-2.5 bg-slate-50 dark:bg-slate-850 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800">
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        value={newStudentFirst}
-                        onChange={(e) => setNewStudentFirst(e.target.value)}
-                        placeholder={tr('ชื่อ *', 'First name *')}
-                        className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                      />
-                      <input
-                        value={newStudentLast}
-                        onChange={(e) => setNewStudentLast(e.target.value)}
-                        placeholder={tr('นามสกุล *', 'Last name *')}
-                        className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        value={newStudentId}
-                        onChange={(e) => setNewStudentId(e.target.value)}
-                        placeholder={tr('รหัสนักเรียน (เช่น 65001)', 'Student ID (e.g. 65001)')}
-                        className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-mono outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                      />
-                      <input
-                        type="email"
-                        value={newStudentEmail}
-                        onChange={(e) => setNewStudentEmail(e.target.value)}
-                        placeholder={tr('อีเมลผู้เรียน', 'Student email')}
-                        className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      disabled={!newStudentFirst.trim()}
-                      onClick={() => handleAddStudent(newStudentFirst, newStudentLast, newStudentId, newStudentEmail)}
-                      className="w-full py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-black hover:opacity-90 transition-all cursor-pointer shadow-xs disabled:opacity-40"
-                    >
-                      {tr('+ เพิ่มเข้าห้องเรียน', '+ Add to classroom')}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: Invite Link & QR Code */}
-            {inviteTab === 'link' && (
-              <div className="space-y-4">
-                {/* Classroom Invite Code */}
-                {classroom.invite_code && (
-                  <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 block">
-                        {tr('รหัสห้องเรียน', 'Class code')}
-                      </span>
-                      <span className="text-xl font-black tracking-widest text-amber-950 dark:text-amber-100 font-mono">
-                        {classroom.invite_code}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(classroom.invite_code || '');
-                        setIsCopiedCode(true);
-                        setTimeout(() => setIsCopiedCode(false), 2000);
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-700 text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5 shadow-xs cursor-pointer"
-                    >
-                      {isCopiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{isCopiedCode ? tr('คัดลอกแล้ว', 'Copied') : tr('คัดลอกรหัส', 'Copy code')}</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* QR Code and LIFF Link */}
-                <div className="flex flex-col sm:flex-row items-center gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800">
-                  <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
-                      getRealLiffUrl(classroom)
-                    )}`}
-                    alt="Classroom QR Code"
-                    className="w-32 h-32 rounded-2xl bg-white p-2 shadow-sm border border-slate-200 shrink-0"
-                  />
-                  <div className="space-y-2 text-center sm:text-left min-w-0 flex-1">
-                    <p className="text-xs font-black text-slate-900 dark:text-white">
-                      {tr('สแกนด้วย LINE เพื่อเข้าห้อง', 'Scan with LINE to join')}
-                    </p>
-                    <p className="text-[11px] text-slate-400 break-all font-mono">
-                      {getRealLiffUrl(classroom)}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(getRealLiffUrl(classroom));
-                          setIsCopiedLiff(true);
-                          setTimeout(() => setIsCopiedLiff(false), 2000);
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
-                      >
-                        {isCopiedLiff ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{isCopiedLiff ? tr('คัดลอกลิงก์แล้ว', 'Link copied') : tr('คัดลอกลิงก์ LINE LIFF', 'Copy LINE LIFF link')}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const message = `${tr('เข้าร่วมห้องเรียน Pudding', 'Join the Pudding classroom')}: ${classroom.name}\n\n${tr('กดลิงก์นี้ใน LINE', 'Open this link in LINE')}: ${getRealLiffUrl(
-                            classroom
-                          )}\n${tr('รหัสห้องเรียน', 'Class code')}: ${classroom.invite_code || ''}`;
-                          navigator.clipboard.writeText(message);
-                          setNotice(tr('คัดลอกข้อความแล้ว', 'Message copied'));
-                        }}
-                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-100 cursor-pointer shadow-xs"
-                      >
-                        <Share2 className="w-3.5 h-3.5 text-amber-500" />
-                        <span>{tr('คัดลอกข้อความเชิญ', 'Copy invite message')}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Direct Web Invite URL */}
-                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
-                  <div className="min-w-0">
-                    <span className="text-[10px] text-slate-400 block">{tr('ลิงก์สำหรับเบราว์เซอร์:', 'Browser link:')}</span>
-                    <span className="text-slate-700 dark:text-slate-300 font-mono text-[11px] truncate block">
-                      {getWebInviteUrl(classroom)}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(getWebInviteUrl(classroom));
-                      setNotice(tr('คัดลอกลิงก์แล้ว', 'Link copied'));
-                    }}
-                    className="p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 cursor-pointer"
-                    title={tr('คัดลอกลิงก์เว็บ', 'Copy web link')}
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 3: Pending Students */}
-            {inviteTab === 'pending' && (
-              <div className="space-y-3">
-                {(!classroom.pending_students || classroom.pending_students.length === 0) ? (
-                  <div className="py-10 text-center space-y-2">
-                    <UserCheck className="w-8 h-8 text-slate-300 mx-auto" />
-                    <p className="text-xs font-bold text-slate-400">{tr('ไม่มีคำขอที่รออนุมัติ', 'No pending requests')}</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {/* Bulk actions stay above the scrolling list; buttons go full-width on narrow screens */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
-                      <span className="text-xs font-bold text-slate-500">
-                        {tr(`รอการอนุมัติ ${classroom.pending_students.length} คน`, `${classroom.pending_students.length} awaiting approval`)}
-                      </span>
-                      <div className="flex items-center gap-1.5 w-full sm:w-auto">
-                        <button
-                          type="button"
-                          onClick={() => setBulkPendingAction('admit')}
-                          className="flex-1 sm:flex-none justify-center px-2.5 py-2 sm:py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
-                        >
-                          <UserCheck className="w-3.5 h-3.5" />
-                          {tr('อนุมัติทั้งหมด', 'Admit all')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setBulkPendingAction('reject')}
-                          className="flex-1 sm:flex-none justify-center px-2.5 py-2 sm:py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:border-rose-900 dark:text-rose-300 font-bold text-[11px] inline-flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
-                        >
-                          <UserX className="w-3.5 h-3.5" />
-                          {tr('ปฏิเสธทั้งหมด', 'Decline all')}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Phones scroll the whole sheet; a nested scroller there is hard to swipe. */}
-                    <div className="space-y-2 sm:max-h-72 sm:overflow-y-auto">
-                    {classroom.pending_students.map((p) => (
-                      <div
-                        key={p.id}
-                        className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-900 dark:text-white wrap-break-word">
-                            {p.first_name} {p.last_name}
-                          </p>
-                          <p className="text-[10px] text-slate-400 font-mono break-all">
-                            {tr('รหัส', 'ID')}: {p.student_id || '-'} • {p.email || 'LINE Login'}
-                          </p>
-                          <InstitutionTag institution={p.institution} otherSchool={isOtherSchool(p.institution)} />
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleAdmitStudent(p.id)}
-                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs cursor-pointer"
-                          >
-                            {tr('อนุมัติ', 'Admit')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRejectStudent(p.id)}
-                            className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs shadow-xs cursor-pointer"
-                          >
-                            {tr('ปฏิเสธ', 'Decline')}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            </ModalSheetBody>
-        </ModalSheet>
+        <StudentRosterModal
+          classroom={classroom}
+          initialTab={inviteTab}
+          onClose={() => setShowInviteModal(false)}
+          onEditStudent={setEditingStudent}
+          onRemoveStudent={handleRemoveStudent}
+          onAdmitStudent={handleAdmitStudent}
+          onRejectStudent={handleRejectStudent}
+          onBulkPending={setBulkPendingAction}
+          isOtherSchool={isOtherSchool}
+        />
       )}
 
       {/* MODAL: CONFIRM ACCEPT ALL / REJECT ALL JOIN REQUESTS */}

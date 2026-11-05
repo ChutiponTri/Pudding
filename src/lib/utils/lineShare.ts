@@ -28,13 +28,15 @@ export type LineUnsentDetail = LineShare & {
   title?: string;
   /** The server's explanation (e.g. when the next re-announcement is allowed). */
   note?: string;
+  /** Offers "no need to send" (e.g. a deadline reminder): the teacher drops it for good. */
+  onDismiss?: () => void;
 };
 
 /**
  * The bot could not send a post to LINE: open the "share it yourself" popup
  * (LineSharePopup, mounted once for teacher pages). No-op when it was sent.
  */
-export function reportLineUnsent(line: unknown, share: LineShare | null | undefined, title?: string, note?: string) {
+export function reportLineUnsent(line: unknown, share: LineShare | null | undefined, title?: string, note?: string, onDismiss?: () => void) {
   if (typeof window === 'undefined' || !share || !isUnsent(line)) return;
-  window.dispatchEvent(new CustomEvent<LineUnsentDetail>(LINE_UNSENT_EVENT, { detail: { reason: line, ...share, title, note } }));
+  window.dispatchEvent(new CustomEvent<LineUnsentDetail>(LINE_UNSENT_EVENT, { detail: { reason: line, ...share, title, note, onDismiss } }));
 }
