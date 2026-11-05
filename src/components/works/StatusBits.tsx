@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, ChevronDown, Clock, Loader2, Lock, Rocket, Unlock, X } from 'lucide-react';
+import Link from 'next/link';
+import { Check, ChevronDown, Clock, EyeOff, Loader2, Lock, Rocket, Unlock, X } from 'lucide-react';
 import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
@@ -10,7 +11,7 @@ import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '
 import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, type AssignmentStatusTone } from '@/lib/utils/assignmentWindow';
 import { daysFromNowAt } from '@/lib/utils/datetime';
 import { shortDate } from '@/components/works/WorkBits';
-import type { WorkClass } from '@/lib/utils/workGroups';
+import type { WorkClass, WorkTotals } from '@/lib/utils/workGroups';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -61,6 +62,95 @@ export function groupStatus(list: AcceptStatus[], th: boolean): AcceptStatus {
   if (new Set(list.map((s) => s.tone)).size === 1) return { ...list[0], hint: '' };
   const open = list.filter((s) => s.tone === 'open' || s.tone === 'late').length;
   return { tone: 'mixed', label: th ? 'หลายสถานะ' : 'Mixed', hint: th ? `เปิดรับ ${open}/${list.length} ห้อง` : `${open}/${list.length} classes open` };
+}
+
+/**
+ * Phones: a work row's status, numbers and grading on one short line —
+ * status dot (tap to change), handed in "ส่ง 12/30", and "ตรวจ" with how many
+ * wait. The full pill, buttons and progress bar show from `sm` up.
+ */
+export function PhoneWorkSummary({
+  status,
+  onStatusClick,
+  totals,
+  gradeHref,
+  hidden = false,
+}: {
+  status: AcceptStatus;
+  onStatusClick?: () => void;
+  totals: Pick<WorkTotals, 'handedIn' | 'totalStudents' | 'pending' | 'graded' | 'checkable'>;
+  gradeHref?: string;
+  /** Draft / scheduled: students cannot see it yet. */
+  hidden?: boolean;
+}) {
+  const { tr } = useLanguage();
+  const dotTitle = `${status.label}${status.hint ? ` · ${status.hint}` : ''}`;
+  const dot = (
+    <span className="relative flex w-2.5 h-2.5">
+      {status.tone === 'open' && <span className="absolute inset-0 rounded-full bg-emerald-400 opacity-75 animate-ping" />}
+      <span className={`relative w-2.5 h-2.5 rounded-full ${STATUS_DOT[status.tone]}`} />
+    </span>
+  );
+  return (
+    <span className="h-9 flex items-center gap-1.5">
+      {onStatusClick ? (
+        <button
+          type="button"
+          draggable={false}
+          onClick={onStatusClick}
+          title={`${dotTitle} — ${tr('กดเพื่อเปลี่ยนสถานะ', 'tap to change')}`}
+          aria-label={`${dotTitle} — ${tr('เปลี่ยนสถานะ', 'change status')}`}
+          className="w-6 h-8 flex items-center justify-center cursor-pointer"
+        >
+          {dot}
+        </button>
+      ) : (
+        <span className="w-6 h-8 flex items-center justify-center" title={dotTitle}>
+          {dot}
+        </span>
+      )}
+      {hidden ? (
+        <span className="w-[7.125rem] text-[11px] font-semibold text-slate-400 inline-flex items-center justify-center gap-1 whitespace-nowrap">
+          <EyeOff className="w-3.5 h-3.5" />
+          {tr('ซ่อน', 'Hidden')}
+        </span>
+      ) : (
+        <>
+          {/* Grading first: "ตรวจ 12/28" once anyone is checked; until then, "ส่ง 5/30". */}
+          {totals.graded > 0 ? (
+            <span className="w-16 text-right text-[11px] font-semibold text-slate-400 whitespace-nowrap tabular-nums" title={tr(`ตรวจแล้ว ${totals.graded}/${totals.checkable} • ส่งแล้ว ${totals.handedIn}/${totals.totalStudents}`, `${totals.graded}/${totals.checkable} checked • ${totals.handedIn}/${totals.totalStudents} handed in`)}>
+              {tr('ตรวจ', 'Chk')}{' '}
+              <span className={`font-black ${totals.graded >= totals.checkable && totals.checkable > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-800 dark:text-slate-100'}`}>{totals.graded}</span>/{totals.checkable}
+            </span>
+          ) : (
+            <span className="w-16 text-right text-[11px] font-semibold text-slate-400 whitespace-nowrap tabular-nums" title={tr('ส่งแล้ว / ทั้งหมด (ยังไม่ได้ตรวจ)', 'Handed in / students (none checked yet)')}>
+              {tr('ส่ง', 'In')} <span className="font-black text-slate-800 dark:text-slate-100">{totals.handedIn}</span>/{totals.totalStudents}
+            </span>
+          )}
+          {gradeHref ? (
+            <Link
+              href={gradeHref}
+              draggable={false}
+              className={`relative w-11 h-8 rounded-lg text-[11px] font-black inline-flex items-center justify-center whitespace-nowrap transition-colors ${
+                totals.pending > 0
+                  ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {tr('ตรวจ', 'Grade')}
+              {totals.pending > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[9px] leading-4 text-center tabular-nums bg-slate-950 text-white ring-2 ring-white dark:ring-slate-900">
+                  {totals.pending > 99 ? '99+' : totals.pending}
+                </span>
+              )}
+            </Link>
+          ) : (
+            <span aria-hidden className="w-11" />
+          )}
+        </>
+      )}
+    </span>
+  );
 }
 
 /** The acceptance state as a pill: coloured dot, state, and a chevron when it can be changed (the time hint is in the tooltip). */

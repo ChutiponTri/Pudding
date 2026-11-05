@@ -5,7 +5,7 @@ import { isRetake, rosterSizeFor } from '@/lib/utils/retake';
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { dataService } from '@/lib/supabase/dataService';
@@ -21,6 +21,7 @@ import { teacherRoleBadgeClass, teacherRoleLabel } from '@/lib/utils/teacherRole
 import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeacherPanel';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ClassworkRow } from '@/components/works/ClassworkRow';
+import { useCrossListDrag } from '@/lib/hooks/useCrossListDrag';
 import { announceConfirmText } from '@/components/works/WorkBits';
 import { applySavedOrder, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
 
@@ -225,6 +226,7 @@ export default function ClassroomWorkspacePage() {
   const { user } = useUser();
   const params = useParams<{ id: string }>();
   const search = useSearchParams();
+  const router = useRouter();
   const classroomId = params.id;
 
   const [classroom, setClassroom] = useState<Classroom | null>(null);
@@ -1286,6 +1288,24 @@ export default function ClassroomWorkspacePage() {
       setNotice(error instanceof Error && error.message ? error.message : tr('บันทึกลำดับงานไม่สำเร็จ', 'Could not save the order'));
     }
   };
+  // Classwork: drag a row from anywhere on it (mouse: move a little; finger:
+  // press and hold), into a position in any category.
+  const classworkDrag = useCrossListDrag({
+    onStart: (id) => setDraggingAssignmentId(id),
+    onOver: (target) => {
+      setDropTarget(target);
+      setDragOverGroup(target?.group ?? null);
+    },
+    onDrop: (id, target) => {
+      void handleDropAssignment(id, target.group, target.index);
+    },
+    onEnd: () => {
+      setDraggingAssignmentId(null);
+      setDragOverGroup(null);
+      setDropTarget(null);
+    },
+  });
+
 
   const handleUpdateAssignmentGroup = async (assignmentId: string, newGroup: string) => {
     const clean = newGroup.trim();
@@ -1984,9 +2004,10 @@ export default function ClassroomWorkspacePage() {
                   />
 
                   {isPostExpanded && (
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[11px] font-bold text-slate-400 mr-1">{tr('ประเภท:', 'Type:')}</span>
+                    // Phones: the four types as one even row, then Cancel / Post as one full-width row.
+                    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <div className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap sm:items-center">
+                        <span className="hidden sm:inline text-[11px] font-bold text-slate-400 mr-1">{tr('ประเภท:', 'Type:')}</span>
                         {(
                           [
                             ['announcement', tr('📢 ประกาศ', '📢 Announcement')],
@@ -1999,7 +2020,7 @@ export default function ClassroomWorkspacePage() {
                             key={type}
                             type="button"
                             onClick={() => setPostActivityType(type)}
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                            className={`h-8 sm:h-7 px-1 sm:px-2.5 rounded-lg text-[11px] sm:text-[10px] font-bold whitespace-nowrap inline-flex items-center justify-center transition-all cursor-pointer ${
                               postActivityType === type
                                 ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
@@ -2010,14 +2031,14 @@ export default function ClassroomWorkspacePage() {
                         ))}
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="grid grid-cols-[1fr_2fr] gap-2 sm:flex sm:items-center">
                         <button
                           type="button"
                           onClick={() => {
                             setIsPostExpanded(false);
                             setPostBody('');
                           }}
-                          className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                          className="h-9 sm:h-8 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500 hover:text-slate-800 inline-flex items-center justify-center cursor-pointer"
                         >
                           {tr('ยกเลิก', 'Cancel')}
                         </button>
@@ -2025,7 +2046,7 @@ export default function ClassroomWorkspacePage() {
                           type="button"
                           disabled={isPosting || !postBody.trim()}
                           onClick={createPost}
-                          className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+                          className="h-9 sm:h-8 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-all"
                         >
                           {isPosting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                           <span>{tr('โพสต์ประกาศ', 'Post')}</span>
@@ -2196,28 +2217,28 @@ export default function ClassroomWorkspacePage() {
           {tab === 'classwork' && (
             <section className="space-y-6">
               {/* Header with Actions */}
-              <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
-                <div>
-                  <h2 className="text-lg font-black text-slate-900 dark:text-white">{tr('งานและเนื้อหา', 'Classwork')}</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
+                <div className="max-sm:w-full max-sm:text-center">
+                  <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">{tr('งานและเนื้อหา', 'Classwork')}</h2>
+                  <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
                     <MobileText short={tr('จัดกลุ่มงานได้เอง นักเรียนเห็นกลุ่มเดียวกัน', 'Group work your way; students see the same groups')} full={tr('จัดกลุ่มงานตามหมวดหมู่ได้เอง นักเรียนจะเห็นหมวดหมู่เดียวกันในหน้าของตนเอง', 'Organize work into your own groups. Students see the same groups on their page.')} />
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="max-sm:w-full max-sm:grid max-sm:grid-cols-2 flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => setShowAddGroupModal(true)}
-                    className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer"
+                    className="max-sm:h-9 px-3.5 py-2 max-sm:py-0 max-sm:px-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <FolderPlus className="w-3.5 h-3.5 text-amber-500" />
-                    <span>{tr('+ สร้างกลุ่มหมวดหมู่ใหม่', '+ New group')}</span>
+                    <FolderPlus className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <span className="truncate"><MobileText short={tr('หมวดหมู่ใหม่', 'New group')} full={tr('+ สร้างกลุ่มหมวดหมู่ใหม่', '+ New group')} /></span>
                   </button>
                   <CreateWorkMenu
                     classroomId={classroom.id}
                     from="classroom"
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                    className="max-sm:h-9 px-4 py-2 max-sm:py-0 max-sm:px-2 rounded-xl border border-amber-500 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-all"
                   >
-                    <Plus className="w-4 h-4" />
-                    <span>{tr('สร้างงาน / ข้อสอบ', 'New assignment / exam')}</span>
+                    <Plus className="w-4 h-4 shrink-0" />
+                    <span className="truncate"><MobileText short={tr('สร้างงาน / ข้อสอบ', 'New work')} full={tr('สร้างงาน / ข้อสอบ', 'New assignment / exam')} /></span>
                   </CreateWorkMenu>
                 </div>
               </div>
@@ -2288,6 +2309,7 @@ export default function ClassroomWorkspacePage() {
                 </div>
               )}
 
+              {classworkDrag.ghostLayer}
               {/* Grouped Assignments List (re-keyed per filter so it slides in like a tab change) */}
               <div
                 key={classworkFilter}
@@ -2305,30 +2327,8 @@ export default function ClassroomWorkspacePage() {
                     key={group}
                     ref={bindGroupItem(foldKey)}
                     style={groupItemStyle(foldKey)}
-                    onDragOver={(e) => {
-                      if (!draggingAssignmentId || isUnpublishedGroup) return;
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = 'move';
-                      if (dragOverGroup !== group) setDragOverGroup(group);
-                      // Over the group but not over a card: drop at the end.
-                      if (dropTarget?.group !== group || dropTarget.index !== items.length) setDropTarget({ group, index: items.length });
-                    }}
-                    onDragLeave={(e) => {
-                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                        setDragOverGroup((g) => (g === group ? null : g));
-                        setDropTarget((t) => (t?.group === group ? null : t));
-                      }
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      if (isUnpublishedGroup) return;
-                      const id = e.dataTransfer.getData('text/plain') || draggingAssignmentId;
-                      const index = dropTarget?.group === group ? dropTarget.index : items.length;
-                      setDragOverGroup(null);
-                      setDropTarget(null);
-                      setDraggingAssignmentId(null);
-                      if (id) handleDropAssignment(id, group, index);
-                    }}
+                    // Over the category but not over a card: drop at its end.
+                    {...(isUnpublishedGroup ? {} : { 'data-xl-list': group, 'data-xl-count': items.length })}
                     // Each category is its own card: clear border and a grey header (or the teacher's colour).
                     className={`relative overflow-hidden rounded-3xl border-2 transition-[border-color,box-shadow,background-color] ${
                       dragOverGroup === group
@@ -2389,30 +2389,25 @@ export default function ClassroomWorkspacePage() {
                         return (
                           <div
                             key={item.id}
-                            draggable={canDrag}
-                            onDragStart={(e) => {
-                              e.dataTransfer.setData('text/plain', item.id);
-                              e.dataTransfer.effectAllowed = 'move';
-                              setDraggingAssignmentId(item.id);
+                            // Top half of the card: before it; bottom half: after it (the drag hook reads these).
+                            {...(isUnpublishedGroup ? {} : { 'data-xl-item': item.id, 'data-xl-group': group, 'data-xl-index': itemIndex })}
+                            {...(canDrag ? classworkDrag.pressProps(item.id, item.title) : {})}
+                            onClickCapture={(e) => {
+                              // The release after a drag must not open the title link.
+                              if (classworkDrag.recentlyDropped()) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }
                             }}
-                            onDragEnd={() => {
-                              setDraggingAssignmentId(null);
-                              setDragOverGroup(null);
-                              setDropTarget(null);
+                            onClick={(e) => {
+                              // A tap anywhere on the row (not its buttons, links or menu) opens grading.
+                              if (classworkDrag.recentlyDropped()) return;
+                              if ((e.target as HTMLElement).closest('a, button, input, select, textarea, label, [role="menu"]')) return;
+                              if (window.getSelection()?.toString()) return;
+                              router.push(`/assignments/${item.id}/grading?from=classroom&classroomId=${classroomId}`);
                             }}
-                            onDragOver={(e) => {
-                              if (!draggingAssignmentId || isUnpublishedGroup) return;
-                              e.preventDefault();
-                              e.stopPropagation();
-                              e.dataTransfer.dropEffect = 'move';
-                              // Top half of the card: before it; bottom half: after it.
-                              const box = e.currentTarget.getBoundingClientRect();
-                              const index = itemIndex + (e.clientY > box.top + box.height / 2 ? 1 : 0);
-                              if (dragOverGroup !== group) setDragOverGroup(group);
-                              if (dropTarget?.group !== group || dropTarget.index !== index) setDropTarget({ group, index });
-                            }}
-                            title={canDrag ? tr('ลากเพื่อเรียงลำดับ หรือย้ายไปกลุ่มอื่น', 'Drag to reorder or move to another group') : undefined}
-                            className={`relative flex ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''} ${draggingAssignmentId === item.id ? 'opacity-40' : ''}`}
+                            title={canDrag ? tr('กดเพื่อตรวจงาน • ลากเพื่อเรียงลำดับหรือย้ายกลุ่ม', 'Tap to grade • drag to reorder or move group') : tr('กดเพื่อตรวจงาน', 'Tap to grade')}
+                            className={`relative flex cursor-pointer select-none [-webkit-touch-callout:none] ${draggingAssignmentId === item.id ? 'opacity-40 scale-[0.98]' : ''} transition-[opacity,transform]`}
                           >
                             {/* Insertion line: where the dragged card will land */}
                             {lineAt(itemIndex) && (
@@ -3433,20 +3428,21 @@ function AttendancePanel({
         </div>
       )}
 
-      {/* 4. Statistics Summary Bento Cards */}
-      <div className="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+      {/* 4. Statistics Summary Bento Cards (phones: one row of four, number over a short label) */}
+      <div className="bg-white dark:bg-slate-900 p-1.5 sm:p-4 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs grid grid-cols-4 gap-1 sm:gap-3">
         {[
-          ['on_time', tr('ตรงเวลา', 'On time'), counts['on_time'] || 0, 'bg-emerald-500', 'text-emerald-600 dark:text-emerald-400'],
-          ['late', tr('มาสาย', 'Late'), counts['late'] || 0, 'bg-amber-400', 'text-amber-600 dark:text-amber-400'],
-          ['absent', tr('ขาด / ยังไม่เช็ก', 'Absent / unchecked'), counts['absent'] || 0, 'bg-rose-500', 'text-rose-600 dark:text-rose-400'],
-          ['excused', tr('ลา', 'Excused'), counts['excused'] || 0, 'bg-sky-500', 'text-sky-600 dark:text-sky-400'],
-        ].map(([key, label, count, dotCls, numberCls]) => (
-          <div key={key} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">
-            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${dotCls}`} />
-              {label}
+          ['on_time', tr('ตรงเวลา', 'On time'), tr('ตรงเวลา', 'On time'), counts['on_time'] || 0, 'bg-emerald-500', 'text-emerald-600 dark:text-emerald-400'],
+          ['late', tr('มาสาย', 'Late'), tr('สาย', 'Late'), counts['late'] || 0, 'bg-amber-400', 'text-amber-600 dark:text-amber-400'],
+          ['absent', tr('ขาด / ยังไม่เช็ก', 'Absent / unchecked'), tr('ขาด', 'Absent'), counts['absent'] || 0, 'bg-rose-500', 'text-rose-600 dark:text-rose-400'],
+          ['excused', tr('ลา', 'Excused'), tr('ลา', 'Excused'), counts['excused'] || 0, 'bg-sky-500', 'text-sky-600 dark:text-sky-400'],
+        ].map(([key, label, shortLabel, count, dotCls, numberCls]) => (
+          <div key={key} className="min-w-0 px-1 py-1.5 sm:p-3 rounded-xl sm:rounded-2xl bg-slate-50 dark:bg-slate-800/60 flex flex-col-reverse items-center sm:flex-col sm:items-start" title={String(label)}>
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1 sm:gap-1.5 max-w-full">
+              <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shrink-0 ${dotCls}`} />
+              <span className="truncate sm:hidden">{shortLabel}</span>
+              <span className="hidden sm:inline">{label}</span>
             </span>
-            <p className={`text-2xl font-black mt-0.5 ${Number(count) > 0 ? numberCls : 'text-slate-400'}`}>{count}</p>
+            <p className={`text-lg sm:text-2xl font-black leading-tight sm:mt-0.5 tabular-nums ${Number(count) > 0 ? numberCls : 'text-slate-400'}`}>{count}</p>
           </div>
         ))}
       </div>
@@ -4005,7 +4001,7 @@ function SessionRoster({
             >
               <div className="min-w-0 flex-1 sm:min-w-44">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-slate-900 dark:text-white truncate">
+                  <span className="text-[13px] sm:text-xs font-bold text-slate-900 dark:text-white truncate">
                     {student.first_name} {student.last_name}
                   </span>
                   {currentStatus === 'idle' && (
@@ -4026,13 +4022,19 @@ function SessionRoster({
                 </span>
               </div>
 
-              {/* Mobile: compact status dropdown */}
-              <div className="relative shrink-0 sm:hidden">
+              {/* Mobile: compact status dropdown. Phones force <select> to 16px (no iOS
+                  zoom), so the real select is invisible on top of a small label. */}
+              <div className={`relative shrink-0 sm:hidden w-24 h-8 rounded-lg border flex items-center pl-2.5 pr-6 text-[11px] font-bold focus-within:ring-2 focus-within:ring-amber-400 ${statusSelectCls[currentStatus]}`}>
+                <span aria-hidden className="truncate">
+                  {currentStatus === 'idle'
+                    ? (isSessionOpen ? tr('รอเช็ก', 'Waiting') : tr('ไม่ได้เช็ก', 'Unchecked'))
+                    : STATUS_CHOICES.find(([k]) => k === currentStatus)?.[1][language]}
+                </span>
                 <select
                   value={currentStatus}
                   onChange={(e) => update(session.id, student.id, e.target.value as AttendanceStatus)}
                   aria-label={`${tr('สถานะของ', 'Status of')} ${student.first_name} ${student.last_name}`}
-                  className={`w-28 appearance-none pl-3 pr-7 py-2 rounded-xl border text-[11px] font-black outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer ${statusSelectCls[currentStatus]}`}
+                  className="absolute inset-0 w-full h-full opacity-0 appearance-none cursor-pointer"
                 >
                   {currentStatus === 'idle' && (
                     <option value="idle" disabled>
@@ -4045,7 +4047,7 @@ function SessionRoster({
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-60" />
+                <ChevronDown className="w-3 h-3 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-60" />
               </div>
 
               {/* Desktop: 1-click status switcher buttons */}

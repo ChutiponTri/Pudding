@@ -62,11 +62,26 @@ video {
 
 /* iOS Safari / the LINE in-app browser zoom the page when a focused field's
    font is smaller than 16px. Keep fields at 16px on phones. */
+/* Teacher pages set .compact-fields on <html> (AppShell) and stop the zoom another
+   way, so their fields keep the designed sizes; this applies to the student app. */
 @media (max-width: 640px) {
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
-  textarea,
-  select {
+  html:not(.compact-fields) input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  html:not(.compact-fields) textarea,
+  html:not(.compact-fields) select {
     font-size: 16px !important;
+  }
+
+  /* A typing field that should look small on phones: it stays 16px (no zoom)
+     but is drawn at 75% (12px). Put it in a flex row that centres it; it is
+     h-12 there so the drawn field is 36px, and its spare width is cancelled. */
+  html:not(.compact-fields) .phone-small-field {
+    transform: scale(0.75);
+    transform-origin: left center;
+    width: 133.334% !important;
+    max-width: none;
+    margin-right: -33.334%;
+    flex: none;
+    height: 3rem;
   }
 }
 

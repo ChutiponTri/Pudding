@@ -1107,7 +1107,7 @@ function NewAssignmentContent() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-24">
+    <div className="max-w-5xl mx-auto space-y-4 sm:space-y-6 pb-24">
       {/* Dynamic Back Button based on entry source */}
       <div>
         <button
@@ -1126,7 +1126,7 @@ function NewAssignmentContent() {
               }
             }
           }}
-          className="inline-flex items-center gap-2 max-w-full px-3.5 py-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
+          className="inline-flex items-center gap-1.5 sm:gap-2 max-w-full px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span className="truncate">
@@ -1143,7 +1143,7 @@ function NewAssignmentContent() {
         <div className="hidden sm:inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-xs font-bold mb-2">
           <span>{isExam ? '🛡️ ' + t('assignment_creator.mode_exam') : '📚 ' + t('assignment_creator.mode_assignment')}</span>
         </div>
-        <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+        <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
           {retake
             ? editId ? tr('แก้ไขข้อสอบซ่อม', 'Edit retake quiz') : tr('สร้างข้อสอบซ่อม', 'New retake quiz')
             : editId
@@ -1244,10 +1244,10 @@ function NewAssignmentContent() {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} onInputCapture={() => setFormTouched(true)} className="space-y-8">
+      <form onSubmit={handleSubmit} onInputCapture={() => setFormTouched(true)} className="space-y-5 sm:space-y-8">
         {/* Mode Selector Toggle: Assignment vs Exam. Sticky under the navbar so the mode can be
             switched from anywhere on a long form; the highlight slides between the two buttons. */}
-        <div className="sticky top-[calc(4rem+env(safe-area-inset-top)+0.5rem)] z-20 p-2 sm:p-2.5 rounded-3xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-between gap-4">
+        <div className="sticky top-[calc(4rem+env(safe-area-inset-top)+0.5rem)] z-20 p-1.5 sm:p-2.5 rounded-2xl sm:rounded-3xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-between gap-4">
           <div
             ref={trackModeToggle}
             role="radiogroup"
@@ -1278,7 +1278,7 @@ function NewAssignmentContent() {
                   data-active={selected}
                   onClick={() => !retake && setIsExam(option.exam)}
                   disabled={!!retake && !option.exam}
-                  className={`relative lg:min-w-40 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors duration-300 cursor-pointer ${
+                  className={`relative lg:min-w-40 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors duration-300 cursor-pointer ${
                     selected
                       ? `text-white ${modeIndicator ? '' : option.pill}`
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
@@ -1315,13 +1315,13 @@ function NewAssignmentContent() {
         </div>
 
         {/* Basic Assignment Details */}
-        <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-6">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+        <div className="bg-white dark:bg-slate-900 p-3.5 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 sm:space-y-6">
+          <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-amber-500" />
             <span>{language === 'th' ? 'ข้อมูลรายวิชาและการมอบหมาย' : 'Course & Assignment Details'}</span>
           </h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
             {/* Parent Course Selector */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -1331,7 +1331,7 @@ function NewAssignmentContent() {
                 value={selectedCourseId}
                 disabled={!!editingAssignment}
                 onChange={(e) => handleCourseChange(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {courses.map((course) => (
                   <option key={course.id} value={course.id}>
@@ -1392,7 +1392,7 @@ function NewAssignmentContent() {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={t('assignment_creator.fields.title_placeholder')}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-hidden focus:border-amber-500"
+                className="w-full px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-hidden focus:border-amber-500"
               />
             </div>
 
@@ -1404,7 +1404,7 @@ function NewAssignmentContent() {
                 value={groupName}
                 onChange={(e) => setGroupName(e.target.value)}
                 placeholder={existingGroups.length ? tr('เลือกด้านล่าง หรือพิมพ์ชื่อใหม่', 'Pick below or type a new name') : isExam ? tr('เช่น สอบกลางภาค', 'e.g. Midterm') : tr('เช่น ใบงานบทที่ 1', 'e.g. Chapter 1 worksheet')}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500"
+                className="w-full px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500"
               />
               {existingGroups.length > 0 && (
                 <div className="space-y-1.5">
@@ -1440,11 +1440,11 @@ function NewAssignmentContent() {
                 {t('assignment_creator.fields.description_label')}
               </label>
               <textarea
-                rows={3}
+                rows={2}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder={t('assignment_creator.fields.description_placeholder')}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 leading-relaxed"
+                className="w-full px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 leading-relaxed"
               />
             </div>
 
@@ -1485,7 +1485,7 @@ function NewAssignmentContent() {
                       <button
                         type="button"
                         onClick={() => openLinkDialog('link')}
-                        className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors active:scale-95"
+                        className="flex flex-row items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 sm:py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors active:scale-95"
                       >
                         <Link2 className="w-4 h-4 text-sky-600" />
                         <span>{tr('ลิงก์', 'Link')}</span>
@@ -1493,13 +1493,13 @@ function NewAssignmentContent() {
                       <button
                         type="button"
                         onClick={() => openLinkDialog('drive')}
-                        className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors active:scale-95"
+                        className="flex flex-row items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 sm:py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors active:scale-95"
                       >
                         <GoogleDriveMark className="w-4 h-4" />
                         <span>Google Drive</span>
                       </button>
                       <label
-                        className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 transition-colors active:scale-95 ${
+                        className={`flex flex-row items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 sm:py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-xs font-bold text-slate-700 dark:text-slate-200 transition-colors active:scale-95 ${
                           isUploadingSample ? 'opacity-60 cursor-wait' : 'cursor-pointer'
                         }`}
                       >
@@ -1788,7 +1788,7 @@ function NewAssignmentContent() {
                   }
                 }}
                 placeholder={linkDialog === 'drive' ? 'https://drive.google.com/...' : 'https://...'}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-sky-500"
+                className="w-full px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-sky-500"
               />
               {linkError && <p className="text-[11px] text-rose-500 font-semibold -mt-2">{linkError}</p>}
               <div className="flex justify-end gap-2">
@@ -1804,10 +1804,10 @@ function NewAssignmentContent() {
         )}
 
         {/* Dynamic Questions Builder */}
-        <div className="space-y-6">
-          <div className="flex items-start sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
             <div className="min-w-0">
-              <h2 className="text-lg font-black text-slate-900 dark:text-white">
+              <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
                 {t('assignment_creator.questions_builder.title')}
               </h2>
               <p className="hidden sm:block text-xs text-slate-500 dark:text-slate-400">
@@ -1836,18 +1836,18 @@ function NewAssignmentContent() {
                   removing ? 'grid-rows-[0fr] opacity-0 scale-[0.97]' : 'grid-rows-[1fr] opacity-100'
                 }`}
               >
-              <div className={`min-h-0 pb-6 ${removing ? 'overflow-hidden' : ''}`}>
+              <div className={`min-h-0 pb-4 sm:pb-6 ${removing ? 'overflow-hidden' : ''}`}>
               <div
                 ref={idx === questions.length - 1 ? lastQuestionRef : null}
-                className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-6 relative transition-colors animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]"
+                className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-3.5 sm:p-6 shadow-xs space-y-4 sm:space-y-6 relative transition-colors animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]"
               >
                 {/* Question Card Header */}
-                <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-3">
-                    <span className="w-8 h-8 rounded-2xl bg-amber-500 text-slate-950 font-black text-sm flex items-center justify-center shadow-xs">
+                <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl sm:rounded-2xl bg-amber-500 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center shadow-xs">
                       {idx + 1}
                     </span>
-                    <span className="hidden min-[380px]:inline font-bold text-sm text-slate-900 dark:text-white">
+                    <span className="hidden min-[380px]:inline font-bold text-[13px] sm:text-sm text-slate-900 dark:text-white">
                       {t('assignment_creator.questions_builder.question_number')} {idx + 1}
                     </span>
                   </div>
@@ -2016,7 +2016,7 @@ function NewAssignmentContent() {
                     value={q.question_text}
                     onChange={(e) => handleQuestionChange(idx, 'question_text', e.target.value)}
                     placeholder={language === 'th' ? 'ระบุเนื้อหาโจทย์หรือคำสั่งข้อนี้...' : 'Write the question prompt...'}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 leading-relaxed font-medium"
+                    className="w-full px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 leading-relaxed font-medium"
                   />
                 </div>
 
@@ -2169,7 +2169,7 @@ function NewAssignmentContent() {
           </div>
 
           {/* QUESTION ADDER PLACEMENT: AT THE BOTTOM OF THE LAST QUESTION ITEM */}
-          <div className="p-4 sm:p-6 rounded-3xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 text-center space-y-3">
+          <div className="p-3 sm:p-6 rounded-2xl sm:rounded-3xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 text-center space-y-3">
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               <MobileText short={language === 'th' ? 'เพิ่มคำถาม' : 'Add a question'} full={t('assignment_creator.questions_builder.add_question_hint')} />
             </p>
@@ -2204,18 +2204,18 @@ function NewAssignmentContent() {
         </div>
 
         {/* Submit Actions Bar (sticky so publishing is always reachable on long forms) */}
-        <div className="sticky bottom-[max(env(safe-area-inset-bottom),0.75rem)] z-20 w-fit ml-auto sm:w-auto sm:ml-0 p-3 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-end gap-2 sm:gap-3">
+        <div className="sticky bottom-[max(env(safe-area-inset-bottom),0.75rem)] z-20 w-fit ml-auto sm:w-auto sm:ml-0 p-2 sm:p-3 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-end gap-2 sm:gap-3">
           <button
             type="button"
             onClick={() => router.back()}
-            className="px-5 py-2.5 rounded-2xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             {t('common.cancel')}
           </button>
           <button
             type="submit"
             disabled={isSubmitting}
-            className={`flex-none justify-center px-6 py-3 sm:py-2.5 rounded-2xl text-sm sm:text-xs font-black shadow-lg transition-all duration-300 active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50 border-2 ${
+            className={`flex-none justify-center px-4 sm:px-6 py-2.5 rounded-xl sm:rounded-2xl text-xs font-black shadow-lg transition-all duration-300 active:scale-[0.98] flex items-center gap-2 cursor-pointer disabled:opacity-50 border-2 ${
               saveAsDraft && !editIsPublished
                 ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border-dashed border-slate-400 dark:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700 shadow-black/5'
                 : 'bg-amber-500 hover:bg-amber-600 text-slate-950 border-transparent shadow-amber-500/25'

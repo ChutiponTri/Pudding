@@ -39,6 +39,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Award,
+  ChevronDown,
   ChevronRight,
   Sparkles,
   UserCheck,
@@ -525,7 +526,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   };
   const reopenBadge = (sub: Submission, name: string, kind: 'edit' | 'handin') => (
     <span
-      className="inline-flex items-center gap-1.5 pl-2.5 pr-1 h-9 sm:h-8 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200 ring-1 ring-orange-300 dark:ring-orange-800 text-[11px] font-bold whitespace-nowrap animate-in fade-in zoom-in-95"
+      className="inline-flex items-center gap-1.5 pl-2.5 pr-1 h-8 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-200 ring-1 ring-orange-300 dark:ring-orange-800 text-[11px] font-bold whitespace-nowrap animate-in fade-in zoom-in-95"
       title={sub.reopen_until ? formatDateTime(sub.reopen_until, language) : undefined}
     >
       <span className="relative flex w-2 h-2 shrink-0" aria-hidden>
@@ -552,7 +553,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       title={kind === 'edit'
         ? th ? 'ให้นักเรียนคนนี้แก้งานที่ส่งแล้ว (เช่น แนบไฟล์ผิด)' : 'Let this student fix and hand in again'
         : th ? 'ให้นักเรียนคนนี้ส่งงานได้ แม้เลยกำหนดหรือปิดรับแล้ว' : 'Let this student hand in, even after it closed'}
-      className={`inline-flex items-center justify-center gap-1.5 h-9 sm:h-8 px-3 rounded-xl text-xs font-black whitespace-nowrap bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25 cursor-pointer active:scale-[0.97] transition-all disabled:opacity-50 ${className}`}
+      className={`inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-xl text-[11px] sm:text-xs font-black whitespace-nowrap bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25 cursor-pointer active:scale-[0.97] transition-all disabled:opacity-50 ${className}`}
     >
       {reopeningKey === target.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : kind === 'edit' ? <PencilLine className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
       {kind === 'edit' ? (th ? 'ให้แก้ไขงาน' : 'Allow edit') : th ? 'ให้ส่งงาน' : 'Allow hand-in'}
@@ -605,7 +606,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         onClick={() => handleMarkNoSubmission(row)}
         disabled={busy}
         title={th ? 'นักเรียนไม่ได้ส่งงาน: บันทึกว่าตรวจแล้ว ได้ 0 คะแนน' : 'Nothing was handed in: record it as checked with 0'}
-        className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:ring-rose-300 hover:text-rose-700 dark:hover:text-rose-300 cursor-pointer disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap"
+        className="h-8 px-2.5 rounded-xl text-[11px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 ring-1 ring-slate-200 dark:ring-slate-700 hover:ring-rose-300 hover:text-rose-700 dark:hover:text-rose-300 cursor-pointer disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap"
       >
         <Ban className="w-3 h-3" />
         {th ? 'ไม่ส่งงาน · ให้ 0' : 'No submission · 0'}
@@ -615,7 +616,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   // A student marked "no submission": 0, with an undo.
   const noSubmissionBadge = (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 whitespace-nowrap">
+    <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full text-[10px] sm:text-[11px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 whitespace-nowrap">
       <Ban className="w-3 h-3" />
       {language === 'th' ? 'ไม่ส่งงาน' : 'No submission'}
     </span>
@@ -626,7 +627,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         type="button"
         onClick={() => handleClearNoSubmission(sub)}
         disabled={clearingId === sub.id}
-        className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold text-slate-500 dark:text-slate-400 ring-1 ring-slate-200 dark:ring-slate-700 hover:text-slate-800 dark:hover:text-slate-200 hover:ring-slate-400 cursor-pointer disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap"
+        className="h-8 px-2.5 rounded-xl text-[11px] font-bold text-slate-500 dark:text-slate-400 ring-1 ring-slate-200 dark:ring-slate-700 hover:text-slate-800 dark:hover:text-slate-200 hover:ring-slate-400 cursor-pointer disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap"
       >
         <Undo2 className="w-3 h-3" />
         {th ? 'ยกเลิก' : 'Undo'}
@@ -830,15 +831,15 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       )}
 
       {/* Top Breadcrumb & Assignment Header */}
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4">
         <Suspense fallback={<span className="block h-4" />}>
           <GradingBackLink classroomId={assignment?.classroom_id} />
           <SiblingClassTabs assignmentId={assignmentId} />
         </Suspense>
 
-        <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 sm:space-y-5">
+        <div className="bg-white dark:bg-slate-900 p-3 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 sm:space-y-5">
           {/* What it is */}
-          <div className="space-y-2 min-w-0">
+          <div className="space-y-1.5 sm:space-y-2 min-w-0">
             <div className="flex flex-wrap items-center gap-1.5">
               <span
                 className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold ${
@@ -868,8 +869,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 </span>
               )}
             </div>
-            <div className="flex items-start justify-between gap-3">
-              <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white leading-snug min-w-0 wrap-break-word">
+            <div className="flex items-start sm:items-start max-sm:items-center justify-between gap-2 sm:gap-3">
+              <h1 className="text-base sm:text-2xl font-black text-slate-900 dark:text-white leading-snug min-w-0 wrap-break-word">
                 {assignment?.title || t('grading.title')}
               </h1>
               {assignment && grader && (
@@ -880,7 +881,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                       onClick={() => setRetakeOpen(true)}
                       title={th ? 'สร้างข้อสอบซ่อมให้นักเรียนที่เลือก' : 'Retake for chosen students'}
                       aria-label={th ? 'สอบซ่อม' : 'Retake'}
-                      className="inline-flex items-center gap-1 justify-center min-w-10 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-[11px] font-bold shadow-sm shadow-orange-500/25 cursor-pointer transition-colors"
+                      className="inline-flex items-center gap-1 justify-center min-w-8 sm:min-w-10 h-8 sm:h-auto px-2 sm:px-2.5 sm:py-1.5 rounded-lg sm:rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-[11px] font-bold shadow-sm shadow-orange-500/25 cursor-pointer transition-colors"
                     >
                       <RotateCcw className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{th ? 'สอบซ่อม' : 'Retake'}</span>
                     </button>
@@ -889,14 +890,14 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     href={`/assignments/new?copy=${assignment.id}&classroomId=${assignment.classroom_id}&${editorFrom}`}
                     title={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
                     aria-label={th ? 'คัดลอกไปห้องอื่น' : 'Copy to other classrooms'}
-                    className="inline-flex items-center gap-1 justify-center min-w-10 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-sky-600 hover:border-sky-400 transition-colors"
+                    className="inline-flex items-center gap-1 justify-center min-w-8 sm:min-w-10 h-8 sm:h-auto px-2 sm:px-2.5 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-sky-600 hover:border-sky-400 transition-colors"
                   >
                     📋 <span className="hidden sm:inline">{th ? 'คัดลอก' : 'Copy'}</span>
                   </Link>
                   <Link
                     href={`/assignments/new?edit=${assignment.id}&classroomId=${assignment.classroom_id}&${editorFrom}`}
                     aria-label={th ? 'แก้ไขงาน' : 'Edit'}
-                    className="inline-flex items-center gap-1 justify-center min-w-10 h-10 sm:h-auto px-2.5 sm:py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
+                    className="inline-flex items-center gap-1 justify-center min-w-8 sm:min-w-10 h-8 sm:h-auto px-2 sm:px-2.5 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400 transition-colors"
                   >
                     ✏️ <span className="hidden sm:inline">{th ? 'แก้ไขงาน' : 'Edit'}</span>
                   </Link>
@@ -912,38 +913,38 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           </div>
 
           {/* The two answers a teacher looks for: does it still take work, and is grading done? */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
             {assignmentStatus && (
               <button
                 type="button"
                 onClick={() => setShowStatusDialog(true)}
                 disabled={!grader || grader.role === 'researcher'}
                 title={th ? 'กดเพื่อขยายเวลาหรือปิดรับงาน' : 'Tap to extend or close submissions'}
-                className={`p-3.5 rounded-2xl border text-left transition-shadow enabled:cursor-pointer enabled:hover:shadow-md disabled:cursor-default ${STATUS_CARD_CLASSES[assignmentStatus.tone]}`}
+                className={`min-w-0 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border text-left transition-shadow enabled:cursor-pointer enabled:hover:shadow-md disabled:cursor-default ${STATUS_CARD_CLASSES[assignmentStatus.tone]}`}
               >
                 <span className="text-[11px] font-bold opacity-80 flex items-center justify-between gap-2">
                   {th ? 'การรับงาน' : 'Submissions'}
                   {grader && grader.role !== 'researcher' && (
                     <span className="inline-flex items-center gap-0.5 font-bold underline underline-offset-2">
-                      {th ? 'ขยายเวลา / ปิดรับ' : 'Extend / close'}
+                      <span className="max-sm:hidden">{th ? 'ขยายเวลา / ปิดรับ' : 'Extend / close'}</span>
                       <ChevronRight className="w-3 h-3" />
                     </span>
                   )}
                 </span>
-                <p className="mt-0.5 text-base font-black flex items-center gap-1.5">
+                <p className="mt-0.5 text-sm sm:text-base font-black flex items-center gap-1 sm:gap-1.5">
                   {assignmentStatus.tone === 'closed' ? <Lock className="w-4 h-4" /> : assignmentStatus.tone === 'late' ? <Unlock className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
                   {assignmentStatus.label}
                 </p>
-                <p className="mt-1 text-[11px] font-semibold opacity-90 flex items-center gap-1">
+                <p className="mt-1 text-[10px] sm:text-[11px] font-semibold opacity-90 flex items-center gap-1 max-sm:leading-snug">
                   <Calendar className="w-3 h-3 shrink-0" />
                   {assignment?.is_exam ? (th ? 'ปิดรับคำตอบ' : 'Closes') : t('grading.due_date')} {deadlineLabel}
                 </p>
-                {assignmentStatus.note && <p className="mt-1 text-[11px] leading-relaxed opacity-80">{assignmentStatus.note}</p>}
+                {assignmentStatus.note && <p className="max-sm:hidden mt-1 text-[11px] leading-relaxed opacity-80">{assignmentStatus.note}</p>}
               </button>
             )}
 
             <div
-              className={`p-3.5 rounded-2xl border ${
+              className={`min-w-0 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border ${
                 toGradeTotal > 0
                   ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-900 text-amber-900 dark:text-amber-200'
                   : gradedTotal > 0
@@ -952,7 +953,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               }`}
             >
               <span className="text-[11px] font-bold opacity-80 block">{th ? 'การตรวจ' : 'Grading'}</span>
-              <p className="mt-0.5 text-base font-black flex items-center gap-1.5">
+              <p className="mt-0.5 text-sm sm:text-base font-black flex items-center gap-1 sm:gap-1.5">
                 {toGradeTotal > 0 ? <Clock className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
                 {toGradeTotal > 0
                   ? th ? `รอตรวจ ${toGradeTotal} คน` : `${toGradeTotal} left to grade`
@@ -960,11 +961,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   ? th ? 'ตรวจครบแล้ว' : 'All graded'
                   : th ? 'ยังไม่มีผู้ส่งงาน' : 'Nothing handed in yet'}
               </p>
-              <div className="mt-2 flex w-full h-2 rounded-full overflow-hidden bg-white/70 dark:bg-slate-900/60">
+              <div className="mt-1.5 sm:mt-2 flex w-full h-1.5 sm:h-2 rounded-full overflow-hidden bg-white/70 dark:bg-slate-900/60">
                 <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(gradedTotal / (rosterRows.length || 1)) * 100}%` }} />
                 <div className="h-full bg-amber-400 transition-all" style={{ width: `${(toGradeTotal / (rosterRows.length || 1)) * 100}%` }} />
               </div>
-              <p className="mt-1.5 text-[11px] font-semibold opacity-90">
+              <p className="mt-1 sm:mt-1.5 text-[10px] sm:text-[11px] font-semibold opacity-90 max-sm:leading-snug">
                 {th
                   ? `ตรวจแล้ว ${gradedTotal}/${checkableTotal} คน · ส่งแล้ว ${handedInTotal}/${rosterRows.length} คน`
                   : `${gradedTotal}/${checkableTotal} checked · ${handedInTotal}/${rosterRows.length} handed in`}
@@ -979,7 +980,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                       ? th ? 'ยังไม่มีงานที่ตรวจเสร็จ' : 'Nothing graded yet'
                       : th ? 'ประกาศคะแนนในกลุ่ม LINE ของห้อง' : 'Announce the scores in the class LINE group'
                   }
-                  className={`mt-3 w-full h-10 rounded-xl text-sm font-black inline-flex items-center justify-center gap-1.5 transition-colors disabled:cursor-not-allowed ${
+                  className={`mt-2 sm:mt-3 w-full h-8 sm:h-10 rounded-lg sm:rounded-xl text-xs sm:text-sm font-black inline-flex items-center justify-center gap-1.5 transition-colors disabled:cursor-not-allowed ${
                     gradedTotal === 0
                       ? 'bg-white/70 dark:bg-slate-900/60 text-slate-400 ring-1 ring-slate-200 dark:ring-slate-700'
                       : toGradeTotal === 0
@@ -990,7 +991,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   {announcing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />}
                   {th ? 'ประกาศคะแนน' : 'Announce scores'}
                   {toGradeTotal > 0 && gradedTotal > 0 && (
-                    <span className="text-[11px] font-bold opacity-80">· {th ? `รอตรวจ ${toGradeTotal}` : `${toGradeTotal} to grade`}</span>
+                    <span className="max-sm:hidden text-[11px] font-bold opacity-80">· {th ? `รอตรวจ ${toGradeTotal}` : `${toGradeTotal} to grade`}</span>
                   )}
                 </button>
               )}
@@ -998,7 +999,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           </div>
 
           {/* Counts: tap one to show those students below */}
-          <div className={`grid grid-cols-2 gap-2 sm:gap-3 ${tracksAway ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
+          <div className={`grid gap-1.5 sm:gap-3 ${tracksAway ? 'grid-cols-5' : 'grid-cols-4'}`}>
             {summaryTiles.map((tile) => (
               <button
                 key={tile.id}
@@ -1007,17 +1008,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   setStatusFilter(statusFilter === tile.id ? 'all' : tile.id);
                   document.getElementById('grading-roster')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }}
-                className={`p-3 rounded-2xl text-left border transition-colors cursor-pointer ${
+                className={`min-w-0 px-1.5 py-2 sm:p-3 rounded-xl sm:rounded-2xl text-center sm:text-left border transition-colors cursor-pointer ${
                   statusFilter === tile.id ? tile.active : 'bg-slate-50 dark:bg-slate-800/60 border-transparent hover:border-slate-200 dark:hover:border-slate-700'
                 }`}
               >
-                <span className={`text-[11px] font-bold flex items-center gap-1 ${tile.label_class}`}>
-                  {tile.icon}
-                  {tile.label}
+                <span className={`text-[10px] sm:text-[11px] font-bold flex items-center justify-center sm:justify-start gap-1 min-w-0 ${tile.label_class}`}>
+                  <span className="max-sm:hidden contents">{tile.icon}</span>
+                  <span className="truncate">{tile.label}</span>
                 </span>
-                <span className={`block text-xl sm:text-2xl font-black mt-0.5 ${tile.value_class}`}>
+                <span className={`block text-lg sm:text-2xl font-black leading-tight mt-0.5 tabular-nums ${tile.value_class}`}>
                   {tile.value}
-                  {tile.of != null && <span className="text-xs font-semibold text-slate-400 ml-1">/ {tile.of}</span>}
+                  {tile.of != null && <span className="text-[10px] sm:text-xs font-semibold text-slate-400 ml-0.5 sm:ml-1">/{tile.of}</span>}
                 </span>
               </button>
             ))}
@@ -1029,7 +1030,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 type="button"
                 onClick={handleMarkAllNoSubmission}
                 disabled={recordingKeys.size > 0}
-                className="w-full sm:w-auto px-3 py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+                className="w-full sm:w-auto px-3 py-1.5 sm:py-2 rounded-xl text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
               >
                 <Ban className="w-3.5 h-3.5" />
                 {th ? `บันทึกว่าไม่ส่งงาน (0 คะแนน) ทุกคนที่ยังไม่ส่ง (${unrecordedRows.length})` : `Mark all missing as no submission · 0 (${unrecordedRows.length})`}
@@ -1066,21 +1067,50 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       {/* Submissions Table & Filter Controls */}
       <div id="grading-roster" className="scroll-mt-20 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
         {/* Table Filters Bar */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+        <div className="p-2.5 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex flex-row items-center justify-between gap-2 sm:gap-4">
+          {/* Phones: the status filter as one dropdown, left of the search. */}
+          <label className="sm:hidden relative shrink-0 w-[42%] h-9 pl-2.5 pr-7 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-100 focus-within:border-amber-500">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${statusFilter === 'pending' ? 'bg-amber-500' : statusFilter === 'graded' ? 'bg-emerald-500' : statusFilter === 'suspicious' ? 'bg-rose-500' : statusFilter === 'missing' ? 'bg-slate-500' : 'bg-slate-300'}`} />
+            <span className="truncate">
+              {statusFilter === 'missing'
+                ? `${th ? 'ยังไม่ส่ง' : 'Not submitted'} (${missingTotal})`
+                : statusFilter === 'suspicious'
+                ? `${t('grading.filter_suspicious')} (${suspiciousTotal})`
+                : statusFilter === 'pending'
+                ? `${t('grading.filter_pending')} (${toGradeTotal})`
+                : statusFilter === 'graded'
+                ? `${t('grading.filter_graded')} (${gradedTotal})`
+                : `${t('grading.filter_all')} (${rosterRows.length})`}
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+              aria-label={th ? 'กรองตามสถานะ' : 'Filter by status'}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            >
+              <option value="all">{t('grading.filter_all')} ({rosterRows.length})</option>
+              <option value="pending">{t('grading.filter_pending')} ({toGradeTotal})</option>
+              <option value="graded">{t('grading.filter_graded')} ({gradedTotal})</option>
+              <option value="missing">{th ? 'ยังไม่ส่ง' : 'Not submitted'} ({missingTotal})</option>
+              {tracksAway && <option value="suspicious">{t('grading.filter_suspicious')} ({suspiciousTotal})</option>}
+            </select>
+          </label>
+
           {/* Search Box */}
-          <div className="relative w-full sm:w-72">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="relative min-w-0 flex-1 sm:flex-none sm:w-72">
+            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 absolute left-3 sm:left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder={t('grading.search_student')}
-              className="w-full pl-9 pr-4 h-11 sm:h-auto sm:py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 font-medium"
+              placeholder={th ? 'ค้นหาชื่อ / รหัส' : 'Name or ID'}
+              className="w-full pl-8 sm:pl-9 pr-3 sm:pr-4 h-9 sm:h-auto sm:py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 font-medium"
             />
           </div>
 
-          {/* Filter Pills */}
-          <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
+          {/* Filter Pills (tablet / desktop) */}
+          <div className="max-sm:hidden flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
             <button
               onClick={() => setStatusFilter('all')}
               className={`shrink-0 px-3 h-10 sm:h-auto sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
@@ -1151,58 +1181,58 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 : (language === 'th' ? 'ไม่พบข้อมูลนักเรียน' : 'Unknown student');
               const initials = (student?.first_name?.[0] || '?') + (student?.last_name?.[0] || '');
               return (
-                <li key={key} className={`p-4 space-y-3 ${sub ? '' : 'bg-slate-50/40 dark:bg-slate-900/40'}`}>
-                  <div className="flex items-center gap-3">
+                <li key={key} className={`px-3 py-2.5 space-y-2 ${sub ? '' : 'bg-slate-50/40 dark:bg-slate-900/40'}`}>
+                  <div className="flex items-center gap-2.5">
                     {student?.avatar_url ? (
-                      <img src={student.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-white dark:ring-slate-900" />
+                      <img src={student.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0 ring-2 ring-white dark:ring-slate-900" />
                     ) : (
-                      <span className="w-9 h-9 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-xs font-black flex items-center justify-center shrink-0">
+                      <span className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px] font-black flex items-center justify-center shrink-0">
                         {initials}
                       </span>
                     )}
                     <div className="min-w-0 flex-1">
-                      <p className="font-bold text-sm text-slate-900 dark:text-white truncate">{fullName}</p>
-                      <p className="text-[11px] text-slate-400 font-mono truncate">
+                      <p className="font-bold text-[13px] leading-snug text-slate-900 dark:text-white truncate">{fullName}</p>
+                      <p className="text-[10px] leading-tight mt-0.5 text-slate-400 font-mono truncate">
                         {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ไม่มีรหัสนักเรียน' : 'No student ID')}
                       </p>
                     </div>
                     {sub && (isGraded || isHandedIn(sub)) && (isGraded ? (
-                      <span className="shrink-0 inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
-                        <span className="text-sm tabular-nums">{sub.total_score}</span>
-                        <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
+                      <span className="shrink-0 h-7 inline-flex items-center gap-0.5 px-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
+                        <span className="text-[13px] tabular-nums">{sub.total_score}</span>
+                        <span className="text-[10px] font-semibold opacity-70">/{sub.max_total_score || assignment?.total_points || 20}</span>
                             {retakeMark(sub)}
                       </span>
                     ) : (
-                      <span className="shrink-0 inline-flex items-center px-2.5 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold">
+                      <span className="shrink-0 h-7 inline-flex items-center px-2 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[10px] font-bold">
                         {t('grading.pending_eval')}{retakeMark(sub)}
                       </span>
                     ))}
                   </div>
 
                   {sub && !isHandedIn(sub) && isGraded ? (
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <div className="flex items-center justify-between gap-2 text-[11px] pl-[42px]">
                       {noSubmissionBadge}
-                      <div className="flex flex-wrap items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
                         {handInControl(row)}
                         {clearNoSubmissionControl(sub)}
                       </div>
                     </div>
                   ) : !sub || !isHandedIn(sub) ? (
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                    <div className="flex items-center justify-between gap-2 text-[11px] pl-[42px]">
+                      <span className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                         {language === 'th' ? 'ยังไม่ส่ง' : 'Not submitted'}
                       </span>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
                         {handInControl(row)}
                         {missingActions(row)}
                       </div>
                     </div>
                   ) : (
                     <>
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[11px]">
+                      <div className="flex items-center gap-1.5 text-[10px] pl-[42px] min-w-0">
                         <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold ${
+                          className={`shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-full font-bold ${
                             isLate
                               ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                               : sub.status === 'submitted'
@@ -1217,12 +1247,14 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                             ? t('grading.status_badges.late')
                             : t('grading.status_badges.pending')}
                         </span>
-                        {sub.submitted_at && <span className="text-slate-400">{formatDateTime(sub.submitted_at, language)}</span>}
-                        <span className="text-slate-400 font-mono">· {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}</span>
+                        <span className="min-w-0 truncate text-slate-400">
+                          {sub.submitted_at && formatDateTime(sub.submitted_at, language)}
+                          <span className="font-mono"> · {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}</span>
+                        </span>
                       </div>
 
                       {(tracksAway || sub.submitted_by) && (
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5 pl-[42px]">
                           {tracksAway && (
                             <AntiCheatingBadge
                               isFlagged={sub.is_flagged_suspicious}
@@ -1241,13 +1273,13 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         </div>
                       )}
 
-                      <div className="flex flex-wrap items-stretch gap-2">
-                        {reopenControl(sub, 'h-10! flex-1')}
+                      <div className="flex items-stretch gap-1.5 pl-[42px]">
+                        {reopenControl(sub, 'flex-1')}
                         <button
                           type="button"
                           disabled={!grader}
                           onClick={() => handleOpenGrading(sub)}
-                          className={`flex-1 min-w-36 h-10 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed ${
+                          className={`flex-1 min-w-0 h-8 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed ${
                             isGraded ? EDIT_GRADE_CLASSES : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-xs'
                           }`}
                         >

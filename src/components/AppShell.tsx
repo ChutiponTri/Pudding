@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from '@/components/SidebarContext';
 import { GlobalClassroomSidebar } from '@/components/GlobalClassroomSidebar';
@@ -19,6 +19,28 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   // Key for the route fade. Clerk's catch-all auth routes change the path between
   // steps (e.g. /sign-in/factor-one); remounting there would reset the sign-in flow.
   const routeKey = pathname.match(/^\/(sign-in|sign-up)(\/|$)/)?.[1] ?? pathname;
+
+  // Teacher pages: fields keep their designed (small) text on phones. iOS zooms
+  // into a focused field under 16px, so there the page's zoom is capped at 1 —
+  // Safari still lets people pinch-zoom, it only stops the jump on focus.
+  // The student app (/liff, inside LINE) keeps 16px fields instead: LINE's
+  // browser would honour the cap and block pinch-zoom.
+  useEffect(() => {
+    const root = document.documentElement;
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+    const original = meta?.getAttribute('content') ?? '';
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isLiff) {
+      root.classList.remove('compact-fields');
+      return;
+    }
+    root.classList.add('compact-fields');
+    if (isIOS && meta && !/maximum-scale/.test(original)) meta.setAttribute('content', `${original}, maximum-scale=1`);
+    return () => {
+      root.classList.remove('compact-fields');
+      if (meta) meta.setAttribute('content', original);
+    };
+  }, [isLiff]);
 
   if (isLiff) {
     return <>{children}</>;

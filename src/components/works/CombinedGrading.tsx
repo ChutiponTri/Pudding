@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
-import { ArrowLeft, ChevronRight, Loader2, School, Search, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight, Loader2, School, Search, ShieldAlert } from 'lucide-react';
 import type { Assignment, Classroom, ClassroomTeacher, Question, Submission, SubmissionAnswer, User } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { dataService } from '@/lib/supabase/dataService';
@@ -203,7 +203,7 @@ export function CombinedGrading() {
       ) : (
         <>
           {/* What it is, and how far grading is across every class */}
-          <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+          <div className="bg-white dark:bg-slate-900 p-3 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-2 sm:space-y-3">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold ${first.is_exam ? 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'}`}>
                 {first.is_exam ? tr('ข้อสอบ', 'Quiz') : tr('การบ้าน', 'Homework')}
@@ -212,10 +212,10 @@ export function CombinedGrading() {
                 {tr(`${sections.length} ห้อง`, `${sections.length} classes`)}
               </span>
             </div>
-            <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white leading-snug wrap-break-word">{first.title}</h1>
+            <h1 className="text-base sm:text-2xl font-black text-slate-900 dark:text-white leading-snug wrap-break-word">{first.title}</h1>
             <div className="space-y-1.5">
               <GradingBar graded={totals.graded} pending={totals.pending} notSubmitted={Math.max(0, totals.all - totals.handedIn)} />
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
+              <p className="text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
                 {tr(`ส่งแล้ว ${totals.handedIn}/${totals.all} · ตรวจแล้ว ${totals.graded}`, `${totals.handedIn}/${totals.all} handed in · ${totals.graded} graded`)}
                 {totals.pending > 0 && <span className="text-amber-700 dark:text-amber-400 font-bold">{tr(` · รอตรวจ ${totals.pending}`, ` · ${totals.pending} to grade`)}</span>}
               </p>
@@ -223,8 +223,30 @@ export function CombinedGrading() {
           </div>
 
           {/* Filter + search */}
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="flex gap-1.5 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className="flex flex-row gap-2">
+            {/* Phones: the filter as one dropdown, left of the search. */}
+            <label className="sm:hidden relative shrink-0 w-[42%] h-9 pl-2.5 pr-7 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center text-[11px] font-bold text-slate-800 dark:text-slate-100 focus-within:border-amber-500">
+              <span className="truncate">
+                {(() => {
+                  const f = FILTERS.find((x) => x.id === filter);
+                  return f ? `${f.label} (${f.count})` : '';
+                })()}
+              </span>
+              <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <select
+                value={filter}
+                onChange={(e) => setFilter(e.target.value as typeof filter)}
+                aria-label={tr('กรองตามสถานะ', 'Filter by status')}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              >
+                {FILTERS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label} ({f.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="max-sm:hidden flex gap-1.5 overflow-x-auto scrollbar-none">
               {FILTERS.map((f) => (
                 <button
                   key={f.id}
@@ -240,36 +262,36 @@ export function CombinedGrading() {
                 </button>
               ))}
             </div>
-            <label className="relative block sm:w-64 sm:ml-auto">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <label className="relative block min-w-0 flex-1 sm:flex-none sm:w-64 sm:ml-auto">
+              <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={tr('ค้นหาชื่อหรือเลขที่', 'Search name or number')}
-                className="w-full h-9 pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+                placeholder={tr('ค้นหาชื่อ / เลขที่', 'Name or number')}
+                className="w-full h-9 pl-8 sm:pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
               />
             </label>
           </div>
 
           {/* One section per classroom, clearly apart */}
-          <div className="space-y-5">
+          <div className="space-y-3 sm:space-y-5">
             {sections.map((s) => {
               const cls = s.block.classroom;
               return (
-                <section key={s.block.assignment.id} className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
-                  <header className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 bg-slate-100/80 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800">
-                    <span className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0">
-                      <School className="w-4 h-4" />
+                <section key={s.block.assignment.id} className="rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
+                  <header className="flex flex-wrap items-center gap-x-2 sm:gap-x-3 gap-y-1 px-3 sm:px-4 py-2 sm:py-3 bg-slate-100/80 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800">
+                    <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0">
+                      <School className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </span>
-                    <h2 className="min-w-0 flex-1 text-base font-black text-slate-900 dark:text-white truncate">{cls?.name || s.block.assignment.classroom_name}</h2>
-                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
+                    <h2 className="min-w-0 flex-1 text-sm sm:text-base font-black text-slate-900 dark:text-white truncate">{cls?.name || s.block.assignment.classroom_name}</h2>
+                    <span className="max-sm:order-last max-sm:basis-full max-sm:pl-9 text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
                       {tr(`ส่ง ${s.handedIn}/${s.all.length} · ตรวจ ${s.graded}`, `${s.handedIn}/${s.all.length} in · ${s.graded} graded`)}
                       {s.pending > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-black">{tr(`รอ ${s.pending}`, `${s.pending} left`)}</span>}
                     </span>
                     <Link
                       href={`/assignments/${s.block.assignment.id}/grading?from=works&returnTo=${encodeURIComponent(backHref)}`}
-                      className="text-xs font-bold text-amber-700 dark:text-amber-400 hover:underline inline-flex items-center gap-0.5"
+                      className="shrink-0 text-[11px] sm:text-xs font-bold text-amber-700 dark:text-amber-400 hover:underline inline-flex items-center gap-0.5"
                     >
                       {tr('หน้าของห้องนี้', 'This class only')}
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -285,11 +307,11 @@ export function CombinedGrading() {
                         const done = !!sub && isGraded(sub);
                         const flagged = !!sub && isIntegrityFlagged(sub, s.block.assignment.is_exam);
                         return (
-                          <li key={key} className="flex items-center gap-3 px-4 py-2.5">
+                          <li key={key} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5">
                             <Avatar src={student?.avatar_url} name={fullName(student)} firstName={student?.first_name} lastName={student?.last_name} className="w-8 h-8 text-xs shrink-0" />
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{fullName(student)}</p>
-                              {student?.student_id && <p className="text-[11px] text-slate-400 tabular-nums">{student.student_id}</p>}
+                              <p className="text-[13px] sm:text-sm font-bold leading-tight text-slate-900 dark:text-white truncate">{fullName(student)}</p>
+                              {student?.student_id && <p className="text-[10px] sm:text-[11px] text-slate-400 tabular-nums">{student.student_id}</p>}
                             </div>
                             {flagged && (
                               <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
@@ -298,7 +320,7 @@ export function CombinedGrading() {
                             )}
                             {sub?.status === 'late' && <span className="shrink-0 text-[10px] font-bold text-orange-600 dark:text-orange-400">{tr('ส่งช้า', 'Late')}</span>}
                             <span
-                              className={`shrink-0 text-xs font-black tabular-nums ${done ? 'text-emerald-600 dark:text-emerald-400' : waiting ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400'}`}
+                              className={`shrink-0 w-14 text-right text-[11px] sm:text-xs font-black tabular-nums ${done ? 'text-emerald-600 dark:text-emerald-400' : waiting ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400'}`}
                             >
                               {done ? `${sub?.total_score ?? 0}/${sub?.max_total_score ?? '-'}` : waiting ? tr('รอตรวจ', 'To grade') : tr('ยังไม่ส่ง', 'Missing')}
                             </span>
@@ -307,14 +329,14 @@ export function CombinedGrading() {
                                 type="button"
                                 onClick={() => sub && openStudent(s.block, sub)}
                                 disabled={opening === sub?.id}
-                                className={`shrink-0 h-8 w-20 rounded-xl text-xs font-black inline-flex items-center justify-center gap-1 cursor-pointer transition-colors ${
+                                className={`shrink-0 h-8 w-16 sm:w-20 rounded-xl text-[11px] sm:text-xs font-black inline-flex items-center justify-center gap-1 cursor-pointer transition-colors ${
                                   waiting ? 'bg-amber-500 hover:bg-amber-600 text-slate-950' : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
                                 }`}
                               >
                                 {opening === sub?.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : waiting ? tr('ตรวจ', 'Grade') : tr('แก้คะแนน', 'Edit')}
                               </button>
                             ) : (
-                              <span className="shrink-0 w-20" />
+                              <span className="shrink-0 w-16 sm:w-20" />
                             )}
                           </li>
                         );

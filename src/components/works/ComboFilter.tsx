@@ -84,13 +84,14 @@ export function ComboFilter({
   return (
     <div ref={wrapRef} className={`relative min-w-0 ${className}`}>
       <div
-        className={`h-10 rounded-xl border flex items-center gap-1.5 pl-3 pr-1 transition-colors ${
+        className={`h-9 sm:h-10 rounded-xl border flex items-center gap-1.5 pl-2.5 sm:pl-3 pr-0.5 sm:pr-1 overflow-hidden transition-colors ${
           active && !open
             ? 'bg-slate-900 border-slate-900 text-white dark:bg-white dark:border-white dark:text-slate-900'
             : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 focus-within:border-amber-500'
         }`}
       >
-        {selected?.kind === 'class' ? <School className="w-4 h-4 shrink-0 opacity-60" /> : <BookOpen className="w-4 h-4 shrink-0 opacity-60" />}
+        {selected?.kind === 'class' ? <School className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 opacity-60" /> : <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 opacity-60" />}
+        <span className="min-w-0 flex-1 h-full flex items-center">
         <input
           ref={inputRef}
           role="combobox"
@@ -109,10 +110,11 @@ export function ComboFilter({
             setHi(0);
           }}
           onKeyDown={onKey}
-          className={`min-w-0 flex-1 h-full bg-transparent text-xs font-black outline-none placeholder:font-semibold ${
+          className={`phone-small-field min-w-0 w-full h-full bg-transparent text-xs font-black outline-none placeholder:font-semibold ${
             active && !open ? 'placeholder:text-white/60 dark:placeholder:text-slate-900/60' : 'placeholder:text-slate-400'
           }`}
         />
+        </span>
         {active ? (
           <button
             type="button"

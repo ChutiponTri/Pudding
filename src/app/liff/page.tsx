@@ -347,7 +347,7 @@ function ReferenceWork({ assignment }: { assignment: Assignment }) {
       {description && (
         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap wrap-break-word">{description}</p>
       )}
-      <AttachmentList attachments={attachments} />
+      <AttachmentList attachments={attachments} inlineImages />
       {assignment.is_exam && attachments.some((a) => !opensPreview(a)) && (
         <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
           รูปภาพและ PDF เปิดดูในหน้านี้ได้ • การเปิดลิงก์จะออกจากหน้าข้อสอบและถูกบันทึกให้คุณครูทราบ

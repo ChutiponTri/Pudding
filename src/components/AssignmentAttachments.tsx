@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ExternalLink, FileText, Link2, Loader2, X } from 'lucide-react';
+import { ExternalLink, FileText, Link2, Loader2, Maximize2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { AssignmentAttachment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { googleAppName, isPdfUrl } from '@/lib/utils/referenceWork';
@@ -123,8 +123,7 @@ function PreviewDialog({ attachment, onClose }: { attachment: AssignmentAttachme
         </div>
         <div className="flex-1 min-h-0 bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
           {attachment.kind === 'image' ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={attachment.url} alt={attachment.name} className="max-w-full max-h-[calc(100dvh-9rem)] object-contain" />
+            <ZoomableImage src={attachment.url} alt={attachment.name} />
           ) : (
             <iframe src={attachment.url} title={attachment.name} className="w-full h-[calc(100dvh-9rem)] bg-white" />
           )}
@@ -132,6 +131,74 @@ function PreviewDialog({ attachment, onClose }: { attachment: AssignmentAttachme
       </div>
     </div>,
     document.body
+  );
+}
+
+const ZOOMS = [1, 2, 3] as const;
+
+/**
+ * The previewed picture: fits the screen at first; tap it (or + / −) to zoom
+ * to 2× and 3×, then scroll / drag a finger to look around. Pinch also works.
+ */
+function ZoomableImage({ src, alt }: { src: string; alt: string }) {
+  const { tr } = useLanguage();
+  const [zoom, setZoom] = useState<(typeof ZOOMS)[number]>(1);
+  const step = (dir: 1 | -1) => setZoom((z) => ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, ZOOMS.indexOf(z) + dir))]);
+  return (
+    <div className="relative w-full h-[calc(100dvh-9rem)]">
+      <div className="absolute inset-0 overflow-auto overscroll-contain [touch-action:pan-x_pan-y_pinch-zoom]">
+        <div
+          className="min-w-full min-h-full flex items-center justify-center"
+          style={zoom > 1 ? { width: `${zoom * 100}%`, height: `${zoom * 100}%` } : undefined}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={alt}
+            draggable={false}
+            onClick={() => setZoom((z) => (z === 3 ? 1 : ZOOMS[ZOOMS.indexOf(z) + 1]))}
+            className={`max-w-full max-h-full object-contain select-none transition-[width,height] duration-200 ${zoom === 3 ? 'cursor-zoom-out' : 'cursor-zoom-in'}`}
+          />
+        </div>
+      </div>
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 p-1 rounded-full bg-slate-900/80 text-white shadow-lg backdrop-blur-sm">
+        <button type="button" onClick={() => step(-1)} disabled={zoom === 1} aria-label={tr('ย่อ', 'Zoom out')} className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-white/15 disabled:opacity-40 cursor-pointer">
+          <ZoomOut className="w-4 h-4" />
+        </button>
+        <span className="w-10 text-center text-xs font-black tabular-nums">{zoom}×</span>
+        <button type="button" onClick={() => step(1)} disabled={zoom === 3} aria-label={tr('ขยาย', 'Zoom in')} className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-white/15 disabled:opacity-40 cursor-pointer">
+          <ZoomIn className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A picture attachment shown whole, at full width; a tap opens the zoomable preview. */
+export function InlineImageAttachment({ attachment }: { attachment: AssignmentAttachment }) {
+  const { tr } = useLanguage();
+  const [previewing, setPreviewing] = useState(false);
+  return (
+    <figure className="min-w-0">
+      <button
+        type="button"
+        draggable={false}
+        onClick={(e) => {
+          e.stopPropagation();
+          setPreviewing(true);
+        }}
+        title={tr('แตะเพื่อดูภาพเต็มและซูม', 'Tap to view full size and zoom')}
+        className="group relative block w-full overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-950 cursor-zoom-in"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={attachment.url} alt={attachment.name} loading="lazy" draggable={false} className="block w-full h-auto select-none" />
+        <span className="absolute top-2 right-2 w-8 h-8 rounded-full bg-slate-900/60 text-white flex items-center justify-center backdrop-blur-sm opacity-90 group-hover:opacity-100 transition-opacity">
+          <Maximize2 className="w-4 h-4" />
+        </span>
+      </button>
+      {attachment.name && <figcaption className="mt-1 px-1 text-[11px] text-slate-500 dark:text-slate-400 truncate">{attachment.name}</figcaption>}
+      {previewing && <PreviewDialog attachment={attachment} onClose={() => setPreviewing(false)} />}
+    </figure>
   );
 }
 
@@ -225,18 +292,34 @@ export function AttachmentList({
   attachments,
   size = 'md',
   className = '',
+  inlineImages = false,
 }: {
   attachments: AssignmentAttachment[];
   size?: 'sm' | 'md';
   className?: string;
+  /** Show pictures whole at full width (tap to zoom) above the other attachments (the student app). */
+  inlineImages?: boolean;
 }) {
   if (!attachments.length) return null;
   const grid = size === 'md' ? 'grid grid-cols-1 sm:grid-cols-2 gap-2.5' : 'grid grid-cols-1 gap-1.5';
+  const images = inlineImages ? attachments.filter((a) => a.kind === 'image') : [];
+  const rest = inlineImages ? attachments.filter((a) => a.kind !== 'image') : attachments;
   return (
-    <div className={`${grid} ${className}`}>
-      {attachments.map((a) => (
-        <AttachmentCard key={a.url} attachment={a} size={size} />
-      ))}
-    </div>
+    <>
+      {images.length > 0 && (
+        <div className="space-y-3">
+          {images.map((a) => (
+            <InlineImageAttachment key={a.url} attachment={a} />
+          ))}
+        </div>
+      )}
+      {rest.length > 0 && (
+        <div className={`${grid} ${className}`}>
+          {rest.map((a) => (
+            <AttachmentCard key={a.url} attachment={a} size={size} />
+          ))}
+        </div>
+      )}
+    </>
   );
 }

@@ -63,7 +63,14 @@ import {
   Building2,
   FileSpreadsheet,
   ClipboardList,
+  GripVertical,
+  ChevronDown,
 } from 'lucide-react';
+import { Collapse } from '@/components/Collapse';
+import { ActionMenu } from '@/components/works/ActionMenu';
+import { DragReorder, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
+import { applySavedOrder, mergeVisibleOrder } from '@/lib/hooks/useSidebarPrefs';
+import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { notificationManager } from '@/lib/utils/notificationManager';
 import { gradingCounts, needsGrading } from '@/lib/utils/gradingStatus';
 import { TeacherProfileFields, announceTeacherProfile, profileFormValues } from '@/components/TeacherProfileGate';
@@ -118,6 +125,73 @@ function getFrameworkProblem(
  * indicators, co-teachers). `dashboard` adds the welcome banner and stat
  * cards; `classrooms` is the classroom-focused page with a search box.
  */
+/** The ⋯ menu on a subject's one-line phone header: every subject action. */
+function CourseRowMenu({
+  name,
+  teacherCount,
+  onCoTeachers,
+  onAddClass,
+  onIndicators,
+  onClone,
+  onDelete,
+}: {
+  name: string;
+  teacherCount: number;
+  onCoTeachers: () => void;
+  onAddClass?: () => void;
+  onIndicators?: () => void;
+  onClone?: () => void;
+  onDelete?: () => void;
+}) {
+  const { t, tr } = useLanguage();
+  return (
+    <ActionMenu
+      size="sm"
+      label={tr(`ตัวเลือกรายวิชา ${name}`, `${name} options`)}
+      items={[
+        onAddClass && { key: 'add', label: tr('เพิ่มห้องเรียน', 'Add classroom'), icon: <PlusCircle className="w-4 h-4" />, onSelect: onAddClass },
+        { key: 'teachers', label: tr('ครูผู้สอน', 'Teachers'), icon: <Users className="w-4 h-4" />, hint: `${teacherCount}`, onSelect: onCoTeachers },
+        onIndicators && { key: 'indicators', label: t('dashboard.classrooms_section.course_settings_btn'), icon: <Sliders className="w-4 h-4" />, onSelect: onIndicators },
+        onClone && { key: 'clone', label: tr('เพิ่มไปเทอมอื่น', 'Add to another term'), icon: <Copy className="w-4 h-4" />, onSelect: onClone },
+        onDelete && { key: 'delete', label: tr('ลบรายวิชา', 'Delete course'), icon: <Trash2 className="w-4 h-4" />, danger: true, onSelect: onDelete },
+      ]}
+    />
+  );
+}
+
+/** The ⋯ menu on a classroom's one-line phone row. */
+function ClassroomRowMenu({
+  name,
+  studentCount,
+  lineConnected,
+  onRoster,
+  onLine,
+  onEdit,
+  onDelete,
+}: {
+  name: string;
+  studentCount: number;
+  lineConnected: boolean;
+  onRoster: () => void;
+  onLine: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}) {
+  const { t, tr } = useLanguage();
+  return (
+    <ActionMenu
+      size="sm"
+      label={tr(`ตัวเลือกห้อง ${name}`, `${name} options`)}
+      items={[
+        { key: 'roster', label: tr('เพิ่ม / จัดการนักเรียน', 'Add / manage students'), icon: <UserPlus className="w-4 h-4" />, hint: `${studentCount}`, onSelect: onRoster },
+        { key: 'line', label: lineConnected ? 'LINE Group' : tr('เชื่อม LINE', 'Connect LINE'), icon: <MessageCircle className="w-4 h-4" />, onSelect: onLine },
+        onEdit && { key: 'edit', label: t('common.edit'), icon: <Edit2 className="w-4 h-4" />, onSelect: onEdit },
+        onDelete && { key: 'delete', label: t('common.delete'), icon: <Trash2 className="w-4 h-4" />, danger: true, onSelect: onDelete },
+      ]}
+    />
+  );
+}
+
 export function TeacherWorkspace({
   view = 'dashboard',
   initialSemesterKey,
@@ -203,6 +277,16 @@ export function TeacherWorkspace({
   const [isSavedLibraryOpen, setIsSavedLibraryOpen] = useState(false);
   // 'indicator' = ตัวชี้วัด (default), 'competency' = สมรรถนะรายวิชา
   const [indicatorMode, setIndicatorMode] = useState<'indicator' | 'competency'>('indicator');
+  const [courseSettingsTab, setCourseSettingsTab] = useState<'indicators' | 'details'>('indicators');
+  /** Step 1 (indicators) must be complete before step 2 (course details). */
+  const goToCourseDetailsTab = () => {
+    const problem = getFrameworkProblem(indicatorMode, indicatorListDraft, lessonPlanDraft, language);
+    if (problem) {
+      alert(problem);
+      return;
+    }
+    setCourseSettingsTab('details');
+  };
   // Lesson-plan entries for competency mode
   const [lessonPlanDraft, setLessonPlanDraft] = useState<CourseLessonPlan[]>([]);
   // Course details (code / name / description) edited in the same popup
@@ -227,6 +311,8 @@ export function TeacherWorkspace({
   const [courseCreationStep, setCourseCreationStep] = useState<1 | 2>(1);
   const [isSavingCourse, setIsSavingCourse] = useState(false);
   const [isCourseCloneFlow, setIsCourseCloneFlow] = useState(false);
+  /** The course being added to another term (the clone flow's header names it). */
+  const [cloneSourceCourse, setCloneSourceCourse] = useState<Course | null>(null);
 
   /** A course with this code already exists in that semester/year (copies must go to another term). */
   const isCoursePeriodTaken = (code: string, semester: number, yearCE: number) => {
@@ -568,6 +654,57 @@ export function TeacherWorkspace({
       .filter((course) => has(course.code, course.name) || course.sections.length > 0);
   }, [groupedCourses, classroomQuery, view]);
 
+  // Subject and classroom order (dragged by the teacher) and folded subjects,
+  // per teacher in this browser; shared by the dashboard and /classrooms.
+  // A subject is keyed by its code so the order carries across terms (by id
+  // when two subjects in view share a code).
+  const layoutScope = clerkUser?.id ? `dashboard-courses:${clerkUser.id}` : '';
+  const [layoutOrder, setLayoutOrder] = useState<{ scope: string; courses: string[]; classes: Record<string, string[]> }>({
+    scope: '',
+    courses: [],
+    classes: {},
+  });
+  if (layoutOrder.scope !== layoutScope) {
+    setLayoutOrder({ scope: layoutScope, courses: layoutScope ? readLocalOrder(layoutScope) : [], classes: {} });
+  }
+  const classOrderOf = (courseKey: string) =>
+    layoutOrder.classes[courseKey] ?? (layoutScope && typeof window !== 'undefined' ? readLocalOrder(`${layoutScope}:${courseKey}`) : []);
+  const { isOpen: isCourseOpen, toggle: toggleCourse } = useCollapsedGroups(layoutScope || 'dashboard-courses');
+  // While searching the classrooms page, every match shows and nothing drags.
+  const isSearchingCourses = view === 'classrooms' && !!classroomQuery.trim();
+
+  const courseKeyById = useMemo(() => {
+    const codeCount = new Map<string, number>();
+    for (const c of visibleCourses) if (c.code) codeCount.set(c.code, (codeCount.get(c.code) || 0) + 1);
+    return new Map(visibleCourses.map((c) => [c.id, c.code && codeCount.get(c.code) === 1 ? c.code : c.id]));
+  }, [visibleCourses]);
+  const orderedCourses = useMemo(
+    () => applySavedOrder(visibleCourses, (c) => courseKeyById.get(c.id) ?? c.id, layoutOrder.courses),
+    [visibleCourses, courseKeyById, layoutOrder.courses]
+  );
+  const courseByKey = useMemo(() => new Map(orderedCourses.map((c) => [courseKeyById.get(c.id) ?? c.id, c])), [orderedCourses, courseKeyById]);
+  const orderedCourseKeys = useMemo(() => [...courseByKey.keys()], [courseByKey]);
+
+  const commitCourseOrder = (next: string[]) => {
+    const merged = mergeVisibleOrder(layoutOrder.courses, orderedCourseKeys, next);
+    setLayoutOrder((current) => ({ ...current, courses: merged }));
+    if (layoutScope) writeLocalOrder(layoutScope, merged);
+  };
+  const commitClassOrder = (courseKey: string, before: string[], next: string[]) => {
+    const merged = mergeVisibleOrder(classOrderOf(courseKey), before, next);
+    setLayoutOrder((current) => ({ ...current, classes: { ...current.classes, [courseKey]: merged } }));
+    if (layoutScope) writeLocalOrder(`${layoutScope}:${courseKey}`, merged);
+  };
+  const {
+    bindList: bindCourseList,
+    bindItem: bindCourseItem,
+    order: courseOrder,
+    dragKey: courseDragKey,
+    itemStyle: courseItemStyle,
+    handleProps: courseHandleProps,
+  } = useDragReorder(orderedCourseKeys, commitCourseOrder);
+  const canDragCourses = !isSearchingCourses && orderedCourseKeys.length > 1;
+
   const pendingGradingCount = useMemo(() => {
     return filteredSubmissions.filter(needsGrading).length;
   }, [filteredSubmissions]);
@@ -628,6 +765,7 @@ export function TeacherWorkspace({
     setCourseLessonPlanDraft(course.lesson_plans || []);
     setCourseCreationMode(course.indicator_mode || 'indicator');
     setCourseCreationStep(1);
+    setCloneSourceCourse(course);
     setIsCourseCloneFlow(true);
     setIsCourseModalOpen(true);
   };
@@ -1005,6 +1143,7 @@ export function TeacherWorkspace({
     setIndicatorMode(course.indicator_mode || 'indicator');
     setLessonPlanDraft(course.lesson_plans || []);
     setIsSavedLibraryOpen(false);
+    setCourseSettingsTab('indicators');
     setIsIndicatorsModalOpen(true);
     const saved = await dataService.getSavedTeacherIndicators(clerkUser?.id);
     setSavedTeacherIndicators(saved);
@@ -1060,11 +1199,13 @@ export function TeacherWorkspace({
     const code = courseDetailsDraft.code.trim().toUpperCase();
     const name = courseDetailsDraft.name.trim();
     if (!code || !name) {
+      setCourseSettingsTab('details');
       alert(language === 'th' ? 'กรุณากรอกรหัสและชื่อรายวิชา' : 'Please enter course code and name');
       return;
     }
     const frameworkProblem = getFrameworkProblem(indicatorMode, indicatorListDraft, lessonPlanDraft, language);
     if (frameworkProblem) {
+      setCourseSettingsTab('indicators');
       alert(frameworkProblem);
       return;
     }
@@ -1164,7 +1305,7 @@ export function TeacherWorkspace({
   const yearOptions = getAcademicYearOptions(defaultPeriod.yearCE);
 
   return (
-    <div className="space-y-6 sm:space-y-8 pb-20">
+    <div className="space-y-4 sm:space-y-8 pb-20">
       {/* Toast Notice */}
       {toastMessage && (
         <div className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
@@ -1176,24 +1317,24 @@ export function TeacherWorkspace({
       {view === 'dashboard' && (
         <>
       {/* Hero Welcome Banner with High-Visibility Primary CTAs */}
-      <div className="relative overflow-hidden bg-linear-to-br from-amber-400 via-orange-400 to-amber-500 rounded-3xl p-5 sm:p-8 text-slate-950 shadow-xl shadow-amber-500/15 flex flex-col xl:flex-row xl:items-center justify-between gap-6">
+      <div className="relative overflow-hidden bg-linear-to-br from-amber-400 via-orange-400 to-amber-500 rounded-2xl sm:rounded-3xl p-4 sm:p-8 text-slate-950 shadow-xl shadow-amber-500/15 flex flex-col xl:flex-row xl:items-center justify-between gap-3 sm:gap-6">
         <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 w-72 h-72 rounded-full bg-white/20 blur-3xl" />
-        <div className="relative space-y-2 min-w-0 xl:max-w-xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
+        <div className="relative space-y-1.5 sm:space-y-2 min-w-0 xl:max-w-xl">
+          <div className="hidden sm:inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs text-xs font-bold text-slate-900">
             <BrandLogo className="h-6 w-auto -my-1" />
             <span>Pudding Learning Intelligence</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-950 wrap-break-word">
-            {t('dashboard.welcome')}, <br className="md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || (loading ? tr('กำลังโหลด...', 'Loading...') : '')}
+          <h1 className="text-lg sm:text-3xl font-black leading-snug tracking-tight text-slate-950 wrap-break-word">
+            {t('dashboard.welcome')}, <br className="hidden sm:inline md:hidden" />{clerkUser?.fullName || clerkUser?.firstName || (loading ? tr('กำลังโหลด...', 'Loading...') : '')}
           </h1>
-          <p className="text-slate-900/90 text-sm max-w-xl font-medium">
+          <p className="hidden sm:block text-slate-900/90 text-sm max-w-xl font-medium">
             <MobileText short={language === 'th' ? 'ภาพรวมห้องเรียนและงานที่ต้องตรวจ' : 'Your classes and grading at a glance'} full={t('dashboard.overview_subtitle')} />
           </p>
-          <div className="flex items-center gap-2 pt-1 min-w-0">
+          <div className="flex items-center gap-2 sm:pt-1 min-w-0">
             <button
               type="button"
               onClick={handleOpenTeacherProfile}
-              className="inline-flex items-center gap-1.5 max-w-full px-3 py-1.5 rounded-xl bg-black/10 hover:bg-black/20 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors cursor-pointer border border-black/10"
+              className="inline-flex items-center gap-1.5 max-w-full px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl bg-black/10 hover:bg-black/20 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors cursor-pointer border border-black/10"
               title={tr('คลิกเพื่อเลือกหรือแก้ไขสถานศึกษา', 'Click to choose or edit your institution')}
             >
               <Building2 className="w-3.5 h-3.5" />
@@ -1203,7 +1344,7 @@ export function TeacherWorkspace({
             {/* Secondary: the export centre (grade books, attendance … as Excel). */}
             <Link
               href="/exports"
-              className="inline-flex items-center gap-1.5 shrink-0 px-3 py-1.5 rounded-xl bg-white/40 hover:bg-white/70 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors border border-white/50"
+              className="inline-flex items-center gap-1.5 shrink-0 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl bg-white/40 hover:bg-white/70 text-slate-950 font-bold text-xs backdrop-blur-xs transition-colors border border-white/50"
               title={tr('ดาวน์โหลดคะแนน การเข้าเรียน และรายงานอื่น ๆ เป็นไฟล์ Excel', 'Download grades, attendance and other reports as Excel')}
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
@@ -1213,15 +1354,15 @@ export function TeacherWorkspace({
         </div>
 
         {/* PRIMARY CTA PROMPTS: Add Course, Add Classroom & Create Assignment/Exam */}
-        <div className="relative grid grid-cols-3 xl:flex xl:flex-wrap gap-2 sm:gap-3 shrink-0">
+        <div className="relative grid grid-cols-3 xl:flex xl:flex-wrap gap-1.5 sm:gap-3 shrink-0">
           {/* 1. Add Course CTA */}
           <button
             type="button"
             onClick={handleOpenCreateCourseModal}
-            className="px-2 py-3 sm:px-3 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-xs leading-tight sm:text-sm sm:leading-normal text-center sm:text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex flex-col sm:flex-row items-center gap-2 sm:gap-3 cursor-pointer ring-1 ring-white/60"
+            className="px-1.5 py-2 sm:px-3 sm:py-3 rounded-xl sm:rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-[11px] leading-tight sm:text-sm sm:leading-normal text-center sm:text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex flex-col sm:flex-row items-center gap-1 sm:gap-3 cursor-pointer ring-1 ring-white/60"
           >
-            <div className="w-10 h-10 shrink-0 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/30 group-hover:rotate-6 transition-transform">
-              <BookOpen className="w-5 h-5" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-lg sm:rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/30 group-hover:rotate-6 transition-transform">
+              <BookOpen className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
               <span>
@@ -1235,10 +1376,10 @@ export function TeacherWorkspace({
           <button
             type="button"
             onClick={() => handleOpenCreateClassModal()}
-            className="px-2 py-3 sm:px-3 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-xs leading-tight sm:text-sm sm:leading-normal text-center sm:text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex flex-col sm:flex-row items-center gap-2 sm:gap-3 cursor-pointer ring-1 ring-white/60"
+            className="px-1.5 py-2 sm:px-3 sm:py-3 rounded-xl sm:rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-[11px] leading-tight sm:text-sm sm:leading-normal text-center sm:text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex flex-col sm:flex-row items-center gap-1 sm:gap-3 cursor-pointer ring-1 ring-white/60"
           >
-            <div className="w-10 h-10 shrink-0 rounded-xl bg-orange-500 text-white flex items-center justify-center font-black shadow-md shadow-orange-500/30 group-hover:rotate-6 transition-transform">
-              <School className="w-5 h-5" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-lg sm:rounded-xl bg-orange-500 text-white flex items-center justify-center font-black shadow-md shadow-orange-500/30 group-hover:rotate-6 transition-transform">
+              <School className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
               <span>
@@ -1250,10 +1391,10 @@ export function TeacherWorkspace({
           {/* 3. Create Assignment / Exam CTA */}
           <CreateWorkMenu
             from="dashboard"
-            className="px-2 py-3 sm:px-3 rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-xs leading-tight sm:text-sm sm:leading-normal text-center sm:text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex flex-col sm:flex-row items-center gap-2 sm:gap-3 cursor-pointer ring-1 ring-white/60"
+            className="px-1.5 py-2 sm:px-3 sm:py-3 rounded-xl sm:rounded-2xl bg-white/90 hover:bg-white text-slate-950 font-bold text-[11px] leading-tight sm:text-sm sm:leading-normal text-center sm:text-left shadow-lg shadow-orange-900/10 hover:shadow-xl transition-all hover:-translate-y-0.5 active:scale-[0.98] flex flex-col sm:flex-row items-center gap-1 sm:gap-3 cursor-pointer ring-1 ring-white/60"
           >
-            <div className="w-10 h-10 shrink-0 rounded-xl bg-linear-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
-              <Sparkles className="w-5 h-5" />
+            <div className="w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-lg sm:rounded-xl bg-linear-to-tr from-amber-500 to-yellow-400 text-slate-950 flex items-center justify-center font-black shadow-md shadow-amber-500/40 group-hover:scale-110 transition-transform">
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
               <span>
@@ -1265,25 +1406,26 @@ export function TeacherWorkspace({
       </div>
 
       {/* Top Metric Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-4 sm:grid-cols-2 md:grid-cols-4 gap-1.5 sm:gap-4">
         
         {/* Assignments & quizzes of the term, across classrooms */}
         <Link
           href={`/works?term=${encodeURIComponent(selectedSemesterKey)}`}
-          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-violet-400 dark:hover:border-violet-500 transition-all block group"
+          className="min-w-0 bg-white dark:bg-slate-900 px-1.5 py-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-violet-400 dark:hover:border-violet-500 transition-all block group"
         >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+          <div className="flex items-center justify-center sm:justify-between">
+            <span className="hidden sm:block text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {tr('งานและข้อสอบ', 'Assignments & quizzes')}
             </span>
-            <div className="w-9 h-9 rounded-xl shrink-0 bg-violet-50 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <ClipboardList className="w-5 h-5" />
+            <div className="w-6 h-6 sm:w-9 sm:h-9 rounded-md sm:rounded-xl shrink-0 bg-violet-50 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <ClipboardList className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+          <p className="text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums text-slate-900 dark:text-white mt-1.5 sm:mt-3">
             {workSummary.total}
           </p>
-          <span className="text-[11px] text-violet-600 dark:text-violet-400 font-semibold mt-1 flex items-center gap-1">
+          <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('งาน', 'Work')}</span>
+          <span className="text-[11px] text-violet-600 dark:text-violet-400 font-semibold mt-1 hidden sm:flex items-center gap-1">
             <span className="truncate">
               {workSummary.open > 0
                 ? tr(`เปิดรับอยู่ ${workSummary.open}`, `${workSummary.open} open`)
@@ -1298,28 +1440,29 @@ export function TeacherWorkspace({
         {/* Pending to Grade -> the work list of the same term (grading starts there) */}
         <Link
           href={`/works?term=${encodeURIComponent(selectedSemesterKey)}`}
-          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-400 dark:hover:border-blue-500 transition-all block group"
+          className="min-w-0 bg-white dark:bg-slate-900 px-1.5 py-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-400 dark:hover:border-blue-500 transition-all block group"
         >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+          <div className="flex items-center justify-center sm:justify-between">
+            <span className="hidden sm:block text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {t('dashboard.stats.pending_grading')}
             </span>
-            <div className="w-9 h-9 rounded-xl shrink-0 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <FileCheck className="w-5 h-5" />
+            <div className="w-6 h-6 sm:w-9 sm:h-9 rounded-md sm:rounded-xl shrink-0 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <FileCheck className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <p className={`text-3xl font-black mt-3 ${pendingGradingCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-white'}`}>
+          <p className={`text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums mt-1.5 sm:mt-3 ${pendingGradingCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-white'}`}>
             {pendingGradingCount}
           </p>
+          <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('รอตรวจ', 'To grade')}</span>
           {pendingGradingCount > 0 ? (
-            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-1 flex items-center gap-1">
+            <span className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-1 hidden sm:flex items-center gap-1">
               <span className="truncate">
                 {language === 'th' ? `ใน ${assignmentsToGradeCount} งาน · ไปตรวจ` : `in ${assignmentsToGradeCount} tasks · grade now`}
               </span>
               <ArrowRight className="w-3 h-3 shrink-0" />
             </span>
           ) : (
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1">
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 hidden sm:flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3 shrink-0" />
               <span className="truncate">{language === 'th' ? 'ตรวจครบทุกงานแล้ว' : 'All work graded'}</span>
             </span>
@@ -1329,20 +1472,21 @@ export function TeacherWorkspace({
         {/* Classrooms count -> every classroom of the selected term */}
         <Link
           href={`/classrooms?term=${encodeURIComponent(selectedSemesterKey)}`}
-          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 transition-all block group"
+          className="min-w-0 bg-white dark:bg-slate-900 px-1.5 py-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-amber-400 dark:hover:border-amber-500 transition-all block group"
         >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+          <div className="flex items-center justify-center sm:justify-between">
+            <span className="hidden sm:block text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {t('dashboard.stats.active_classrooms')}
             </span>
-            <div className="w-9 h-9 rounded-xl shrink-0 bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <School className="w-5 h-5" />
+            <div className="w-6 h-6 sm:w-9 sm:h-9 rounded-md sm:rounded-xl shrink-0 bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <School className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+          <p className="text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums text-slate-900 dark:text-white mt-1.5 sm:mt-3">
             {filteredClassrooms.length}
           </p>
-          <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-1 flex items-center gap-1">
+          <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('ห้องเรียน', 'Classes')}</span>
+          <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-1 hidden sm:flex items-center gap-1">
             <span className="truncate">
               {selectedSemesterKey === 'all'
                 ? (language === 'th' ? 'ทุกภาคเรียน' : 'All Semesters')
@@ -1355,20 +1499,21 @@ export function TeacherWorkspace({
         {/* Total Students -> every student of the selected term, editable */}
         <Link
           href={`/students?term=${encodeURIComponent(selectedSemesterKey)}`}
-          className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-emerald-400 dark:hover:border-emerald-500 transition-all block group"
+          className="min-w-0 bg-white dark:bg-slate-900 px-1.5 py-2.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-emerald-400 dark:hover:border-emerald-500 transition-all block group"
         >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+          <div className="flex items-center justify-center sm:justify-between">
+            <span className="hidden sm:block text-xs font-semibold text-slate-500 dark:text-slate-400 leading-snug">
               {t('dashboard.stats.total_students')}
             </span>
-            <div className="w-9 h-9 rounded-xl shrink-0 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Users className="w-5 h-5" />
+            <div className="w-6 h-6 sm:w-9 sm:h-9 rounded-md sm:rounded-xl shrink-0 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Users className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <p className="text-3xl font-black text-slate-900 dark:text-white mt-3">
+          <p className="text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums text-slate-900 dark:text-white mt-1.5 sm:mt-3">
             {totalStudents}
           </p>
-          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1">
+          <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('นักเรียน', 'Students')}</span>
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 hidden sm:flex items-center gap-1">
             <span className="truncate"><MobileText short={language === 'th' ? 'ดู / แก้ไข' : 'View & edit'} full={language === 'th' ? 'ดูและแก้ไขข้อมูลนักเรียน' : 'View & edit students'} /></span>
             <ArrowRight className="w-3 h-3 shrink-0" />
           </span>
@@ -1439,32 +1584,35 @@ export function TeacherWorkspace({
       )}
 
       {/* COURSE-BASED GROUPING VIEW (Course -> Classroom/Section -> Assignment) */}
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <FolderKanban className="w-4 h-4 text-amber-500" />
+      <div className="space-y-3 sm:space-y-6">
+        <div className="flex flex-row items-center justify-between gap-2 sm:gap-3 bg-white dark:bg-slate-900 py-2 pl-3 pr-2 sm:p-4 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="min-w-0">
+            <h2 className="text-[13px] sm:text-base font-bold text-slate-900 dark:text-white flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+              <FolderKanban className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 shrink-0" />
               <span>{t('courses.title')}</span>
-              <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-mono text-xs font-bold">
+              <span className="px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-mono text-[10px] sm:text-xs font-bold">
                 {courses.length} {t('common.course')}
               </span>
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            <p className="hidden sm:block text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               <MobileText short={language === 'th' ? 'ห้องเรียนและงานแยกตามรายวิชา' : 'Classrooms and work by course'} full={t('courses.subtitle')} />
             </p>
           </div>
 
           {/* Semester Selector */}
+          <div className="min-w-0 max-w-[55%] sm:max-w-none">
           <SemesterSelect
             value={selectedSemesterKey}
             onChange={changeSemester}
             options={availableSemesterOptions}
             currentPeriod={defaultPeriod}
+            dense
           />
+          </div>
         </div>
 
         {/* Grouped Course Cards */}
-        <div className="space-y-6">
+        <div ref={bindCourseList} className="relative space-y-3 sm:space-y-6">
           {visibleCourses.length === 0 && classroomQuery.trim() ? (
             <div className="text-center py-14 px-6 bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 space-y-1">
               <p className="text-sm font-bold text-slate-900 dark:text-white">
@@ -1499,26 +1647,163 @@ export function TeacherWorkspace({
               </button>
             </div>
           ) : (
-            visibleCourses.map((course) => (
+            courseOrder.map((courseKey) => {
+            const course = courseByKey.get(courseKey);
+            if (!course) return null;
+            const courseOpen = isSearchingCourses || isCourseOpen(courseKey);
+            const sectionsId = `course-sections-${course.id}`;
+            const isCourseOwner = !course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id;
+            return (
             <div
-              key={course.id}
-              className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 sm:p-6 space-y-5 sm:space-y-6 transition-all hover:border-slate-300 dark:hover:border-slate-700"
+              key={courseKey}
+              ref={bindCourseItem(courseKey)}
+              style={courseItemStyle(courseKey)}
+              onClick={(e) => {
+                // A tap anywhere on the subject folds / unfolds it, except on its own
+                // buttons and links, inside the open classroom list, or after selecting text.
+                if (isSearchingCourses) return;
+                const target = e.target as HTMLElement;
+                if (target.closest('button, a, input, select, textarea, label, [role="menu"], [role="dialog"]')) return;
+                if (courseOpen && target.closest(`#${sectionsId}`)) return;
+                if (window.getSelection()?.toString()) return;
+                toggleCourse(courseKey);
+              }}
+              className={`group/course bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border p-3 sm:p-6 transition-[border-color,box-shadow] ${
+                isSearchingCourses ? '' : 'cursor-pointer'
+              } ${
+                courseDragKey === courseKey
+                  ? 'border-amber-400 ring-2 ring-amber-400/50 shadow-2xl shadow-slate-900/15'
+                  : courseOpen
+                    ? 'border-slate-200 dark:border-slate-800 shadow-xs hover:border-slate-300 dark:hover:border-slate-700'
+                    : 'border-slate-200 dark:border-slate-800 shadow-xs hover:border-amber-300 dark:hover:border-amber-700 hover:shadow-md hover:shadow-amber-500/10'
+              }`}
             >
-              {/* Course Header */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-                {/* Icon is as tall as the code + name block, so the two read as one unit. */}
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-12 h-12 rounded-xl bg-linear-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-sm shadow-amber-500/20 shrink-0">
-                    <BookOpen className="w-6 h-6" />
-                  </div>
-                  <div className="min-w-0 flex flex-col justify-center gap-0.5">
-                    <span className="font-mono text-xs font-bold tracking-wide text-amber-700 dark:text-amber-400 leading-none">
-                      {course.code}
+              {/* Phones: the subject on one line (like a classroom row); every action is also in ⋯. */}
+              <div
+                className={`sm:hidden flex items-center gap-1 -mx-1 border-b transition-[padding,border-color] duration-300 ${
+                  courseOpen ? 'pb-3 border-slate-100 dark:border-slate-800' : 'border-transparent'
+                }`}
+              >
+                {canDragCourses && (
+                  <button
+                    type="button"
+                    draggable={false}
+                    aria-label={tr(`ลากเพื่อจัดลำดับรายวิชา ${course.name}`, `Drag to reorder ${course.name}`)}
+                    {...courseHandleProps(courseKey)}
+                    className="w-6 h-10 shrink-0 rounded-lg flex items-center justify-center text-slate-400 active:text-slate-600 touch-none select-none cursor-grab"
+                  >
+                    <GripVertical className="w-4 h-4" />
+                  </button>
+                )}
+                <span className="w-9 h-9 shrink-0 rounded-lg bg-linear-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-sm shadow-amber-500/20">
+                  <BookOpen className="w-4.5 h-4.5" />
+                </span>
+                <span className="min-w-0 flex-1 flex flex-col pl-1.5">
+                  <span className="truncate text-[15px] font-black leading-tight text-slate-900 dark:text-white">{course.name}</span>
+                  <span className="truncate font-mono text-[11px] font-bold text-amber-700 dark:text-amber-400 leading-snug">
+                    {course.code}
+                    <span className="font-sans font-semibold text-slate-400"> · {course.sections.length} {tr('ห้อง', course.sections.length === 1 ? 'class' : 'classes')}</span>
+                  </span>
+                </span>
+                <span className="shrink-0 flex items-center gap-1.5 pl-1">
+                  {isCourseOwner ? (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCreateClassModal(course)}
+                      className="h-8 px-2.5 rounded-full bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 text-[11px] font-black inline-flex items-center gap-1 whitespace-nowrap cursor-pointer transition-[transform,background-color] shadow-xs"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      {tr('เพิ่มห้อง', 'Class')}
+                    </button>
+                  ) : (
+                    <span className={`px-2 py-1 rounded-full font-black text-[10px] border whitespace-nowrap ${teacherRoleBadgeClass(myCourseRole(course))}`}>
+                      {teacherRoleLabel(myCourseRole(course), tr)}
                     </span>
-                    <h3 className="text-lg sm:text-xl font-black leading-tight tracking-tight text-slate-900 dark:text-white wrap-break-word">
-                      {course.name}
-                    </h3>
-                  </div>
+                  )}
+                  <CourseRowMenu
+                    name={course.name}
+                    teacherCount={courseTeachers(course).length || 1}
+                    onCoTeachers={() => handleOpenCoTeachersModal(course)}
+                    onAddClass={isCourseOwner ? () => handleOpenCreateClassModal(course) : undefined}
+                    onIndicators={isCourseOwner ? () => handleOpenIndicatorsModal(course) : undefined}
+                    onClone={isCourseOwner ? () => handleCloneCourseToOtherSemester(course) : undefined}
+                    onDelete={isCourseOwner ? () => handleDeleteCourse(course) : undefined}
+                  />
+                  {!isSearchingCourses && (
+                    <button
+                      type="button"
+                      onClick={() => toggleCourse(courseKey)}
+                      aria-expanded={courseOpen}
+                      aria-controls={sectionsId}
+                      aria-label={courseOpen ? tr('ย่อรายวิชา', 'Collapse course') : tr('ขยายรายวิชา', 'Expand course')}
+                      className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                        courseOpen ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
+                      }`}
+                    >
+                      <ChevronDown className={`w-4.5 h-4.5 transition-transform duration-300 ${courseOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                  )}
+                </span>
+              </div>
+
+              {/* Course Header */}
+              <div
+                className={`hidden sm:flex flex-col md:flex-row md:items-center justify-between gap-4 border-b transition-[padding,border-color] duration-300 ${
+                  courseOpen ? 'pb-4 border-slate-100 dark:border-slate-800' : 'border-transparent'
+                }`}
+              >
+                <div className="flex items-center gap-1 sm:gap-2 min-w-0">
+                  {canDragCourses && (
+                    <button
+                      type="button"
+                      draggable={false}
+                      aria-label={tr(`ลากเพื่อจัดลำดับรายวิชา ${course.name} (หรือกดลูกศรขึ้น/ลง)`, `Drag to reorder ${course.name} (or press arrow up/down)`)}
+                      title={tr('ลากเพื่อจัดลำดับรายวิชา', 'Drag to reorder')}
+                      {...courseHandleProps(courseKey)}
+                      className="w-7 h-12 -ml-2 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 touch-none select-none cursor-grab active:cursor-grabbing"
+                    >
+                      <GripVertical className="w-4 h-4" />
+                    </button>
+                  )}
+                  {/* Icon is as tall as the code + name block, so the two read as one unit. */}
+                  <button
+                    type="button"
+                    onClick={() => toggleCourse(courseKey)}
+                    disabled={isSearchingCourses}
+                    aria-expanded={courseOpen}
+                    aria-controls={sectionsId}
+                    title={courseOpen ? tr('ย่อรายวิชา', 'Collapse course') : tr('ขยายรายวิชา', 'Expand course')}
+                    className="group/toggle flex items-center gap-3 min-w-0 text-left cursor-pointer disabled:cursor-default"
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-linear-to-br from-amber-400 to-orange-500 text-white flex items-center justify-center shadow-sm shadow-amber-500/20 shrink-0">
+                      <BookOpen className="w-6 h-6" />
+                    </div>
+                    <div className="min-w-0 flex flex-col justify-center gap-0.5">
+                      <span className="font-mono text-xs font-bold tracking-wide text-amber-700 dark:text-amber-400 leading-none">
+                        {course.code}
+                        {!courseOpen && (
+                          <span className="font-sans font-semibold text-slate-500 dark:text-slate-400">
+                            {' · '}{course.sections.length} {tr('ห้องเรียน', course.sections.length === 1 ? 'classroom' : 'classrooms')}
+                          </span>
+                        )}
+                      </span>
+                      <h3 className="text-lg sm:text-xl font-black leading-tight tracking-tight text-slate-900 dark:text-white wrap-break-word">
+                        {course.name}
+                      </h3>
+                    </div>
+                    {!isSearchingCourses && (
+                      <span
+                        aria-hidden
+                        className={`w-8 h-8 shrink-0 rounded-full flex items-center justify-center transition-colors duration-200 ${
+                          courseOpen
+                            ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 group-hover/course:bg-amber-100 group-hover/course:text-amber-700 dark:group-hover/course:bg-amber-950/60 dark:group-hover/course:text-amber-300'
+                            : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 group-hover/course:bg-amber-500 group-hover/course:text-slate-950'
+                        }`}
+                      >
+                        <ChevronDown className={`w-4.5 h-4.5 transition-transform duration-300 ${courseOpen ? 'rotate-180' : ''}`} />
+                      </span>
+                    )}
+                  </button>
                 </div>
 
                 {/* Course Control Actions: Rubrics, Co-Teachers, Clone to other term, Add Section & Delete Course */}
@@ -1596,8 +1881,28 @@ export function TeacherWorkspace({
                 </div>
               </div>
 
+              {/* Folded: say what is hidden and how to bring it back. */}
+              {!courseOpen && (
+                <button
+                  type="button"
+                  onClick={() => toggleCourse(courseKey)}
+                  aria-expanded={false}
+                  aria-controls={sectionsId}
+                  className="hidden sm:flex mt-4 w-full h-10 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-500 dark:text-slate-400 items-center justify-center gap-1.5 cursor-pointer transition-colors group-hover/course:border-amber-400 group-hover/course:text-amber-700 dark:group-hover/course:text-amber-300 group-hover/course:bg-amber-50/60 dark:group-hover/course:bg-amber-950/30"
+                >
+                  <School className="w-4 h-4" />
+                  <span>
+                    {course.sections.length
+                      ? tr(`แสดงห้องเรียน (${course.sections.length} ห้อง)`, `Show ${course.sections.length} ${course.sections.length === 1 ? 'classroom' : 'classrooms'}`)
+                      : tr('แสดงห้องเรียน', 'Show classrooms')}
+                  </span>
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+              )}
+
               {/* Sub-sections Grid (Classrooms belonging to this Course) */}
-              <div className="space-y-3">
+              <Collapse open={courseOpen} unclipWhenOpen>
+              <div id={sectionsId} className="space-y-3 pt-3 sm:pt-6">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-black text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
                     <School className="w-4 h-4 text-amber-500" />
@@ -1617,23 +1922,127 @@ export function TeacherWorkspace({
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-                  {course.sections.length === 0 ? (
-                    <div className="col-span-full p-4 sm:p-6 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
+                {course.sections.length === 0 ? (
+                    <div className="p-4 sm:p-6 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
                       {language === 'th' ? 'ยังไม่มีห้องเรียน กด "เพิ่มห้องเรียน" เพื่อเริ่ม' : 'No classroom enrolled under this course yet.'}
                     </div>
-                  ) : (
-                    course.sections.map((cls) => {
+                ) : (() => {
+                  const sections = applySavedOrder(course.sections, (cls) => cls.id, classOrderOf(courseKey));
+                  const sectionKeys = sections.map((cls) => cls.id);
+                  const sectionById = new Map(sections.map((cls) => [cls.id, cls]));
+                  const canDragSections = !isSearchingCourses && sections.length > 1;
+                  return (
+                <DragReorder grid keys={sectionKeys} onCommit={(next) => commitClassOrder(courseKey, sectionKeys, next)}>
+                  {(sectionDrag) => (
+                <div ref={sectionDrag.bindList} className="relative grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-4">
+                  {sectionDrag.order.map((sectionId) => {
+                      const cls = sectionById.get(sectionId);
+                      if (!cls) return null;
                       const count = cls.students ? cls.students.length : (cls.student_count || 0);
+                      const isDraggingSection = sectionDrag.dragKey === cls.id;
+                      const isOwner = !course.primary_teacher_id || course.primary_teacher_id === clerkUser?.id;
+                      const lineStatus = lineConnectionStatuses[cls.id];
+                      const pendingCount = cls.pending_students?.length || 0;
 
                       return (
                         <div
                           key={cls.id}
-                          className="group relative p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 flex flex-col justify-between gap-4 min-w-0 hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-lg hover:shadow-amber-500/10 transition-all"
+                          ref={sectionDrag.bindItem(cls.id)}
+                          style={sectionDrag.itemStyle(cls.id)}
+                          className={`group relative rounded-xl sm:rounded-2xl bg-white dark:bg-slate-800 border min-w-0 transition-[border-color,box-shadow] ${
+                            isDraggingSection
+                              ? 'border-amber-400 ring-2 ring-amber-400/50 shadow-2xl shadow-slate-900/20'
+                              : 'border-slate-200 dark:border-slate-700/60 hover:border-amber-400 dark:hover:border-amber-500 hover:shadow-lg hover:shadow-amber-500/10'
+                          }`}
                         >
+                          {/* Phones: the whole classroom on one line; the rest lives in the ⋯ menu. */}
+                              <div className="sm:hidden flex items-center gap-1 min-h-13 pl-1 pr-1">
+                                {canDragSections && (
+                                  <button
+                                    type="button"
+                                    draggable={false}
+                                    aria-label={tr(`ลากเพื่อจัดลำดับห้อง ${cls.name}`, `Drag to reorder ${cls.name}`)}
+                                    {...sectionDrag.handleProps(cls.id)}
+                                    className="w-6 h-10 shrink-0 rounded-lg flex items-center justify-center text-slate-300 dark:text-slate-500 active:text-slate-600 touch-none select-none cursor-grab"
+                                  >
+                                    <GripVertical className="w-4 h-4" />
+                                  </button>
+                                )}
+                                <Link
+                                  href={`/classrooms/${cls.id}`}
+                                  draggable={false}
+                                  className={`min-w-0 flex-1 flex items-center gap-1.5 py-2 ${canDragSections ? '' : 'pl-2'}`}
+                                >
+                                  <span className="min-w-0 truncate text-[15px] font-black text-slate-900 dark:text-white">{cls.name}</span>
+                                  <span className="shrink-0 font-mono text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded">
+                                    {cls.invite_code || 'OMU'}
+                                  </span>
+                                  {selectedSemesterKey === 'all' && (
+                                    <span className="shrink-0 text-[10px] font-bold text-amber-900 dark:text-amber-300 bg-amber-100/90 dark:bg-amber-950/80 px-1.5 py-0.5 rounded">
+                                      {cls.semester === 3 ? tr('ซัมเมอร์', 'S') : `${tr('ท.', 'T')}${cls.semester || 1}`}
+                                    </span>
+                                  )}
+                                </Link>
+                                <div className="shrink-0 flex items-center gap-2.5 pl-1">
+                                <span className="shrink-0 inline-flex items-center gap-0.5 text-xs font-bold text-slate-500 dark:text-slate-300 tabular-nums" title={`${count} ${t('common.student')}`}>
+                                  <Users className="w-3.5 h-3.5" />
+                                  {count}
+                                </span>
+                                {pendingCount > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenManagingClassroom(cls, 'pending')}
+                                    className="shrink-0 h-6 min-w-6 px-1.5 rounded-full bg-rose-500 text-white text-[11px] font-black inline-flex items-center justify-center gap-0.5 animate-pulse cursor-pointer"
+                                    aria-label={tr(`รออนุมัติ ${pendingCount} คน`, `${pendingCount} awaiting approval`)}
+                                  >
+                                    <UserPlus className="w-3 h-3" />
+                                    {pendingCount}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenLineConnectionPopup(cls)}
+                                  className={`group/line shrink-0 h-7 px-2 rounded-full inline-flex items-center gap-1 text-[11px] font-bold whitespace-nowrap cursor-pointer transition-[transform,box-shadow,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-95 ${
+                                    lineStatus === 'connected'
+                                      ? 'bg-emerald-600 text-white hover:bg-emerald-500 hover:shadow-emerald-600/30'
+                                      : lineStatus === 'waiting'
+                                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 hover:shadow-amber-500/20'
+                                        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200 hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/50 dark:hover:text-emerald-300 hover:shadow-emerald-500/20'
+                                  }`}
+                                  aria-label={lineStatus === 'connected' ? tr('LINE เชื่อมแล้ว', 'LINE connected') : lineStatus === 'waiting' ? tr('LINE รอยืนยัน', 'LINE pending') : tr('LINE ยังไม่เชื่อม', 'LINE not connected')}
+                                  title={tr('จัดการ LINE Group', 'Manage LINE group')}
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5 transition-transform duration-300 ease-out group-hover/line:-rotate-12 group-hover/line:scale-110" />
+                                  <span>{lineStatus === 'connected' ? 'LINE' : lineStatus === 'waiting' ? tr('รอยืนยัน', 'Pending') : tr('เชื่อม LINE', 'Connect')}</span>
+                                </button>
+                                <ClassroomRowMenu
+                                  name={cls.name}
+                                  studentCount={count}
+                                  lineConnected={lineStatus === 'connected'}
+                                  onRoster={() => handleOpenManagingClassroom(cls, 'roster')}
+                                  onLine={() => handleOpenLineConnectionPopup(cls)}
+                                  onEdit={isOwner ? () => handleOpenEditClassModal(cls) : undefined}
+                                  onDelete={isOwner ? () => handleDeleteClassroom(cls) : undefined}
+                                />
+                                </div>
+                              </div>
+
+                          <div className="hidden sm:flex h-full p-5 flex-col justify-between gap-4">
                           <div className="space-y-3">
                             <div className="flex items-start justify-between gap-2">
-                              <Link href={`/classrooms/${cls.id}`} className="min-w-0 flex-1 cursor-pointer">
+                              {canDragSections && (
+                                <button
+                                  type="button"
+                                  draggable={false}
+                                  aria-label={tr(`ลากเพื่อจัดลำดับห้อง ${cls.name} (หรือกดลูกศร)`, `Drag to reorder ${cls.name} (or press the arrow keys)`)}
+                                  title={tr('ลากเพื่อจัดลำดับห้อง', 'Drag to reorder')}
+                                  {...sectionDrag.handleProps(cls.id)}
+                                  className="w-6 h-9 -ml-2 -mr-1 shrink-0 rounded-lg flex items-center justify-center text-slate-300 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 touch-none select-none cursor-grab active:cursor-grabbing"
+                                >
+                                  <GripVertical className="w-4 h-4" />
+                                </button>
+                              )}
+                              <Link href={`/classrooms/${cls.id}`} draggable={false} className="min-w-0 flex-1 cursor-pointer">
                                 <h4 className="text-lg font-black leading-snug text-slate-900 dark:text-white wrap-break-word group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
                                   {cls.name}
                                 </h4>
@@ -1735,15 +2144,21 @@ export function TeacherWorkspace({
                               </button>
                             </div>
                           </div>
+                          </div>
                         </div>
                       );
-                    })
-                  )}
+                    })}
                 </div>
+                  )}
+                </DragReorder>
+                  );
+                })()}
               </div>
+              </Collapse>
 
             </div>
-            ))
+            );
+            })
           )}
         </div>
       </div>
@@ -1758,7 +2173,7 @@ export function TeacherWorkspace({
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                    {tr('แก้ไขรายวิชา', 'Edit course')}
+                    {tr('ตั้งค่าวิชา & ตัวชี้วัด', 'Course settings & indicators')}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                     {editingCourseIndicators.code} - {editingCourseIndicators.name}
@@ -1777,13 +2192,45 @@ export function TeacherWorkspace({
               </button>
             </ModalSheetHeader>
 
-            <ModalSheetBody className="space-y-6">
+            {/* Two steps keep the sheet short: indicators first, then the course's own details. */}
+            <div role="tablist" aria-label={tr('ตั้งค่ารายวิชา', 'Course settings')} className="shrink-0 relative grid grid-cols-2 px-4 sm:px-6 pt-2 border-b border-slate-100 dark:border-slate-800">
+              {([
+                { key: 'indicators', step: 1, label: tr('ตัวชี้วัด / สมรรถนะ', 'Indicators') },
+                { key: 'details', step: 2, label: tr('ข้อมูลรายวิชา', 'Course details') },
+              ] as const).map((tab) => {
+                const active = courseSettingsTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => (tab.key === 'details' ? goToCourseDetailsTab() : setCourseSettingsTab('indicators'))}
+                    className={`h-10 inline-flex items-center justify-center gap-1.5 text-xs font-bold cursor-pointer transition-colors duration-300 ${
+                      active ? 'text-amber-700 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    <span className={`w-5 h-5 rounded-full text-[10px] font-black flex items-center justify-center transition-colors duration-300 ${active ? 'bg-amber-500 text-slate-950' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300'}`}>
+                      {tab.step}
+                    </span>
+                    {tab.label}
+                  </button>
+                );
+              })}
+              {/* Underline slides to the active tab. */}
+              <span aria-hidden className="pointer-events-none absolute bottom-0 left-4 right-4 sm:left-6 sm:right-6 h-0.5">
+                <span
+                  className={`block h-full w-1/2 rounded-full bg-amber-500 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                    courseSettingsTab === 'details' ? 'translate-x-full' : 'translate-x-0'
+                  }`}
+                />
+              </span>
+            </div>
+
+            <ModalSheetBody className="space-y-4 sm:space-y-5">
             {/* ─── COURSE DETAILS ─── */}
-            <section className="space-y-3">
-              <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5 text-amber-500" />
-                {tr('ข้อมูลรายวิชา', 'Course details')}
-              </h4>
+            {courseSettingsTab === 'details' && (
+            <section key="details" className="space-y-3 animate-in fade-in slide-in-from-right-8 duration-300 ease-out">
               <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3">
                 <div className="space-y-1.5">
                   <label htmlFor="edit-course-code" className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -1828,12 +2275,10 @@ export function TeacherWorkspace({
                 />
               </div>
             </section>
+            )}
 
-            <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 pt-4 border-t border-slate-100 dark:border-slate-800">
-              <Sliders className="w-3.5 h-3.5 text-amber-500" />
-              {t('indicators_config.title')}
-            </h4>
-
+            {courseSettingsTab === 'indicators' && (
+            <div key="indicators" className="space-y-4 sm:space-y-5 animate-in fade-in slide-in-from-left-8 duration-300 ease-out">
             {/* ─── MODE TOGGLE: ตัวชี้วัด vs สมรรถนะรายวิชา ─── */}
             <div className="p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 flex gap-1">
               <button
@@ -2154,25 +2599,54 @@ export function TeacherWorkspace({
                 )}
               </>
             )}
+            </div>
+            )}
 
             </ModalSheetBody>
 
             <ModalSheetFooter>
-              <button
-                type="button"
-                onClick={() => setIsIndicatorsModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveIndicators}
-                disabled={isSavingIndicators}
-                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer disabled:opacity-60"
-              >
-                {isSavingIndicators ? tr('กำลังบันทึก...', 'Saving...') : t('common.save')}
-              </button>
+              {courseSettingsTab === 'indicators' ? (
+                <>
+                  <button
+                    key="settings-cancel"
+                    type="button"
+                    onClick={() => setIsIndicatorsModalOpen(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                  <button
+                    key="settings-next"
+                    type="button"
+                    onClick={goToCourseDetailsTab}
+                    className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer inline-flex items-center gap-1.5 transition-transform active:scale-95"
+                  >
+                    {tr('ถัดไป', 'Next')}
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    key="settings-back"
+                    type="button"
+                    onClick={() => setCourseSettingsTab('indicators')}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    {tr('ก่อนหน้า', 'Back')}
+                  </button>
+                  <button
+                    key="settings-save"
+                    type="button"
+                    onClick={handleSaveIndicators}
+                    disabled={isSavingIndicators}
+                    className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-xs cursor-pointer disabled:opacity-60 transition-transform active:scale-95"
+                  >
+                    {isSavingIndicators ? tr('กำลังบันทึก...', 'Saving...') : t('common.save')}
+                  </button>
+                </>
+              )}
             </ModalSheetFooter>
         </ModalSheet>
       )}
@@ -2371,6 +2845,28 @@ export function TeacherWorkspace({
       {isCourseModalOpen && (
         <ModalSheet onClose={() => setIsCourseModalOpen(false)} size="sm:max-w-lg">
             <ModalSheetHeader>
+              {isCourseCloneFlow ? (
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 shrink-0 rounded-xl bg-sky-100 dark:bg-sky-950 text-sky-600 dark:text-sky-400 flex items-center justify-center">
+                    <Copy className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      {tr('เพิ่มไปเทอมอื่น', 'Add to another term')}
+                      <span className="px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 text-[10px] font-black">
+                        {tr('คัดลอกวิชาเดิม', 'Copy of a course')}
+                      </span>
+                    </h3>
+                    {cloneSourceCourse && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                        {tr('จาก', 'From')} {cloneSourceCourse.code} {cloneSourceCourse.name}
+                        {' · '}
+                        {formatAcademicPeriod(cloneSourceCourse.semester, cloneSourceCourse.year_ce, language)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-600 dark:text-amber-400 flex items-center justify-center">
                   <BookOpen className="w-4 h-4" />
@@ -2379,6 +2875,7 @@ export function TeacherWorkspace({
                   {t('courses.create_course_modal_title') || (language === 'th' ? 'สร้างรายวิชาใหม่' : 'Create New Course')}
                 </h3>
               </div>
+              )}
               <button
                 type="button"
                 onClick={() => setIsCourseModalOpen(false)}
@@ -2704,7 +3201,9 @@ export function TeacherWorkspace({
                 >
                   {isSavingCourse
                     ? (language === 'th' ? 'กำลังสร้างรายวิชา...' : 'Creating...')
-                    : (language === 'th' ? 'ยืนยันสร้างวิชาและกรอบการวัดผล' : 'Create course and framework')}
+                    : isCourseCloneFlow
+                      ? tr('ยืนยันเพิ่มไปเทอมนี้', 'Add to this term')
+                      : (language === 'th' ? 'ยืนยันสร้างวิชาและกรอบการวัดผล' : 'Create course and framework')}
                 </button>
                 )}
               </ModalSheetFooter>

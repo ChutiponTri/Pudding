@@ -355,7 +355,7 @@ export function announceConfirmText(targets: AnnounceTarget[], tr: (th: string, 
 
 export const ROW_INSET = {
   /** Class rows sit one border + 12 px padding further in. */
-  work: '@4xl:pr-[13px]',
+  work: 'max-sm:pr-[13px] @4xl:pr-[13px]',
   class: '',
 } as const;
 
@@ -369,6 +369,7 @@ export function WorkRowLayout({
   metrics,
   action,
   menu,
+  phone,
   inset = '',
 }: {
   lead: React.ReactNode;
@@ -376,20 +377,24 @@ export function WorkRowLayout({
   metrics?: React.ReactNode;
   action?: React.ReactNode;
   menu?: React.ReactNode;
+  /** Phones only: a short summary kept on the title's line (PhoneWorkSummary); status, buttons and numbers then hide below `sm`. */
+  phone?: React.ReactNode;
   /** ROW_INSET for the level, so columns line up across levels. */
   inset?: string;
 }) {
   // Wide board (container ≥ 56rem): one line. The name takes the free space;
   // status, numbers, button and ⋯ keep fixed widths at the right, so every
   // row's status button starts at the same x (each sized to its label).
-  // Narrow: name + ⋯ / status + button / numbers.
+  // Narrow: name + ⋯ / status + button / numbers. Phones with `phone`: one line.
+  const wide = phone ? 'max-sm:hidden' : '';
   return (
-    <div className={`flex flex-wrap @4xl:flex-nowrap items-center gap-x-3 gap-y-1.5 ${inset}`}>
-      <div className="order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 min-h-9 flex items-center">{lead}</div>
+    <div className={`flex flex-wrap @4xl:flex-nowrap items-center gap-x-3 gap-y-1.5 ${phone ? 'max-sm:flex-nowrap max-sm:gap-x-1.5' : ''} ${inset}`}>
+      <div className={`order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 min-h-9 flex items-center ${phone ? 'max-sm:basis-0' : ''}`}>{lead}</div>
+      {phone && <div className="sm:hidden order-1 shrink-0 flex items-center">{phone}</div>}
       <div className="order-2 @4xl:order-6 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
-      <div className={`order-3 @4xl:order-2 min-w-0 shrink-0 @4xl:w-36 h-9 flex items-center ${status ? '' : 'hidden @4xl:flex'}`}>{status}</div>
-      <div className="order-4 @4xl:order-5 ml-auto @4xl:ml-0 shrink-0 @4xl:w-52 h-9 flex items-center justify-end gap-1.5">{action}</div>
-      <div className="order-5 @4xl:order-4 basis-full @4xl:basis-auto @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3">{metrics}</div>
+      <div className={`order-3 @4xl:order-2 min-w-0 shrink-0 @4xl:w-36 h-9 flex items-center ${status ? '' : 'hidden @4xl:flex'} ${wide}`}>{status}</div>
+      <div className={`order-4 @4xl:order-5 ml-auto @4xl:ml-0 shrink-0 @4xl:w-52 h-9 flex items-center justify-end gap-1.5 ${wide}`}>{action}</div>
+      <div className={`order-5 @4xl:order-4 basis-full @4xl:basis-auto @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3 ${wide}`}>{metrics}</div>
     </div>
   );
 }

@@ -11,7 +11,7 @@ import type { GradingCounts } from '@/lib/utils/gradingStatus';
 import { isRetake } from '@/lib/utils/retake';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { AnnounceButton, announcesResults, GradeButton, MetricCells, Pill, RemindButton, WorkRowLayout } from '@/components/works/WorkBits';
-import { acceptStatus, StatusButton } from '@/components/works/StatusBits';
+import { acceptStatus, PhoneWorkSummary, StatusButton } from '@/components/works/StatusBits';
 
 /**
  * One assignment of a classroom's classwork list on a single line: kind and
@@ -125,6 +125,7 @@ export function ClassworkRow({
             <Link
               href={gradingHref}
               draggable={false}
+              data-drag-ok
               title={assignment.title}
               className="min-w-0 truncate text-sm font-black text-slate-900 dark:text-white hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
             >
@@ -144,6 +145,7 @@ export function ClassworkRow({
           </span>
         }
         status={<StatusButton status={status} onClick={onStatusClick} />}
+        phone={<PhoneWorkSummary status={status} onStatusClick={onStatusClick} totals={counts} gradeHref={gradingHref} hidden={hidden} />}
         metrics={
           hidden ? (
             <span className="text-[11px] font-semibold text-slate-400 inline-flex items-center gap-1">

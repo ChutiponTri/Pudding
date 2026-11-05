@@ -37,7 +37,7 @@ function Tabs({ assignmentId }: { assignmentId: string }) {
             replace
             scroll={false}
             aria-current={active ? 'page' : undefined}
-            className={`shrink-0 h-9 px-3 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
+            className={`shrink-0 h-8 sm:h-9 px-2.5 sm:px-3 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold inline-flex items-center gap-1 sm:gap-1.5 transition-colors ${
               active
                 ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
                 : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'

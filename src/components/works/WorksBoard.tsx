@@ -18,8 +18,9 @@ import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { ComboFilter } from '@/components/works/ComboFilter';
+import { categoryLook } from '@/components/works/CategoryTools';
 import { AnnounceButton, announceConfirmText, announcesResults, DueDateDialog, GradeButton, MetricCells, Pill, RemindButton, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
-import { acceptStatus, BulkStatusDialog, groupStatus, StatusButton } from '@/components/works/StatusBits';
+import { acceptStatus, BulkStatusDialog, groupStatus, PhoneWorkSummary, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
@@ -224,7 +225,7 @@ export function WorksBoard() {
     let next = 0;
     prefs.setOrder(fullByTab[tab].map((g) => (visible.has(g.rep.id) ? shown[next++] : g.rep.id)));
   };
-  const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps, recentlyDropped } = useDragReorder(
+  const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps, pressProps, recentlyDropped } = useDragReorder(
     works.map((g) => g.rep.id),
     commitOrder
   );
@@ -585,14 +586,27 @@ export function WorksBoard() {
   const classRow = (c: WorkClass, g: WorkGroup) => (
     <li
       key={c.assignment.id}
-      className={`px-3 py-1.5 rounded-2xl border ${c.published ? 'bg-slate-50/80 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/70' : 'bg-white/60 dark:bg-slate-900/40 border-dashed border-slate-300 dark:border-slate-700'}`}
+      onClick={(e) => {
+        // A tap anywhere on the class (not its buttons) opens its grading.
+        e.stopPropagation();
+        if (!c.published || recentlyDropped()) return;
+        if ((e.target as HTMLElement).closest('a, button, input, select, textarea, label, [role="menu"]')) return;
+        if (window.getSelection()?.toString()) return;
+        router.push(gradeHref(c.assignment.id));
+      }}
+      // Phones: the name starts under the work's title (past the header's fold chevron).
+      className={`px-3 py-2 max-sm:pl-[33px] rounded-2xl border transition-colors ${
+        !c.published
+          ? 'bg-slate-50 dark:bg-slate-900/60 border-dashed border-slate-300 dark:border-slate-700'
+          : `cursor-pointer bg-white dark:bg-slate-900 hover:border-amber-400 dark:hover:border-amber-600 ${c.counts.pending > 0 ? 'border-amber-300 dark:border-amber-800/70' : 'border-slate-200 dark:border-slate-800'}`
+      }`}
     >
       <WorkRowLayout
         inset={ROW_INSET.class}
         lead={
           <span className="flex items-center gap-1.5 min-w-0">
             {/* Each class reads as its own room: icon tile + name. */}
-            <span className="w-7 h-7 rounded-lg shrink-0 bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 flex items-center justify-center">
+            <span className="max-sm:hidden w-7 h-7 rounded-lg shrink-0 bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 flex items-center justify-center">
               <School className="w-3.5 h-3.5" />
             </span>
             <span className="text-sm font-black text-slate-900 dark:text-white truncate">{c.classroom.name}</span>
@@ -605,6 +619,7 @@ export function WorksBoard() {
           </span>
         }
         status={<StatusButton status={classAccept(c)} onClick={() => setStatusOne(c)} />}
+        phone={<PhoneWorkSummary status={classAccept(c)} onStatusClick={() => setStatusOne(c)} totals={c.counts} gradeHref={gradeHref(c.assignment.id)} hidden={!c.published} />}
         metrics={c.published ? <MetricCells totals={c.counts} /> : hiddenNote}
         action={
           c.published ? (
@@ -630,24 +645,28 @@ export function WorksBoard() {
     const color = prefs.colors[g.rep.id];
     const hidden = g.classes.filter((c) => !c.published);
     const subject = subjectLine(g);
+    const look = categoryLook(color);
     return (
       <div
         key={g.key}
         ref={bindItem(g.rep.id)}
         style={itemStyle(g.rep.id)}
-        // A tap anywhere on the card (not on a button, link or the class list) opens or closes it.
+        {...(canDrag ? pressProps(g.rep.id) : {})}
+        // A tap anywhere on the work (not on a button, link or its class list) opens
+        // or closes the class list; a tap on a class opens that class's grading.
         onClick={(e) => {
-          if ((e.target as HTMLElement).closest('a, button, input, select, textarea, label, [data-no-toggle]')) return;
+          if ((e.target as HTMLElement).closest('a, button, input, select, textarea, label, [role="menu"], [data-no-toggle]')) return;
           if (recentlyDropped()) return;
           if (window.getSelection()?.toString()) return;
           toggleWork(g.rep.id);
         }}
-        className={`relative overflow-hidden rounded-3xl border cursor-pointer transition-colors ${dragKey === g.rep.id ? 'shadow-2xl shadow-amber-500/20 ring-2 ring-amber-400' : 'shadow-xs'} ${
-          g.published ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800' : 'bg-slate-50/80 dark:bg-slate-900/50 border-dashed border-slate-300 dark:border-slate-700'
-        } ${color ? WORK_COLOR_CLASSES[color].tint : ''}`}
+        className={`relative overflow-hidden rounded-3xl border-2 bg-white dark:bg-slate-900 cursor-pointer select-none [-webkit-touch-callout:none] transition-[border-color,box-shadow] ${look.border} ${
+          g.published ? '' : 'border-dashed'
+        } ${dragKey === g.rep.id ? 'shadow-2xl shadow-amber-500/20 ring-2 ring-amber-400' : 'shadow-xs'}`}
       >
-        {color && <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 ${WORK_COLOR_CLASSES[color].bar}`} />}
-        <div className={`p-3 sm:p-4 ${color ? 'pl-4 sm:pl-5' : ''}`}>
+        {look.bar && <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 z-1 ${look.bar}`} />}
+        {/* Header: the work itself, on the category-style grey (or the teacher's colour). */}
+        <div className={`px-3 sm:px-4 py-2 ${look.head} ${look.bar ? 'pl-4 sm:pl-5' : ''}`}>
           <WorkRowLayout
             inset={ROW_INSET.work}
             lead={
@@ -658,12 +677,19 @@ export function WorksBoard() {
                   aria-label={tr(`ลากเพื่อจัดลำดับ ${g.rep.title}`, `Drag to reorder ${g.rep.title}`)}
                   title={tr('ลากเพื่อจัดลำดับ', 'Drag to reorder')}
                   {...handleProps(g.rep.id)}
-                  className="-ml-1.5 w-7 h-9 shrink-0 rounded-lg flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 touch-none select-none cursor-grab active:cursor-grabbing"
+                  className="max-sm:hidden -ml-1.5 w-7 h-9 shrink-0 rounded-lg flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 touch-none select-none cursor-grab active:cursor-grabbing"
                 >
                   <GripVertical className="w-4 h-4" />
                 </button>
               )}
-              <button type="button" onClick={() => toggleWork(g.rep.id)} aria-expanded={open} className="w-full min-w-0 flex items-center gap-2.5 text-left cursor-pointer group/work">
+              {/* Phones: the fold chevron sits before the title, as on the classwork tab. */}
+              <span
+                aria-hidden
+                className="sm:hidden w-6 h-6 mr-1.5 rounded-full shrink-0 flex items-center justify-center text-slate-500 dark:text-slate-400 bg-white/80 dark:bg-slate-800 ring-1 ring-slate-200 dark:ring-slate-700"
+              >
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
+              </span>
+              <span className="w-full min-w-0 flex items-center gap-2.5 text-left group/work">
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5 min-w-0">
                     <span className="min-w-0 truncate text-[15px] font-black text-slate-900 dark:text-white group-hover/work:text-amber-700 dark:group-hover/work:text-amber-400 transition-colors">
@@ -690,13 +716,22 @@ export function WorksBoard() {
                     </span>
                   )}
                 </span>
-              </button>
+              </span>
               </span>
             }
             status={
               <StatusButton
                 status={groupStatus(g.classes.map(classAccept), th)}
                 onClick={() => openWorkStatus(g)}
+              />
+            }
+            phone={
+              <PhoneWorkSummary
+                status={groupStatus(g.classes.map(classAccept), th)}
+                onStatusClick={() => openWorkStatus(g)}
+                totals={g.totals}
+                gradeHref={g.published ? workGradeHref(g) : undefined}
+                hidden={!g.published}
               />
             }
             metrics={g.published ? <MetricCells totals={g.totals} /> : hiddenNote}
@@ -740,26 +775,33 @@ export function WorksBoard() {
             }
             menu={<ActionMenu label={tr(`ตัวเลือกของ ${g.rep.title}`, `Options for ${g.rep.title}`)} items={workMenu(g)} />}
           />
-          <Collapse open={open}>
-            <ul data-no-toggle className="pt-3 space-y-2 cursor-default">{g.classes.map((c) => classRow(c, g))}</ul>
-          </Collapse>
-          {/* The fold: the number of classes, centred at the bottom of the card. */}
-          <div className="flex justify-center pt-2.5 -mb-1">
+        </div>
+        <Collapse open={open}>
+          <ul data-no-toggle data-no-drag className={`p-3 sm:p-4 space-y-2 cursor-default ${look.bar ? 'pl-4 sm:pl-5' : ''}`}>{g.classes.map((c) => classRow(c, g))}</ul>
+        </Collapse>
+        {/* Tablet / desktop fold: a full-width bar along the bottom. Folded, it
+            previews the classes' names; the chevron turns as it opens. */}
+        <div className={`max-sm:hidden border-t border-slate-100 dark:border-slate-800 ${look.bar ? 'pl-1.5' : ''}`}>
             <button
               type="button"
               onClick={() => toggleWork(g.rep.id)}
               aria-expanded={open}
-              className={`h-8 pl-3 pr-2.5 rounded-full text-xs font-black inline-flex items-center gap-1.5 tabular-nums cursor-pointer transition-colors ${
-                open
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
-              }`}
+              className="group/fold w-full h-10 px-3 sm:px-4 flex items-center gap-2 text-left cursor-pointer transition-colors hover:bg-amber-50/70 dark:hover:bg-amber-950/20"
             >
-              <School className="w-3.5 h-3.5" />
-              {g.classes.length} {tr('ห้อง', g.classes.length === 1 ? 'class' : 'classes')}
-              <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} />
+              <span className="shrink-0 h-6 pl-1.5 pr-2 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[11px] font-black inline-flex items-center gap-1 tabular-nums">
+                <School className="w-3.5 h-3.5" />
+                {g.classes.length} {tr('ห้อง', g.classes.length === 1 ? 'class' : 'classes')}
+              </span>
+              <span className={`min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-400 transition-opacity duration-300 ${open ? 'opacity-0' : 'opacity-100'}`}>
+                {g.classes.map((c) => c.classroom.name).join(' · ')}
+              </span>
+              <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 dark:text-slate-400 group-hover/fold:text-amber-700 dark:group-hover/fold:text-amber-300 transition-colors">
+                {open ? tr('ซ่อน', 'Hide') : tr('แสดง', 'Show')}
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center transition-[transform,background-color] duration-300 ${open ? 'rotate-180 bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-800 group-hover/fold:bg-amber-500 group-hover/fold:text-slate-950'}`}>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </span>
+              </span>
             </button>
-          </div>
         </div>
       </div>
     );
@@ -792,14 +834,14 @@ export function WorksBoard() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex-1 sm:flex-none min-w-0">
-            <SemesterSelect value={semesterKey} onChange={setSemesterKey} options={termOptions} currentPeriod={currentPeriod} />
+            <SemesterSelect value={semesterKey} onChange={setSemesterKey} options={termOptions} currentPeriod={currentPeriod} dense />
           </div>
           <CreateWorkMenu
             from="works"
             returnTo={returnTo}
-            className="h-10 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 shadow-sm cursor-pointer shrink-0"
+            className="h-8 sm:h-10 px-3 sm:px-3.5 rounded-lg sm:rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] sm:text-xs inline-flex items-center gap-1 sm:gap-1.5 shadow-sm cursor-pointer shrink-0"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             <span>{tr('สร้าง', 'New')}</span>
           </CreateWorkMenu>
         </div>
@@ -847,7 +889,7 @@ export function WorksBoard() {
         </div>
 
         {/* Filters: subject, status, grading (dropdowns) + search */}
-        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 sm:gap-2">
           <ComboFilter
             value={activeClass !== 'all' ? `class:${activeClass}` : activeCourse !== 'all' ? `course:${activeCourse}` : 'all'}
             onChange={selectPlace}
@@ -890,14 +932,14 @@ export function WorksBoard() {
               { value: 'finished', label: tr('ตรวจครบแล้ว', 'Fully graded') },
             ]}
           />
-          <label className="relative block col-span-2 sm:col-span-1 sm:flex-1 sm:min-w-48">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <label className="relative col-span-2 sm:col-span-1 sm:flex-1 sm:min-w-48 h-9 sm:h-10 flex items-center overflow-hidden pl-8 sm:pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus-within:border-amber-500 cursor-text">
+            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={tr('ค้นหาชื่องานหรือห้อง', 'Search work or class')}
-              className="w-full h-10 pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-sm text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500"
+              className="phone-small-field w-full min-w-0 h-full bg-transparent text-sm text-slate-900 dark:text-white outline-none"
             />
           </label>
           {filtering && (
@@ -911,7 +953,7 @@ export function WorksBoard() {
                 setParam('status', null);
                 setParam('grading', null);
               }}
-              className="col-span-2 sm:col-span-1 h-10 px-3 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1 cursor-pointer"
+              className="col-span-2 sm:col-span-1 h-8 sm:h-10 px-3 rounded-xl text-[11px] sm:text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
               {tr('ล้างตัวกรอง', 'Clear filters')}
@@ -1050,7 +1092,7 @@ function FilterSelect({
   const current = options.find((o) => o.value === value)?.label || '';
   return (
     <label
-      className={`relative h-10 min-w-0 rounded-xl border flex items-center gap-1.5 pl-3 pr-8 text-xs transition-colors cursor-pointer ${
+      className={`relative h-9 sm:h-10 min-w-0 rounded-xl border flex items-center gap-1 sm:gap-1.5 pl-2.5 sm:pl-3 pr-7 sm:pr-8 text-[11px] sm:text-xs transition-colors cursor-pointer ${
         active
           ? 'bg-slate-900 border-slate-900 text-white dark:bg-white dark:border-white dark:text-slate-900'
           : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:border-amber-400'
@@ -1058,7 +1100,7 @@ function FilterSelect({
     >
       <span className={`shrink-0 font-semibold ${active ? 'opacity-70' : 'text-slate-400'}`}>{label}</span>
       <span className="min-w-0 truncate font-black">{current}</span>
-      <ChevronDown className="w-4 h-4 absolute right-2.5 top-1/2 -translate-y-1/2 opacity-60 pointer-events-none" />
+      <ChevronDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 absolute right-2 sm:right-2.5 top-1/2 -translate-y-1/2 opacity-60 pointer-events-none" />
       {/* The real control covers the field, invisible, so the native picker opens on tap. */}
       <select
         value={value}
