@@ -20,7 +20,7 @@ const promptFont = Prompt({
 
 const SITE_URL = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://www.pudding-p.com').replace(/\/+$/, '');
 const SITE_NAME = 'Pudding';
-const TITLE = 'Pudding - แพลตฟอร์มอัจฉริยะเพื่อการเรียนรู้และจัดการการบ้านผ่าน LINE';
+const TITLE = 'Pudding - ตรวจการบ้านและควิซออนไลน์ผ่าน LINE สำหรับคุณครู';
 const DESCRIPTION =
   'แพลตฟอร์มช่วยคุณครูสั่งและตรวจการบ้านผ่านเว็บ พร้อมให้เด็ก ๆ ทำงานผ่าน LINE LIFF ได้ทันที มีบอทคอยทวงงานในไลน์กลุ่ม และเทคโนโลยี AI ช่วยตรวจ | SIIT มธ.';
 export const metadata: Metadata = {
