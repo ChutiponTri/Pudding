@@ -28,6 +28,7 @@ import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ReopenTimeDialog, reopenTimeSuggestion } from '@/components/ReopenTimeDialog';
 import { RetakePicker } from '@/components/RetakePicker';
 import { SiblingClassTabs } from '@/components/works/SiblingClassTabs';
+import { announceConfirmText, announcesResults } from '@/components/works/WorkBits';
 import { isRetake, rosterFor } from '@/lib/utils/retake';
 import {
   Search,
@@ -52,6 +53,7 @@ import {
   Ban,
   Undo2,
   Loader2,
+  Megaphone,
   Send,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, canRecordNoSubmission, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
@@ -711,6 +713,45 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   );
   const th = language === 'th';
 
+  // "ประกาศคะแนน", as on the classwork and works lists: offered once nobody is
+  // left to remind (everyone handed in or has a score, or the work is closed).
+  const canAnnounce =
+    !!assignment && !!assignmentWindow && !!grader && grader.role !== 'researcher' &&
+    !assignmentWindow.isDraft && !assignmentWindow.isScheduled &&
+    announcesResults({ notSubmitted: missingTotal }, assignmentWindow.acceptsSubmissions);
+  const [announcing, setAnnouncing] = useState(false);
+  /**
+   * Closes the work first if it still takes hand-ins (results only show once it
+   * is closed), after the teacher confirms; then the bot posts to the class
+   * group, or the share popup opens whenever it cannot (quota, no group, limit).
+   */
+  const handleAnnounceResults = async () => {
+    if (!assignment || !assignmentWindow || announcing) return;
+    const target = {
+      title: assignment.title,
+      className: classroom?.name,
+      acceptsSubmissions: assignmentWindow.acceptsSubmissions,
+      counts: { pending: toGradeTotal, notSubmitted: missingTotal },
+    };
+    if (!confirm(announceConfirmText([target], (thText, enText) => (th ? thText : enText)))) return;
+    setAnnouncing(true);
+    try {
+      const result = await dataService.announceResults(assignment.id, assignment.title);
+      if (result.assignment) setAssignment((prev) => (prev ? { ...prev, ...result.assignment } : prev));
+      const line =
+        result.line === 'sent'
+          ? th ? 'ประกาศคะแนนในกลุ่ม LINE แล้ว' : 'Scores announced in the LINE group'
+          : result.line === 'quota'
+          ? th ? 'โควตา LINE เดือนนี้ไม่พอ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น' : 'Not enough LINE quota — share it from the window that opened'
+          : th ? 'บอทส่งไม่ได้ตอนนี้ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น' : 'The bot could not send it — share it from the window that opened';
+      showToast(result.closed ? `${th ? 'ปิดรับงานแล้ว' : 'Closed'} • ${line}` : line);
+    } catch (err) {
+      showToast(err instanceof Error && err.message ? err.message : th ? 'ประกาศคะแนนไม่สำเร็จ' : 'Could not announce the scores');
+    } finally {
+      setAnnouncing(false);
+    }
+  };
+
   const summaryTiles: Array<{
     id: typeof statusFilter;
     label: string;
@@ -928,6 +969,31 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   ? `ตรวจแล้ว ${gradedTotal}/${checkableTotal} คน · ส่งแล้ว ${handedInTotal}/${rosterRows.length} คน`
                   : `${gradedTotal}/${checkableTotal} checked · ${handedInTotal}/${rosterRows.length} handed in`}
               </p>
+              {canAnnounce && (
+                <button
+                  type="button"
+                  onClick={handleAnnounceResults}
+                  disabled={gradedTotal === 0 || announcing}
+                  title={
+                    gradedTotal === 0
+                      ? th ? 'ยังไม่มีงานที่ตรวจเสร็จ' : 'Nothing graded yet'
+                      : th ? 'ประกาศคะแนนในกลุ่ม LINE ของห้อง' : 'Announce the scores in the class LINE group'
+                  }
+                  className={`mt-3 w-full h-10 rounded-xl text-sm font-black inline-flex items-center justify-center gap-1.5 transition-colors disabled:cursor-not-allowed ${
+                    gradedTotal === 0
+                      ? 'bg-white/70 dark:bg-slate-900/60 text-slate-400 ring-1 ring-slate-200 dark:ring-slate-700'
+                      : toGradeTotal === 0
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm shadow-emerald-600/25 cursor-pointer'
+                      : 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-300 dark:ring-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer'
+                  }`}
+                >
+                  {announcing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />}
+                  {th ? 'ประกาศคะแนน' : 'Announce scores'}
+                  {toGradeTotal > 0 && gradedTotal > 0 && (
+                    <span className="text-[11px] font-bold opacity-80">· {th ? `รอตรวจ ${toGradeTotal}` : `${toGradeTotal} to grade`}</span>
+                  )}
+                </button>
+              )}
             </div>
           </div>
 
