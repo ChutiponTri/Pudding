@@ -249,17 +249,70 @@ function WorkShortcut({ tone, badge, title, meta, action, onClick }: {
 
 /** Bottom sheet on phones, centered dialog from sm up. */
 function Sheet({ children, onClose, size = "md" }: { children: React.ReactNode; onClose?: () => void; size?: "sm" | "md" }) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Keep the sheet above the on-screen keyboard. In LINE's in-app browser
+  // (notably iOS) the keyboard overlays the page instead of resizing it, and an
+  // autoFocus input opened mid slide-in (often on the first LIFF open) is left
+  // hidden behind it. Pin the overlay to the *visual* viewport so the sheet's
+  // bottom always sits on top of the keyboard, then bring the focused field
+  // into view once the keyboard has settled.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const overlay = overlayRef.current;
+    if (!vv || !overlay) return;
+
+    let frame = 0;
+    const revealFocused = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && panelRef.current?.contains(active) && active.matches("input, textarea, select, [contenteditable]")) {
+        active.scrollIntoView({ block: "nearest" });
+      }
+    };
+    const sync = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        overlay.style.top = `${vv.offsetTop}px`;
+        overlay.style.height = `${vv.height}px`;
+        overlay.style.bottom = "auto";
+        revealFocused();
+      });
+    };
+    // iOS may report the keyboard a beat after focus; re-check a few times.
+    const timers: number[] = [];
+    const onFocusIn = () => {
+      timers.forEach(clearTimeout);
+      timers.length = 0;
+      [100, 300, 600].forEach((ms) => timers.push(window.setTimeout(sync, ms)));
+    };
+
+    sync();
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    overlay.addEventListener("focusin", onFocusIn);
+    return () => {
+      cancelAnimationFrame(frame);
+      timers.forEach(clearTimeout);
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+      overlay.removeEventListener("focusin", onFocusIn);
+    };
+  }, []);
+
   return (
     <div
+      ref={overlayRef}
       className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 animate-in fade-in"
       onClick={(e) => {
         if (onClose && e.target === e.currentTarget) onClose();
       }}
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
-        className={`w-full ${size === "sm" ? "sm:max-w-sm" : "sm:max-w-md"} max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-900 p-5 sm:p-6 pb-[max(env(safe-area-inset-bottom),1.25rem)] shadow-2xl space-y-5 animate-in slide-in-from-bottom-5`}
+        className={`w-full ${size === "sm" ? "sm:max-w-sm" : "sm:max-w-md"} max-h-[92%] overflow-y-auto overscroll-contain rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-900 p-5 sm:p-6 pb-[max(env(safe-area-inset-bottom),1.25rem)] shadow-2xl space-y-5 animate-in slide-in-from-bottom-5`}
       >
         <div className="sm:hidden mx-auto -mt-1 mb-1 h-1.5 w-10 rounded-full bg-slate-200 dark:bg-slate-700" />
         {children}
