@@ -23,6 +23,8 @@
 # misc
 .DS_Store
 *.pem
+# local HTTPS certificates (scripts/dev-https.sh)
+/.certs/
 
 # debug
 npm-debug.log*

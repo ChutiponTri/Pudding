@@ -60,6 +60,7 @@ import { quizExitRule, quizLeaveWarning, QuizExitWarningSheet, SuspiciousLabel }
 import type { QuizOpenResult } from "@/lib/utils/quizExit";
 import { canEditSubmission, isHandInAllowed, isHandedIn, isReopenActive, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
+import { isObjectiveAnswerCorrect, isPickedOption } from "@/lib/utils/autoGrade";
 import { assignmentAttachments } from "@/lib/utils/referenceWork";
 import { AttachmentList, opensPreview } from "@/components/AssignmentAttachments";
 import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploadClient";
@@ -3953,6 +3954,9 @@ export default function LiffStudentPage() {
               const ans = viewingGradedSub.answers[q.id];
               // Students only see the teacher's official score, never the AI draft.
               const score = ans?.teacher_score;
+              const choiceOptions = q.type === "multiple_choice" || q.type === "true_false"
+                ? (Array.isArray(q.options) && q.options.length > 0 ? q.options.map(String) : q.type === "true_false" ? [...TRUE_FALSE_OPTIONS] : [])
+                : [];
               return (
                 <div key={q.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200/80 dark:ring-slate-700/70 space-y-2.5">
                   <div className="flex items-start justify-between gap-3">
@@ -3966,6 +3970,9 @@ export default function LiffStudentPage() {
                       </span>
                     )}
                   </div>
+                  {choiceOptions.length > 0 ? (
+                    <ChoiceResult question={q} options={choiceOptions} answerText={ans?.text_answer} />
+                  ) : (
                   <div className="p-3 rounded-xl bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-300 wrap-break-word">
                     <span className="text-xs font-semibold text-slate-400 block mb-0.5">คำตอบของคุณ</span>
                     {ans?.text_answer || "(ไม่มีข้อความ)"}
@@ -3975,6 +3982,7 @@ export default function LiffStudentPage() {
                       </a>
                     )}
                   </div>
+                  )}
                   {ans?.teacher_comment && (
                     <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-sm">
                       <span className="text-xs font-bold block mb-0.5">💬 ความเห็นคุณครู</span>
@@ -4040,6 +4048,54 @@ export default function LiffStudentPage() {
             ตกลง
           </button>
         </Sheet>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A choice / true-false answer on the result sheet: every option, the
+ * student's pick marked. The right option is marked only once the results are
+ * released (the server sends the answer key only then).
+ */
+function ChoiceResult({ question, options, answerText }: { question: Question; options: string[]; answerText?: string | null }) {
+  const keyShown = !!(question.ideal_answer || "").trim();
+  const picked = options.findIndex((opt) => isPickedOption(question, opt, answerText));
+  return (
+    <div className="space-y-1.5">
+      <ul className="space-y-1">
+        {options.map((opt, oi) => {
+          const isPicked = oi === picked;
+          const isRight = keyShown && isObjectiveAnswerCorrect(question, opt) === true;
+          const tone = isRight
+            ? "bg-emerald-50 dark:bg-emerald-950/40 ring-emerald-300 dark:ring-emerald-800 text-emerald-900 dark:text-emerald-100"
+            : isPicked && keyShown
+            ? "bg-rose-50 dark:bg-rose-950/40 ring-rose-300 dark:ring-rose-800 text-rose-900 dark:text-rose-100"
+            : isPicked
+            ? "bg-sky-50 dark:bg-sky-950/40 ring-sky-300 dark:ring-sky-800 text-sky-900 dark:text-sky-100"
+            : "bg-white dark:bg-slate-900 ring-transparent text-slate-700 dark:text-slate-300";
+          return (
+            <li key={oi} className={`px-3 py-2 rounded-xl ring-1 text-sm wrap-break-word flex items-start gap-2 ${tone}`}>
+              <span
+                aria-hidden
+                className={`mt-0.5 w-4 h-4 rounded-full shrink-0 ring-2 flex items-center justify-center ${
+                  isPicked ? "ring-current" : "ring-slate-300 dark:ring-slate-600"
+                }`}
+              >
+                {isPicked && <span className="w-2 h-2 rounded-full bg-current" />}
+              </span>
+              <span className="min-w-0 flex-1">{opt}</span>
+              {(isPicked || isRight) && (
+                <span className="text-[11px] font-bold shrink-0">
+                  {isRight ? (isPicked ? "✓ คำตอบของคุณถูกต้อง" : "✓ คำตอบที่ถูก") : keyShown ? "✗ คำตอบของคุณ" : "คำตอบของคุณ"}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {picked < 0 && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">{(answerText || "").trim() ? `คำตอบของคุณ: ${answerText}` : "คุณไม่ได้เลือกคำตอบ"}</p>
       )}
     </div>
   );

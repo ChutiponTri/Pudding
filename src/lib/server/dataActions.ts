@@ -1507,7 +1507,7 @@ export const dataActions = {
         classroom,
         authorId: me.userId,
         activityType: assignmentData.is_exam ? 'exam' : 'assignment',
-        body: assignmentPostBody(assignmentData),
+        body: assignmentPostBody(assignmentData, classroom.students),
         metadata: assignmentPostMetadata(assignmentData, id),
         // Only when the database kept publish_at; otherwise the assignment is already visible.
         publishAt: row.publish_at || undefined,
@@ -1579,7 +1579,7 @@ export const dataActions = {
             classroom,
             authorId: requireTeacher(actor).userId,
             activityType: next.is_exam ? 'exam' : 'assignment',
-            body: assignmentPostBody(next),
+            body: assignmentPostBody(next, classroom.students),
             metadata: assignmentPostMetadata(next, id),
             publishAt: new Date(nextPublishMs).toISOString(),
           });
@@ -1600,8 +1600,9 @@ export const dataActions = {
 
     // The timeline post spells out the title and due date; keep it in step.
     const dueChanged = patch.due_date && new Date(patch.due_date).getTime() !== new Date(previous.due_date).getTime();
-    const retakeCountChanged = isRetake(previous) && patch.retake_student_ids && patch.retake_student_ids.length !== (previous.retake_student_ids || []).length;
-    if (dueChanged || (patch.title && patch.title !== previous.title) || retakeCountChanged) {
+    const retakeListChanged =
+      isRetake(previous) && patch.retake_student_ids && [...patch.retake_student_ids].sort().join() !== [...(previous.retake_student_ids || [])].sort().join();
+    if (dueChanged || (patch.title && patch.title !== previous.title) || retakeListChanged) {
       const { data: posts } = await supabase.from('classroom_posts').select('id, body, metadata').contains('metadata', { assignmentId: id });
       await Promise.all(
         (posts || [])
@@ -1609,7 +1610,7 @@ export const dataActions = {
           .map((p) =>
             supabase
               .from('classroom_posts')
-              .update({ body: assignmentPostBody(next), metadata: { ...(p.metadata || {}), dueDate: next.due_date } })
+              .update({ body: assignmentPostBody(next, ownClassroom.students), metadata: { ...(p.metadata || {}), dueDate: next.due_date } })
               .eq('id', p.id)
           )
       );
@@ -1892,7 +1893,11 @@ export const dataActions = {
     for (const ans of row.submission_answers || []) {
       answers[ans.question_id] = maskAnswer({ ...ans, co_grades: undefined, research_grades: undefined }, release.hiddenQuestionIds);
     }
-    return { questions: questionsForStudent(questions || []), answers, resultsHidden: release.hidden.size > 0 };
+    const resultsHidden = release.hidden.size > 0;
+    // Once results are out, choice questions show which option was right. Only for
+    // handed-in work: resultRelease does not check the rest (it may still be handed in late).
+    const choiceKeys = !resultsHidden && isHandedIn({ status: row.status }) && row.total_score != null;
+    return { questions: questionsForStudent(questions || [], { choiceKeys }), answers, resultsHidden };
   },
 
   /** Saves one grade; see saveTeacherGrades. */

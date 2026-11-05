@@ -10,7 +10,7 @@ import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import type { GradingCounts } from '@/lib/utils/gradingStatus';
 import { isRetake } from '@/lib/utils/retake';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
-import { MetricCells, Pill, RemindButton, WorkRowLayout } from '@/components/works/WorkBits';
+import { GradeButton, MetricCells, Pill, RemindButton, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, StatusButton } from '@/components/works/StatusBits';
 
 /**
@@ -156,18 +156,7 @@ export function ClassworkRow({
           ) : (
             <>
             {onRemind && <RemindButton missing={counts.notSubmitted} closed={!win.acceptsSubmissions} onClick={onRemind} />}
-            <Link
-              href={gradingHref}
-              draggable={false}
-              className={`h-9 px-3 rounded-xl text-xs font-black inline-flex items-center gap-1.5 whitespace-nowrap transition-colors ${
-                counts.pending > 0
-                  ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm shadow-amber-500/20'
-                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
-              }`}
-            >
-              {tr('ตรวจงาน', 'Grade')}
-              {counts.pending > 0 && <span className="min-w-5 px-1 rounded-full bg-slate-950/15 text-[11px] tabular-nums text-center">{counts.pending}</span>}
-            </Link>
+            <GradeButton pending={counts.pending} href={gradingHref} />
             </>
           )
         }

@@ -13,6 +13,9 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  // `npm run dev:https` serves the dev server as https://dev.pudding-p.com, the only kind of
+  // origin the production Clerk instance accepts (see scripts/dev-https.sh).
+  allowedDevOrigins: ["dev.pudding-p.com", "*.pudding-p.com"],
   env: {
     NEXT_PUBLIC_LINE_LIFF_ID: process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID || "",
     LINE_LIFF_ID: process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID || "",

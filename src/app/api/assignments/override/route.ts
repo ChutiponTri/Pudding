@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
           classroom,
           authorId: userId,
           activityType: published.is_exam ? 'exam' : 'assignment',
-          body: assignmentPostBody(published),
+          body: assignmentPostBody(published, classroom.students),
           metadata: assignmentPostMetadata(published, assignmentId),
         }));
       } catch (postError) {

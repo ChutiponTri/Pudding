@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:https": "bash scripts/dev-https.sh",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

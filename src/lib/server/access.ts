@@ -2,6 +2,7 @@ import 'server-only';
 import type { Actor } from '@/lib/auth/actor';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 import type { Assignment, Classroom, Question, User } from '@/types/database';
+import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
 
 type Supabase = ReturnType<typeof createServiceSupabaseClient>;
 
@@ -100,9 +101,14 @@ export function classroomForStudent(classroom: Classroom, actor: Extract<Actor, 
   };
 }
 
-/** Questions as a student receives them: never the answer key or rubric. */
-export function questionsForStudent(questions: Question[]): Question[] {
-  return questions.map(({ ideal_answer: _answer, rubric_criteria: _rubric, ...rest }) => rest as Question);
+/**
+ * Questions as a student receives them: never the rubric, and no answer key —
+ * except choice / true-false keys on a result sheet whose results are released.
+ */
+export function questionsForStudent(questions: Question[], { choiceKeys = false }: { choiceKeys?: boolean } = {}): Question[] {
+  return questions.map(({ ideal_answer, rubric_criteria: _rubric, ...rest }) =>
+    (choiceKeys && isObjectiveQuestion(rest) ? { ...rest, ideal_answer } : rest) as Question
+  );
 }
 
 /** JSON error response for a thrown HttpError (or a generic 500). */

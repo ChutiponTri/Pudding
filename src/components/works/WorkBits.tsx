@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { BellRing, Calendar, Check, Loader2, X } from 'lucide-react';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -252,6 +253,32 @@ export function RemindButton({
         </span>
       )}
     </button>
+  );
+}
+
+/**
+ * "ตรวจงาน": filled amber while work waits; how many wait sits in the button's
+ * top-right corner, the same way as RemindButton.
+ */
+export function GradeButton({ pending, href }: { pending: number; href: string }) {
+  const { tr } = useLanguage();
+  return (
+    <Link
+      href={href}
+      draggable={false}
+      className={`relative h-9 pl-3 ${pending > 0 ? 'pr-6' : 'pr-3'} rounded-xl text-xs font-black inline-flex items-center gap-1 whitespace-nowrap transition-colors ${
+        pending > 0
+          ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm shadow-amber-500/20'
+          : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
+      }`}
+    >
+      {tr('ตรวจงาน', 'Grade')}
+      {pending > 0 && (
+        <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center tabular-nums bg-slate-950 text-white">
+          {pending > 99 ? '99+' : pending}
+        </span>
+      )}
+    </Link>
   );
 }
 

@@ -45,7 +45,7 @@ import { CreateWorkMenu } from '@/components/CreateWorkMenu';
 import { Collapse } from '@/components/Collapse';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { ComboFilter } from '@/components/works/ComboFilter';
-import { DueDateDialog, MetricCells, Pill, RemindButton, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
+import { DueDateDialog, GradeButton, MetricCells, Pill, RemindButton, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, BulkStatusDialog, groupStatus, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
@@ -519,21 +519,7 @@ export function WorksBoard() {
     ].filter(Boolean) as ActionMenuItem[];
   };
 
-  /** Always "ตรวจงาน"; filled amber with the count while work waits. */
-  const gradeButton = (pending: number, href: string) => (
-    <Link
-      href={href}
-      draggable={false}
-      className={`h-9 px-3 rounded-xl text-xs font-black inline-flex items-center gap-1.5 whitespace-nowrap transition-colors ${
-        pending > 0
-          ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm shadow-amber-500/20'
-          : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
-      }`}
-    >
-      {tr('ตรวจงาน', 'Grade')}
-      {pending > 0 && <span className="min-w-5 px-1 rounded-full bg-slate-950/15 text-[11px] tabular-nums text-center">{pending}</span>}
-    </Link>
-  );
+  const gradeButton = (pending: number, href: string) => <GradeButton pending={pending} href={href} />;
   const publishButton = (items: WorkClass[]) => (
     <button
       type="button"

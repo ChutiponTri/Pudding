@@ -7,7 +7,8 @@ import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { postShareToken, reannounceShareToken, remindShareToken } from '@/lib/server/inviteCodes';
 import type { LabelledClassroom } from '@/lib/utils/classroomLabel';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
-import type { Assignment } from '@/types/database';
+import { rosterFor } from '@/lib/utils/retake';
+import type { Assignment, User } from '@/types/database';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 
 export type ClassroomPost = {
@@ -34,16 +35,25 @@ export function assignmentPostMetadata(a: Pick<Assignment, 'is_exam' | 'due_date
 export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอบใหม่|สอบซ่อม):/;
 
 /**
- * Timeline/LINE text for new work. A retake names no students (the group
- * sees the post); only the chosen students can open it.
+ * Timeline/LINE text for new work. A retake lists the students who take it
+ * (from the classroom roster); only they can open it.
  */
-export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'>) {
+export function assignmentPostBody(
+  a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'>,
+  /** The classroom roster: a retake names its students from it. */
+  students?: Array<Pick<User, 'id' | 'line_uid' | 'first_name' | 'last_name'> & { name?: string }> | null
+) {
   const due = formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE);
   if (Array.isArray(a.retake_student_ids)) {
-    return `สอบซ่อม: ${a.title} (ปิดรับคำตอบ: ${due})\nเฉพาะนักเรียนที่คุณครูแจ้ง ${a.retake_student_ids.length} คน`;
+    const names = rosterFor(a, (students || []).filter((s) => !!s?.id)).map(studentName);
+    const head = `สอบซ่อม: ${a.title} (ปิดรับคำตอบ: ${due})`;
+    if (!names.length) return `${head}\nเฉพาะนักเรียนที่คุณครูแจ้ง ${a.retake_student_ids.length} คน`;
+    return `${head}\nเฉพาะนักเรียนต่อไปนี้ (${names.length} คน):\n${names.map((name, i) => `${i + 1}. ${name}`).join('\n')}`;
   }
   return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${a.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due})`;
 }
+
+const studentName = (s: Partial<User> & { name?: string }) => `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.name || 'ไม่ระบุชื่อ';
 
 /**
  * Adds a timeline post and announces it in the classroom's LINE group.

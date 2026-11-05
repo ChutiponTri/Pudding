@@ -69,3 +69,15 @@ export function isObjectiveAnswerCorrect(question: ObjectiveFields, answerText: 
 export function scoreObjectiveAnswer(question: ObjectiveFields, answerText: string | null | undefined): number {
   return isObjectiveAnswerCorrect(question, answerText) ? Number(question.max_score || 0) : 0;
 }
+
+/** Whether a student's saved answer is this option (true/false by meaning: "จริง" picks "ถูก"). */
+export function isPickedOption(question: Pick<Question, 'type'>, option: string, answerText: string | null | undefined): boolean {
+  const answer = (answerText || '').trim();
+  if (!answer) return false;
+  if (question.type === 'true_false') {
+    const a = parseTrueFalse(answer);
+    const o = parseTrueFalse(option);
+    if (a !== null && o !== null) return a === o;
+  }
+  return normChoice(option) === normChoice(answer);
+}
