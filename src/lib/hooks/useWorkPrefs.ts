@@ -24,7 +24,7 @@ type WorkPrefs = { order: string[]; colors: Record<string, WorkColor> };
 
 function parse(raw: unknown): WorkPrefs {
   const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<WorkPrefs>;
-  const order = Array.isArray(value.order) ? value.order.filter((k): k is string => typeof k === 'string').map(expand) : [];
+  const order = Array.isArray(value.order) ? value.order.filter((k): k is string => typeof k === 'string').map((k) => expand(k.split('~')[0])) : [];
   const colors: Record<string, WorkColor> = {};
   if (value.colors && typeof value.colors === 'object') {
     for (const [k, v] of Object.entries(value.colors)) {

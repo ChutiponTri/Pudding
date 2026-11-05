@@ -25,7 +25,6 @@ import {
   Rocket,
   School,
   Search,
-  Share2,
   ShieldAlert,
   Trash2,
   Unlock,
@@ -61,11 +60,15 @@ type LocalEdits = { base: TeacherDashboardData | null; updated: Record<string, P
 
 const NO_EDITS: LocalEdits = { base: null, updated: {}, deleted: [] };
 
+type AcceptFilter = 'all' | 'open' | 'closed' | 'hidden';
+type GradeFilter = 'all' | 'unfinished' | 'finished';
+/** open: some class takes work now; closed: published, none does; hidden: no class can see it yet. */
+const acceptOf = (g: WorkGroup): Exclude<AcceptFilter, 'all'> =>
+  !g.published ? 'hidden' : g.classes.some((c) => c.published && c.window.acceptsSubmissions) ? 'open' : 'closed';
+
 /** 0 not published yet, 1 still being graded, 2 fully graded. */
 const workRank = (g: WorkGroup) => (!g.published ? 0 : g.totals.pending === 0 && g.totals.notSubmitted === 0 && g.totals.totalStudents > 0 ? 2 : 1);
-/** "<id>~<state>": the saved order entry; a different state means "place it by default again". */
-const orderEntry = (g: WorkGroup) =>
-  `${g.rep.id}~${workRank(g)}${[...new Set(g.classes.map((c) => (c.published ? (c.assignment.status_override || 'auto')[0] : 'h')))].sort().join('')}`;
+
 
 /**
  * Every assignment and quiz of the term, across classrooms: one card per work
@@ -87,6 +90,15 @@ export function WorksBoard() {
   const [tab, setTab] = useState<Tab>(() => (search.get('tab') === 'quiz' ? 'quiz' : 'homework'));
   const [courseFilter, setCourseFilter] = useState(() => search.get('course') || 'all');
   const [query, setQuery] = useState('');
+  // Filters: whether it takes work, and whether grading is done (also kept in the URL).
+  const [acceptFilter, setAcceptFilter] = useState<AcceptFilter>(() => {
+    const v = search.get('status');
+    return v === 'open' || v === 'closed' || v === 'hidden' ? v : 'all';
+  });
+  const [gradeFilter, setGradeFilter] = useState<GradeFilter>(() => {
+    const v = search.get('grading');
+    return v === 'unfinished' || v === 'finished' ? v : 'all';
+  });
   const [tabDirection, setTabDirection] = useState(0);
   const setParam = (key: string, value: string | null) => {
     const params = new URLSearchParams(window.location.search);
@@ -170,8 +182,10 @@ export function WorksBoard() {
   const matches = useCallback(
     (g: WorkGroup) =>
       (activeCourse === 'all' || g.courseId === activeCourse) &&
+      (acceptFilter === 'all' || acceptOf(g) === acceptFilter) &&
+      (gradeFilter === 'all' || (gradeFilter === 'finished') === (workRank(g) === 2)) &&
       (!q || g.rep.title.toLowerCase().includes(q) || g.classes.some((c) => c.classroom.name.toLowerCase().includes(q))),
-    [activeCourse, q]
+    [activeCourse, acceptFilter, gradeFilter, q]
   );
   const tabCounts = useMemo(
     () => ({
@@ -189,27 +203,26 @@ export function WorksBoard() {
   );
 
   // Both tabs are worked out together, so switching tabs only swaps what is shown.
-  // The default place of a work: not published yet → still being graded →
-  // fully graded (latest deadline first inside each). It only applies to work
-  // that is new or whose state just changed (published, closed/reopened,
-  // grading finished): the saved order records each work's state, and a work
-  // whose state still matches stays exactly where the teacher dragged it.
+  // Where the teacher dragged a work, it stays. Only work that is not in the
+  // saved order yet (new) gets a default place: not published → still being
+  // graded → fully graded, latest deadline first.
   const byTab = useMemo(() => {
     const build = (isExam: boolean) => {
       const groups = allGroups
         .filter((g) => g.isExam === isExam && matches(g))
         .sort((a, b) => workRank(a) - workRank(b) || b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th'));
-      return applySavedOrder(groups, orderEntry, prefs.order, (item, other) => workRank(item) <= workRank(other));
+      return applySavedOrder(groups, (g) => g.rep.id, prefs.order, (item, other) => workRank(item) <= workRank(other));
     };
     return { homework: build(false), quiz: build(true) };
   }, [allGroups, matches, prefs.order]);
   const works = byTab[tab];
   const workById = new Map(works.map((g) => [g.rep.id, g]));
   // Dragging only on the full list (not while searching or filtering a course).
-  const canDrag = !q && activeCourse === 'all' && works.length > 1;
+  const filtering = !!q || activeCourse !== 'all' || acceptFilter !== 'all' || gradeFilter !== 'all';
+  const canDrag = !filtering && works.length > 1;
   const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps } = useDragReorder(
     works.map((g) => g.rep.id),
-    (keys) => prefs.setOrder(keys.map((id) => (workById.has(id) ? orderEntry(workById.get(id)!) : id)))
+    (keys) => prefs.setOrder(keys)
   );
 
   // ---------------------------------------------------------------- actions
@@ -298,21 +311,7 @@ export function WorksBoard() {
     showToast(tr('เปลี่ยนกำหนดส่งแล้ว', 'Due date changed'));
   };
 
-  const shareTemplate = async (g: WorkGroup) => {
-    try {
-      const token = await dataService.getTemplateLink(g.rep.id);
-      const url = `${window.location.origin}/assignments/new?template=${encodeURIComponent(token)}`;
-      const coarse = window.matchMedia?.('(pointer: coarse)').matches;
-      if (coarse && navigator.share) {
-        await navigator.share({ title: g.rep.title, url }).catch(() => {});
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      showToast(tr('คัดลอกลิงก์เทมเพลตแล้ว ครูท่านอื่นเปิดแล้วสร้างงานนี้ในห้องตัวเองได้', 'Template link copied. Other teachers can open it to create this work in their classes.'));
-    } catch (err) {
-      showToast(errorText(err, tr('สร้างลิงก์ไม่สำเร็จ', 'Could not create the link')));
-    }
-  };
+
 
   // ---------------------------------------------------------------- render bits
   const courseLabel = (id: string) => courseById.get(id)?.code || '';
@@ -375,7 +374,6 @@ export function WorksBoard() {
         onSelect: () => router.push(editorHref('edit', g.rep, g.classes.map((c) => c.assignment.id).filter((id) => id !== g.rep.id))),
       },
       { key: 'copy', label: tr('คัดลอกไปห้องอื่น', 'Copy to classes'), icon: <Copy className="w-4 h-4" />, onSelect: () => router.push(editorHref('copy', g.rep)) },
-      !isRetake(g.rep) && { key: 'share', label: tr('แชร์เป็นเทมเพลต', 'Share as template'), icon: <Share2 className="w-4 h-4" />, onSelect: () => shareTemplate(g) },
       {
         key: 'color',
         label: tr('สีการ์ด', 'Card colour'),
@@ -506,7 +504,13 @@ export function WorksBoard() {
         key={g.key}
         ref={bindItem(g.rep.id)}
         style={itemStyle(g.rep.id)}
-        className={`relative overflow-hidden rounded-3xl border transition-colors ${dragKey === g.rep.id ? 'shadow-2xl shadow-amber-500/20 ring-2 ring-amber-400' : 'shadow-xs'} ${
+        // A tap anywhere on the card (not on a button, link or the class list) opens or closes it.
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('a, button, input, select, textarea, label, [data-no-toggle]')) return;
+          if (window.getSelection()?.toString()) return;
+          toggleWork(g.rep.id);
+        }}
+        className={`relative overflow-hidden rounded-3xl border cursor-pointer transition-colors ${dragKey === g.rep.id ? 'shadow-2xl shadow-amber-500/20 ring-2 ring-amber-400' : 'shadow-xs'} ${
           g.published ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800' : 'bg-slate-50/80 dark:bg-slate-900/50 border-dashed border-slate-300 dark:border-slate-700'
         } ${color ? WORK_COLOR_CLASSES[color].tint : ''}`}
       >
@@ -568,7 +572,7 @@ export function WorksBoard() {
             menu={<ActionMenu label={tr(`ตัวเลือกของ ${g.rep.title}`, `Options for ${g.rep.title}`)} items={workMenu(g)} />}
           />
           <Collapse open={open}>
-            <ul className="pt-3 space-y-2">{g.classes.map((c) => classRow(c, g))}</ul>
+            <ul data-no-toggle className="pt-3 space-y-2 cursor-default">{g.classes.map((c) => classRow(c, g))}</ul>
           </Collapse>
           {/* The fold: the number of classes, centred at the bottom of the card. */}
           <div className="flex justify-center pt-2.5 -mb-1">
@@ -688,7 +692,7 @@ export function WorksBoard() {
               })}
             </div>
           )}
-          <label className="relative block sm:w-64 sm:ml-auto">
+          <label className="relative block sm:w-64 sm:ml-auto shrink-0">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="search"
@@ -700,6 +704,76 @@ export function WorksBoard() {
           </label>
         </div>
 
+        {/* Status and grading filters (tap again to clear) */}
+        <div className="-mx-4 px-4 sm:mx-0 sm:px-0 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+          {(
+            [
+              ['open', tr('เปิดรับ', 'Open')],
+              ['closed', tr('ปิดรับ', 'Closed')],
+              ['hidden', tr('ยังไม่เผยแพร่', 'Not published')],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={acceptFilter === id}
+              onClick={() => {
+                const next = acceptFilter === id ? 'all' : id;
+                setAcceptFilter(next);
+                setParam('status', next === 'all' ? null : next);
+              }}
+              className={`shrink-0 h-8 px-3 rounded-full text-xs font-bold transition-colors cursor-pointer ${
+                acceptFilter === id ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <span aria-hidden className="shrink-0 w-px h-5 mx-1 bg-slate-300 dark:bg-slate-700" />
+          {(
+            [
+              ['unfinished', tr('ยังตรวจไม่ครบ', 'Not fully graded')],
+              ['finished', tr('ตรวจครบแล้ว', 'Fully graded')],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={gradeFilter === id}
+              onClick={() => {
+                const next = gradeFilter === id ? 'all' : id;
+                setGradeFilter(next);
+                setParam('grading', next === 'all' ? null : next);
+              }}
+              className={`shrink-0 h-8 px-3 rounded-full text-xs font-bold transition-colors cursor-pointer ${
+                gradeFilter === id
+                  ? id === 'finished'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-amber-500 text-slate-950'
+                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-amber-400'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {filtering && (
+            <button
+              type="button"
+              onClick={() => {
+                setAcceptFilter('all');
+                setGradeFilter('all');
+                setQuery('');
+                selectCourse('all');
+                setParam('status', null);
+                setParam('grading', null);
+              }}
+              className="shrink-0 h-8 px-2.5 rounded-full text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white inline-flex items-center gap-1 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+              {tr('ล้างตัวกรอง', 'Clear')}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Phones: the two tabs as a bottom bar (like the classroom page). */}
@@ -756,13 +830,13 @@ export function WorksBoard() {
         ) : works.length === 0 ? (
           <div className="text-center py-14 px-6 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
             <p className="text-sm font-bold text-slate-900 dark:text-white">
-              {q || activeCourse !== 'all'
-                ? tr('ไม่พบงานที่ค้นหา', 'Nothing matches')
+              {filtering
+                ? tr('ไม่พบงานตามที่เลือก', 'Nothing matches')
                 : tab === 'quiz'
                 ? tr('ภาคเรียนนี้ยังไม่มีข้อสอบ', 'No quizzes this term')
                 : tr('ภาคเรียนนี้ยังไม่มีการบ้าน', 'No assignments this term')}
             </p>
-            {!q && activeCourse === 'all' && (
+            {!filtering && (
               <CreateWorkMenu from="works" returnTo={returnTo} className="h-10 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer">
                 <Plus className="w-4 h-4" />
                 {tr('สร้างงาน / ข้อสอบ', 'New assignment / quiz')}

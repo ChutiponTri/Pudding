@@ -19,14 +19,30 @@ import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ClassworkRow } from '@/components/works/ClassworkRow';
 import { applySavedOrder, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
 
-/** One colour per classwork category (in turn), so neighbouring categories never look alike. */
-const GROUP_ACCENTS = [
-  { bar: 'bg-amber-400', head: 'bg-amber-50 dark:bg-amber-950/30', border: 'border-amber-200 dark:border-amber-900/60' },
-  { bar: 'bg-sky-400', head: 'bg-sky-50 dark:bg-sky-950/30', border: 'border-sky-200 dark:border-sky-900/60' },
-  { bar: 'bg-violet-400', head: 'bg-violet-50 dark:bg-violet-950/30', border: 'border-violet-200 dark:border-violet-900/60' },
-  { bar: 'bg-emerald-400', head: 'bg-emerald-50 dark:bg-emerald-950/30', border: 'border-emerald-200 dark:border-emerald-900/60' },
-  { bar: 'bg-rose-400', head: 'bg-rose-50 dark:bg-rose-950/30', border: 'border-rose-200 dark:border-rose-900/60' },
-];
+import { CategoryDetailSheet, categoryLook, RenameCategoryDialog } from '@/components/works/CategoryTools';
+import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
+import { BulkStatusDialog } from '@/components/works/StatusBits';
+import { WORK_COLORS, WORK_COLOR_CLASSES, type WorkColor } from '@/lib/hooks/useWorkPrefs';
+import { Check as CheckMark, Clock as ClockIcon, Eye as EyeIcon, Palette, PencilLine as PencilIcon, X as XIcon } from 'lucide-react';
+import type { WorkClass } from '@/lib/utils/workGroups';
+
+/** Category card colours, kept per classroom in this browser. */
+const colorsKey = (classroomId: string) => `pudding:classwork-colors:${classroomId}`;
+function readCategoryColors(classroomId: string): Record<string, WorkColor> {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(colorsKey(classroomId)) || '{}');
+    return Object.fromEntries(Object.entries(value).filter(([, v]) => (WORK_COLORS as readonly string[]).includes(v as string))) as Record<string, WorkColor>;
+  } catch {
+    return {};
+  }
+}
+function writeCategoryColors(classroomId: string, colors: Record<string, WorkColor>) {
+  try {
+    window.localStorage.setItem(colorsKey(classroomId), JSON.stringify(colors));
+  } catch {
+    // Kept for this visit only.
+  }
+}
 import { AssignmentGroupHeader, teacherGroupChips } from '@/components/AssignmentGroupHeader';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { gradingCounts, isGraded, isHandedIn, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
@@ -1078,6 +1094,114 @@ export default function ClassroomWorkspacePage() {
   const orderedClassworkGroups = groupOrder
     .map((key) => sortedClassworkGroups.find(([group]) => classworkFoldKey(group) === key))
     .filter((entry): entry is (typeof sortedClassworkGroups)[number] => !!entry);
+
+  // Category ⋯ menu: details, rename (all its work), colour, status of all its work.
+  const [categoryColorState, setCategoryColorState] = useState<{ scope: string; colors: Record<string, WorkColor> }>(() => ({
+    scope: classroomId,
+    colors: typeof window === 'undefined' ? {} : readCategoryColors(classroomId),
+  }));
+  if (categoryColorState.scope !== classroomId) setCategoryColorState({ scope: classroomId, colors: readCategoryColors(classroomId) });
+  const categoryColors = categoryColorState.scope === classroomId ? categoryColorState.colors : {};
+  const setCategoryColor = (foldKey: string, color: WorkColor | null) => {
+    const next = { ...categoryColors };
+    if (color) next[foldKey] = color;
+    else delete next[foldKey];
+    setCategoryColorState({ scope: classroomId, colors: next });
+    writeCategoryColors(classroomId, next);
+  };
+  const [categoryDetail, setCategoryDetail] = useState<string | null>(null);
+  const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
+  const [categoryStatus, setCategoryStatus] = useState<string | null>(null);
+  /** Every work of a category (not only what the filter shows). */
+  const categoryItems = (group: string) =>
+    classworkFoldKey(group) === '__unpublished' ? unpublishedWork : assignments.filter((a) => isAssignmentPublished(a, nowMs) && groupKeyOf(a) === group);
+  const countsFor = (a: Assignment) => classworkCounts.get(a.id) || gradingCounts([], rosterSizeFor(a, classroom?.students?.length || 0), a.is_exam);
+  const workClassesOf = (group: string): WorkClass[] =>
+    classroom
+      ? categoryItems(group).map((a) => ({ assignment: a, classroom, counts: countsFor(a), window: getAssignmentWindow(a), published: isAssignmentPublished(a) }))
+      : [];
+  const renameCategory = async (group: string, name: string) => {
+    // Drafts that will join this category move too.
+    const all = assignments.filter((a) => groupKeyOf(a) === group);
+    if (all.length) {
+      await dataService.reorderAssignments(
+        classroomId,
+        all.map((a, index) => ({ id: a.id, sort_order: a.sort_order ?? index, group_name: name }))
+      );
+      const ids = new Set(all.map((a) => a.id));
+      setAssignments((prev) => prev.map((a) => (ids.has(a.id) ? { ...a, group_name: name } : a)));
+    }
+    setCustomGroups((prev) => prev.map((g) => (g === group ? name : g)));
+    const oldKey = classworkFoldKey(group);
+    if (categoryColors[oldKey]) {
+      const moved: Record<string, WorkColor> = {};
+      for (const [k, v] of Object.entries(categoryColors)) moved[k === oldKey ? name : k] = v;
+      setCategoryColorState({ scope: classroomId, colors: moved });
+      writeCategoryColors(classroomId, moved);
+    }
+    const nextOrder = savedGroupOrder.map((k) => (k === oldKey ? name : k));
+    setGroupOrderState({ scope: groupOrderScope, keys: nextOrder });
+    writeLocalOrder(groupOrderScope, nextOrder);
+    setNotice(tr(`เปลี่ยนชื่อหมวดเป็น “${name}” แล้ว`, `Category renamed to “${name}”`));
+  };
+  const categoryMenu = (group: string, foldKey: string): ActionMenuItem[] => {
+    const color = categoryColors[foldKey];
+    const items = categoryItems(group);
+    return [
+      { key: 'detail', label: tr('ดูรายละเอียด', 'See details'), icon: <EyeIcon className="w-4 h-4" />, onSelect: () => setCategoryDetail(group) },
+      foldKey !== '__unpublished' && {
+        key: 'rename',
+        label: tr('แก้ไขหมวดหมู่', 'Edit category'),
+        hint: items.length ? tr(`${items.length} งาน`, `${items.length}`) : undefined,
+        icon: <PencilIcon className="w-4 h-4" />,
+        onSelect: () => setRenamingCategory(group),
+      },
+      items.length > 0 && {
+        key: 'status',
+        label: foldKey === '__unpublished' ? tr('เผยแพร่ / เปลี่ยนสถานะ', 'Publish / change status') : tr('เปลี่ยนสถานะทุกงาน', 'Change status (all)'),
+        hint: tr(`${items.length} งาน`, `${items.length}`),
+        icon: <ClockIcon className="w-4 h-4" />,
+        onSelect: () => setCategoryStatus(group),
+      },
+      {
+        key: 'color',
+        label: tr('สีการ์ด', 'Card colour'),
+        icon: color ? <span className={`w-3 h-3 rounded-full ${WORK_COLOR_CLASSES[color].swatch}`} /> : <Palette className="w-4 h-4" />,
+        panel: {
+          title: tr('สีการ์ด', 'Card colour'),
+          render: (close: () => void) => (
+            <div className="grid grid-cols-4 gap-1.5 p-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setCategoryColor(foldKey, null);
+                  close();
+                }}
+                aria-label={tr('สีปกติ', 'Default')}
+                className={`h-10 rounded-xl ring-1 ring-slate-200 dark:ring-slate-700 flex items-center justify-center text-slate-400 cursor-pointer hover:ring-slate-400 ${!color ? 'ring-2 ring-slate-900 dark:ring-white' : ''}`}
+              >
+                <XIcon className="w-4 h-4" />
+              </button>
+              {WORK_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => {
+                    setCategoryColor(foldKey, c);
+                    close();
+                  }}
+                  aria-label={tr(WORK_COLOR_CLASSES[c].label[0], WORK_COLOR_CLASSES[c].label[1])}
+                  className={`h-10 rounded-xl flex items-center justify-center cursor-pointer ${WORK_COLOR_CLASSES[c].swatch} ${color === c ? 'ring-2 ring-offset-2 ring-slate-900 dark:ring-white dark:ring-offset-slate-900' : 'hover:brightness-95'}`}
+                >
+                  {color === c && <CheckMark className="w-4 h-4 text-white" />}
+                </button>
+              ))}
+            </div>
+          ),
+        },
+      },
+    ].filter(Boolean) as ActionMenuItem[];
+  };
 
   /**
    * A card dropped into `group` at `index` (counted in that group's list as
@@ -2139,9 +2263,9 @@ export default function ClassroomWorkspacePage() {
                 style={{ '--tw-enter-translate-x': `${classworkFilterDirection * 2.5}rem` } as CSSProperties}
               >
                 <div ref={bindGroupList} className="relative space-y-5">
-                {orderedClassworkGroups.map(([group, items], groupIndex) => {
-                  const accent = GROUP_ACCENTS[groupIndex % GROUP_ACCENTS.length];
+                {orderedClassworkGroups.map(([group, items]) => {
                   const foldKey = classworkFoldKey(group);
+                  const accent = categoryLook(categoryColors[foldKey]);
                   // Not a real category: nothing can be dropped in, and its cards stay put.
                   const isUnpublishedGroup = foldKey === '__unpublished';
                   return (
@@ -2173,7 +2297,7 @@ export default function ClassroomWorkspacePage() {
                       setDraggingAssignmentId(null);
                       if (id) handleDropAssignment(id, group, index);
                     }}
-                    // Each category is its own card with a colour of its own, so they never run together.
+                    // Each category is its own card: clear border and a grey header (or the teacher's colour).
                     className={`relative overflow-hidden rounded-3xl border-2 transition-[border-color,box-shadow,background-color] ${
                       dragOverGroup === group
                         ? 'border-amber-400 ring-2 ring-amber-400/60 bg-amber-50/60 dark:bg-amber-950/20'
@@ -2182,7 +2306,7 @@ export default function ClassroomWorkspacePage() {
                         : `${accent.border} bg-white dark:bg-slate-900`
                     } ${groupDragKey === foldKey ? 'shadow-2xl shadow-slate-900/15' : 'shadow-xs'}`}
                   >
-                    <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 ${accent.bar}`} />
+                    {accent.bar && <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 ${accent.bar}`} />}
                     <div className={`flex items-center gap-1 pl-3 pr-2 sm:pl-4 sm:pr-3 py-2 ${accent.head}`}>
                       {classworkFilter === 'all' && orderedClassworkGroups.length > 1 && (
                         <button
@@ -2209,6 +2333,7 @@ export default function ClassroomWorkspacePage() {
                     />
 
                       </div>
+                      <ActionMenu size="sm" label={tr(`ตัวเลือกของหมวด ${group}`, `Options for ${group}`)} items={categoryMenu(group, foldKey)} />
                     </div>
                     <Collapse open={isClassworkGroupOpen(classworkFoldKey(group))}>
                     <div className="space-y-3 p-3 sm:p-4 pt-3">
@@ -2668,6 +2793,34 @@ export default function ClassroomWorkspacePage() {
       {/* ============================================================== */}
       {/* MODAL: ASSIGNMENT STATUS */}
       {/* ============================================================== */}
+      {categoryDetail !== null && (
+        <CategoryDetailSheet
+          title={categoryDetail}
+          items={categoryItems(categoryDetail).map((a) => ({ assignment: a, counts: countsFor(a) }))}
+          onClose={() => setCategoryDetail(null)}
+        />
+      )}
+      {renamingCategory !== null && (
+        <RenameCategoryDialog
+          current={renamingCategory}
+          count={assignments.filter((a) => groupKeyOf(a) === renamingCategory).length}
+          onClose={() => setRenamingCategory(null)}
+          onSave={(name) => renameCategory(renamingCategory, name)}
+        />
+      )}
+      {categoryStatus !== null && (
+        <BulkStatusDialog
+          title={categoryStatus}
+          scope={tr(`${categoryItems(categoryStatus).length} งาน`, `${categoryItems(categoryStatus).length} items`)}
+          items={workClassesOf(categoryStatus)}
+          onClose={() => setCategoryStatus(null)}
+          onDone={(changes, message) => {
+            const byId = new Map(changes.map((c) => [c.id, c.change]));
+            setAssignments((prev) => prev.map((a) => (byId.has(a.id) ? { ...a, ...byId.get(a.id) } : a)));
+            setNotice(message);
+          }}
+        />
+      )}
       {statusAssignment && (
         <AssignmentStatusDialog
           assignment={statusAssignment}

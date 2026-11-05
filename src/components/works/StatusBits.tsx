@@ -117,6 +117,9 @@ export function BulkStatusDialog({
   const { tr } = useLanguage();
   const published = items.filter((c) => c.published);
   const hidden = items.filter((c) => !c.published);
+  // Several classes of one work → count classes; one classroom's works → count works.
+  const oneClass = new Set(items.map((c) => c.classroom.id)).size <= 1;
+  const unit = oneClass ? tr('งาน', 'items') : tr('ห้อง', 'classes');
   const modes = new Set(published.map((c) => c.assignment.status_override || 'auto'));
   const [mode, setMode] = useState<SubmissionOverrideStatus>(modes.size === 1 ? [...modes][0] : 'auto');
   const [until, setUntil] = useState(() => daysFromNowAt(1, 23, 59));
@@ -159,7 +162,7 @@ export function BulkStatusDialog({
     }
     const done =
       (kind === 'publish' ? tr('เผยแพร่แล้ว', 'Published') : tr('เปลี่ยนสถานะแล้ว', 'Status changed')) +
-      (changes.length > 1 ? tr(` · ${changes.length} ห้อง`, ` · ${changes.length} classes`) : '');
+      (changes.length > 1 ? ` · ${changes.length} ${unit}` : '');
     onDone(changes, failed ? `${done} ${changes.length}/${list.length} · ${failed}` : done);
     onClose();
   };
@@ -212,7 +215,7 @@ export function BulkStatusDialog({
         )}
         {hidden.length > 0 && (
           <div className="p-3 rounded-2xl bg-sky-50 dark:bg-sky-950/40 flex items-center gap-3">
-            <p className="flex-1 text-xs font-bold text-sky-800 dark:text-sky-200">{tr(`ยังไม่เผยแพร่ ${hidden.length} ห้อง`, `${hidden.length} not published yet`)}</p>
+            <p className="flex-1 text-xs font-bold text-sky-800 dark:text-sky-200">{tr(`ยังไม่เผยแพร่ ${hidden.length} ${unit}`, `${hidden.length} not published yet`)}</p>
             <button
               type="button"
               onClick={() => run('publish')}
@@ -261,7 +264,7 @@ export function BulkStatusDialog({
             className="h-10 px-5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 text-xs font-black inline-flex items-center gap-1.5 cursor-pointer"
           >
             {saving === 'status' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            {tr(`ใช้กับ ${published.length} ห้อง`, `Apply to ${published.length} classes`)}
+            {tr(`ใช้กับ ${published.length} ${unit}`, `Apply to ${published.length} ${unit}`)}
           </button>
         </ModalSheetFooter>
       )}
