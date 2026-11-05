@@ -35,7 +35,7 @@ import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions, type ResultRelease } from '@/lib/server/resultRelease';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
 import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, zeroFillNoSubmissions } from '@/lib/server/grading';
-import { isObjectiveQuestion } from '@/lib/utils/autoGrade';
+import { isObjectiveQuestion, missingKeyMessage } from '@/lib/utils/autoGrade';
 import { isRetake, retakeIncludes, rosterFor } from '@/lib/utils/retake';
 import { RETAKE_MIGRATION_MESSAGE, resyncRetakesOf, syncRetakeScores, unlinkRetake } from '@/lib/server/retake';
 import { personNameError, studentProfileError } from '@/lib/utils/studentName';
@@ -1459,6 +1459,11 @@ export const dataActions = {
       const { retake_of: _of, retake_student_ids: _ids, ...plain } = assignmentData;
       assignmentData = plain;
     }
+    // Published or scheduled work needs every choice / true-false key (a draft may wait).
+    if (!isAssignmentDraft(assignmentData)) {
+      const keyProblem = missingKeyMessage(questionsData);
+      if (keyProblem) throw new HttpError(400, keyProblem);
+    }
     const stamp = Date.now();
     const id = `assign-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
     const newAssignment: Assignment = {
@@ -1636,6 +1641,10 @@ export const dataActions = {
     questionsData: Array<Omit<Question, 'assignment_id' | 'id'> & { id?: string }>
   ) {
     const { assignment } = await requireTeacherOfAssignment(supabase, actor, id);
+    if (!isAssignmentDraft(assignment)) {
+      const keyProblem = missingKeyMessage(questionsData);
+      if (keyProblem) throw new HttpError(400, keyProblem);
+    }
     const { data: existing, error: loadError } = await supabase.from('questions').select('*').eq('assignment_id', id);
     if (loadError) throw toDatabaseError(loadError, 'questions');
     const previousById = new Map(((existing || []) as Question[]).map((q) => [q.id, q]));

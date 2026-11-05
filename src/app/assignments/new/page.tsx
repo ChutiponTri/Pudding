@@ -791,14 +791,15 @@ function NewAssignmentContent() {
           ? !q.options.some((opt) => opt.trim() && opt === q.ideal_answer)
           : q.type === 'true_false' && parseTrueFalse(q.ideal_answer) === null
       );
-    if (
-      noAnswerKey.length &&
-      !confirm(
+    // Published or scheduled work needs every key (it would auto-score 0 for everyone); a draft may wait.
+    const publishing = editIsPublished || !saveAsDraft;
+    if (noAnswerKey.length && publishing) {
+      alert(
         language === 'th'
-          ? `ข้อ ${noAnswerKey.map((x) => x.n).join(', ')} ยังไม่ได้เลือกคำตอบที่ถูกต้อง ระบบจะให้ 0 คะแนนอัตโนมัติ (ตรวจเองภายหลังได้)\n\nต้องการสร้างต่อหรือไม่?`
-          : `Question ${noAnswerKey.map((x) => x.n).join(', ')} has no correct answer selected and will auto-score 0. Continue?`
-      )
-    ) {
+          ? `ข้อ ${noAnswerKey.map((x) => x.n).join(', ')} ยังไม่ได้เลือกคำตอบที่ถูกต้อง กรุณาเลือกคำตอบก่อนเผยแพร่\n(หรือบันทึกเป็นฉบับร่างไว้ก่อน)`
+          : `Question ${noAnswerKey.map((x) => x.n).join(', ')} has no correct answer selected. Pick one before publishing (or save it as a draft).`
+      );
+      document.getElementById(`question-${noAnswerKey[0].n - 1}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
 
@@ -1828,6 +1829,7 @@ function NewAssignmentContent() {
               return (
               <div
                 key={q.uid}
+                id={`question-${idx}`}
                 inert={removing}
                 className={`grid last:[&>div]:pb-0 transition-[grid-template-rows,opacity,scale] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
                   removing ? 'grid-rows-[0fr] opacity-0 scale-[0.97]' : 'grid-rows-[1fr] opacity-100'

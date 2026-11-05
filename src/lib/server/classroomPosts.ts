@@ -46,9 +46,11 @@ export function assignmentPostBody(
   const due = formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE);
   if (Array.isArray(a.retake_student_ids)) {
     const names = rosterFor(a, (students || []).filter((s) => !!s?.id)).map(studentName);
-    const head = `สอบซ่อม: ${a.title} (ปิดรับคำตอบ: ${due})`;
-    if (!names.length) return `${head}\nเฉพาะนักเรียนที่คุณครูแจ้ง ${a.retake_student_ids.length} คน`;
-    return `${head}\nเฉพาะนักเรียนต่อไปนี้ (${names.length} คน):\n${names.map((name, i) => `${i + 1}. ${name}`).join('\n')}`;
+    // Retake titles often start with "สอบซ่อม" already; never say it twice.
+    const title = a.title.replace(/^\s*สอบซ่อม(\s*[:：-]\s*|\s+)/, '') || a.title;
+    const head = `สอบซ่อม: ${title}\nกำหนดส่ง: ${due}`;
+    if (!names.length) return `${head}\n\nเฉพาะนักเรียนที่คุณครูแจ้ง ${a.retake_student_ids.length} คน`;
+    return `${head}\n\nเฉพาะนักเรียนต่อไปนี้ (${names.length} คน):\n${names.map((name, i) => `${i + 1}. ${name}`).join('\n')}`;
   }
   return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${a.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due})`;
 }

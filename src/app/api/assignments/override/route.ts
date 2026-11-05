@@ -8,7 +8,8 @@ import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, reanno
 import { botSendOrShare } from '@/lib/server/lineSend';
 import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
-import type { Assignment, SubmissionOverrideStatus } from '@/types/database';
+import { questionsMissingKey } from '@/lib/utils/autoGrade';
+import type { Assignment, Question, SubmissionOverrideStatus } from '@/types/database';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -91,6 +92,16 @@ export async function POST(request: NextRequest) {
     // A draft may have sat past its deadline; publishing it would open already-closed work.
     if (wasDraft && new Date(previous.due_date).getTime() <= Date.now()) {
       return NextResponse.json({ error: 'กำหนดส่งของฉบับร่างนี้ผ่านไปแล้ว กรุณาแก้ไขกำหนดส่งก่อนเผยแพร่' }, { status: 400 });
+    }
+    // Every choice / true-false question needs its correct answer before students see the work.
+    // (Rows come unordered, so the message counts them rather than naming question numbers.)
+    const { data: keyRows } = await supabase.from('questions').select('type, ideal_answer, options').eq('assignment_id', assignmentId);
+    const noKey = questionsMissingKey((keyRows || []) as Pick<Question, 'type' | 'ideal_answer' | 'options'>[]).length;
+    if (noKey) {
+      return NextResponse.json(
+        { error: `มี ${noKey} ข้อที่ยังไม่ได้เลือกคำตอบที่ถูกต้อง กรุณากด "แก้ไข" แล้วเลือกคำตอบก่อนเผยแพร่` },
+        { status: 400 }
+      );
     }
     const nowIso = new Date().toISOString();
     const { data: published, error: publishError } = await supabase

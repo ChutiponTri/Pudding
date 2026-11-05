@@ -81,3 +81,22 @@ export function isPickedOption(question: Pick<Question, 'type'>, option: string,
   }
   return normChoice(option) === normChoice(answer);
 }
+
+/**
+ * Choice / true-false questions without a usable answer key (1-based numbers).
+ * Work cannot be published with any: they would auto-score 0 for everyone.
+ */
+export function questionsMissingKey(questions: Array<Pick<Question, 'type' | 'ideal_answer' | 'options'>>): number[] {
+  const missing: number[] = [];
+  questions.forEach((q, i) => {
+    if (q.type === 'multiple_choice' && matchChoiceOption(q.ideal_answer, q.options) < 0) missing.push(i + 1);
+    else if (q.type === 'true_false' && parseTrueFalse(q.ideal_answer) === null) missing.push(i + 1);
+  });
+  return missing;
+}
+
+/** Why work with these questions cannot be published yet, or null. */
+export function missingKeyMessage(questions: Array<Pick<Question, 'type' | 'ideal_answer' | 'options'>>): string | null {
+  const missing = questionsMissingKey(questions);
+  return missing.length ? `ข้อ ${missing.join(', ')} ยังไม่ได้เลือกคำตอบที่ถูกต้อง กรุณาเลือกก่อนเผยแพร่ (บันทึกเป็นฉบับร่างได้)` : null;
+}
