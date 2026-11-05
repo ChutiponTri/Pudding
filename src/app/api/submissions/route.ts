@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
   let submissions = (data || []) as SubmissionRow[];
   if (actor.kind === 'student' && submissions.length > 0) {
     // Choice / true-false results stay hidden until nobody can hand in any more.
-    const release = await resultReleaseForSubmissions(supabase, submissions as unknown as Array<Pick<Submission, 'assignment_id' | 'status'>>);
+    const release = await resultReleaseForSubmissions(supabase, submissions as unknown as Array<Pick<Submission, 'assignment_id' | 'status' | 'total_score'>>);
     submissions = submissions.map((sub) => (release.hidden.has(sub.assignment_id as string) ? (maskSubmission(sub as Partial<Submission>) as unknown as SubmissionRow) : sub));
   }
   if (!withStudents || submissions.length === 0) {
@@ -555,13 +555,13 @@ export async function POST(request: NextRequest) {
     after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id }));
     // Choice / true-false results are only shown once nobody can hand in any
     // more (this hand-in may have been the last one). Read after the write.
-    const release = await resultRelease(supabase, [assignment], [{ assignment_id, status: submissionRecord.status as Submission['status'] }]);
+    const release = await resultRelease(supabase, [assignment], [{ assignment_id, status: submissionRecord.status as Submission['status'], total_score: calculatedTotalScore ?? null }]);
     if (release.hidden.size > 0) {
       return NextResponse.json({
         success: true,
         submission: {
           ...maskSubmission(submissionRecord as unknown as Submission),
-          answers: scoredAnswers.map((ans) => (release.objectiveQuestionIds.has(ans.question_id) ? { ...ans, teacher_score: undefined } : ans)),
+          answers: scoredAnswers.map((ans) => (release.hiddenQuestionIds.has(ans.question_id) ? { ...ans, teacher_score: undefined } : ans)),
         },
       });
     }

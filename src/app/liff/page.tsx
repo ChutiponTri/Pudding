@@ -174,14 +174,14 @@ function formatTimeLeft(deadline: number | null): string {
  */
 function ResultsHiddenNote({ isExam, submittedAt }: { isExam: boolean; submittedAt?: string }) {
   return (
-    <div className="liff-rise p-5 rounded-2xl bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-200 dark:ring-violet-900 text-center space-y-1.5">
-      <p className="liff-pop text-2xl" aria-hidden>🔒</p>
-      <p className="text-base font-bold text-violet-900 dark:text-violet-200">ส่งแล้ว • รอประกาศคะแนน</p>
-      <p className="text-xs leading-relaxed text-violet-800/80 dark:text-violet-300/80">
-        คะแนนข้อปรนัยและถูก/ผิด จะแสดงเมื่อปิดรับ{isExam ? "ข้อสอบ" : "งาน"}แล้ว หรือเมื่อเพื่อนในห้องส่งครบทุกคน
+    <div className="liff-rise p-5 rounded-2xl bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-200 dark:ring-sky-900 text-center space-y-1.5">
+      <p className="liff-pop text-2xl" aria-hidden>✅</p>
+      <p className="text-base font-bold text-sky-900 dark:text-sky-200">ส่ง{isExam ? "ข้อสอบ" : "งาน"}แล้ว</p>
+      <p className="text-xs leading-relaxed text-sky-800/80 dark:text-sky-300/80">
+        คะแนนและความเห็นของคุณครูจะแสดงที่นี่ หลังปิดรับ{isExam ? "ข้อสอบ" : "งาน"}และคุณครูประกาศผลแล้ว
       </p>
       {submittedAt && (
-        <p className="text-[11px] text-violet-700/70 dark:text-violet-300/70">
+        <p className="text-[11px] text-sky-700/70 dark:text-sky-300/70">
           ส่งเมื่อ {new Date(submittedAt).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}
         </p>
       )}
@@ -2385,7 +2385,7 @@ export default function LiffStudentPage() {
                 <div className="p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20">
                   <p className="text-xs font-semibold text-emerald-50">ส่งแล้ว</p>
                   <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : <CountUp value={completedAssignments.length} />}</p>
-                  <p className="text-[11px] text-emerald-50/90 mt-0.5">ตรวจแล้ว / รอผล</p>
+                  <p className="text-[11px] text-emerald-50/90 mt-0.5">ดูงานที่ส่งได้ในแต่ละวิชา</p>
                 </div>
               </div>
             </section>
@@ -2761,10 +2761,9 @@ export default function LiffStudentPage() {
                                     <span className="text-base tabular-nums">{submission.total_score}</span>
                                     <span className="text-[11px] font-bold">/{assignment.total_points || 20}</span>
                                   </span>
-                                ) : isSubmitted && submission.results_hidden ? (
-                                  <Pill tone="violet">🔒 รอประกาศคะแนน</Pill>
                                 ) : isSubmitted ? (
-                                  <Pill tone="sky">รอตรวจ</Pill>
+                                  // No grading status before the results are released (closed and graded).
+                                  <Pill tone="sky">✓ ส่งแล้ว</Pill>
                                 ) : isClosed ? (
                                   <Pill tone="rose">🔒 ปิดรับแล้ว</Pill>
                                 ) : isPastDue ? (
@@ -2800,7 +2799,7 @@ export default function LiffStudentPage() {
                               </span>
                               {!isClosed && (
                                 <span className="font-bold text-line shrink-0 flex items-center gap-0.5">
-                                  {isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : canHandInOverMissing(assignment, submission) ? 'ส่งงาน' : 'ดูผล') : handInAllowed ? 'ส่งงาน' : 'เริ่มทำ'}
+                                  {isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : canHandInOverMissing(assignment, submission) ? 'ส่งงาน' : isGraded ? 'ดูผล' : 'ดูงานที่ส่ง') : handInAllowed ? 'ส่งงาน' : 'เริ่มทำ'}
                                   <ChevronRight className="w-3.5 h-3.5" />
                                 </span>
                               )}
@@ -3788,16 +3787,10 @@ export default function LiffStudentPage() {
                 คิดเป็น {Math.round(((viewingGradedSub.submission.total_score || 0) / (viewingGradedSub.assignment.total_points || 20)) * 100)}%
               </p>
             </div>
-          ) : viewingGradedSub.submission.results_hidden ? (
+          ) : isHandedIn(viewingGradedSub.submission) ? (
+            // Handed in, results not released yet: no grading status, only that it was handed in.
             <ResultsHiddenNote isExam={!!viewingGradedSub.assignment.is_exam} submittedAt={viewingGradedSub.submission.submitted_at} />
-          ) : (
-            <div className="p-5 rounded-2xl bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-200 dark:ring-sky-900 text-center space-y-1">
-              <p className="text-base font-bold text-sky-800 dark:text-sky-200">ส่งงานแล้ว • รอคุณครูตรวจ</p>
-              <p className="text-xs text-sky-700/80 dark:text-sky-300/80">
-                ส่งเมื่อ {viewingGradedSub.submission.submitted_at ? new Date(viewingGradedSub.submission.submitted_at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
-              </p>
-            </div>
-          )}
+          ) : null}
 
           <div className="space-y-3">
             <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">
@@ -3834,14 +3827,11 @@ export default function LiffStudentPage() {
                     <p className="text-sm font-semibold text-slate-800 dark:text-slate-100 min-w-0 wrap-break-word">
                       <span className="text-slate-400">ข้อ {i + 1}.</span> {q.question_text}
                     </p>
-                    {score != null ? (
+                    {/* Scores only once the results are released (the server leaves them out before). */}
+                    {score != null && (
                       <span className="text-sm font-bold text-line shrink-0 tabular-nums">
                         {score}/{q.max_score}
                       </span>
-                    ) : viewingGradedSub.submission.results_hidden && (q.type === "multiple_choice" || q.type === "true_false") ? (
-                      <span className="shrink-0"><Pill tone="violet">🔒 รอประกาศ</Pill></span>
-                    ) : (
-                      <span className="shrink-0"><Pill tone="sky">รอตรวจ</Pill></span>
                     )}
                   </div>
                   <div className="p-3 rounded-xl bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-300 wrap-break-word">
