@@ -105,10 +105,57 @@ export async function recomputeSubmissionTotals(
   );
 }
 
+/** A score moved to a question's new points (same share of the points), or null when it can't / needn't move. */
+function rescaleScore(score: number | null | undefined, beforeMax: number | null | undefined, afterMax: number | null | undefined): number | null {
+  const from = Number(beforeMax || 0);
+  const to = Number(afterMax || 0);
+  if (score == null || from <= 0 || from === to) return null;
+  return Math.round(((Number(score) * to) / from) * 100) / 100;
+}
+
+/**
+ * Written / file questions whose points changed (e.g. 5 → 2): every score
+ * already given keeps its share of the points (4/5 → 1.6/2), so the teacher
+ * doesn't have to grade the question again. Choice questions are handled by
+ * regradeObjectiveQuestions. Returns how many answers were rescaled.
+ */
+export async function rescaleChangedMaxScores(
+  supabase: SupabaseClient,
+  assignmentId: string,
+  changes: Array<{ before: Question; after: Question }>
+) {
+  const relevant = changes.filter(
+    ({ before, after }) => !isObjectiveQuestion(after) && Number(before.max_score || 0) > 0 && Number(before.max_score || 0) !== Number(after.max_score || 0)
+  );
+  if (!relevant.length) return 0;
+  const changeFor = new Map(relevant.map((change) => [change.after.id, change]));
+  const answers = await answersFor(supabase, 'question_id', [...changeFor.keys()]);
+  const now = new Date().toISOString();
+  const updates: Array<{ id: string; score: number }> = [];
+  const touched = new Set<string>();
+  for (const answer of answers) {
+    const change = changeFor.get(answer.question_id);
+    const next = change ? rescaleScore(answer.teacher_score, change.before.max_score, change.after.max_score) : null;
+    if (next == null || next === Number(answer.teacher_score)) continue;
+    updates.push({ id: answer.id, score: next });
+    touched.add(answer.submission_id);
+  }
+  for (const part of chunk(updates, 25)) {
+    const results = await Promise.all(
+      part.map(({ id, score }) => supabase.from('submission_answers').update({ teacher_score: score, updated_at: now }).eq('id', id))
+    );
+    const failed = results.find((r) => r.error)?.error;
+    if (failed) throw new Error(failed.message);
+  }
+  if (touched.size) await recomputeSubmissionTotals(supabase, assignmentId, [...touched]);
+  return updates.length;
+}
+
 /**
  * Re-scores submitted answers of choice questions after their answer key (or
  * options / points) changed. An answer the teacher adjusted by hand (its score
- * differs from what the old key gave) keeps the teacher's score.
+ * differs from what the old key gave) keeps the teacher's score, rescaled to
+ * the question's new points when those changed.
  * Returns how many answers were re-scored and how many manual scores were kept.
  */
 export async function regradeObjectiveQuestions(
@@ -134,7 +181,13 @@ export async function regradeObjectiveQuestions(
     // Only scores the system set from the old key move; a teacher's own adjustment stays.
     const wasAuto = current == null || !change.before || !isObjectiveQuestion(change.before) || Number(current) === scoreObjectiveAnswer(change.before, answer.text_answer);
     if (!wasAuto) {
-      if (Number(current) !== next) keptManual += 1;
+      // A teacher's own score keeps its share of the question's points when the points change.
+      const rescaled = change.before ? rescaleScore(current, change.before.max_score, change.after.max_score) : null;
+      if (rescaled != null && rescaled !== Number(current)) {
+        updates.push({ id: answer.id, score: rescaled });
+        touched.add(answer.submission_id);
+      }
+      if ((rescaled ?? Number(current)) !== next) keptManual += 1;
       continue;
     }
     if (current != null && Number(current) === next) continue;

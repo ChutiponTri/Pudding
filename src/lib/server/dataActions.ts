@@ -34,7 +34,7 @@ import { DRAFT_RETENTION_MS, canRecordNoSubmission, getAssignmentWindow, isAssig
 import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions, type ResultRelease } from '@/lib/server/resultRelease';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
-import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, zeroFillNoSubmissions } from '@/lib/server/grading';
+import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, rescaleChangedMaxScores, zeroFillNoSubmissions } from '@/lib/server/grading';
 import { isObjectiveQuestion, missingKeyMessage } from '@/lib/utils/autoGrade';
 import { isRetake, retakeIncludes, rosterFor } from '@/lib/utils/retake';
 import { RETAKE_MIGRATION_MESSAGE, resyncRetakesOf, syncRetakeScores, unlinkRetake } from '@/lib/server/retake';
@@ -1635,7 +1635,8 @@ export const dataActions = {
    * keep their id, so students' answers stay attached; a question left out is
    * deleted together with its answers. total_points follows the new scores.
    * Every handed-in choice / true-false answer is re-scored from the new key
-   * (scores the teacher adjusted by hand are kept), answers to a question that
+   * (scores the teacher adjusted by hand are kept, rescaled to new points),
+   * written / file scores are rescaled when a question's points change, answers to a question that
    * is no longer a choice question go back to "to grade", and every
    * submission's total follows the new set of questions. Students' handed-in
    * work stays locked; the teacher reopens it per student when they should
@@ -1695,6 +1696,8 @@ export const dataActions = {
     );
     // A choice question turned into a written one goes back to the teacher.
     await clearRetiredAutoScores(supabase, kept.map((q) => ({ before: previousById.get(q.id)!, after: q })));
+    // Written / file questions with new points: given scores keep their share (5 → 2 points: 4 becomes 1.6).
+    await rescaleChangedMaxScores(supabase, id, kept.map((q) => ({ before: previousById.get(q.id)!, after: q })));
     // "No submission" students get 0 on questions added now too.
     await zeroFillNoSubmissions(supabase, id, rows.filter((q) => !previousById.has(q.id)).map((q) => q.id));
     // Added / removed questions and new points change every total.
