@@ -25,6 +25,7 @@ import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
 import { isRetake } from '@/lib/utils/retake';
+import { useScheduleNow } from '@/lib/hooks/useScheduleNow';
 import {
   buildWorkGroups,
   type WorkClass,
@@ -130,12 +131,9 @@ export function WorksBoard() {
   const [statusOne, setStatusOne] = useState<WorkClass | null>(null);
   const [statusMany, setStatusMany] = useState<{ title: string; scope: string; items: WorkClass[] } | null>(null);
 
-  // Ticks every minute so "2 days left" stays true on an open page.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
+  // Ticks every minute so "2 days left" stays true on an open page, and exactly when a
+  // scheduled publish time or a deadline passes, so the status flips without a refresh.
+  const now = useScheduleNow(data?.assignments, 60_000);
 
   const courses = useMemo(() => data?.courses || [], [data]);
   const classrooms = useMemo(() => data?.classrooms || [], [data]);
@@ -214,8 +212,15 @@ export function WorksBoard() {
   );
   const works = byTab[tab];
   const workById = new Map(works.map((g) => [g.rep.id, g]));
+  // Work no class can see yet (draft / scheduled) is pinned on top: never dragged and not
+  // part of the drag order (latest deadline first). It still folds open like any work.
+  // The saved order of everything else is untouched (commitOrder keeps pinned ids in place).
+  const pinnedWorks = works
+    .filter((g) => !g.published)
+    .sort((a, b) => b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th'));
+  const draggableWorks = works.filter((g) => g.published);
   const filtering = !!q || activeCourse !== 'all' || activeClass !== 'all' || acceptFilter !== 'all' || gradeFilter !== 'all';
-  const canDrag = works.length > 1;
+  const canDrag = draggableWorks.length > 1;
   /**
    * A drag in a filtered list reorders only the works shown: they swap among
    * the places they hold in the whole tab, and the hidden ones stay put.
@@ -226,7 +231,7 @@ export function WorksBoard() {
     prefs.setOrder(fullByTab[tab].map((g) => (visible.has(g.rep.id) ? shown[next++] : g.rep.id)));
   };
   const { bindList, bindItem, order: shownOrder, dragKey, itemStyle, handleProps, pressProps, recentlyDropped } = useDragReorder(
-    works.map((g) => g.rep.id),
+    draggableWorks.map((g) => g.rep.id),
     commitOrder
   );
 
@@ -640,8 +645,9 @@ export function WorksBoard() {
     </li>
   );
 
-  const workCard = (g: WorkGroup) => {
+  const workCard = (g: WorkGroup, draggable = true) => {
     const open = isWorkOpen(g.rep.id);
+    const dragHere = canDrag && draggable;
     const color = prefs.colors[g.rep.id];
     const hidden = g.classes.filter((c) => !c.published);
     const subject = subjectLine(g);
@@ -649,9 +655,9 @@ export function WorksBoard() {
     return (
       <div
         key={g.key}
-        ref={bindItem(g.rep.id)}
-        style={itemStyle(g.rep.id)}
-        {...(canDrag ? pressProps(g.rep.id) : {})}
+        ref={draggable ? bindItem(g.rep.id) : undefined}
+        style={draggable ? itemStyle(g.rep.id) : undefined}
+        {...(dragHere ? pressProps(g.rep.id) : {})}
         // A tap anywhere on the work (not on a button, link or its class list) opens
         // or closes the class list; a tap on a class opens that class's grading.
         onClick={(e) => {
@@ -671,7 +677,7 @@ export function WorksBoard() {
             inset={ROW_INSET.work}
             lead={
               <span className="w-full min-w-0 flex items-center gap-1">
-              {canDrag && (
+              {dragHere && (
                 <button
                   type="button"
                   aria-label={tr(`ลากเพื่อจัดลำดับ ${g.rep.title}`, `Drag to reorder ${g.rep.title}`)}
@@ -1041,8 +1047,11 @@ export function WorksBoard() {
           </div>
         ) : (
           // @container: rows go one line by the list's own width (the sidebar changes it).
-          <div ref={bindList} className="@container relative space-y-2.5">
-            {shownOrder.map((id) => workById.get(id)).filter((g): g is WorkGroup => !!g).map(workCard)}
+          <div className="@container space-y-2.5">
+            {pinnedWorks.length > 0 && <div className="space-y-2.5">{pinnedWorks.map((g) => workCard(g, false))}</div>}
+            <div ref={bindList} className="relative space-y-2.5">
+              {shownOrder.map((id) => workById.get(id)).filter((g): g is WorkGroup => !!g).map((g) => workCard(g))}
+            </div>
           </div>
         )}
       </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { usePageTitle } from '@/lib/hooks/usePageTitle';
-import React, { useState, useEffect, useRef, use, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo, use, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
@@ -58,6 +58,7 @@ import {
   Send,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, canRecordNoSubmission, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
+import { useScheduleNow } from '@/lib/hooks/useScheduleNow';
 import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isReopenActive, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
@@ -177,6 +178,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   };
 
   const cacheKey = `assignmentGrading:${assignmentId}`;
+  // The cached copy follows the assignment shown here (published now, deadline changed,
+  // results announced). Without this, a later grade (applySubmissionChange stores the
+  // copy as fresh) would bring back the old "draft / scheduled" assignment on the next
+  // visit, with no refetch to correct it. Freshness is unchanged.
+  useEffect(() => {
+    const teacherId = clerkUser?.id;
+    if (!teacherId || !assignment || assignment.id !== assignmentId) return;
+    const cached = readCache<{ assignment: Assignment | null }>(cacheKey, teacherId);
+    if (cached && cached.value.assignment !== assignment) patchCache(cacheKey, teacherId, { ...cached.value, assignment });
+  }, [clerkUser?.id, assignment, assignmentId, cacheKey]);
   // Each submissions fetch gets a number; only the newest may write state, so a
   // slow earlier response (e.g. from "save & next") never brings back old scores.
   const submissionsSeqRef = useRef(0);
@@ -426,12 +437,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const [reopeningKey, setReopeningKey] = useState<string | null>(null);
   const [retakeOpen, setRetakeOpen] = useState(false);
   const [reopenDialog, setReopenDialog] = useState<(ReopenTarget & { kind: 'edit' | 'handin'; minutes: number }) | null>(null);
-  // Re-renders now and then so a time-limited permission drops off when it runs out.
-  const [nowTick, setNowTick] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNowTick(Date.now()), 30000);
-    return () => clearInterval(timer);
-  }, []);
+  // Re-renders now and then so a time-limited permission drops off when it runs out, and
+  // exactly when a scheduled publish time or a deadline passes (status flips without a refresh).
+  const scheduleTarget = useMemo(() => (assignment ? [assignment] : []), [assignment]);
+  const nowTick = useScheduleNow(scheduleTarget, 30000);
 
   /**
    * Shows a saved change at once and stores it as this session's fresh copy:

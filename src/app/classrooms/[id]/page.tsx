@@ -55,6 +55,7 @@ import { gradingCounts, isGraded, isHandedIn, isStudentSubmission, needsGrading,
 import { formatDateTime } from '@/lib/utils/datetime';
 import { roomLabel } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
+import { useScheduleNow } from '@/lib/hooks/useScheduleNow';
 import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } from '@/types/database';
 import { MobileText } from '@/components/MobileText';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
@@ -670,19 +671,9 @@ export default function ClassroomWorkspacePage() {
     };
   }, [classroomId]);
 
-  // Re-render when the next scheduled assignment goes live, so its badge and
-  // timeline entry flip from "scheduled" without a refresh.
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const now = Date.now();
-    const next = assignments
-      .map((a) => (a.publish_at ? new Date(a.publish_at).getTime() : NaN))
-      .filter((t) => t > now)
-      .sort((a, b) => a - b)[0];
-    if (!next) return;
-    const timer = setTimeout(() => setNowMs(Date.now()), Math.min(next - now + 500, 2 ** 31 - 1));
-    return () => clearTimeout(timer);
-  }, [assignments, nowMs]);
+  // Re-render when the next scheduled assignment goes live (or a deadline passes), so its
+  // badge and timeline entry flip from "scheduled" / "open" without a refresh.
+  const nowMs = useScheduleNow(assignments);
 
   // ----------------------------------------------------
   // UNIFIED TIMELINE BUILDER (Feed of Announcements, Work, Exams, Attendance)
@@ -1128,16 +1119,21 @@ export default function ClassroomWorkspacePage() {
     itemStyle: groupItemStyle,
     handleProps: groupHandleProps,
   } = useDragReorder(
-    sortedClassworkGroups.map(([group]) => classworkFoldKey(group)),
+    // "ยังไม่เผยแพร่" is pinned on top (shown above the list, never dragged), so only the
+    // real categories take part. Its saved place (from before it was pinned) no longer matters.
+    sortedClassworkGroups.map(([group]) => classworkFoldKey(group)).filter((key) => key !== '__unpublished'),
     (keys) => {
       const next = [...keys, ...savedGroupOrder.filter((k) => !keys.includes(k))];
       setGroupOrderState({ scope: groupOrderScope, keys: next });
       writeLocalOrder(groupOrderScope, next);
     }
   );
-  const orderedClassworkGroups = groupOrder
+  const pinnedClassworkGroups = sortedClassworkGroups.filter(([group]) => classworkFoldKey(group) === '__unpublished');
+  const draggableClassworkGroups = groupOrder
     .map((key) => sortedClassworkGroups.find(([group]) => classworkFoldKey(group) === key))
     .filter((entry): entry is (typeof sortedClassworkGroups)[number] => !!entry);
+  /** Unpublished work always first, then the categories in the teacher's order. */
+  const orderedClassworkGroups = [...pinnedClassworkGroups, ...draggableClassworkGroups];
 
   // Category ⋯ menu: details, rename (all its work), colour, status of all its work.
   const [categoryColorState, setCategoryColorState] = useState<{ scope: string; colors: Record<string, WorkColor> }>(() => ({
@@ -2353,8 +2349,16 @@ export default function ClassroomWorkspacePage() {
                 className="space-y-5 animate-in fade-in [--tw-duration:320ms]"
                 style={{ '--tw-enter-translate-x': `${classworkFilterDirection * 2.5}rem` } as CSSProperties}
               >
-                <div ref={bindGroupList} className="relative space-y-5">
-                {orderedClassworkGroups.map(([group, items]) => {
+                {/* Unpublished work is pinned on top, outside the drag list (never dragged or
+                    reordered, still folds); the categories below keep their own drag order. */}
+                {[
+                  { id: 'pinned', groups: pinnedClassworkGroups, draggable: false },
+                  { id: 'categories', groups: draggableClassworkGroups, draggable: true },
+                ]
+                  .filter((list) => list.draggable || list.groups.length > 0)
+                  .map((list) => (
+                <div key={list.id} ref={list.draggable ? bindGroupList : undefined} className="relative space-y-5">
+                {list.groups.map(([group, items]) => {
                   const foldKey = classworkFoldKey(group);
                   const accent = categoryLook(categoryColors[foldKey]);
                   // Not a real category: nothing can be dropped in, and its cards stay put.
@@ -2362,8 +2366,8 @@ export default function ClassroomWorkspacePage() {
                   return (
                   <div
                     key={group}
-                    ref={bindGroupItem(foldKey)}
-                    style={groupItemStyle(foldKey)}
+                    ref={list.draggable ? bindGroupItem(foldKey) : undefined}
+                    style={list.draggable ? groupItemStyle(foldKey) : undefined}
                     // A drop target: the drag hook works out the place from its rows (data-xl-item).
                     {...(isUnpublishedGroup ? {} : { 'data-xl-list': group })}
                     // Each category is its own card: clear border and a grey header (or the teacher's colour).
@@ -2377,7 +2381,7 @@ export default function ClassroomWorkspacePage() {
                   >
                     {accent.bar && <span aria-hidden className={`absolute left-0 inset-y-0 w-1.5 ${accent.bar}`} />}
                     <div className={`flex items-center gap-1 pl-3 pr-2 sm:pl-4 sm:pr-3 py-2 ${accent.head}`}>
-                      {classworkFilter === 'all' && orderedClassworkGroups.length > 1 && (
+                      {list.draggable && classworkFilter === 'all' && draggableClassworkGroups.length > 1 && (
                         <button
                           type="button"
                           draggable={false}
@@ -2490,6 +2494,7 @@ export default function ClassroomWorkspacePage() {
                   );
                 })}
                 </div>
+                  ))}
               </div>
 
             </section>
