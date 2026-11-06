@@ -253,6 +253,16 @@ function WorkShortcut({ tone, badge, title, meta, action, onClick }: {
   );
 }
 
+// ?splitdebug=1 on the LIFF link turns on the quiz's split-screen debug box. Read as the
+// page loads (before LIFF may tidy the URL) and kept for the session.
+if (typeof window !== "undefined") {
+  try {
+    if (window.location.href.includes("splitdebug")) sessionStorage.setItem("splitdebug", "1");
+  } catch {
+    // Storage blocked: no debug box.
+  }
+}
+
 /** Bottom sheet on phones, centered dialog from sm up. */
 function Sheet({ children, onClose, size = "md" }: { children: React.ReactNode; onClose?: () => void; size?: "sm" | "md" }) {
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -1808,7 +1818,6 @@ export default function LiffStudentPage() {
     // Survives the LIFF login redirect (liff.state keeps the word) via sessionStorage.
     let debugBox: HTMLDivElement | null = null;
     try {
-      if (window.location.href.includes("splitdebug")) sessionStorage.setItem("splitdebug", "1");
       if (sessionStorage.getItem("splitdebug") === "1") {
         debugBox = document.createElement("div");
         debugBox.style.cssText =
@@ -1819,8 +1828,37 @@ export default function LiffStudentPage() {
     } catch {
       debugBox = null;
     }
+    // What the browser told us, newest first: shows whether blur / resize ever arrive.
+    const debugLog: string[] = [];
+    const logDebug = (what: string) => {
+      if (!debugBox) return;
+      const t = new Date().toTimeString().slice(0, 8);
+      const de = document.documentElement;
+      debugLog.unshift(`${t} ${what} ${de.clientWidth}x${de.clientHeight} f=${document.hasFocus() ? 1 : 0}`);
+      debugLog.length = Math.min(debugLog.length, 8);
+    };
+    const onDebugEvent = (e: Event) => logDebug(e.type === "visibilitychange" ? `visibility:${document.visibilityState}` : e.type);
+    const debugEvents = ["blur", "focus", "resize", "pagehide", "pageshow", "freeze", "resume"] as const;
+    if (debugBox) {
+      debugEvents.forEach((name) => window.addEventListener(name, onDebugEvent));
+      document.addEventListener("visibilitychange", onDebugEvent);
+      document.addEventListener("freeze", onDebugEvent);
+      document.addEventListener("resume", onDebugEvent);
+      logDebug("start");
+    }
+    let lastDebugFocus = document.hasFocus();
+    let lastDebugSplit = false;
     const renderDebug = () => {
       if (!debugBox) return;
+      // Changes no event announced.
+      if (document.hasFocus() !== lastDebugFocus) {
+        lastDebugFocus = document.hasFocus();
+        logDebug(`poll:focus=${lastDebugFocus}`);
+      }
+      if (split !== lastDebugSplit) {
+        lastDebugSplit = split;
+        logDebug(`SPLIT=${split} ${splitReason}`);
+      }
       const s = window.screen;
       const de = document.documentElement;
       const vv = window.visualViewport;
@@ -1831,6 +1869,9 @@ export default function LiffStudentPage() {
         `vv ${vv ? `${Math.round(vv.width)}x${Math.round(vv.height)}` : "-"} orient ${s.orientation?.type ?? "-"} legacy ${(window as unknown as { orientation?: number }).orientation ?? "-"}`,
         `focus ${document.hasFocus()} hidden ${document.hidden} typing ${isTyping()} view ${liffViewTypeRef.current ?? "-"}`,
         `away ${awayTripRef.current?.event_type ?? "-"} most ${most.screenLong}/${most.screenShort} p${most.portrait.width}x${most.portrait.height} l${most.landscape.width}x${most.landscape.height}`,
+        `ua ${navigator.userAgent.replace(/^Mozilla\/5\.0 /, "").slice(0, 160)}`,
+        "— events —",
+        ...debugLog,
       ].join("\n");
     };
 
@@ -1859,7 +1900,13 @@ export default function LiffStudentPage() {
       window.clearTimeout(firstCheck);
       if (blurTimer) window.clearTimeout(blurTimer);
       if (wakeLock) void wakeLock.release().catch(() => undefined);
-      debugBox?.remove();
+      if (debugBox) {
+        debugEvents.forEach((name) => window.removeEventListener(name, onDebugEvent));
+        document.removeEventListener("visibilitychange", onDebugEvent);
+        document.removeEventListener("freeze", onDebugEvent);
+        document.removeEventListener("resume", onDebugEvent);
+        debugBox.remove();
+      }
       awayTripRef.current = null;
     };
   }, [activeAssignment, isTrackingAway]);

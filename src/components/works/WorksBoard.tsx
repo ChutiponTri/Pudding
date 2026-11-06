@@ -847,10 +847,10 @@ export function WorksBoard() {
         </div>
       </div>
 
-      {/* Desktop: tabs and filters stay pinned under the navbar while scrolling. */}
-      <div className="md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 md:py-3 space-y-2 md:bg-slate-50/90 md:dark:bg-slate-950/90 md:backdrop-blur-xl md:border-b md:border-slate-200/80 md:dark:border-slate-800">
+      {/* Desktop: only the tabs stay pinned under the navbar while scrolling; filters scroll with the page. */}
+      <div className="hidden md:block md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 md:py-3 md:bg-slate-50/90 md:dark:bg-slate-950/90 md:backdrop-blur-xl md:border-b md:border-slate-200/80 md:dark:border-slate-800">
         {/* Two main tabs; the highlight slides between them. */}
-        <div ref={setTabGroup} role="tablist" className="hidden md:grid relative grid-cols-2 p-1 rounded-2xl bg-slate-200/70 dark:bg-slate-900 ring-1 ring-slate-300/70 dark:ring-slate-700">
+        <div ref={setTabGroup} role="tablist" className="grid relative grid-cols-2 p-1 rounded-2xl bg-slate-200/70 dark:bg-slate-900 ring-1 ring-slate-300/70 dark:ring-slate-700">
           {tabIndicator && (
             <span
               aria-hidden
@@ -887,6 +887,7 @@ export function WorksBoard() {
             );
           })}
         </div>
+      </div>
 
         {/* Filters, by the width they have (not the screen's): below 56rem two full-width lines of the
             same width (a 2 × 2 grid of equal boxes: subject/class + search, then status + grading;
@@ -968,7 +969,6 @@ export function WorksBoard() {
           )}
         </div>
         </div>
-      </div>
 
       {/* Phones: the two tabs as a bottom bar (like the classroom page). */}
       <nav
