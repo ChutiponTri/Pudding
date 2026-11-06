@@ -1546,7 +1546,8 @@ export default function LiffStudentPage() {
     // Touch laptops are desktops: their windows are often not full-screen, so no split check there.
     const ua = navigator.userAgent;
     const isIPad = /iPad/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    const isMobileOS = /Android|iPhone|iPod/.test(ua) || isIPad;
+    const isAndroid = /Android/.test(ua);
+    const isMobileOS = isAndroid || /iPhone|iPod/.test(ua) || isIPad;
     const isDesktop = !isMobileOS;
 
     // ---------- the quiz's own focus (no false alarm) ----------
@@ -1569,14 +1570,23 @@ export default function LiffStudentPage() {
     const isTyping = () => !!(document.activeElement as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]");
     const most = { screenLong: 0, screenShort: 0, portrait: { width: 0, height: 0 }, landscape: { width: 0, height: 0 } };
     let lastSize = "";
+    // Which rule found the split (shown in the ?splitdebug=1 overlay).
+    let splitReason = "";
     const isSplitNow = () => {
+      splitReason = "";
       if (isDesktop) return false;
+      const hit = (reason: string) => {
+        splitReason = reason;
+        return true;
+      };
       const sw = window.screen.width;
       const sh = window.screen.height;
       const width = document.documentElement.clientWidth;
       const height = document.documentElement.clientHeight;
       if (!sw || !sh || !width || !height) return false;
       const typing = isTyping();
+      const viewType = liffViewTypeRef.current;
+      const lineSheet = !!viewType && viewType !== "full" && viewType !== "full-flex";
 
       // 1. Against the screen (iOS / iPadOS).
       const screenShort = Math.min(sw, sh);
@@ -1584,18 +1594,43 @@ export default function LiffStudentPage() {
       const type = window.screen.orientation?.type;
       const legacy = (window as unknown as { orientation?: number }).orientation;
       const landscape = type ? type.startsWith("landscape") : typeof legacy === "number" ? Math.abs(legacy) === 90 : width > height;
-      if (width < (landscape ? screenLong : screenShort) * 0.85) return true;
+      if (width < (landscape ? screenLong : screenShort) * 0.85) return hit("width<screen");
 
-      // 1b. Shape (Android, even when the quiz opens already split): a phone's page shown
-      // full-screen is long and narrow (about 1.6–2.4 : 1 either way up); half of a phone is
-      // close to square. Not while typing (the keyboard squares the page too), not on large
-      // pages (a foldable's inner screen is square when full), not in LINE's half / tall sheet.
-      const viewType = liffViewTypeRef.current;
-      const lineSheet = !!viewType && viewType !== "full" && viewType !== "full-flex";
+      // 1z. Real pixels (Android pop-up / floating / mini window, even opened already
+      // floating): Android reports the window as the screen, so a small window looks like a
+      // small phone. But every Android phone screen is ≥ 720 device pixels wide upright
+      // (≥ ~1180 sideways, minus the nav bar), and display zoom only raises the pixel ratio,
+      // so page width × pixel ratio stays the full screen. A floating window is narrower.
+      // The keyboard never changes the width. Not on iOS (an old iPhone SE is 640 wide).
+      if (isAndroid && type) {
+        const deviceWidth = width * (window.devicePixelRatio || 1);
+        if (type.startsWith("portrait") && deviceWidth < 700) return hit("floating-narrow");
+        if (type.startsWith("landscape") && deviceWidth < 1000) return hit("floating-narrow");
+      }
+
       if (!typing && !lineSheet) {
+        // 1a. Height against the screen, upright: a phone split top / bottom keeps the full
+        // width, so check 1 misses it. Full-screen LINE (status bar, LINE's header, nav bar)
+        // still leaves ≥ ~70% of the screen; a half or two-thirds window does not. Where
+        // Android reports the window as the screen this simply never fires.
+        if (!landscape && height < screenLong * 0.62) return hit("height<screen");
+
+        // 1b. Page shape against the device's rotation (Android, quiz opened already split):
+        // the rotation comes from the display, the page from the window. An upright phone
+        // whose page is wider than tall is in a short split window (the keyboard does that
+        // too, hence not while typing); a sideways device with a tall, narrow page is in a
+        // side-by-side window.
+        if (type) {
+          if (type.startsWith("portrait") && width > height * 1.1) return hit("wide-in-portrait");
+          if (type.startsWith("landscape") && height > width * 1.1) return hit("tall-in-landscape");
+        }
+
+        // 1c. Shape: a phone's page shown full-screen is long and narrow (about 1.6–2.4 : 1
+        // either way up); half of a phone is close to square. Not on large pages (a
+        // foldable's inner screen is square when full).
         const short = Math.min(width, height);
         const long = Math.max(width, height);
-        if (short <= 520 && long / short < 1.45) return true;
+        if (short <= 520 && long / short < 1.45) return hit("near-square");
       }
 
       // 2. Against the largest seen in this quiz, per orientation (Android multi-window, and any device).
@@ -1611,13 +1646,13 @@ export default function LiffStudentPage() {
         return false;
       }
       // One side smaller: Android put the app in a split window (it reports the window as the screen).
-      if (longShrank || shortShrank) return true;
+      if (longShrank || shortShrank) return hit("screen-shrank");
       most.screenLong = Math.max(most.screenLong, screenLong);
       most.screenShort = Math.max(most.screenShort, screenShort);
       const seen = landscape ? most.landscape : most.portrait;
       // Width: the keyboard never changes it. Height: only while not typing.
-      if (seen.width && width < seen.width * 0.8) return true;
-      if (!typing && seen.height && height < seen.height * 0.65) return true;
+      if (seen.width && width < seen.width * 0.8) return hit("width-shrank");
+      if (!typing && seen.height && height < seen.height * 0.65) return hit("height-shrank");
       // Learn only steady, full-looking sizes: the same as last check (not mid-rotation),
       // and shaped like the orientation (wider than tall in landscape).
       const size = `${width}x${height}x${landscape}`;
@@ -1650,7 +1685,7 @@ export default function LiffStudentPage() {
       split = now;
       if (now) {
         // Already away (hidden / lost focus): the same trip continues.
-        startAway("split_screen", "แบ่งหน้าจอ / เปิดแอปอื่นข้างกัน (หน้าข้อสอบเล็กลงกว่าจอ)", splitSince);
+        startAway("split_screen", "แบ่งหน้าจอ / หน้าต่างลอย / เปิดแอปอื่นข้างกัน (หน้าข้อสอบเล็กลงกว่าจอ)", splitSince);
       } else if (!document.hidden && (document.hasFocus() || focusInsideQuiz())) {
         endAway();
       }
@@ -1769,10 +1804,41 @@ export default function LiffStudentPage() {
     document.addEventListener("copy", handleCopy);
     document.addEventListener("cut", handleCopy);
     document.addEventListener("paste", handlePaste);
+    // ---------- ?splitdebug=1: live readout of what this device reports (for tuning) ----------
+    // Survives the LIFF login redirect (liff.state keeps the word) via sessionStorage.
+    let debugBox: HTMLDivElement | null = null;
+    try {
+      if (window.location.href.includes("splitdebug")) sessionStorage.setItem("splitdebug", "1");
+      if (sessionStorage.getItem("splitdebug") === "1") {
+        debugBox = document.createElement("div");
+        debugBox.style.cssText =
+          "position:fixed;left:4px;bottom:4px;z-index:99999;max-width:96vw;padding:6px 8px;border-radius:6px;" +
+          "background:rgba(0,0,0,.8);color:#0f0;font:11px/1.35 monospace;white-space:pre-wrap;pointer-events:none";
+        document.body.appendChild(debugBox);
+      }
+    } catch {
+      debugBox = null;
+    }
+    const renderDebug = () => {
+      if (!debugBox) return;
+      const s = window.screen;
+      const de = document.documentElement;
+      const vv = window.visualViewport;
+      debugBox.textContent = [
+        `split=${split} pending=${pendingSplit} rule=${splitReason || "-"}`,
+        `screen ${s.width}x${s.height} avail ${s.availWidth}x${s.availHeight} dpr ${window.devicePixelRatio} devW ${Math.round(de.clientWidth * (window.devicePixelRatio || 1))}`,
+        `page ${de.clientWidth}x${de.clientHeight} inner ${window.innerWidth}x${window.innerHeight} outer ${window.outerWidth}x${window.outerHeight}`,
+        `vv ${vv ? `${Math.round(vv.width)}x${Math.round(vv.height)}` : "-"} orient ${s.orientation?.type ?? "-"} legacy ${(window as unknown as { orientation?: number }).orientation ?? "-"}`,
+        `focus ${document.hasFocus()} hidden ${document.hidden} typing ${isTyping()} view ${liffViewTypeRef.current ?? "-"}`,
+        `away ${awayTripRef.current?.event_type ?? "-"} most ${most.screenLong}/${most.screenShort} p${most.portrait.width}x${most.portrait.height} l${most.landscape.width}x${most.landscape.height}`,
+      ].join("\n");
+    };
+
     // Split changes without a resize event, and focus lost without a blur, are caught here.
     const poll = window.setInterval(() => {
       checkSplit();
       focusPoll();
+      renderDebug();
     }, 750);
     const firstCheck = window.setTimeout(checkSplit, 600);
 
@@ -1793,6 +1859,7 @@ export default function LiffStudentPage() {
       window.clearTimeout(firstCheck);
       if (blurTimer) window.clearTimeout(blurTimer);
       if (wakeLock) void wakeLock.release().catch(() => undefined);
+      debugBox?.remove();
       awayTripRef.current = null;
     };
   }, [activeAssignment, isTrackingAway]);
