@@ -172,7 +172,15 @@ function formatTimeLeft(deadline: number | null): string {
  * Choice / true-false results are held back until nobody can hand in any more
  * (the work closed for good, or everyone handed in); the server sends none yet.
  */
-function ResultsHiddenNote({ isExam, submittedAt }: { isExam: boolean; submittedAt?: string }) {
+function ResultsHiddenNote({ isExam, submittedAt, compact = false }: { isExam: boolean; submittedAt?: string; compact?: boolean }) {
+  // Right after handing in, the card's heading already says it was sent: one short line.
+  if (compact) {
+    return (
+      <p className="px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 text-xs font-semibold text-sky-800 dark:text-sky-200">
+        คะแนนจะแสดงเมื่อคุณครูประกาศผล
+      </p>
+    );
+  }
   return (
     <div className="liff-rise p-5 rounded-2xl bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-200 dark:ring-sky-900 text-center space-y-1.5">
       <p className="liff-pop text-2xl" aria-hidden>✅</p>
@@ -2946,27 +2954,25 @@ export default function LiffStudentPage() {
           aria-labelledby="screen-gate-title"
           className="fixed inset-0 z-[70] flex items-center justify-center p-5 bg-slate-50 dark:bg-slate-950 overflow-y-auto"
         >
-          <div className="w-full max-w-sm text-center space-y-4">
-            <div className="mx-auto w-16 h-16 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-300 flex items-center justify-center">
-              <Smartphone className={`w-8 h-8 ${screenGate.reason === "rotate" ? "rotate-90" : ""}`} />
+          <div className="w-full max-w-xs text-center space-y-3.5">
+            <div className="mx-auto w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-300 flex items-center justify-center">
+              <Smartphone className={`w-7 h-7 ${screenGate.reason === "rotate" ? "rotate-90" : ""}`} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <h2 id="screen-gate-title" className="text-lg font-black text-slate-900 dark:text-white">
                 {screenGate.reason === "rotate" ? "หมุนโทรศัพท์เป็นแนวตั้ง" : "เปิดข้อสอบให้เต็มจอ"}
               </h2>
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                {screenGate.reason === "rotate"
-                  ? "ข้อสอบแสดงเฉพาะเมื่อถือโทรศัพท์แนวตั้งและเปิด LINE เต็มจอ"
-                  : "ปิดการแบ่งหน้าจอหรือหน้าต่างลอย แล้วเปิด LINE เต็มจอ ข้อสอบจะแสดงต่อทันที"}
+              <p className="text-xs text-slate-600 dark:text-slate-300">
+                {screenGate.reason === "rotate" ? "ข้อสอบแสดงเฉพาะแนวตั้ง" : "ปิดการแบ่งจอหรือหน้าต่างลอย"}
               </p>
             </div>
             {gateEscapeReady && (
               <button
                 type="button"
                 onClick={overrideScreenGate}
-                className="w-full min-h-11 px-4 py-2.5 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-800 hover:bg-slate-300/70 dark:hover:bg-slate-700 cursor-pointer"
+                className="w-full h-10 px-3 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-800 hover:bg-slate-300/70 dark:hover:bg-slate-700 cursor-pointer"
               >
-                หน้าจอเต็มแล้ว แต่ยังขึ้นข้อความนี้
+                เต็มจอแล้ว แต่ยังขึ้นข้อความนี้
               </button>
             )}
           </div>
@@ -3627,80 +3633,72 @@ export default function LiffStudentPage() {
               <p className="text-center text-sm text-slate-500">กำลังเตรียมข้อสอบ...</p>
             </div>
           ) : isQuizForfeited && quizOpen ? (
-            <div className={`${CARD} text-center space-y-5 p-6 sm:p-8 mt-6 animate-in fade-in zoom-in-95`}>
-              <div className="w-20 h-20 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 mx-auto flex! items-center justify-center">
-                <ShieldAlert className="w-10 h-10" />
+            <div className={`${CARD} w-full max-w-sm mx-auto text-center space-y-3.5 p-5 mt-4 animate-in fade-in zoom-in-95`}>
+              <div className="w-14 h-14 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 mx-auto flex! items-center justify-center">
+                <ShieldAlert className="w-7 h-7" />
               </div>
-              <div className="space-y-1.5">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">ระบบส่งกระดาษเปล่าแล้ว</h2>
-                <p className="text-sm text-slate-500 max-w-xs mx-auto leading-relaxed">
-                  คุณปิดหรือออกจากข้อสอบนี้ก่อนส่ง {quizOpen.exits} ครั้ง
-                  {quizOpen.warnings > 0 ? ` (เกิน ${quizOpen.warnings} ครั้งที่เตือนไว้)` : ""} จึงได้ 0 คะแนน และทำข้อสอบนี้ต่อไม่ได้
-                </p>
+              <div className="space-y-1">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">ส่งกระดาษเปล่าแล้ว (0 คะแนน)</h2>
+                <p className="text-xs text-slate-500">ออกจากข้อสอบเกินที่เตือนไว้ • มีเหตุจำเป็นติดต่อคุณครู</p>
               </div>
               <SuspiciousLabel />
-              <p className="text-xs text-slate-500">หากมีเหตุจำเป็น (เช่น แอปค้าง) ติดต่อคุณครู</p>
               <button
                 onClick={() => {
                   if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
                   setActiveAssignment(null);
                 }}
-                className="w-full h-12 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+                className="w-full h-11 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
               >
                 {activeProxy && proxyFriend ? "กลับไปหน้าส่งแทนเพื่อน" : "กลับสู่หน้าหลัก"}
               </button>
             </div>
           ) : submissionSuccess ? (
-            <div className={`${CARD} text-center space-y-5 p-6 sm:p-8 mt-6 animate-in fade-in zoom-in-95`}>
-              <div className="liff-pop w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-950 text-line mx-auto flex! items-center justify-center">
-                <CheckCircle2 className="w-10 h-10" />
+            <div className={`${CARD} w-full max-w-sm mx-auto text-center space-y-3.5 p-5 mt-4 animate-in fade-in zoom-in-95`}>
+              <div className="liff-pop w-14 h-14 rounded-full bg-emerald-100 dark:bg-emerald-950 text-line mx-auto flex! items-center justify-center">
+                <CheckCircle2 className="w-7 h-7" />
               </div>
-              <div className="space-y-1.5">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">{editingSubmission ? "ส่งงานที่แก้ไขแล้ว!" : "ส่งงานเรียบร้อยแล้ว!"}</h2>
-                <p className="text-sm text-slate-500 max-w-xs mx-auto">
-                  {isTrackingAway ? "ส่งคำตอบถึงคุณครูแล้ว" : "ส่งงานถึงคุณครูแล้ว"}
-                </p>
-              </div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                {editingSubmission ? "ส่งงานที่แก้ไขแล้ว" : isTrackingAway ? "ส่งข้อสอบแล้ว" : "ส่งงานแล้ว"}
+              </h2>
               {/* Flagged by the server: shown with no reason. */}
               {submittedResult?.submission.is_flagged_suspicious && <SuspiciousLabel />}
               {submittedResult?.submission.results_hidden ? (
-                <ResultsHiddenNote isExam={!!activeAssignment?.is_exam} />
+                <ResultsHiddenNote isExam={!!activeAssignment?.is_exam} compact />
               ) : submittedResult && submittedResult.total !== null ? (
-                <div className="liff-sheen liff-rise p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white space-y-1">
-                  <p className="text-xs font-semibold text-emerald-50">คะแนนของคุณ (ตรวจอัตโนมัติ)</p>
-                  <p className="text-4xl font-black tabular-nums">
+                <div className="liff-sheen liff-rise px-4 py-3 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white">
+                  <p className="text-[11px] font-semibold text-emerald-50">คะแนนของคุณ</p>
+                  <p className="text-3xl font-black tabular-nums">
                     <CountUp value={submittedResult.total} />
-                    <span className="text-xl font-bold text-emerald-100"> / {submittedResult.max}</span>
+                    <span className="text-lg font-bold text-emerald-100"> / {submittedResult.max}</span>
                   </p>
                 </div>
               ) : submittedResult && submittedResult.autoScored > 0 ? (
-                <div className="p-4 rounded-2xl bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-200 dark:ring-sky-900 text-sm text-sky-800 dark:text-sky-200 space-y-1">
-                  <p className="font-bold">ข้อปรนัยตรวจแล้ว {submittedResult.autoScored} ข้อ</p>
-                  <p className="text-xs text-sky-700/80 dark:text-sky-300/80">
-                    อีก {submittedResult.pending} ข้อรอคุณครูตรวจ • คะแนนรวมจะแสดงเมื่อตรวจครบ
-                  </p>
-                </div>
+                <p className="px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 text-xs font-semibold text-sky-800 dark:text-sky-200">
+                  ตรวจแล้ว {submittedResult.autoScored} ข้อ • รอคุณครูตรวจอีก {submittedResult.pending} ข้อ
+                </p>
               ) : null}
-              {/* Homework too: the student can read back what they handed in before it is graded. */}
-              {submittedResult && activeAssignment && (
+              <div className={`grid gap-2 ${submittedResult && activeAssignment ? "grid-cols-2" : ""}`}>
+                {/* Homework too: the student can read back what they handed in before it is graded. */}
+                {submittedResult && activeAssignment && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenGradedDetail(activeAssignment, submittedResult.submission)}
+                    className="h-11 px-2 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+                  >
+                    {submittedResult.autoScored > 0 ? "ดูคะแนนรายข้อ" : "ดูงานที่ส่ง"}
+                  </button>
+                )}
                 <button
-                  type="button"
-                  onClick={() => handleOpenGradedDetail(activeAssignment, submittedResult.submission)}
-                  className="w-full h-11 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+                  onClick={() => {
+                    // Back to the lending sheet so the classmate can hand in the next piece of work.
+                    if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
+                    setActiveAssignment(null);
+                  }}
+                  className="h-11 px-2 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md cursor-pointer active:scale-[0.98] transition-transform"
                 >
-                  {submittedResult.autoScored > 0 ? "ดูคะแนนรายข้อ" : "ดูงานที่ส่ง"}
+                  {activeProxy && proxyFriend ? "ส่งแทนเพื่อนต่อ" : "กลับหน้าหลัก"}
                 </button>
-              )}
-              <button
-                onClick={() => {
-                  // Back to the lending sheet so the classmate can hand in the next piece of work.
-                  if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
-                  setActiveAssignment(null);
-                }}
-                className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md cursor-pointer active:scale-[0.98] transition-transform"
-              >
-                {activeProxy && proxyFriend ? "กลับไปหน้าส่งแทนเพื่อน" : "กลับสู่หน้าหลัก"}
-              </button>
+              </div>
             </div>
           ) : (
             <>
@@ -3771,27 +3769,18 @@ export default function LiffStudentPage() {
               <ReferenceWork assignment={activeAssignment} />
 
               {isTrackingAway && quizOpen?.tracked && quizOpen.exits > 0 && (
-                <div role="status" className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200 text-xs leading-relaxed">
-                  <p>
-                    <b>ปิดหรือออกจากข้อสอบก่อนส่ง {quizOpen.exits} ครั้ง</b> (เตือนครั้งที่ {quizOpen.exits}/{quizOpen.warnings}) • {quizExitRule(quizOpen)}
-                  </p>
-                </div>
+                <p role="status" className="px-3 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200 text-xs">
+                  <b>ออกจากข้อสอบแล้ว {quizOpen.exits}/{quizOpen.warnings} ครั้ง</b> • {quizExitRule(quizOpen)}
+                </p>
               )}
               {isTrackingAway && (
-                <div role="note" className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-amber-900 dark:text-amber-200 text-xs leading-relaxed">
-                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-                  <p>
-                    ข้อสอบนี้แนบไฟล์ไม่ได้ และห้ามออกจากหน้าข้อสอบระหว่างทำ
-                    {quizOpen?.tracked && quizOpen.exits === 0 && (
-                      <span className="block mt-1 font-bold">
-                        ห้ามปิดหน้าข้อสอบ (กด X) หรือกดออกก่อนส่ง —{" "}
-                        {quizOpen.warnings === 0
-                          ? "ถ้าเปิดใหม่ ระบบจะส่งกระดาษเปล่าทันที (0 คะแนน)"
-                          : `ถ้าเปิดใหม่จะถูกเตือน ${quizOpen.warnings} ครั้ง ครั้งถัดไประบบจะส่งกระดาษเปล่า (0 คะแนน)`}
-                      </span>
-                    )}
-                  </p>
-                </div>
+                <p role="note" className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-amber-900 dark:text-amber-200 text-xs font-semibold">
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  <span>
+                    ห้ามออกหรือปิดหน้าข้อสอบก่อนส่ง
+                    {quizOpen?.tracked && quizOpen.exits === 0 && (quizOpen.warnings === 0 ? " • เปิดใหม่ = 0 คะแนน" : ` • เตือนได้ ${quizOpen.warnings} ครั้ง`)}
+                  </span>
+                </p>
               )}
 
               {activeQuestions.length === 0 && (

@@ -6,9 +6,7 @@ import type { QuizOpenResult } from '@/lib/utils/quizExit';
 /** What happens on the next exit, in words for the student. */
 export function quizExitRule(result: Pick<QuizOpenResult, 'exits' | 'warnings'>): string {
   const left = result.warnings - result.exits;
-  return left <= 0
-    ? 'ถ้าปิดหรือออกจากข้อสอบอีกครั้ง ระบบจะส่งกระดาษเปล่าทันที (0 คะแนน)'
-    : `ถ้าปิดหรือออกจากข้อสอบอีก ${left + 1} ครั้ง ระบบจะส่งกระดาษเปล่าทันที (0 คะแนน)`;
+  return left <= 0 ? 'ออกอีกครั้ง = ส่งกระดาษเปล่า (0 คะแนน)' : `เตือนได้อีก ${left} ครั้ง แล้วส่งกระดาษเปล่า (0 คะแนน)`;
 }
 
 /** What leaving a quiz before handing in costs, for the leave confirmation. */
@@ -16,8 +14,8 @@ export function quizLeaveWarning(result: QuizOpenResult | null): string {
   if (!result?.tracked) return 'ออกจากหน้านี้? (คำตอบจะยังไม่ถูกส่ง)';
   const next = result.exits + 1;
   return result.exits >= result.warnings
-    ? `ออกจากข้อสอบ? คำตอบจะยังไม่ถูกส่ง\n\nเมื่อเปิดข้อสอบนี้อีกครั้ง ระบบจะส่งกระดาษเปล่าทันที (0 คะแนน)`
-    : `ออกจากข้อสอบ? คำตอบจะยังไม่ถูกส่ง\n\nเมื่อเปิดใหม่จะนับเป็นการออกจากข้อสอบครั้งที่ ${next} (เตือนได้ ${result.warnings} ครั้ง)`;
+    ? 'ออกจากข้อสอบ? คำตอบยังไม่ถูกส่ง\nเปิดใหม่ = ส่งกระดาษเปล่า (0 คะแนน)'
+    : `ออกจากข้อสอบ? คำตอบยังไม่ถูกส่ง\nเปิดใหม่นับเป็นครั้งที่ ${next}/${result.warnings}`;
 }
 
 /**
@@ -31,33 +29,27 @@ export function QuizExitWarningSheet({ result, onClose }: { result: QuizOpenResu
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="quiz-exit-title"
-        className="w-full sm:max-w-sm max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-900 p-5 sm:p-6 pb-[max(env(safe-area-inset-bottom),1.25rem)] shadow-2xl space-y-4"
+        className="w-full sm:max-w-xs max-h-[92dvh] overflow-y-auto overscroll-contain rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-900 p-5 pb-[max(env(safe-area-inset-bottom),1.25rem)] shadow-2xl space-y-3.5"
       >
-        <div className="flex flex-col items-center text-center gap-3">
-          <span className="submit-shake w-16 h-16 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 flex items-center justify-center">
-            <ShieldAlert className="w-8 h-8" />
+        <div className="flex flex-col items-center text-center gap-2.5">
+          <span className="submit-shake w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+            <ShieldAlert className="w-6 h-6" />
           </span>
-          <div className="space-y-1.5">
-            <h2 id="quiz-exit-title" className="text-lg font-black text-slate-900 dark:text-white">
-              ตรวจพบการปิดหน้าข้อสอบ
+          <div className="space-y-0.5">
+            <h2 id="quiz-exit-title" className="text-base font-black text-slate-900 dark:text-white">
+              ออกจากข้อสอบ ครั้งที่ {result.exits}/{result.warnings}
             </h2>
-            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-              คุณปิดหรือออกจากข้อสอบนี้ก่อนส่ง {result.exits} ครั้ง
-              <span className="block font-bold text-rose-600 dark:text-rose-400">
-                เตือนครั้งที่ {result.exits}/{result.warnings}
-              </span>
-            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">คำตอบเดิมไม่ถูกบันทึก ต้องตอบใหม่</p>
           </div>
         </div>
-        <p className="text-xs leading-relaxed p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200">
+        <p className="text-xs text-center font-semibold px-3 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200">
           {quizExitRule(result)}
-          <span className="block mt-1 opacity-80">คำตอบก่อนหน้าไม่ได้ถูกบันทึก ต้องตอบใหม่ทั้งหมด</span>
         </p>
         <button
           type="button"
           onClick={onClose}
           autoFocus
-          className="w-full h-12 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+          className="w-full h-11 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
         >
           รับทราบ ทำข้อสอบต่อ
         </button>
