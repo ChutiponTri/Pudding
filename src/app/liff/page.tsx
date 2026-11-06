@@ -263,6 +263,54 @@ if (typeof window !== "undefined") {
   }
 }
 
+// ---------- full-screen gate (quiz on a phone) ----------
+// A phone's page shown full-screen and upright is long and narrow (about 1.9–2.1 : 1 on
+// today's 20:9 phones, ~1.5 on old 16:9 ones, after LINE's header and the system bars);
+// LIFF in an Android split window is 1.0–1.4. Below this the quiz is covered.
+const QUIZ_FULL_RATIO = 1.55;
+// The tallest upright page this device has shown full-screen, by pixel ratio and page
+// width (a top / bottom split keeps the width), learned on every LIFF visit. Android
+// reports a split window as the screen, so this is the only memory of the real size: a
+// quiz opened already split is clearly shorter than it.
+const DEVICE_FULL_KEY = "pudding.deviceFullHeight.v1";
+const deviceFullId = (width: number) => `${window.devicePixelRatio || 1}:${width}`;
+function readDeviceFullHeight(width: number): number {
+  try {
+    const all = JSON.parse(localStorage.getItem(DEVICE_FULL_KEY) || "{}") as Record<string, number>;
+    return Number(all[deviceFullId(width)]) || 0;
+  } catch {
+    return 0;
+  }
+}
+/** Raise the remembered height (or, with `replace`, set it: the student said this is full). */
+function writeDeviceFullHeight(width: number, height: number, replace = false) {
+  try {
+    const all = JSON.parse(localStorage.getItem(DEVICE_FULL_KEY) || "{}") as Record<string, number>;
+    const id = deviceFullId(width);
+    if (!replace && (Number(all[id]) || 0) >= height) return;
+    all[id] = height;
+    localStorage.setItem(DEVICE_FULL_KEY, JSON.stringify(all));
+  } catch {
+    // Storage blocked: the shape rule still works.
+  }
+}
+/** A phone (not a tablet, not an open foldable), upright, page full-screen-shaped right now. */
+function looksFullPhonePage(viewType: string | undefined): { width: number; height: number } | null {
+  const ua = navigator.userAgent;
+  if (!/Android|iPhone|iPod/.test(ua)) return null;
+  const width = document.documentElement.clientWidth;
+  const height = document.documentElement.clientHeight;
+  if (!width || !height || Math.min(width, height) >= 600) return null;
+  const type = window.screen.orientation?.type;
+  const legacy = (window as unknown as { orientation?: number }).orientation;
+  const upright = type ? type.startsWith("portrait") : typeof legacy === "number" ? legacy === 0 || legacy === 180 : height > width;
+  if (!upright) return null;
+  if ((document.activeElement as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]")) return null;
+  if (viewType && viewType !== "full" && viewType !== "full-flex") return null;
+  if (height < width * QUIZ_FULL_RATIO) return null;
+  return { width, height };
+}
+
 /** Bottom sheet on phones, centered dialog from sm up. */
 function Sheet({ children, onClose, size = "md" }: { children: React.ReactNode; onClose?: () => void; size?: "sm" | "md" }) {
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -716,6 +764,13 @@ export default function LiffStudentPage() {
   /** The trip away in progress (sent to the server when it starts and when it ends). */
   const awayTripRef = useRef<{ id: string; event_type: "tab_hidden" | "window_blur" | "split_screen"; started_at: string; details: string } | null>(null);
   const tabSwitchCountRef = useRef(0);
+  // Phone quiz not full-screen (split / floating window, or held sideways): the questions are
+  // covered until it is. "rotate" = held sideways. `counting`: the quiz was already shown
+  // full, so this time counts as away (a quiz opened already split is only covered).
+  const [screenGate, setScreenGate] = useState<{ reason: "rotate" | "split"; counting: boolean; since: number } | null>(null);
+  // The student said the screen is full though the gate showed: the size rules behind the
+  // gate are off for the rest of this quiz (the older split rules still log quietly).
+  const gateOverrideRef = useRef(false);
   // The open quiz's server-side count of times it was closed and opened again
   // (closing LINE resets everything above, so leaving is counted at each opening).
   const [quizOpen, setQuizOpen] = useState<QuizOpenResult | null>(null);
@@ -1505,6 +1560,8 @@ export default function LiffStudentPage() {
     setTotalAwaySeconds(0);
     setAuditEvents([]);
     awayStartRef.current = null;
+    setScreenGate(null);
+    gateOverrideRef.current = false;
     if (!activeAssignment || !isTrackingAway) return;
 
     const assignmentId = activeAssignment.id;
@@ -1582,6 +1639,12 @@ export default function LiffStudentPage() {
     let lastSize = "";
     // Which rule found the split (shown in the ?splitdebug=1 overlay).
     let splitReason = "";
+    const isPhoneOS = isAndroid || /iPhone|iPod/.test(ua);
+    // The keyboard is up only when typing *and* the page got shorter than it was without
+    // typing. In an Android split window the text box keeps focus while the student uses the
+    // other app (LINE never reports losing focus there), so "typing" alone would switch
+    // the size rules off for good.
+    let plainHeight = 0;
     const isSplitNow = () => {
       splitReason = "";
       if (isDesktop) return false;
@@ -1604,7 +1667,21 @@ export default function LiffStudentPage() {
       const type = window.screen.orientation?.type;
       const legacy = (window as unknown as { orientation?: number }).orientation;
       const landscape = type ? type.startsWith("landscape") : typeof legacy === "number" ? Math.abs(legacy) === 90 : width > height;
+      if (!typing && !landscape) plainHeight = height;
+      const keyboardUp = typing && (!plainHeight || height < plainHeight * 0.9);
       if (width < (landscape ? screenLong : screenShort) * 0.85) return hit("width<screen");
+
+      // 0. Full-screen gate (phones; not tablets or an open foldable): upright, and shaped
+      // and sized like this device's full screen. The quiz is covered while it is not, so
+      // these can be strict. Off once the student says the screen is full (gateOverrideRef).
+      if (isPhoneOS && Math.min(width, height) < 600 && !gateOverrideRef.current) {
+        if (landscape) return hit("landscape");
+        if (!keyboardUp && !lineSheet) {
+          if (height < width * QUIZ_FULL_RATIO) return hit("ratio");
+          const deviceFull = readDeviceFullHeight(width);
+          if (deviceFull && height < deviceFull * 0.8) return hit("below-device-full");
+        }
+      }
 
       // 1z. Real pixels (Android pop-up / floating / mini window, even opened already
       // floating): Android reports the window as the screen, so a small window looks like a
@@ -1618,7 +1695,7 @@ export default function LiffStudentPage() {
         if (type.startsWith("landscape") && deviceWidth < 1000) return hit("floating-narrow");
       }
 
-      if (!typing && !lineSheet) {
+      if (!keyboardUp && !lineSheet) {
         // 1a. Height against the screen, upright: a phone split top / bottom keeps the full
         // width, so check 1 misses it. Full-screen LINE (status bar, LINE's header, nav bar)
         // still leaves ≥ ~70% of the screen; a half or two-thirds window does not. Where
@@ -1662,7 +1739,7 @@ export default function LiffStudentPage() {
       const seen = landscape ? most.landscape : most.portrait;
       // Width: the keyboard never changes it. Height: only while not typing.
       if (seen.width && width < seen.width * 0.8) return hit("width-shrank");
-      if (!typing && seen.height && height < seen.height * 0.65) return hit("height-shrank");
+      if (!keyboardUp && seen.height && height < seen.height * 0.65) return hit("height-shrank");
       // Learn only steady, full-looking sizes: the same as last check (not mid-rotation),
       // and shaped like the orientation (wider than tall in landscape).
       const size = `${width}x${height}x${landscape}`;
@@ -1672,17 +1749,33 @@ export default function LiffStudentPage() {
         seen.width = Math.max(seen.width, width);
         if (!typing) seen.height = Math.max(seen.height, height);
       }
+      if (steady && isPhoneOS) {
+        const full = looksFullPhonePage(viewType);
+        if (full) writeDeviceFullHeight(full.width, full.height);
+      }
       return false;
     };
+    const gateReason = () => (splitReason === "landscape" ? "rotate" : "split") as "rotate" | "split";
+    // Once the quiz has been shown full-screen, being split counts as away. Before that
+    // (opened already split) the questions were never visible: covered, not counted.
+    let shownFull = false;
     // A size must hold for two checks in a row (~1.5 s): rotating, folding or the
     // keyboard closing pass through odd sizes for a moment.
     let split = false;
     let pendingSplit: boolean | null = null;
     let splitSince = 0;
+    const showGate = (counting: boolean, since: number) => {
+      if (gateOverrideRef.current) return;
+      const reason = gateReason();
+      setScreenGate((prev) => (prev && prev.reason === reason && prev.counting === counting ? prev : { reason, counting, since }));
+    };
     const checkSplit = () => {
       const now = isSplitNow();
       if (now === split) {
         pendingSplit = null;
+        if (!now) shownFull = true;
+        // Still split, but held sideways now (or upright again): keep the cover's text right.
+        else showGate(shownFull, splitSince);
         return;
       }
       if (pendingSplit !== now) {
@@ -1694,12 +1787,21 @@ export default function LiffStudentPage() {
       pendingSplit = null;
       split = now;
       if (now) {
+        showGate(shownFull, splitSince);
         // Already away (hidden / lost focus): the same trip continues.
-        startAway("split_screen", "แบ่งหน้าจอ / หน้าต่างลอย / เปิดแอปอื่นข้างกัน (หน้าข้อสอบเล็กลงกว่าจอ)", splitSince);
-      } else if (!document.hidden && (document.hasFocus() || focusInsideQuiz())) {
-        endAway();
+        if (shownFull) startAway("split_screen", "แบ่งหน้าจอ / หน้าต่างลอย / เปิดแอปอื่นข้างกัน / หมุนจอแนวนอน (หน้าข้อสอบไม่เต็มจอ)", splitSince);
+      } else {
+        shownFull = true;
+        setScreenGate(null);
+        if (!document.hidden && (document.hasFocus() || focusInsideQuiz())) endAway();
       }
     };
+    // Opened already split: covered at once (no waiting out the steadiness check).
+    if (isSplitNow()) {
+      split = true;
+      splitSince = Date.now();
+      showGate(false, splitSince);
+    }
 
     // ---------- hidden / focus ----------
     const handleVisibilityChange = () => {
@@ -1863,7 +1965,8 @@ export default function LiffStudentPage() {
       const de = document.documentElement;
       const vv = window.visualViewport;
       debugBox.textContent = [
-        `split=${split} pending=${pendingSplit} rule=${splitReason || "-"}`,
+        `split=${split} pending=${pendingSplit} rule=${splitReason || "-"} shownFull=${shownFull} override=${gateOverrideRef.current}`,
+        `ratio ${(de.clientHeight / Math.max(1, de.clientWidth)).toFixed(2)} (need ${QUIZ_FULL_RATIO}) deviceFull ${readDeviceFullHeight(de.clientWidth) || "-"} plainH ${plainHeight}`,
         `screen ${s.width}x${s.height} avail ${s.availWidth}x${s.availHeight} dpr ${window.devicePixelRatio} devW ${Math.round(de.clientWidth * (window.devicePixelRatio || 1))}`,
         `page ${de.clientWidth}x${de.clientHeight} inner ${window.innerWidth}x${window.innerHeight} outer ${window.outerWidth}x${window.outerHeight}`,
         `vv ${vv ? `${Math.round(vv.width)}x${Math.round(vv.height)}` : "-"} orient ${s.orientation?.type ?? "-"} legacy ${(window as unknown as { orientation?: number }).orientation ?? "-"}`,
@@ -1910,6 +2013,58 @@ export default function LiffStudentPage() {
       awayTripRef.current = null;
     };
   }, [activeAssignment, isTrackingAway]);
+
+  // Learn this phone's full-screen page height on every LIFF visit outside a quiz, so a quiz
+  // opened already split can be told from a full one (see readDeviceFullHeight).
+  useEffect(() => {
+    if (isTrackingAway) return;
+    let lastSize = "";
+    const learn = () => {
+      if (document.hidden) return;
+      const full = looksFullPhonePage(liffViewTypeRef.current);
+      const size = full ? `${full.width}x${full.height}` : "";
+      // The same size twice in a row: not mid-rotation or mid-resize.
+      if (full && size === lastSize) writeDeviceFullHeight(full.width, full.height);
+      lastSize = size;
+    };
+    learn();
+    const poll = window.setInterval(learn, 1500);
+    return () => window.clearInterval(poll);
+  }, [isTrackingAway]);
+
+  // The cover offers "my screen is already full" after a while: a size rule can be wrong on
+  // an unusual phone, and a student must never be locked out of a quiz. Logged for the teacher.
+  const [gateEscapeReady, setGateEscapeReady] = useState(false);
+  const gateSince = screenGate?.since;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setGateEscapeReady(false);
+    if (gateSince == null) return;
+    const timer = window.setTimeout(() => setGateEscapeReady(true), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [gateSince]);
+  const overrideScreenGate = () => {
+    if (!activeAssignment || !screenGate) return;
+    gateOverrideRef.current = true;
+    const width = document.documentElement.clientWidth;
+    const height = document.documentElement.clientHeight;
+    // Upright: this size is this phone's full screen from now on.
+    if (screenGate.reason === "split") writeDeviceFullHeight(width, height, true);
+    const event = {
+      id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
+      event_type: "split_screen" as const,
+      started_at: new Date().toISOString(),
+      details: `นักเรียนยืนยันว่าเปิดเต็มจอแล้ว แต่ระบบเห็นหน้าข้อสอบ${screenGate.reason === "rotate" ? "เป็นแนวนอน" : "เล็กกว่าจอ"} (${width}×${height}) — กดข้ามหน้าบังข้อสอบ`,
+    };
+    // A split_screen event is a trip on the server too (AWAY_TRIP_TYPES): counted the same here.
+    setTabSwitchCount((prev) => {
+      tabSwitchCountRef.current = prev + 1;
+      return prev + 1;
+    });
+    setAuditEvents((prev) => [...prev, { id: event.id, event_type: event.event_type, timestamp: event.started_at, duration_seconds: 0, details: event.details }]);
+    dataService.reportQuizAway(activeAssignment.id, { ...event, duration_seconds: 0 }, activeProxyNumberRef.current);
+    setScreenGate(null);
+  };
 
 
 
@@ -2743,6 +2898,48 @@ export default function LiffStudentPage() {
       {/* Opened again after closing the quiz: must be acknowledged */}
       {isQuizExitWarningOpen && quizOpen && activeAssignment && (
         <QuizExitWarningSheet result={quizOpen} onClose={() => setIsQuizExitWarningOpen(false)} />
+      )}
+
+      {/* Phone quiz not full-screen: the questions are covered until it is */}
+      {screenGate && isTrackingAway && !submissionSuccess && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="screen-gate-title"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-5 bg-slate-50 dark:bg-slate-950 overflow-y-auto"
+        >
+          <div className="w-full max-w-sm text-center space-y-4">
+            <div className="mx-auto w-16 h-16 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-300 flex items-center justify-center">
+              <Smartphone className={`w-8 h-8 ${screenGate.reason === "rotate" ? "rotate-90" : ""}`} />
+            </div>
+            <div className="space-y-1.5">
+              <h2 id="screen-gate-title" className="text-lg font-black text-slate-900 dark:text-white">
+                {screenGate.reason === "rotate" ? "หมุนโทรศัพท์เป็นแนวตั้ง" : "เปิดข้อสอบให้เต็มจอ"}
+              </h2>
+              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                {screenGate.reason === "rotate"
+                  ? "ข้อสอบแสดงเฉพาะเมื่อถือโทรศัพท์แนวตั้งและเปิด LINE เต็มจอ"
+                  : "ปิดการแบ่งหน้าจอหรือหน้าต่างลอย แล้วเปิด LINE เต็มจอ ข้อสอบจะแสดงต่อทันที"}
+              </p>
+            </div>
+            {screenGate.counting && (
+              <p className="text-xs font-bold text-rose-600 dark:text-rose-400 flex items-center justify-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 shrink-0" />
+                ระหว่างนี้นับเป็นเวลาออกจากหน้าข้อสอบ
+              </p>
+            )}
+            {gateEscapeReady && (
+              <button
+                type="button"
+                onClick={overrideScreenGate}
+                className="w-full min-h-11 px-4 py-2.5 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-800 hover:bg-slate-300/70 dark:hover:bg-slate-700 cursor-pointer"
+              >
+                หน้าจอเต็มแล้ว แต่ยังขึ้นข้อความนี้
+                <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400">ระบบจะแจ้งคุณครูว่ากดข้าม</span>
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Floating away-from-screen warning */}
