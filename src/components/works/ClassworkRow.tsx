@@ -10,8 +10,8 @@ import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import type { GradingCounts } from '@/lib/utils/gradingStatus';
 import { isRetake } from '@/lib/utils/retake';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
-import { AnnounceButton, announcesResults, GradeButton, MetricCells, Pill, RemindButton, WorkRowLayout } from '@/components/works/WorkBits';
-import { acceptStatus, PhoneWorkSummary, StatusButton } from '@/components/works/StatusBits';
+import { AnnounceButton, announcesResults, GradeButton, MetricCells, PhoneProgress, Pill, RemindButton, WorkRowLayout } from '@/components/works/WorkBits';
+import { acceptStatus, StatusButton } from '@/components/works/StatusBits';
 
 /**
  * One assignment of a classroom's classwork list on a single line: kind and
@@ -69,10 +69,35 @@ export function ClassworkRow({
   const resultsMode = !!onAnnounceResults && announcesResults(counts, win.acceptsSubmissions);
 
   const typePill = (
-    <Pill tone={retake ? 'amber' : assignment.is_exam ? 'sky' : 'emerald'} className="shrink-0">
-      {retake ? tr(`สอบซ่อม · ${assignment.retake_student_ids?.length || 0}`, `Retake · ${assignment.retake_student_ids?.length || 0}`) : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : tr('การบ้าน', 'Homework')}
-    </Pill>
+    <span className="contents" title={retake ? tr(`สอบซ่อม ${assignment.retake_student_ids?.length || 0} คน`, `Retake for ${assignment.retake_student_ids?.length || 0}`) : undefined}>
+      <Pill tone={retake ? 'amber' : assignment.is_exam ? 'sky' : 'emerald'} className="shrink-0">
+        {retake ? tr('สอบซ่อม', 'Retake') : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : tr('การบ้าน', 'Homework')}
+      </Pill>
+    </span>
   );
+
+  /** Publish (hidden work), or ทวงงาน / ประกาศ, then ตรวจงาน: the row's buttons, at either size. */
+  const actions = (size: 'xs' | 'sm' | 'md') =>
+    hidden && onPublishNow ? (
+      <button
+        type="button"
+        draggable={false}
+        onClick={onPublishNow}
+        className={`${size === 'xs' ? 'h-7 px-2 text-[11px] rounded-lg' : size === 'sm' ? 'h-8 px-2.5 text-[11px] rounded-xl' : 'h-9 px-3 text-xs rounded-xl'} font-black inline-flex items-center gap-1.5 whitespace-nowrap bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/60 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-200 cursor-pointer transition-colors`}
+      >
+        <Rocket className="w-3.5 h-3.5" />
+        {tr('เผยแพร่', 'Publish')}
+      </button>
+    ) : (
+      <>
+        {resultsMode ? (
+          <AnnounceButton graded={counts.graded} onClick={onAnnounceResults!} size={size} />
+        ) : (
+          onRemind && <RemindButton missing={counts.notSubmitted} closed={!win.acceptsSubmissions} onClick={onRemind} size={size} />
+        )}
+        <GradeButton pending={counts.pending} href={gradingHref} size={size} />
+      </>
+    );
 
   const menu: ActionMenuItem[] = [
     onStatusClick && { key: 'status', label: tr('เปลี่ยนสถานะการรับงาน', 'Change status'), icon: <Clock className="w-4 h-4" />, onSelect: onStatusClick },
@@ -122,14 +147,13 @@ export function ClassworkRow({
         lead={
           <span className="w-full min-w-0 flex items-center gap-1.5">
             {leading}
-            {/* Phones: the type moves to the second line (phoneMeta) so the title has room. */}
-            <span className="max-sm:hidden contents">{typePill}</span>
+            {typePill}
             <Link
               href={gradingHref}
               draggable={false}
               data-drag-ok
               title={assignment.title}
-              className="min-w-0 truncate max-sm:whitespace-normal max-sm:line-clamp-2 max-sm:leading-snug text-sm max-sm:text-[13px] font-black text-slate-900 dark:text-white hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
+              className="min-w-0 truncate text-sm max-sm:text-[13px] font-black text-slate-900 dark:text-white hover:text-amber-700 dark:hover:text-amber-400 transition-colors"
             >
               {assignment.title}
             </Link>
@@ -147,8 +171,24 @@ export function ClassworkRow({
           </span>
         }
         status={<StatusButton status={status} onClick={onStatusClick} />}
-        phone={<PhoneWorkSummary status={status} onStatusClick={onStatusClick} totals={counts} gradeHref={gradingHref} hidden={hidden} />}
-        phoneMeta={typePill}
+        // Phones, two lines: type + title + ⋯ / status · handed in · checked · ทวงงาน/ประกาศ · ตรวจ.
+        phone={<span aria-hidden />}
+        phoneMeta={
+          <div className="w-full min-w-0 flex items-center gap-1.5">
+            <span className="min-w-0 max-w-[38%] shrink">
+              <StatusButton status={status} onClick={onStatusClick} size="sm" />
+            </span>
+            {hidden ? (
+              <span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-400 inline-flex items-center justify-center gap-1">
+                <EyeOff className="w-3 h-3 shrink-0" />
+                {tr('ยังไม่เผยแพร่', 'Not published')}
+              </span>
+            ) : (
+              <PhoneProgress totals={counts} bar={false} />
+            )}
+            <span className="shrink-0 flex items-center gap-1.5">{actions('xs')}</span>
+          </div>
+        }
         metrics={
           hidden ? (
             <span className="text-[11px] font-semibold text-slate-400 inline-flex items-center gap-1">
@@ -159,28 +199,7 @@ export function ClassworkRow({
             <MetricCells totals={counts} />
           )
         }
-        action={
-          hidden && onPublishNow ? (
-            <button
-              type="button"
-              draggable={false}
-              onClick={onPublishNow}
-              className="h-9 px-3 rounded-xl text-xs font-black inline-flex items-center gap-1.5 whitespace-nowrap bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/60 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-200 cursor-pointer transition-colors"
-            >
-              <Rocket className="w-3.5 h-3.5" />
-              {tr('เผยแพร่', 'Publish')}
-            </button>
-          ) : (
-            <>
-            {resultsMode ? (
-              <AnnounceButton graded={counts.graded} onClick={onAnnounceResults!} />
-            ) : (
-              onRemind && <RemindButton missing={counts.notSubmitted} closed={!win.acceptsSubmissions} onClick={onRemind} />
-            )}
-            <GradeButton pending={counts.pending} href={gradingHref} />
-            </>
-          )
-        }
+        action={actions('md')}
         menu={menu.length > 0 ? <ActionMenu size="sm" label={tr(`ตัวเลือกของ ${assignment.title}`, `Options for ${assignment.title}`)} items={menu} /> : undefined}
       />
     </div>

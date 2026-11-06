@@ -141,7 +141,7 @@ export function ComboFilter({
         <div
           id={listId}
           role="listbox"
-          className="absolute z-40 left-0 right-0 sm:right-auto sm:min-w-full sm:w-80 mt-1.5 max-h-[min(60dvh,22rem)] overflow-y-auto overscroll-contain p-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl animate-in fade-in zoom-in-95 [--tw-duration:140ms]"
+          className="absolute z-40 left-0 min-w-full w-[min(20rem,calc(100vw-2rem))] mt-1.5 max-h-[min(60dvh,22rem)] overflow-y-auto overscroll-contain p-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl animate-in fade-in zoom-in-95 [--tw-duration:140ms]"
         >
           {shown.length === 0 ? (
             <p className="px-3 py-4 text-xs text-slate-400 text-center">{tr('ไม่พบวิชาหรือห้องที่ค้นหา', 'No subject or class matches')}</p>

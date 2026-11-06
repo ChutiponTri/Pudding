@@ -75,6 +75,7 @@ export function PhoneWorkSummary({
   totals,
   gradeHref,
   hidden = false,
+  controlsOnly = false,
 }: {
   status: AcceptStatus;
   onStatusClick?: () => void;
@@ -82,8 +83,28 @@ export function PhoneWorkSummary({
   gradeHref?: string;
   /** Draft / scheduled: students cannot see it yet. */
   hidden?: boolean;
+  /** Only the status dot and ตรวจ (the numbers are shown on their own line, PhoneProgress). */
+  controlsOnly?: boolean;
 }) {
   const { tr } = useLanguage();
+  const gradeLink = gradeHref ? (
+    <Link
+      href={gradeHref}
+      draggable={false}
+      className={`relative w-11 h-8 rounded-lg text-[11px] font-black inline-flex items-center justify-center whitespace-nowrap transition-colors ${
+        totals.pending > 0
+          ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+          : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
+      }`}
+    >
+      {tr('ตรวจ', 'Grade')}
+      {totals.pending > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[9px] leading-4 text-center tabular-nums bg-slate-950 text-white ring-2 ring-white dark:ring-slate-900">
+          {totals.pending > 99 ? '99+' : totals.pending}
+        </span>
+      )}
+    </Link>
+  ) : null;
   const dotTitle = `${status.label}${status.hint ? ` · ${status.hint}` : ''}`;
   const dot = (
     <span className="relative flex w-2.5 h-2.5">
@@ -109,7 +130,13 @@ export function PhoneWorkSummary({
           {dot}
         </span>
       )}
-      {hidden ? (
+      {controlsOnly ? (
+        gradeHref && !hidden ? (
+          gradeLink
+        ) : (
+          <span aria-hidden className="w-11" />
+        )
+      ) : hidden ? (
         <span className="w-[7.125rem] text-[11px] font-semibold text-slate-400 inline-flex items-center justify-center gap-1 whitespace-nowrap">
           <EyeOff className="w-3.5 h-3.5" />
           {tr('ซ่อน', 'Hidden')}
@@ -128,22 +155,7 @@ export function PhoneWorkSummary({
             </span>
           )}
           {gradeHref ? (
-            <Link
-              href={gradeHref}
-              draggable={false}
-              className={`relative w-11 h-8 rounded-lg text-[11px] font-black inline-flex items-center justify-center whitespace-nowrap transition-colors ${
-                totals.pending > 0
-                  ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
-                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              {tr('ตรวจ', 'Grade')}
-              {totals.pending > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[9px] leading-4 text-center tabular-nums bg-slate-950 text-white ring-2 ring-white dark:ring-slate-900">
-                  {totals.pending > 99 ? '99+' : totals.pending}
-                </span>
-              )}
-            </Link>
+            gradeLink
           ) : (
             <span aria-hidden className="w-11" />
           )}
@@ -154,7 +166,7 @@ export function PhoneWorkSummary({
 }
 
 /** The acceptance state as a pill: coloured dot, state, and a chevron when it can be changed (the time hint is in the tooltip). */
-export function StatusButton({ status, onClick }: { status: AcceptStatus; onClick?: () => void }) {
+export function StatusButton({ status, onClick, size = 'md' }: { status: AcceptStatus; onClick?: () => void; size?: 'sm' | 'md' }) {
   const { tr } = useLanguage();
   const inner = (
     <>
@@ -163,10 +175,10 @@ export function StatusButton({ status, onClick }: { status: AcceptStatus; onClic
         <span className={`relative w-2 h-2 rounded-full ${STATUS_DOT[status.tone]}`} />
       </span>
       <span className="font-black truncate">{status.label}</span>
-      {onClick && <ChevronDown className="w-3 h-3 shrink-0 ml-auto opacity-60" />}
+      {onClick && size === 'md' && <ChevronDown className="w-3 h-3 shrink-0 ml-auto opacity-60" />}
     </>
   );
-  const cls = `h-7 max-w-full min-w-0 px-2.5 rounded-full border text-[11px] inline-flex items-center gap-1.5 ${STATUS_CLASSES[status.tone]}`;
+  const cls = `${size === 'sm' ? 'h-6 px-2 text-[10px] gap-1' : 'h-7 px-2.5 text-[11px] gap-1.5'} max-w-full min-w-0 rounded-full border inline-flex items-center ${STATUS_CLASSES[status.tone]}`;
   return onClick ? (
     <button
       type="button"

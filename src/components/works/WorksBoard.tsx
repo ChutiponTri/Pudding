@@ -888,17 +888,31 @@ export function WorksBoard() {
           })}
         </div>
 
-        {/* Filters: subject, status, grading (dropdowns) + search */}
-        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 sm:gap-2">
+        {/* Filters, by the width they have (not the screen's): below 56rem two full-width lines of the
+            same width (a 2 × 2 grid of equal boxes: subject/class + search, then status + grading;
+            clear is a tall button down the right of both); from 56rem, where everything fits,
+            one row (order sets the sequence). */}
+        <div className="@container">
+        <div className={`grid ${filtering ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]' : 'grid-cols-2'} gap-1.5 @4xl:flex @4xl:items-center @4xl:gap-2`}>
           <ComboFilter
             value={activeClass !== 'all' ? `class:${activeClass}` : activeCourse !== 'all' ? `course:${activeCourse}` : 'all'}
             onChange={selectPlace}
-            className="col-span-2 sm:col-span-1 sm:w-72"
+            className="flex-1 @4xl:flex-none @4xl:w-72 @4xl:order-1"
             options={[
               ...termCourses.map((c) => ({ value: `course:${c.id}`, label: `${c.code} ${c.name}`.trim(), kind: 'subject' as const })),
               ...termWorkClasses.map((c) => ({ value: `class:${c.id}`, label: c.name, sub: courseById.get(c.courseId)?.code, kind: 'class' as const })),
             ]}
           />
+          <label className="relative flex-1 min-w-0 @4xl:min-w-48 @4xl:order-4 h-9 sm:h-10 flex items-center overflow-hidden pl-8 sm:pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus-within:border-amber-500 cursor-text">
+            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={tr('ค้นหาชื่องานหรือห้อง', 'Search work or class')}
+              className="phone-small-field w-full min-w-0 h-full bg-transparent text-xs sm:text-sm text-slate-900 dark:text-white outline-none"
+            />
+          </label>
           <FilterSelect
             label={tr('สถานะ', 'Status')}
             value={acceptFilter}
@@ -908,7 +922,7 @@ export function WorksBoard() {
               setAcceptFilter(next);
               setParam('status', next === 'all' ? null : next);
             }}
-            className="sm:w-44"
+            className="flex-1 @4xl:flex-none @4xl:w-44 @4xl:order-2"
             options={[
               { value: 'all', label: tr('ทุกสถานะ', 'Any status') },
               { value: 'open', label: tr('เปิดรับ', 'Open') },
@@ -925,23 +939,13 @@ export function WorksBoard() {
               setGradeFilter(next);
               setParam('grading', next === 'all' ? null : next);
             }}
-            className="sm:w-44"
+            className="flex-1 @4xl:flex-none @4xl:w-44 @4xl:order-3"
             options={[
               { value: 'all', label: tr('ทั้งหมด', 'All') },
               { value: 'unfinished', label: tr('ยังตรวจไม่ครบ', 'Not fully graded') },
               { value: 'finished', label: tr('ตรวจครบแล้ว', 'Fully graded') },
             ]}
           />
-          <label className="relative col-span-2 sm:col-span-1 sm:flex-1 sm:min-w-48 h-9 sm:h-10 flex items-center overflow-hidden pl-8 sm:pl-9 pr-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 focus-within:border-amber-500 cursor-text">
-            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={tr('ค้นหาชื่องานหรือห้อง', 'Search work or class')}
-              className="phone-small-field w-full min-w-0 h-full bg-transparent text-sm text-slate-900 dark:text-white outline-none"
-            />
-          </label>
           {filtering && (
             <button
               type="button"
@@ -953,19 +957,25 @@ export function WorksBoard() {
                 setParam('status', null);
                 setParam('grading', null);
               }}
-              className="col-span-2 sm:col-span-1 h-8 sm:h-10 px-3 rounded-xl text-[11px] sm:text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1 cursor-pointer"
+              aria-label={tr('ล้างตัวกรอง', 'Clear filters')}
+              title={tr('ล้างตัวกรอง', 'Clear filters')}
+              // Two lines: one tall button down the right of both lines, so the four boxes stay equal.
+              className="col-start-3 row-start-1 row-span-2 h-full w-9 sm:w-10 @4xl:col-auto @4xl:row-auto @4xl:w-auto @4xl:h-10 @4xl:px-3 @4xl:order-5 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100 @4xl:bg-transparent dark:bg-slate-800 @4xl:dark:bg-transparent hover:bg-slate-200 @4xl:hover:bg-slate-100 dark:hover:bg-slate-700 @4xl:dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
-              {tr('ล้างตัวกรอง', 'Clear filters')}
+              <span className="@max-4xl:hidden">{tr('ล้างตัวกรอง', 'Clear filters')}</span>
             </button>
           )}
+        </div>
         </div>
       </div>
 
       {/* Phones: the two tabs as a bottom bar (like the classroom page). */}
       <nav
         aria-label={tr('ประเภทงาน', 'Work type')}
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]"
+        // The solid ::after under the bar fills any sliver between it and the screen's edge
+        // (fractional pixel ratios, browser toolbars sliding away), so the page never shows through.
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] after:content-[''] after:absolute after:inset-x-0 after:top-full after:h-24 after:bg-white dark:after:bg-slate-900"
       >
         <div className="relative grid grid-cols-2 px-1 py-1.5">
           <span

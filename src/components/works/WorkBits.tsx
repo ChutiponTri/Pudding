@@ -183,7 +183,7 @@ export function MetricCells({ totals }: { totals: WorkTotals }) {
   const percent = totalStudents > 0 ? Math.round((graded / totalStudents) * 100) : 0;
   // One line each, same height, so every row's numbers sit on the same line.
   const cell = (label: string, value: number, of: number, strong: boolean) => (
-    <span className="@4xl:w-21 shrink-0 h-9 inline-flex items-center gap-1 whitespace-nowrap tabular-nums">
+    <span className="@lg:w-16 @4xl:w-21 shrink-0 h-9 inline-flex items-center gap-1 whitespace-nowrap tabular-nums">
       <span className="text-[11px] font-semibold text-slate-400 dark:text-slate-500">{label}</span>
       <span className={`text-sm font-black ${strong ? 'text-amber-700 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>{value}</span>
       <span className="text-[11px] font-semibold text-slate-400">/{of}</span>
@@ -193,12 +193,46 @@ export function MetricCells({ totals }: { totals: WorkTotals }) {
     <>
       {cell(tr('ส่ง', 'In'), handedIn, totalStudents, false)}
       {cell(tr('ตรวจ', 'Checked'), graded, checkable, pending > 0)}
-      <span className="h-9 flex items-center gap-2 flex-1 min-w-20 @4xl:flex-none @4xl:w-28" title={tr(`ตรวจแล้ว ${percent}% ของนักเรียนทั้งหมด`, `${percent}% of students checked`)}>
+      <span className="h-9 flex items-center gap-2 flex-1 min-w-20 @lg:@max-4xl:hidden @4xl:flex-none @4xl:w-28" title={tr(`ตรวจแล้ว ${percent}% ของนักเรียนทั้งหมด`, `${percent}% of students checked`)}>
         <span className="flex-1 min-w-0">
           <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />
         </span>
         <span className={`w-9 text-right text-xs font-black tabular-nums ${percent === 100 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-200'}`}>{percent}%</span>
       </span>
+    </>
+  );
+}
+
+/**
+ * Phones: a work's whole progress on one line — handed in, checked, and a bar
+ * with the checked share (as MetricCells shows on wider screens). Fixed widths,
+ * so the numbers line up row after row.
+ */
+export function PhoneProgress({ totals, bar = true }: { totals: WorkTotals; bar?: boolean }) {
+  const { tr } = useLanguage();
+  const { handedIn, totalStudents, graded, checkable, pending, notSubmitted } = totals;
+  const percent = totalStudents > 0 ? Math.round((graded / totalStudents) * 100) : 0;
+  const cell = (label: string, value: number, of: number, strong: boolean, width: string) => (
+    <span className={`${width} shrink-0 inline-flex items-baseline gap-0.5 whitespace-nowrap tabular-nums`}>
+      <span className="text-[10px] font-semibold text-slate-400">{label}</span>
+      <span className={`text-xs font-black ${strong ? 'text-amber-700 dark:text-amber-400' : 'text-slate-900 dark:text-white'}`}>{value}</span>
+      <span className="text-[10px] font-semibold text-slate-400">/{of}</span>
+    </span>
+  );
+  return (
+    <>
+      {/* The two counts side by side, centred in the space between the type and the bar. */}
+      <span className="min-w-0 flex-1 flex items-center justify-center gap-3">
+        {cell(tr('ส่ง', 'In'), handedIn, totalStudents, false, '')}
+        {cell(tr('ตรวจ', 'Chk'), graded, checkable, pending > 0, '')}
+      </span>
+      {/* A short bar at the right end, under the row's controls (not stretched across the line). */}
+      {bar && <span className="w-24 shrink-0 flex items-center gap-1.5" title={tr(`ตรวจแล้ว ${percent}% ของนักเรียนทั้งหมด`, `${percent}% of students checked`)}>
+        <span className="flex-1 min-w-0">
+          <GradingBar graded={graded} pending={pending} notSubmitted={notSubmitted} />
+        </span>
+        <span className={`w-8 text-right text-[11px] font-black tabular-nums ${percent === 100 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-200'}`}>{percent}%</span>
+      </span>}
     </>
   );
 }
@@ -213,12 +247,15 @@ export function RemindButton({
   onClick,
   title,
   closed = false,
+  size = 'md',
 }: {
   missing: number;
   onClick: () => void;
   title?: string;
   /** The work no longer takes hand-ins: shown, but greyed out. */
   closed?: boolean;
+  /** 'sm': 32 px, 11 px text. 'xs': the two-line phone row (28 px, the bell and its count only). */
+  size?: 'xs' | 'sm' | 'md';
 }) {
   const { tr } = useLanguage();
   // Always shown on published work (so it is easy to find); greyed out when there is nobody to remind.
@@ -236,17 +273,17 @@ export function RemindButton({
       disabled={disabled}
       title={reason}
       aria-label={reason}
-      className={`relative h-9 pl-2.5 ${missing > 0 ? 'pr-6' : 'pr-2.5'} rounded-xl text-xs font-black inline-flex items-center gap-1 whitespace-nowrap ring-1 transition-colors ${
+      className={`relative ${size === 'xs' ? 'h-7 pl-1.5 text-[10px] rounded-lg' : size === 'sm' ? 'h-8 pl-2 text-[11px] rounded-xl' : 'h-9 pl-2.5 text-xs rounded-xl'} ${missing > 0 ? (size === 'xs' ? 'pr-1.5' : 'pr-6') : size === 'xs' ? 'pr-1.5' : size === 'sm' ? 'pr-2' : 'pr-2.5'} font-black inline-flex items-center gap-1 whitespace-nowrap ring-1 transition-colors ${
         disabled
           ? 'bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500 ring-slate-200 dark:ring-slate-700 cursor-not-allowed'
           : 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 ring-rose-200 dark:ring-rose-900 cursor-pointer'
       }`}
     >
       <BellRing className="w-3.5 h-3.5 shrink-0" />
-      {tr('ทวงงาน', 'Remind')}
+      {size !== 'xs' && <span className={size === 'md' ? '@lg:@max-4xl:hidden' : ''}>{tr('ทวงงาน', 'Remind')}</span>}
       {missing > 0 && (
         <span
-          className={`absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center tabular-nums ${
+          className={`absolute ${size === 'xs' ? '-top-1.5 -right-1.5 ring-2 ring-white dark:ring-slate-900' : 'top-1 right-1'} min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center tabular-nums ${
             disabled ? 'bg-slate-300 dark:bg-slate-600 text-white' : 'bg-rose-600 text-white'
           }`}
         >
@@ -261,21 +298,30 @@ export function RemindButton({
  * "ตรวจงาน": filled amber while work waits; how many wait sits in the button's
  * top-right corner, the same way as RemindButton.
  */
-export function GradeButton({ pending, href }: { pending: number; href: string }) {
+export function GradeButton({ pending, href, size = 'md' }: { pending: number; href: string; size?: 'xs' | 'sm' | 'md' }) {
   const { tr } = useLanguage();
   return (
     <Link
       href={href}
       draggable={false}
-      className={`relative h-9 pl-3 ${pending > 0 ? 'pr-6' : 'pr-3'} rounded-xl text-xs font-black inline-flex items-center gap-1 whitespace-nowrap transition-colors ${
+      className={`relative ${size === 'xs' ? 'h-7 px-2 text-[11px] rounded-lg' : size === 'sm' ? 'h-8 pl-2.5 text-[11px] rounded-xl' : 'h-9 pl-3 text-xs rounded-xl'} ${size === 'xs' ? '' : pending > 0 ? 'pr-6' : size === 'sm' ? 'pr-2.5' : 'pr-3'} font-black inline-flex items-center gap-1 whitespace-nowrap transition-colors ${
         pending > 0
           ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm shadow-amber-500/20'
           : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
       }`}
     >
-      {tr('ตรวจงาน', 'Grade')}
+      {size === 'xs' ? (
+        tr('ตรวจ', 'Grade')
+      ) : size === 'md' ? (
+        <>
+          <span className="@lg:@max-4xl:hidden">{tr('ตรวจงาน', 'Grade')}</span>
+          <span className="hidden @lg:@max-4xl:inline">{tr('ตรวจ', 'Grade')}</span>
+        </>
+      ) : (
+        tr('ตรวจงาน', 'Grade')
+      )}
       {pending > 0 && (
-        <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center tabular-nums bg-slate-950 text-white">
+        <span className={`absolute ${size === 'xs' ? '-top-1.5 -right-1.5 ring-2 ring-white dark:ring-slate-900' : 'top-1 right-1'} min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-center tabular-nums bg-slate-950 text-white`}>
           {pending > 99 ? '99+' : pending}
         </span>
       )}
@@ -296,7 +342,7 @@ export function announcesResults(counts: Pick<GradingCounts, 'notSubmitted'>, ac
  * button is never wider than the bell + "ทวงงาน" (the full wording is its
  * tooltip and the ⋯ menu item).
  */
-export function AnnounceButton({ graded, onClick, title }: { graded: number; onClick: () => void; title?: string }) {
+export function AnnounceButton({ graded, onClick, title, size = 'md' }: { graded: number; onClick: () => void; title?: string; size?: 'xs' | 'sm' | 'md' }) {
   const { tr } = useLanguage();
   const disabled = graded === 0;
   const reason = disabled ? tr('ยังไม่มีงานที่ตรวจเสร็จ', 'Nothing graded yet') : title || tr('ประกาศคะแนนในกลุ่ม LINE', 'Announce scores in the LINE group');
@@ -308,14 +354,14 @@ export function AnnounceButton({ graded, onClick, title }: { graded: number; onC
       disabled={disabled}
       title={reason}
       aria-label={reason}
-      className={`h-9 px-2.5 rounded-xl text-xs font-black inline-flex items-center gap-1 whitespace-nowrap ring-1 transition-colors ${
+      className={`${size === 'xs' ? 'h-7 px-1.5 text-[10px] rounded-lg' : size === 'sm' ? 'h-8 px-2 text-[11px] rounded-xl' : 'h-9 px-2.5 text-xs rounded-xl'} font-black inline-flex items-center gap-1 whitespace-nowrap ring-1 transition-colors ${
         disabled
           ? 'bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500 ring-slate-200 dark:ring-slate-700 cursor-not-allowed'
           : 'bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 ring-emerald-200 dark:ring-emerald-900 cursor-pointer'
       }`}
     >
       <Megaphone className="w-3.5 h-3.5 shrink-0" />
-      {tr('ประกาศ', 'Scores')}
+      {size !== 'xs' && <span className={size === 'md' ? '@lg:@max-4xl:hidden' : ''}>{tr('ประกาศ', 'Scores')}</span>}
     </button>
   );
 }
@@ -381,8 +427,9 @@ export function WorkRowLayout({
   /** Phones only: a short summary kept on the title's line (PhoneWorkSummary); status, buttons and numbers then hide below `sm`. */
   phone?: React.ReactNode;
   /**
-   * Phones only, with `phone`: the title gets a line to itself (up to two lines),
-   * and this (e.g. the work type) starts the second line, before the summary and ⋯.
+   * Phones only, with `phone`: a second line under the title, full width (e.g. the
+   * work type and its whole progress); the title shares the first line with
+   * `phone` (then just the controls) and ⋯.
    */
   phoneMeta?: React.ReactNode;
   /** ROW_INSET for the level, so columns line up across levels. */
@@ -391,28 +438,30 @@ export function WorkRowLayout({
   // Wide board (container ≥ 56rem): one line. The name takes the free space;
   // status, numbers, button and ⋯ keep fixed widths at the right, so every
   // row's status button starts at the same x (each sized to its label).
-  // Narrow: name + ⋯ / status + button / numbers. Phones with `phone`: one line.
+  // Medium (32–56rem, e.g. a 650–980 px screen): one line too, with compact
+  // fixed columns (no bar; ทวงงาน / ประกาศ as icons, ตรวจงาน as ตรวจ).
+  // Narrow: name + ⋯ / status + button / numbers. Phones with `phone`: their own layout.
   const wide = phone ? 'max-sm:hidden' : '';
   const stacked = !!(phone && phoneMeta);
   return (
     <div
-      className={`flex flex-wrap @4xl:flex-nowrap items-center gap-x-3 gap-y-1.5 ${
-        phone ? (stacked ? 'max-sm:gap-x-1.5 max-sm:gap-y-0.5' : 'max-sm:flex-nowrap max-sm:gap-x-1.5') : ''
+      className={`flex flex-wrap @lg:flex-nowrap items-center gap-x-3 @lg:gap-x-2 @4xl:gap-x-3 gap-y-1.5 ${
+        phone ? (stacked ? 'max-sm:gap-x-1.5 max-sm:gap-y-1' : 'max-sm:flex-nowrap max-sm:gap-x-1.5') : ''
       } ${inset}`}
     >
       <div
-        className={`order-1 basis-[calc(100%-3rem)] @4xl:basis-auto min-w-0 flex-1 min-h-9 flex items-center ${
-          phone ? (stacked ? 'max-sm:basis-full max-sm:min-h-0 max-sm:pt-0.5' : 'max-sm:basis-0') : ''
+        className={`order-1 basis-[calc(100%-3rem)] @lg:basis-auto min-w-0 flex-1 min-h-9 flex items-center ${
+          phone ? 'max-sm:basis-0' : ''
         }`}
       >
         {lead}
       </div>
-      {stacked && <div className="sm:hidden order-1 min-w-0 flex-1 flex items-center gap-1.5">{phoneMeta}</div>}
       {phone && <div className="sm:hidden order-1 shrink-0 flex items-center">{phone}</div>}
-      <div className="order-2 @4xl:order-6 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
-      <div className={`order-3 @4xl:order-2 min-w-0 shrink-0 @4xl:w-36 h-9 flex items-center ${status ? '' : 'hidden @4xl:flex'} ${wide}`}>{status}</div>
-      <div className={`order-4 @4xl:order-5 ml-auto @4xl:ml-0 shrink-0 @4xl:w-52 h-9 flex items-center justify-end gap-1.5 ${wide}`}>{action}</div>
-      <div className={`order-5 @4xl:order-4 basis-full @4xl:basis-auto @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3 ${wide}`}>{metrics}</div>
+      {stacked && <div className="sm:hidden order-3 basis-full min-w-0 flex items-center gap-2">{phoneMeta}</div>}
+      <div className="order-2 @lg:order-6 shrink-0 w-9 h-9 flex items-center justify-end">{menu}</div>
+      <div className={`order-3 @lg:order-2 min-w-0 shrink-0 @lg:w-24 @4xl:w-36 h-9 flex items-center ${status ? '' : 'hidden @lg:flex'} ${wide}`}>{status}</div>
+      <div className={`order-4 @lg:order-5 ml-auto @lg:ml-0 shrink-0 @lg:w-30 @4xl:w-52 h-9 flex items-center justify-end gap-1.5 ${wide}`}>{action}</div>
+      <div className={`order-5 @lg:order-4 basis-full @lg:basis-auto @lg:w-[8.5rem] @4xl:w-76 shrink-0 min-w-0 h-9 flex items-center gap-3 @lg:gap-2 @4xl:gap-3 ${wide}`}>{metrics}</div>
     </div>
   );
 }

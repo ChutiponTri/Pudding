@@ -851,8 +851,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 {assignment?.is_exam ? t('assignment_creator.mode_exam') : t('assignment_creator.mode_assignment')}
               </span>
               {isRetake(assignment) && (
-                <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300">
-                  🔁 {th ? `สอบซ่อม · ${assignment?.retake_student_ids?.length || 0} คน` : `Retake · ${assignment?.retake_student_ids?.length || 0}`}
+                <span
+                  title={th ? `สอบซ่อม ${assignment?.retake_student_ids?.length || 0} คน` : `Retake for ${assignment?.retake_student_ids?.length || 0}`}
+                  className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
+                >
+                  🔁 {th ? 'สอบซ่อม' : 'Retake'}
                 </span>
               )}
               {isRetake(assignment) && assignment?.retake_of && (

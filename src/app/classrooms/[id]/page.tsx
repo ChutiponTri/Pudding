@@ -21,7 +21,7 @@ import { teacherRoleBadgeClass, teacherRoleLabel } from '@/lib/utils/teacherRole
 import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeacherPanel';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ClassworkRow } from '@/components/works/ClassworkRow';
-import { useCrossListDrag } from '@/lib/hooks/useCrossListDrag';
+import { shiftFor, useCrossListDrag } from '@/lib/hooks/useCrossListDrag';
 import { announceConfirmText } from '@/components/works/WorkBits';
 import { applySavedOrder, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
 
@@ -317,6 +317,9 @@ export default function ClassroomWorkspacePage() {
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
   // Where a dragged card would land: before the card at `index` in `group` (index = length → at the end).
   const [dropTarget, setDropTarget] = useState<{ group: string; index: number } | null>(null);
+  // The row being dragged: where it came from and how far the others slide aside for it.
+  const [classworkDragInfo, setClassworkDragInfo] = useState<{ id: string; source: { group: string; index: number }; size: number } | null>(null);
+  const foldOpenTimer = useRef<{ group: string; timer: number } | null>(null);
 
   // People Tab: Add Teacher & Add Student Modals
   const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
@@ -1250,19 +1253,29 @@ export default function ClassroomWorkspacePage() {
    * group and, when it came from another group, moves it; the default groups
    * (งานทั่วไป / ข้อสอบ) mean "no group name".
    */
-  const handleDropAssignment = async (assignmentId: string, group: string, index: number) => {
+  /**
+   * Drops a row into `group`, before the shown row `beforeId` (null: after the last shown
+   * row). By row, not by position: the stored list of a category also holds its
+   * unpublished work (shown in its own section), so positions on screen and in the
+   * list differ.
+   */
+  const handleDropAssignment = async (assignmentId: string, group: string, beforeId: string | null, lastShownId: string | null) => {
     const item = assignments.find((a) => a.id === assignmentId);
     if (!item) return;
     const fromGroup = groupKeyOf(item);
-    const list = assignments.filter((a) => groupKeyOf(a) === group).sort(byClassworkOrder);
-    const from = list.findIndex((a) => a.id === assignmentId);
-    let target = Math.max(0, Math.min(index, list.length));
-    if (from !== -1) {
-      if (target === from || target === from + 1) return; // dropped where it already is
-      list.splice(from, 1);
-      if (from < target) target -= 1;
+    const full = assignments.filter((a) => groupKeyOf(a) === group).sort(byClassworkOrder);
+    const list = full.filter((a) => a.id !== assignmentId);
+    let target = list.length;
+    if (beforeId && beforeId !== assignmentId) {
+      const at = list.findIndex((a) => a.id === beforeId);
+      if (at !== -1) target = at;
+    } else if (lastShownId && lastShownId !== assignmentId) {
+      const at = list.findIndex((a) => a.id === lastShownId);
+      if (at !== -1) target = at + 1;
     }
     list.splice(target, 0, item);
+    // Dropped where it already is.
+    if (fromGroup === group && list.every((a, i) => a.id === full[i]?.id)) return;
 
     const fallback = item.is_exam ? tr('ข้อสอบ', 'Exam') : tr('งานทั่วไป', 'General');
     const newGroupName = fromGroup === group ? undefined : group === fallback ? null : group;
@@ -1291,16 +1304,39 @@ export default function ClassroomWorkspacePage() {
   // Classwork: drag a row from anywhere on it (mouse: move a little; finger:
   // press and hold), into a position in any category.
   const classworkDrag = useCrossListDrag({
-    onStart: (id) => setDraggingAssignmentId(id),
+    onStart: (id, source, size) => {
+      setDraggingAssignmentId(id);
+      setClassworkDragInfo({ id, source, size });
+    },
     onOver: (target) => {
       setDropTarget(target);
       setDragOverGroup(target?.group ?? null);
+      // Held over a folded category for a moment: open it, so the row can go anywhere in it.
+      const pending = foldOpenTimer.current;
+      if (pending && pending.group !== target?.group) {
+        window.clearTimeout(pending.timer);
+        foldOpenTimer.current = null;
+      }
+      if (target && !foldOpenTimer.current && !isClassworkGroupOpen(classworkFoldKey(target.group))) {
+        const group = target.group;
+        foldOpenTimer.current = {
+          group,
+          timer: window.setTimeout(() => {
+            foldOpenTimer.current = null;
+            if (!isClassworkGroupOpen(classworkFoldKey(group))) toggleClassworkGroup(classworkFoldKey(group));
+          }, 650),
+        };
+      }
     },
     onDrop: (id, target) => {
-      void handleDropAssignment(id, target.group, target.index);
+      const shown = orderedClassworkGroups.find(([group]) => group === target.group)?.[1] || [];
+      void handleDropAssignment(id, target.group, shown[target.index]?.id ?? null, shown[shown.length - 1]?.id ?? null);
     },
     onEnd: () => {
+      if (foldOpenTimer.current) window.clearTimeout(foldOpenTimer.current.timer);
+      foldOpenTimer.current = null;
       setDraggingAssignmentId(null);
+      setClassworkDragInfo(null);
       setDragOverGroup(null);
       setDropTarget(null);
     },
@@ -1930,7 +1966,9 @@ export default function ClassroomWorkspacePage() {
           {/* Mobile bottom tab bar: all five tabs at once, icon above a short label. */}
           <nav
             aria-label={tr('เมนูห้องเรียน', 'Classroom menu')}
-            className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]"
+            // The solid ::after under the bar fills any sliver between it and the screen's edge
+        // (fractional pixel ratios, browser toolbars sliding away), so the page never shows through.
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] after:content-[''] after:absolute after:inset-x-0 after:top-full after:h-24 after:bg-white dark:after:bg-slate-900"
           >
             <div className="relative grid grid-cols-5 px-1 py-1.5">
               {/* One column-wide track slides to the active tab; the pill inside matches the icon highlight. */}
@@ -2309,7 +2347,6 @@ export default function ClassroomWorkspacePage() {
                 </div>
               )}
 
-              {classworkDrag.ghostLayer}
               {/* Grouped Assignments List (re-keyed per filter so it slides in like a tab change) */}
               <div
                 key={classworkFilter}
@@ -2327,8 +2364,8 @@ export default function ClassroomWorkspacePage() {
                     key={group}
                     ref={bindGroupItem(foldKey)}
                     style={groupItemStyle(foldKey)}
-                    // Over the category but not over a card: drop at its end.
-                    {...(isUnpublishedGroup ? {} : { 'data-xl-list': group, 'data-xl-count': items.length })}
+                    // A drop target: the drag hook works out the place from its rows (data-xl-item).
+                    {...(isUnpublishedGroup ? {} : { 'data-xl-list': group })}
                     // Each category is its own card: clear border and a grey header (or the teacher's colour).
                     className={`relative overflow-hidden rounded-3xl border-2 transition-[border-color,box-shadow,background-color] ${
                       dragOverGroup === group
@@ -2375,23 +2412,33 @@ export default function ClassroomWorkspacePage() {
                       </div>
                     )}
 
-                    <div className="@container space-y-2">
-                      {items.map((item, itemIndex, all) => {
-                        // Show the insertion line only where a drop would change something.
-                        const draggedIndex = all.findIndex((a) => a.id === draggingAssignmentId);
-                        const lineAt = (index: number) =>
-                          !!draggingAssignmentId &&
-                          dropTarget?.group === group &&
-                          dropTarget.index === index &&
-                          (draggedIndex === -1 || (index !== draggedIndex && index !== draggedIndex + 1));
+                    <div
+                      className="@container space-y-2"
+                      // Another category's row headed here: room for it at the end, as the rows slide down.
+                      style={
+                        classworkDragInfo && dropTarget?.group === group && classworkDragInfo.source.group !== group
+                          ? { paddingBottom: classworkDragInfo.size, transition: 'padding 220ms cubic-bezier(0.2,0.8,0.2,1)' }
+                          : classworkDragInfo
+                          ? { transition: 'padding 220ms cubic-bezier(0.2,0.8,0.2,1)' }
+                          : undefined
+                      }
+                    >
+                      {items.map((item, itemIndex) => {
                         const itemWindow = getAssignmentWindow(item);
                         const canDrag = classworkFilter === 'all' && !isUnpublishedGroup;
+                        const isDragged = classworkDragInfo?.id === item.id;
+                        // While a row is dragged the others slide aside to open a gap where it will land.
+                        const shift = shiftFor(classworkDragInfo, dropTarget, group, itemIndex, isDragged);
                         return (
                           <div
                             key={item.id}
-                            // Top half of the card: before it; bottom half: after it (the drag hook reads these).
-                            {...(isUnpublishedGroup ? {} : { 'data-xl-item': item.id, 'data-xl-group': group, 'data-xl-index': itemIndex })}
-                            {...(canDrag ? classworkDrag.pressProps(item.id, item.title) : {})}
+                            {...(isUnpublishedGroup ? {} : { 'data-xl-item': item.id, 'data-xl-index': itemIndex, 'data-xl-shift': shift })}
+                            {...(canDrag ? classworkDrag.pressProps(item.id) : {})}
+                            style={
+                              classworkDragInfo
+                                ? { transform: shift ? `translate3d(0, ${shift}px, 0)` : undefined, transition: 'transform 220ms cubic-bezier(0.2,0.8,0.2,1)' }
+                                : undefined
+                            }
                             onClickCapture={(e) => {
                               // The release after a drag must not open the title link.
                               if (classworkDrag.recentlyDropped()) {
@@ -2407,17 +2454,13 @@ export default function ClassroomWorkspacePage() {
                               router.push(`/assignments/${item.id}/grading?from=classroom&classroomId=${classroomId}`);
                             }}
                             title={canDrag ? tr('กดเพื่อตรวจงาน • ลากเพื่อเรียงลำดับหรือย้ายกลุ่ม', 'Tap to grade • drag to reorder or move group') : tr('กดเพื่อตรวจงาน', 'Tap to grade')}
-                            className={`relative flex cursor-pointer select-none [-webkit-touch-callout:none] ${draggingAssignmentId === item.id ? 'opacity-40 scale-[0.98]' : ''} transition-[opacity,transform]`}
+                            className={`relative flex cursor-pointer select-none [-webkit-touch-callout:none] ${
+                              // The dragged row's place: an empty dashed slot (its copy follows the pointer).
+                              isDragged ? 'rounded-2xl outline-2 outline-dashed outline-amber-400 bg-amber-50/60 dark:bg-amber-950/20' : ''
+                            }`}
                           >
-                            {/* Insertion line: where the dragged card will land */}
-                            {lineAt(itemIndex) && (
-                              <span aria-hidden className="pointer-events-none absolute top-[-6px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
-                            )}
-                            {itemIndex === items.length - 1 && lineAt(items.length) && (
-                              <span aria-hidden className="pointer-events-none absolute bottom-[-6px] inset-x-1 h-1 rounded-full bg-amber-500 shadow-sm shadow-amber-500/40" />
-                            )}
                             <ClassworkRow
-                              className="flex-1 min-w-0 hover:border-amber-400"
+                              className={`flex-1 min-w-0 hover:border-amber-400 ${isDragged ? 'opacity-0' : ''}`}
                               now={nowMs}
                               tag={isUnpublishedGroup ? groupKeyOf(item) : undefined}
                               assignment={item}

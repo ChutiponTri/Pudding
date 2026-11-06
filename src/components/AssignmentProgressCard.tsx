@@ -139,7 +139,7 @@ export function AssignmentProgressCard({
             }`}
           >
             {isRetake(assignment)
-              ? th ? `สอบซ่อม · ${assignment.retake_student_ids?.length || 0} คน` : `Retake · ${assignment.retake_student_ids?.length || 0}`
+              ? th ? 'สอบซ่อม' : 'Retake'
               : assignment.is_exam ? (th ? 'ข้อสอบ' : 'Quiz') : th ? 'การบ้าน/ใบงาน' : 'Assignment'}
           </span>
           {onStatusClick ? (
