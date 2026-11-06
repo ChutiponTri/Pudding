@@ -16,8 +16,8 @@ export function quizLeaveWarning(result: QuizOpenResult | null): string {
   if (!result?.tracked) return 'ออกจากหน้านี้? (คำตอบจะยังไม่ถูกส่ง)';
   const next = result.exits + 1;
   return result.exits >= result.warnings
-    ? `ออกจากข้อสอบ? คำตอบจะยังไม่ถูกส่ง\n\nเมื่อเปิดข้อสอบนี้อีกครั้ง ระบบจะส่งกระดาษเปล่าทันที (0 คะแนน) และรายงานคุณครูว่าน่าสงสัยว่าทุจริต`
-    : `ออกจากข้อสอบ? คำตอบจะยังไม่ถูกส่ง\n\nเมื่อเปิดใหม่จะนับเป็นการออกจากข้อสอบครั้งที่ ${next} (เตือนได้ ${result.warnings} ครั้ง) และรายงานคุณครูว่าน่าสงสัยว่าทุจริต`;
+    ? `ออกจากข้อสอบ? คำตอบจะยังไม่ถูกส่ง\n\nเมื่อเปิดข้อสอบนี้อีกครั้ง ระบบจะส่งกระดาษเปล่าทันที (0 คะแนน)`
+    : `ออกจากข้อสอบ? คำตอบจะยังไม่ถูกส่ง\n\nเมื่อเปิดใหม่จะนับเป็นการออกจากข้อสอบครั้งที่ ${next} (เตือนได้ ${result.warnings} ครั้ง)`;
 }
 
 /**
@@ -49,7 +49,6 @@ export function QuizExitWarningSheet({ result, onClose }: { result: QuizOpenResu
             </p>
           </div>
         </div>
-        <SuspiciousLabel />
         <p className="text-xs leading-relaxed p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200">
           {quizExitRule(result)}
           <span className="block mt-1 opacity-80">คำตอบก่อนหน้าไม่ได้ถูกบันทึก ต้องตอบใหม่ทั้งหมด</span>
@@ -67,14 +66,16 @@ export function QuizExitWarningSheet({ result, onClose }: { result: QuizOpenResu
   );
 }
 
-/** The "suspected of cheating" label, as the teacher also sees it. */
+/**
+ * Shown to the student only on a hand-in the server flagged (is_flagged_suspicious), and
+ * never with a reason: what the system watches stays the teacher's to know.
+ */
 export function SuspiciousLabel({ className = '' }: { className?: string }) {
   return (
     <p className={`flex items-center justify-center gap-1.5 text-xs font-bold text-rose-700 dark:text-rose-300 ${className}`}>
       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 dark:bg-rose-950/70 ring-1 ring-rose-200 dark:ring-rose-900">
-        <ShieldAlert className="w-3.5 h-3.5" /> น่าสงสัยว่าทุจริต
+        <ShieldAlert className="w-3.5 h-3.5" /> ระบบตรวจพบพฤติกรรมน่าสงสัย
       </span>
-      <span className="font-semibold text-rose-600/80 dark:text-rose-300/80">รายงานคุณครูแล้ว</span>
     </p>
   );
 }

@@ -147,7 +147,7 @@ export function mergeAwayEvents(
   reported: Array<{ id?: string; event_type: string; timestamp?: string; duration_seconds?: number; details?: string }>,
   openedAt: string[],
   handedInAt: Date
-): { events: AwayEvent[]; count: number; seconds: number; pastes: number } {
+): { events: AwayEvent[]; count: number; seconds: number; pastes: number; copies: number } {
   const byId = new Map<string, AwayEvent>();
   for (const e of saved) byId.set(e.id, e);
   reported.forEach((e, i) => {
@@ -183,6 +183,8 @@ export function mergeAwayEvents(
     count: trips.length,
     seconds: trips.reduce((sum, e) => sum + e.duration_seconds, 0),
     pastes: events.filter((e) => e.event_type === 'paste_attempt').length,
+    // Selecting or copying question text (the phone logs neither for the student's own answers).
+    copies: events.filter((e) => e.event_type === 'copy_attempt').length,
   };
 }
 

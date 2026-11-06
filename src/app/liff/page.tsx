@@ -14,7 +14,6 @@ import {
   Upload,
   ChevronRight,
   ArrowLeft,
-  ShieldCheck,
   ShieldAlert,
   Send,
   PlusCircle,
@@ -1595,10 +1594,9 @@ export default function LiffStudentPage() {
       if (trip) report(trip, durationSec);
       setAuditEvents((prev) => prev.map((e) => (trip && e.id === trip.id ? { ...e, duration_seconds: durationSec } : e)));
       setTotalAwaySeconds((prev) => prev + durationSec);
-      setAwayWarningToast(
-        `⚠️ ออกจากหน้าจอ ${durationSec} วินาที (ครั้งที่ ${tabSwitchCountRef.current}) — จะรายงานให้คุณครูเมื่อส่ง`
-      );
-      setTimeout(() => setAwayWarningToast(null), 5000);
+      // A short, plain reminder only: no count, time or "reported" (that is for the teacher).
+      setAwayWarningToast("อย่าออกจากหน้าข้อสอบระหว่างทำข้อสอบ");
+      setTimeout(() => setAwayWarningToast(null), 2500);
     };
 
     /** A logged signal that is not a trip (pointer left, copy, paste): shown to the teacher. */
@@ -1874,15 +1872,52 @@ export default function LiffStudentPage() {
       }
       return window.getSelection()?.toString() || "";
     };
+    // ---------- selecting / copying the questions (silent) ----------
+    // Split screen cannot be seen from inside LINE on Android, so selecting or copying a
+    // question's text (to look it up in another app) is what gives it away. Both are allowed
+    // and nothing is shown to the student: each is only logged, and the hand-in is flagged
+    // for the teacher (POST /api/submissions). The student's own answer boxes are not watched.
+    const inEditable = (target: EventTarget | null) =>
+      !!(target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
+    const questionSelection = () => {
+      if (inEditable(document.activeElement)) return "";
+      return norm(window.getSelection()?.toString() || "");
+    };
+    const snippet = (text: string) => `${text.length} ตัวอักษร: “${text.length > 60 ? `${text.slice(0, 60)}…` : text}”`;
+    // One line per selection: logged once it has held for 0.8 s (handles moving while
+    // dragging), and not again while the same selection is only adjusted.
+    let selectTimer = 0;
+    let loggedSelection = "";
+    const handleSelectionChange = () => {
+      if (selectTimer) window.clearTimeout(selectTimer);
+      selectTimer = 0;
+      const text = questionSelection();
+      // Five characters or more: a stray long-press on one short word is not counted.
+      if (text.length < 5) {
+        if (!text) loggedSelection = "";
+        return;
+      }
+      selectTimer = window.setTimeout(() => {
+        selectTimer = 0;
+        const now = questionSelection();
+        if (now.length < 5 || (loggedSelection && (now.includes(loggedSelection) || loggedSelection.includes(now)))) return;
+        loggedSelection = now;
+        logSignal("copy_attempt", `คลุมข้อความบนหน้าข้อสอบ (${snippet(now)})`, Date.now(), 0);
+      }, 800);
+    };
     const handleCopy = () => {
+      const own = inEditable(document.activeElement);
       const text = norm(selectedText());
       if (text) copiedInside.add(text);
-      logSignal("copy_attempt", "คัดลอกข้อความจากหน้าข้อสอบ", Date.now(), 0);
+      if (own) return;
+      logSignal("copy_attempt", `คัดลอกข้อความจากหน้าข้อสอบ${text ? ` (${snippet(text)})` : ""}`, Date.now(), 0);
     };
+    // Every paste into an answer is logged (and flags the hand-in), even text copied inside the
+    // quiz: the note only says where it came from.
     const handlePaste = (e: ClipboardEvent) => {
       const text = norm(e.clipboardData?.getData("text") || "");
-      if (text && copiedInside.has(text)) return;
-      logSignal("paste_attempt", `วางข้อความจากภายนอกลงในคำตอบ${text ? ` (${Math.min(text.length, 9999)} ตัวอักษร)` : ""}`, Date.now(), 0);
+      const from = text && copiedInside.has(text) ? "วางข้อความที่คัดลอกจากในหน้าข้อสอบลงในคำตอบ" : "วางข้อความจากภายนอกลงในคำตอบ";
+      logSignal("paste_attempt", `${from}${text ? ` (${snippet(text)})` : ""}`, Date.now(), 0);
     };
 
     // ---------- keep the screen on (auto-lock would look like leaving) ----------
@@ -1916,6 +1951,7 @@ export default function LiffStudentPage() {
     document.addEventListener("copy", handleCopy);
     document.addEventListener("cut", handleCopy);
     document.addEventListener("paste", handlePaste);
+    document.addEventListener("selectionchange", handleSelectionChange);
     // ---------- ?splitdebug=1: live readout of what this device reports (for tuning) ----------
     // Survives the LIFF login redirect (liff.state keeps the word) via sessionStorage.
     let debugBox: HTMLDivElement | null = null;
@@ -1999,6 +2035,8 @@ export default function LiffStudentPage() {
       document.removeEventListener("copy", handleCopy);
       document.removeEventListener("cut", handleCopy);
       document.removeEventListener("paste", handlePaste);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+      if (selectTimer) window.clearTimeout(selectTimer);
       window.clearInterval(poll);
       window.clearTimeout(firstCheck);
       if (blurTimer) window.clearTimeout(blurTimer);
@@ -2922,12 +2960,6 @@ export default function LiffStudentPage() {
                   : "ปิดการแบ่งหน้าจอหรือหน้าต่างลอย แล้วเปิด LINE เต็มจอ ข้อสอบจะแสดงต่อทันที"}
               </p>
             </div>
-            {screenGate.counting && (
-              <p className="text-xs font-bold text-rose-600 dark:text-rose-400 flex items-center justify-center gap-1.5">
-                <ShieldAlert className="w-4 h-4 shrink-0" />
-                ระหว่างนี้นับเป็นเวลาออกจากหน้าข้อสอบ
-              </p>
-            )}
             {gateEscapeReady && (
               <button
                 type="button"
@@ -2935,7 +2967,6 @@ export default function LiffStudentPage() {
                 className="w-full min-h-11 px-4 py-2.5 rounded-xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-800 hover:bg-slate-300/70 dark:hover:bg-slate-700 cursor-pointer"
               >
                 หน้าจอเต็มแล้ว แต่ยังขึ้นข้อความนี้
-                <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400">ระบบจะแจ้งคุณครูว่ากดข้าม</span>
               </button>
             )}
           </div>
@@ -3576,18 +3607,6 @@ export default function LiffStudentPage() {
               <ArrowLeft className="w-5 h-5" />
             </button>
 
-            {/* Live anti-cheating status (quizzes only) */}
-            {isTrackingAway && !isQuizForfeited && (
-              <div
-                className={`flex items-center gap-2 h-9 px-3.5 rounded-full text-xs font-semibold ring-1 ${tabSwitchCount > 0
-                  ? "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:ring-rose-900"
-                  : "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:ring-emerald-900"
-                  }`}
-              >
-                {tabSwitchCount > 0 ? <ShieldAlert className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
-                <span>ออกจากจอ {tabSwitchCount} ครั้ง ({totalAwaySeconds} วิ)</span>
-              </div>
-            )}
           </div>
 
           {activeProxy && (
@@ -3639,10 +3658,11 @@ export default function LiffStudentPage() {
               <div className="space-y-1.5">
                 <h2 className="text-xl font-bold text-slate-900 dark:text-white">{editingSubmission ? "ส่งงานที่แก้ไขแล้ว!" : "ส่งงานเรียบร้อยแล้ว!"}</h2>
                 <p className="text-sm text-slate-500 max-w-xs mx-auto">
-                  {isTrackingAway ? "ส่งคำตอบและรายงานถึงคุณครูแล้ว" : "ส่งงานถึงคุณครูแล้ว"}
+                  {isTrackingAway ? "ส่งคำตอบถึงคุณครูแล้ว" : "ส่งงานถึงคุณครูแล้ว"}
                 </p>
               </div>
-              {isTrackingAway && !!quizOpen?.exits && <SuspiciousLabel />}
+              {/* Flagged by the server: shown with no reason. */}
+              {submittedResult?.submission.is_flagged_suspicious && <SuspiciousLabel />}
               {submittedResult?.submission.results_hidden ? (
                 <ResultsHiddenNote isExam={!!activeAssignment?.is_exam} />
               ) : submittedResult && submittedResult.total !== null ? (
@@ -3670,18 +3690,6 @@ export default function LiffStudentPage() {
                 >
                   {submittedResult.autoScored > 0 ? "ดูคะแนนรายข้อ" : "ดูงานที่ส่ง"}
                 </button>
-              )}
-              {isTrackingAway && (
-              <dl className="grid grid-cols-2 gap-3 text-left">
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800">
-                  <dt className="text-xs text-slate-500">สลับหน้าจอ</dt>
-                  <dd className="text-lg font-bold text-slate-900 dark:text-white tabular-nums">{tabSwitchCount} ครั้ง</dd>
-                </div>
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800">
-                  <dt className="text-xs text-slate-500">เวลานอกจอ</dt>
-                  <dd className="text-lg font-bold text-slate-900 dark:text-white tabular-nums">{totalAwaySeconds} วิ</dd>
-                </div>
-              </dl>
               )}
               <button
                 onClick={() => {
@@ -3763,8 +3771,7 @@ export default function LiffStudentPage() {
               <ReferenceWork assignment={activeAssignment} />
 
               {isTrackingAway && quizOpen?.tracked && quizOpen.exits > 0 && (
-                <div role="status" className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200 text-xs leading-relaxed space-y-2">
-                  <SuspiciousLabel className="justify-start!" />
+                <div role="status" className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200 text-xs leading-relaxed">
                   <p>
                     <b>ปิดหรือออกจากข้อสอบก่อนส่ง {quizOpen.exits} ครั้ง</b> (เตือนครั้งที่ {quizOpen.exits}/{quizOpen.warnings}) • {quizExitRule(quizOpen)}
                   </p>
@@ -3774,7 +3781,7 @@ export default function LiffStudentPage() {
                 <div role="note" className="flex items-start gap-2.5 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-200 dark:ring-amber-900 text-amber-900 dark:text-amber-200 text-xs leading-relaxed">
                   <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
                   <p>
-                    ข้อสอบนี้แนบไฟล์ไม่ได้ และทุกครั้งที่ออกจากหน้าจอจะถูกรายงานให้คุณครูทราบ
+                    ข้อสอบนี้แนบไฟล์ไม่ได้ และห้ามออกจากหน้าข้อสอบระหว่างทำ
                     {quizOpen?.tracked && quizOpen.exits === 0 && (
                       <span className="block mt-1 font-bold">
                         ห้ามปิดหน้าข้อสอบ (กด X) หรือกดออกก่อนส่ง —{" "}
@@ -4481,6 +4488,9 @@ export default function LiffStudentPage() {
               ✕
             </button>
           </div>
+
+          {/* Flagged by the server: shown with no reason. */}
+          {viewingGradedSub.submission.is_flagged_suspicious && <SuspiciousLabel />}
 
           {gradedSubmissionIds.has(viewingGradedSub.submission.id) && viewingGradedSub.submission.total_score != null ? (
             <div className="liff-sheen p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white text-center space-y-1">

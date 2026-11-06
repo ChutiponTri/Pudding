@@ -418,8 +418,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Closing the quiz and coming back is always suspicious, even within the warnings.
-    // A paste during a quiz (an answer brought in from elsewhere) is suspicious on its own too.
-    const isSuspicious = tracked && (quizExits > 0 || isSuspiciousActivity(tabSwitchCount, awaySeconds) || (awayMerged?.pastes || 0) > 0);
+    // A paste during a quiz (an answer brought in from elsewhere) is suspicious on its own too,
+    // and so is selecting or copying a question's text (to look it up in another app). The
+    // student is never warned about the copy rule; only the teacher sees why.
+    const isSuspicious =
+      tracked &&
+      (quizExits > 0 || isSuspiciousActivity(tabSwitchCount, awaySeconds) || (awayMerged?.pastes || 0) > 0 || (awayMerged?.copies || 0) > 0);
     const submittedAt = new Date();
     const submissionRecord = {
       id: subId,
