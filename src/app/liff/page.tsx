@@ -275,6 +275,9 @@ if (typeof window !== "undefined") {
 // today's 20:9 phones, ~1.5 on old 16:9 ones, after LINE's header and the system bars);
 // LIFF in an Android split window is 1.0–1.4. Below this the quiz is covered.
 const QUIZ_FULL_RATIO = 1.55;
+// A selection of question text is logged (and flags the hand-in) from this many characters
+// (spaces squeezed): long enough that one tapped word is not counted.
+const MIN_LOGGED_SELECTION = 10;
 // The tallest upright page this device has shown full-screen, by pixel ratio and page
 // width (a top / bottom split keeps the width), learned on every LIFF visit. Android
 // reports a split window as the screen, so this is the only memory of the real size: a
@@ -1900,15 +1903,15 @@ export default function LiffStudentPage() {
       if (selectTimer) window.clearTimeout(selectTimer);
       selectTimer = 0;
       const text = questionSelection();
-      // Five characters or more: a stray long-press on one short word is not counted.
-      if (text.length < 5) {
+      // MIN_LOGGED_SELECTION characters or more: a stray long-press on a short word is not counted.
+      if (text.length < MIN_LOGGED_SELECTION) {
         if (!text) loggedSelection = "";
         return;
       }
       selectTimer = window.setTimeout(() => {
         selectTimer = 0;
         const now = questionSelection();
-        if (now.length < 5 || (loggedSelection && (now.includes(loggedSelection) || loggedSelection.includes(now)))) return;
+        if (now.length < MIN_LOGGED_SELECTION || (loggedSelection && (now.includes(loggedSelection) || loggedSelection.includes(now)))) return;
         loggedSelection = now;
         logSignal("copy_attempt", `คลุมข้อความบนหน้าข้อสอบ (${snippet(now)})`, Date.now(), 0);
       }, 800);

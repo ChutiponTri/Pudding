@@ -300,7 +300,7 @@
       "add_new_chip": "+ Add Custom Template"
     },
     "audit_modal": {
-      "title": "Integrity Audit Report",
+      "title": "Quiz behaviour log",
       "subtitle": "Foreground screen events and browser tab activity log",
       "summary_switches": "Total Tab Switches",
       "summary_duration": "Total Duration Away",
@@ -310,15 +310,15 @@
       "risk_low": "Clean",
       "event_timeline": "Event Timeline",
       "event_types": {
-        "tab_hidden": "Browser tab switched to background",
-        "window_blur": "Window blur (external app opened)",
-        "tab_visible": "Returned to assessment tab",
-        "window_focus": "Regained window focus",
-        "copy_attempt": "Highlight copy attempt",
-        "paste_attempt": "External paste attempt",
+        "tab_hidden": "Left the quiz (switched app / closed LINE)",
+        "window_blur": "Quiz lost focus (another app or window)",
+        "tab_visible": "Back on the quiz",
+        "window_focus": "Back on the quiz",
+        "copy_attempt": "Selected / copied text",
+        "paste_attempt": "Pasted text into an answer",
         "quiz_reopened": "Closed the quiz and reopened it",
-        "split_screen": "Split screen / floating window / another app side by side",
-        "pointer_left": "Pointer left the quiz window (e.g. another monitor)"
+        "split_screen": "Split screen / floating window / not full screen",
+        "pointer_left": "Pointer left the quiz window"
       }
     }
   },

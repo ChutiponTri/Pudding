@@ -1275,6 +1275,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               quizExitCount={sub.quiz_exit_count}
                               autoForfeited={sub.auto_forfeited}
                               onClick={() => handleOpenAudit(sub)}
+                              // The chip only: the counts and every event are in the log it opens.
+                              showDetails={false}
                             />
                           )}
                           {sub.submitted_by && (
@@ -1458,6 +1460,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               quizExitCount={sub.quiz_exit_count}
                               autoForfeited={sub.auto_forfeited}
                               onClick={() => handleOpenAudit(sub)}
+                              // The chip only: the counts and every event are in the log it opens.
+                              showDetails={false}
                             />
                           ) : (
                             <span className="text-slate-400">-</span>
