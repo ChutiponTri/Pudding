@@ -1,5 +1,5 @@
 import 'server-only';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { after } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getGroupSummary, isGroupMember } from '@/lib/line/messaging';
@@ -8,24 +8,19 @@ import { PUDDING_WEB_URL } from '@/lib/line/teacherFaq';
 import { teacherAccessOf, type TeacherAccess } from '@/lib/utils/teacherProfile';
 
 /**
- * Linking a classroom to a LINE group needs two halves:
- *   - who + which classroom: an approved teacher and one of their classrooms
- *     (a "waiting" request on the classroom, or a tap that names it), and
- *   - which group: a LINE group the bot is in (line_pending_groups).
- * Every entry point (web button, LIFF page from the rich menu, the bot's
- * buttons in a group) supplies one half; whichever half comes second links.
- * This module holds what the webhook and the API routes share.
+ * Linking a classroom to a LINE group: the teacher picks a group the bot is
+ * in and one of their classrooms, on the LIFF page (/liff/connect, opened from
+ * the bot's button in the group or the rich menu) or in the web dialog.
+ * Nothing waits for a message. Groups the bot is in live in line_bot_groups
+ * under an opaque `ref`, so links never carry the LINE group id; LINE itself
+ * confirms the teacher is a member before anything is linked.
  */
 
 export type ServiceClient = ReturnType<typeof createServiceSupabaseClient>;
 
-/** How long a "connect this classroom" request waits for its group. Only that teacher can complete it. */
-export const CONNECT_INTENT_TTL_MS = 24 * 60 * 60 * 1000;
-/** Unlinked groups older than this are not offered any more (the bot may sit there forgotten). */
-const PENDING_GROUP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const MAX_CANDIDATE_GROUPS = 10;
-/** "Create a classroom for this group" links from the bot. */
-const LINK_TOKEN_TTL_MS = 30 * 60 * 1000;
+/** Unlinked groups older than this are not offered (the bot may sit there forgotten). */
+const UNLINKED_GROUP_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
+const MAX_UNLINKED_GROUPS = 20;
 
 export type LinkClassroom = {
   id: string;
@@ -40,16 +35,10 @@ export type LinkClassroom = {
   academic_year?: string | null;
   line_group_id?: string | null;
   line_group_name?: string | null;
-  line_connection_status?: string | null;
-  /** Clerk id of the teacher who asked to connect this classroom (see armConnectRequest). */
-  line_connection_token?: string | null;
-  /** Group already shown the "move this group?" prompt, so ordinary chat does not repeat it. */
-  line_connection_token_hash?: string | null;
-  line_connection_token_expires_at?: string | null;
   created_at?: string | null;
 };
 
-export const LINK_COLUMNS = 'id, name, invite_code, teacher_id, teachers, course_name, subject_code, semester, year_ce, academic_year, line_group_id, line_group_name, line_connection_status, line_connection_token, line_connection_token_hash, line_connection_token_expires_at, created_at';
+export const LINK_COLUMNS = 'id, name, invite_code, teacher_id, teachers, course_name, subject_code, semester, year_ce, academic_year, line_group_id, line_group_name, created_at';
 
 export const isTeacherOf = (classroom: LinkClassroom, teacherId: string) =>
   classroom.teacher_id === teacherId || (classroom.teachers || []).some((t) => t.teacher_id === teacherId);
@@ -88,8 +77,8 @@ export async function getClassroom(supabase: ServiceClient, classroomId: string)
   return (data as LinkClassroom | null) || null;
 }
 
-/** Classrooms the teacher may link (newest first), optionally only those without a group. */
-export async function listLinkableClassrooms(supabase: ServiceClient, teacherId: string, options: { unlinkedOnly?: boolean } = {}): Promise<LinkClassroom[]> {
+/** Classrooms the teacher may link, newest first. */
+export async function listLinkableClassrooms(supabase: ServiceClient, teacherId: string): Promise<LinkClassroom[]> {
   const [owned, shared] = await Promise.all([
     supabase.from('classrooms').select(LINK_COLUMNS).eq('teacher_id', teacherId),
     supabase.from('classrooms').select(LINK_COLUMNS).contains('teachers', JSON.stringify([{ teacher_id: teacherId }])),
@@ -97,35 +86,8 @@ export async function listLinkableClassrooms(supabase: ServiceClient, teacherId:
   const byId = new Map<string, LinkClassroom>();
   for (const row of [...((owned.data || []) as LinkClassroom[]), ...((shared.data || []) as LinkClassroom[])]) byId.set(row.id, row);
   return [...byId.values()]
-    .filter((row) => canLinkLine(row, teacherId) && (!options.unlinkedOnly || !row.line_group_id))
+    .filter((row) => canLinkLine(row, teacherId))
     .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-}
-
-/**
- * Classrooms still waiting for a group, optionally only those requested by one
- * teacher. Expired requests and requesters who can no longer link the
- * classroom are dropped.
- */
-export async function findWaitingClassrooms(supabase: ServiceClient, requesterId?: string): Promise<LinkClassroom[]> {
-  let query = supabase
-    .from('classrooms')
-    .select(LINK_COLUMNS)
-    .eq('line_connection_status', 'waiting')
-    .is('line_group_id', null)
-    .not('line_connection_token', 'is', null);
-  if (requesterId) query = query.eq('line_connection_token', requesterId);
-  const { data, error } = await query;
-  if (error) {
-    console.error('LINE waiting classroom lookup failed:', error);
-    return [];
-  }
-  const now = Date.now();
-  return ((data || []) as LinkClassroom[]).filter(
-    (item) =>
-      item.line_connection_token_expires_at &&
-      new Date(item.line_connection_token_expires_at).getTime() > now &&
-      canLinkLine(item, item.line_connection_token as string)
-  );
 }
 
 /** Open teacher pages refresh the classroom's LINE status (no classroom signal is sent otherwise). */
@@ -134,148 +96,179 @@ export function signalLineStatus(...classroomIds: Array<string | null | undefine
 }
 
 // ---------------------------------------------------------------------------
-// Groups the bot is in but that are not linked yet
+// Groups the bot is in
 // ---------------------------------------------------------------------------
 
-/** Remembers a group the bot joined (or found unlinked), so the web and LIFF page can offer it. */
-export async function rememberPendingGroup(supabase: ServiceClient, groupId: string, groupName?: string | null, options: { prompted?: boolean } = {}) {
-  const { error } = await supabase.from('line_pending_groups').upsert({
-    group_id: groupId,
-    group_name: groupName || null,
-    joined_at: new Date().toISOString(),
-    prompted_at: options.prompted ? new Date().toISOString() : null,
-  });
-  if (error) console.warn('LINE pending group save failed (run supabase_line_connect_flow_update.sql):', error.message);
-}
+export type BotGroup = { groupId: string; ref: string; groupName?: string };
 
-export async function forgetPendingGroup(supabase: ServiceClient, groupId: string) {
-  const { error } = await supabase.from('line_pending_groups').delete().eq('group_id', groupId);
-  if (error) console.warn('LINE pending group delete failed:', error.message);
-}
+const newRef = () => randomBytes(12).toString('base64url');
 
 /**
- * The first teacher message in an unlinked group gets the "เชื่อมห้องเรียน"
- * button once; later chat does not. Returns true when this call claimed it.
+ * The bot's record of a group, created if missing (the bot joined before
+ * this table existed). Returns null only when the table is missing.
  */
-export async function claimGroupPrompt(supabase: ServiceClient, groupId: string): Promise<boolean> {
-  const { data: pending, error } = await supabase.from('line_pending_groups').select('prompted_at').eq('group_id', groupId).maybeSingle();
-  if (error) return false;
-  if (!pending) {
-    // Bot added before this table existed (or the row was lost): only an unlinked group counts.
-    if (await findLinkedClassroom(supabase, groupId)) return false;
-    const summary = await getGroupSummary(groupId).catch(() => null);
-    await rememberPendingGroup(supabase, groupId, summary?.groupName, { prompted: true });
-    return true;
+export async function ensureBotGroup(supabase: ServiceClient, groupId: string, groupName?: string | null): Promise<BotGroup | null> {
+  const { data: existing } = await supabase.from('line_bot_groups').select('group_id, ref, group_name').eq('group_id', groupId).maybeSingle();
+  if (existing) {
+    if (groupName && groupName !== existing.group_name) {
+      await supabase.from('line_bot_groups').update({ group_name: groupName }).eq('group_id', groupId);
+    }
+    return { groupId, ref: existing.ref as string, groupName: groupName || (existing.group_name as string | null) || undefined };
   }
-  if (pending.prompted_at) return false;
-  const { data: claimed } = await supabase
-    .from('line_pending_groups')
-    .update({ prompted_at: new Date().toISOString() })
-    .eq('group_id', groupId)
-    .is('prompted_at', null)
-    .select('group_id');
-  return Boolean(claimed?.length);
+  const name = groupName ?? (await getGroupSummary(groupId).catch(() => null))?.groupName ?? null;
+  const ref = newRef();
+  const { error } = await supabase.from('line_bot_groups').insert({ group_id: groupId, ref, group_name: name });
+  if (error) {
+    // Lost a race with another webhook: read the winner's row.
+    const { data: again } = await supabase.from('line_bot_groups').select('ref, group_name').eq('group_id', groupId).maybeSingle();
+    if (again) return { groupId, ref: again.ref as string, groupName: (again.group_name as string | null) || undefined };
+    console.warn('LINE bot group save failed (run supabase_line_connect_flow_update.sql):', error.message);
+    return null;
+  }
+  return { groupId, ref, groupName: name || undefined };
 }
 
-export type CandidateGroup = { groupId: string; groupName?: string };
+export async function forgetBotGroup(supabase: ServiceClient, groupId: string) {
+  const { error } = await supabase.from('line_bot_groups').delete().eq('group_id', groupId);
+  if (error) console.warn('LINE bot group delete failed:', error.message);
+}
+
+export async function findBotGroupByRef(supabase: ServiceClient, ref: string | null | undefined): Promise<BotGroup | null> {
+  if (!ref) return null;
+  const { data } = await supabase.from('line_bot_groups').select('group_id, ref, group_name').eq('ref', ref).maybeSingle();
+  return data ? { groupId: data.group_id as string, ref: data.ref as string, groupName: (data.group_name as string | null) || undefined } : null;
+}
+
+async function isMember(groupId: string, lineUid: string) {
+  try {
+    return await isGroupMember(groupId, lineUid);
+  } catch (error) {
+    console.error('LINE group membership check failed:', error);
+    return false;
+  }
+}
+
+/** A group the teacher may pick: they are in it (LINE says so) and the bot is too. */
+export type TeacherGroup = {
+  ref: string;
+  groupName?: string;
+  /** Classroom the group is linked to now, if any (always one of this teacher's). */
+  linkedClassroomId?: string;
+};
 
 /**
- * Unlinked groups the bot is in that this teacher is a member of: the web and
- * LIFF page offer them for a one-click link. Membership is asked from LINE,
- * so a teacher only ever sees their own groups.
+ * Groups this teacher can pick: unlinked groups the bot joined recently that
+ * LINE confirms they are a member of, plus the groups already linked to their
+ * own classrooms (to move them). `focusRef` (the group whose button was
+ * tapped) is always checked, however old.
  */
-export async function findCandidateGroups(supabase: ServiceClient, teacherLineUid: string | null | undefined): Promise<CandidateGroup[]> {
-  if (!teacherLineUid) return [];
-  const since = new Date(Date.now() - PENDING_GROUP_MAX_AGE_MS).toISOString();
-  const { data, error } = await supabase
-    .from('line_pending_groups')
-    .select('group_id, group_name')
-    .gte('joined_at', since)
-    .order('joined_at', { ascending: false })
-    .limit(MAX_CANDIDATE_GROUPS);
-  if (error || !data?.length) return [];
-  const ids = data.map((row) => row.group_id as string);
-  const { data: linked } = await supabase.from('classrooms').select('line_group_id').in('line_group_id', ids);
-  const linkedIds = new Set((linked || []).map((row) => row.line_group_id as string));
-  // Linked elsewhere in the meantime: tidy up.
-  for (const id of linkedIds) void forgetPendingGroup(supabase, id);
-  const open = data.filter((row) => !linkedIds.has(row.group_id as string));
-  const checks = await Promise.allSettled(open.map((row) => isGroupMember(row.group_id as string, teacherLineUid)));
-  return open
-    .filter((_, index) => checks[index].status === 'fulfilled' && (checks[index] as PromiseFulfilledResult<boolean>).value)
-    .map((row) => ({ groupId: row.group_id as string, groupName: (row.group_name as string | null) || undefined }));
+export async function listTeacherGroups(
+  supabase: ServiceClient,
+  teacher: { id: string; lineUid: string },
+  classrooms: LinkClassroom[],
+  focusRef?: string | null
+): Promise<{ groups: TeacherGroup[]; focus?: TeacherGroup | { ref: string; error: string } }> {
+  const since = new Date(Date.now() - UNLINKED_GROUP_MAX_AGE_MS).toISOString();
+  const linkedIds = classrooms.map((item) => item.line_group_id).filter(Boolean) as string[];
+  const [recent, own, focusGroup] = await Promise.all([
+    supabase.from('line_bot_groups').select('group_id, ref, group_name').gte('joined_at', since).order('joined_at', { ascending: false }).limit(MAX_UNLINKED_GROUPS * 2),
+    linkedIds.length ? supabase.from('line_bot_groups').select('group_id, ref, group_name').in('group_id', linkedIds) : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+    findBotGroupByRef(supabase, focusRef),
+  ]);
+  const rows = [...((recent.data || []) as Array<Record<string, unknown>>)];
+  if (focusGroup && !rows.some((row) => row.group_id === focusGroup.groupId)) {
+    rows.unshift({ group_id: focusGroup.groupId, ref: focusGroup.ref, group_name: focusGroup.groupName || null });
+  }
+  const ids = rows.map((row) => row.group_id as string);
+  const { data: linkedRows } = ids.length
+    ? await supabase.from('classrooms').select('id, line_group_id').in('line_group_id', ids)
+    : { data: [] as Array<{ id: string; line_group_id: string }> };
+  const linkedTo = new Map((linkedRows || []).map((row) => [row.line_group_id as string, row.id as string]));
+  const mine = new Map(classrooms.filter((item) => item.line_group_id).map((item) => [item.line_group_id as string, item.id]));
+
+  // Unlinked ones need LINE to confirm membership; ones linked to other teachers are skipped.
+  const unlinked = rows.filter((row) => !linkedTo.has(row.group_id as string)).slice(0, MAX_UNLINKED_GROUPS);
+  const checks = await Promise.all(unlinked.map((row) => isMember(row.group_id as string, teacher.lineUid)));
+  const groups: TeacherGroup[] = unlinked
+    .filter((_, index) => checks[index])
+    .map((row) => ({ ref: row.ref as string, groupName: (row.group_name as string | null) || undefined }));
+  for (const row of (own.data || []) as Array<Record<string, unknown>>) {
+    groups.push({ ref: row.ref as string, groupName: (row.group_name as string | null) || undefined, linkedClassroomId: mine.get(row.group_id as string) });
+  }
+
+  let focus: TeacherGroup | { ref: string; error: string } | undefined;
+  if (focusRef) {
+    if (!focusGroup) {
+      focus = { ref: focusRef, error: 'ไม่พบกลุ่มนี้ (บอทอาจถูกนำออกจากกลุ่มแล้ว) กรุณาเชิญ Pudding Bot เข้ากลุ่มอีกครั้ง' };
+    } else {
+      const found = groups.find((group) => group.ref === focusRef);
+      if (found) focus = found;
+      else if (linkedTo.has(focusGroup.groupId)) focus = { ref: focusRef, error: 'กลุ่มนี้เชื่อมกับห้องเรียนของคุณครูท่านอื่นแล้ว' };
+      else focus = { ref: focusRef, error: 'ไม่พบคุณครูในกลุ่มนี้ เปิดปุ่มนี้จากบัญชี LINE ที่อยู่ในกลุ่มและใช้เข้าสู่ระบบ Pudding' };
+    }
+  }
+  return { groups, focus };
 }
 
 // ---------------------------------------------------------------------------
-// Requests and links
+// Links
 // ---------------------------------------------------------------------------
-
-/**
- * Records that this teacher wants to connect this classroom. Their next group
- * message, the bot's join prompt or a confirm tap completes it. One request
- * per teacher, so a later group can never match an older, forgotten request.
- */
-export async function armConnectRequest(supabase: ServiceClient, teacherId: string, classroomId: string): Promise<{ expiresAt?: string; error?: string }> {
-  const { error: cancelError } = await supabase.from('classrooms').update({
-    line_connection_status: 'disconnected',
-    line_connection_token: null,
-    line_connection_token_hash: null,
-    line_connection_token_expires_at: null,
-  }).eq('line_connection_status', 'waiting').eq('line_connection_token', teacherId).neq('id', classroomId);
-  if (cancelError) console.warn('Could not cancel older LINE connect requests:', cancelError);
-
-  const expiresAt = new Date(Date.now() + CONNECT_INTENT_TTL_MS).toISOString();
-  const { error } = await supabase.from('classrooms').update({
-    line_connection_status: 'waiting',
-    line_connection_token_hash: null,
-    line_connection_token: teacherId,
-    line_connection_token_expires_at: expiresAt,
-  }).eq('id', classroomId).is('line_group_id', null);
-  if (error) return { error: error.message };
-  return { expiresAt };
-}
-
-export async function cancelConnectRequest(supabase: ServiceClient, classroomId: string) {
-  await supabase.from('classrooms').update({
-    line_connection_status: 'disconnected',
-    line_connection_token: null,
-    line_connection_token_hash: null,
-    line_connection_token_expires_at: null,
-  }).eq('id', classroomId).eq('line_connection_status', 'waiting');
-}
 
 export type LinkResult =
-  | { ok: true; groupName?: string }
-  | { ok: false; reason: 'group-taken' | 'classroom-taken' | 'changed' | 'failed' };
+  | { ok: true; groupName?: string; movedFrom?: LinkClassroom }
+  | { ok: false; reason: 'not-found' | 'not-member' | 'group-taken' | 'classroom-taken' | 'changed' | 'not-allowed' | 'failed' };
 
 /**
- * Links the group to `classroom`. When `replacing` is given (the teacher chose
- * to move the group from an older classroom), that classroom is unlinked
- * first; nothing changes if the group's link moved on in the meantime. The
- * caller has already checked who may do this.
+ * Links the group behind `ref` to `classroom` for this teacher. LINE confirms
+ * the teacher is in the group. A group linked to another classroom moves only
+ * when `move` is set and the teacher may unlink that classroom; a classroom
+ * linked to another group must be unlinked first. The caller has checked the
+ * teacher is approved and may link `classroom`.
  */
-export async function linkClassroomToGroup(
+export async function linkGroupByRef(
   supabase: ServiceClient,
-  groupId: string,
+  teacher: { id: string; lineUid: string },
   classroom: LinkClassroom,
-  replacing?: LinkClassroom | null
+  ref: string,
+  options: { move?: boolean } = {}
 ): Promise<LinkResult> {
-  if (replacing) {
+  const group = await findBotGroupByRef(supabase, ref);
+  if (!group) return { ok: false, reason: 'not-found' };
+  if (classroom.line_group_id === group.groupId) return { ok: true, groupName: group.groupName };
+  if (classroom.line_group_id) return { ok: false, reason: 'classroom-taken' };
+  if (!(await isMember(group.groupId, teacher.lineUid))) return { ok: false, reason: 'not-member' };
+
+  const linked = await findLinkedClassroom(supabase, group.groupId);
+  if (linked && (!options.move || !canUnlinkLine(linked, teacher.id))) {
+    return { ok: false, reason: isTeacherOf(linked, teacher.id) ? 'group-taken' : 'not-allowed' };
+  }
+  if (linked) {
     const { data: unlinked } = await supabase.from('classrooms').update({
       line_group_id: null,
       line_group_name: null,
       line_connection_status: 'disconnected',
       line_connected_at: null,
-    }).eq('id', replacing.id).eq('line_group_id', groupId).select('id');
+    }).eq('id', linked.id).eq('line_group_id', group.groupId).select('id');
     if (!unlinked?.length) return { ok: false, reason: 'changed' };
-  } else if (await findLinkedClassroom(supabase, groupId)) {
-    return { ok: false, reason: 'group-taken' };
   }
 
-  const summary = await getGroupSummary(groupId).catch(() => null);
+  // The bot must still be in the group (its summary is only readable from inside).
+  const summary = await getGroupSummary(group.groupId).catch(() => null);
+  if (!summary) {
+    if (linked) {
+      await supabase.from('classrooms').update({
+        line_group_id: group.groupId,
+        line_group_name: linked.line_group_name || null,
+        line_connection_status: 'connected',
+        line_connected_at: new Date().toISOString(),
+      }).eq('id', linked.id).is('line_group_id', null);
+    }
+    return { ok: false, reason: 'not-found' };
+  }
+  const groupName = summary.groupName || group.groupName || null;
   const { data: updated, error } = await supabase.from('classrooms').update({
-    line_group_id: groupId,
-    line_group_name: summary?.groupName || null,
+    line_group_id: group.groupId,
+    line_group_name: groupName,
     line_connection_status: 'connected',
     line_connection_token_hash: null,
     line_connection_token: null,
@@ -284,20 +277,22 @@ export async function linkClassroomToGroup(
   }).eq('id', classroom.id).is('line_group_id', null).select('id');
   if (error || !updated?.length) {
     if (error) console.error('LINE classroom link failed:', error);
-    if (replacing) {
+    if (linked) {
       // Put the old link back rather than leave the group linked to nothing.
       await supabase.from('classrooms').update({
-        line_group_id: groupId,
-        line_group_name: summary?.groupName || null,
+        line_group_id: group.groupId,
+        line_group_name: groupName,
         line_connection_status: 'connected',
         line_connected_at: new Date().toISOString(),
-      }).eq('id', replacing.id).is('line_group_id', null);
+      }).eq('id', linked.id).is('line_group_id', null);
     }
     return { ok: false, reason: error ? 'failed' : 'classroom-taken' };
   }
-  await forgetPendingGroup(supabase, groupId);
-  signalLineStatus(classroom.id, replacing?.id);
-  return { ok: true, groupName: summary?.groupName || undefined };
+  if (groupName && groupName !== group.groupName) {
+    await supabase.from('line_bot_groups').update({ group_name: groupName }).eq('group_id', group.groupId);
+  }
+  signalLineStatus(classroom.id, linked?.id);
+  return { ok: true, groupName: groupName || undefined, movedFrom: linked || undefined };
 }
 
 /** Unlinks the classroom's group in the database; the caller makes the bot leave. */
@@ -315,73 +310,16 @@ export async function unlinkClassroom(supabase: ServiceClient, classroomId: stri
   return { error };
 }
 
-/**
- * Links a group the teacher picked on the web or LIFF page. LINE confirms the
- * teacher is in that group (so nobody can link a group they are not in) and
- * the classroom must still be free.
- */
-export async function linkCandidateGroup(
-  supabase: ServiceClient,
-  teacher: { id: string; lineUid: string },
-  classroom: LinkClassroom,
-  groupId: string
-): Promise<LinkResult | { ok: false; reason: 'not-member' }> {
-  let member = false;
-  try {
-    member = await isGroupMember(groupId, teacher.lineUid);
-  } catch (error) {
-    console.error('LINE group membership check failed:', error);
-  }
-  if (!member) return { ok: false, reason: 'not-member' };
-  if (classroom.line_group_id) return { ok: false, reason: 'classroom-taken' };
-  return linkClassroomToGroup(supabase, groupId, classroom);
-}
-
 export function linkErrorMessage(reason: string) {
   switch (reason) {
-    case 'not-member': return 'ไม่พบคุณครูในกลุ่มนี้ หรือบอทไม่ได้อยู่ในกลุ่มแล้ว';
-    case 'group-taken': return 'กลุ่มนี้เชื่อมกับห้องเรียนอื่นแล้ว';
-    case 'classroom-taken': return 'ห้องเรียนนี้เชื่อมกับกลุ่ม LINE อื่นอยู่แล้ว';
+    case 'not-found': return 'ไม่พบกลุ่มนี้ หรือบอทไม่ได้อยู่ในกลุ่มแล้ว กรุณาเชิญ Pudding Bot เข้ากลุ่มอีกครั้ง';
+    case 'not-member': return 'ไม่พบคุณครูในกลุ่มนี้ (ต้องเป็นบัญชี LINE เดียวกับที่ใช้เข้าสู่ระบบ Pudding)';
+    case 'group-taken': return 'กลุ่มนี้เชื่อมกับห้องเรียนอื่นของคุณครูอยู่ เลือก “ย้ายมาห้องนี้” หากต้องการย้าย';
+    case 'not-allowed': return 'กลุ่มนี้เชื่อมกับห้องเรียนที่คุณครูไม่มีสิทธิ์เปลี่ยน';
+    case 'classroom-taken': return 'ห้องเรียนนี้เชื่อมกับกลุ่ม LINE อื่นอยู่แล้ว ยกเลิกการเชื่อมกลุ่มเดิมก่อน';
     case 'changed': return 'สถานะกลุ่มเปลี่ยนไปแล้ว กรุณาลองใหม่อีกครั้ง';
-    case 'expired': return 'ลิงก์หมดอายุแล้ว กรุณากด “เชื่อมห้องเรียน” ในกลุ่ม LINE อีกครั้ง';
     default: return 'ระบบบันทึกการเชื่อมต่อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
   }
-}
-
-// ---------------------------------------------------------------------------
-// "Create a classroom for this group" tokens
-// ---------------------------------------------------------------------------
-
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
-
-/** Single-use token for one teacher and one group; only its hash is stored. */
-export async function createLinkToken(supabase: ServiceClient, groupId: string, teacherId: string): Promise<string | null> {
-  const token = randomBytes(24).toString('base64url');
-  const { error } = await supabase.from('line_link_tokens').insert({
-    token_hash: hashToken(token),
-    group_id: groupId,
-    teacher_id: teacherId,
-    expires_at: new Date(Date.now() + LINK_TOKEN_TTL_MS).toISOString(),
-  });
-  if (error) {
-    console.warn('LINE link token save failed (run supabase_line_connect_flow_update.sql):', error.message);
-    return null;
-  }
-  return token;
-}
-
-/** Uses up the token if it belongs to this teacher and is still valid; returns its group. */
-export async function claimLinkToken(supabase: ServiceClient, token: string, teacherId: string): Promise<string | null> {
-  if (!token) return null;
-  const { data } = await supabase
-    .from('line_link_tokens')
-    .update({ used_at: new Date().toISOString() })
-    .eq('token_hash', hashToken(token))
-    .eq('teacher_id', teacherId)
-    .is('used_at', null)
-    .gt('expires_at', new Date().toISOString())
-    .select('group_id');
-  return (data?.[0]?.group_id as string | undefined) || null;
 }
 
 /** Public site, for links the bot sends (they open in the teacher's browser). */
@@ -390,8 +328,9 @@ export function webUrl(path: string) {
   return `${base}${path}`;
 }
 
-/** The teacher's LIFF page for connecting groups (also the rich-menu link). */
-export function liffConnectUrl() {
+/** The teacher's LIFF connect page (rich-menu link); `ref` preselects the group whose button was tapped. */
+export function liffConnectUrl(ref?: string) {
   const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
-  return liffId ? `https://liff.line.me/${liffId}/connect` : webUrl('/liff/connect');
+  const query = ref ? `?g=${encodeURIComponent(ref)}` : '';
+  return liffId ? `https://liff.line.me/${liffId}/connect${query}` : webUrl(`/liff/connect${query}`);
 }

@@ -15,7 +15,7 @@ const KEYWORD = /^#?\s*(?:pudding|พุดดิ้ง|พุดดิง|พ�
  * attendance (not home) and "ส่งงาน" is submit (not the works list).
  */
 const COMMAND_WORDS: Array<[StudentCommand, string[]]> = [
-  // Teachers only: link, move or unlink this group ("พุดดิ้ง เชื่อม").
+  // Teachers only: the link button to the connect page ("พุดดิ้ง เชื่อม").
   ['connect', ['เชื่อม', 'ย้ายห้อง', 'ย้ายกลุ่ม', 'ยกเลิกการเชื่อม', 'connect', 'unlink']],
   ['attendance', ['เช็กชื่อ', 'เช็คชื่อ', 'เชคชื่อ', 'มาเรียน', 'attendance', 'checkin', 'check-in']],
   ['submit', ['ส่งงาน', 'ส่งการบ้าน', 'ทำข้อสอบ', 'submit']],
@@ -53,7 +53,7 @@ export function studentHelpText(classroomTitle?: string | null): string {
 • พุดดิ้ง ส่งงาน → ลิงก์ส่งของแต่ละงาน
 • พุดดิ้ง เข้าห้อง → รหัสและลิงก์เข้าห้องเรียน
 • พุดดิ้ง หน้าหลัก → เปิดห้องเรียนใน Pudding
-• พุดดิ้ง เชื่อม → ย้ายหรือยกเลิกการเชื่อมกลุ่มนี้ (เฉพาะคุณครู)
+• พุดดิ้ง เชื่อม → ปุ่มเชื่อม/ย้าย/ยกเลิกการเชื่อมกลุ่มนี้ (เฉพาะคุณครู)
 
 พิมพ์ "pudding" แทน "พุดดิ้ง" ก็ได้
 (ข้อความจากนักเรียน บอทจะไม่ตอบ)`;

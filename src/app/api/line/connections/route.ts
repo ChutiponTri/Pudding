@@ -3,21 +3,10 @@ import { canUseTeacherApp } from '@/lib/server/teacherProfileGuard';
 import { getLineTestQuota, releaseLineTestSend, reserveLineTestSend } from '@/lib/server/lineTestQuota';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { getGroupSummary, leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
+import { leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
-import {
-  armConnectRequest,
-  canLinkLine,
-  canUnlinkLine,
-  claimLinkToken,
-  findCandidateGroups,
-  findLinkedClassroom,
-  getClassroom,
-  linkCandidateGroup,
-  linkClassroomToGroup,
-  linkErrorMessage,
-} from '@/lib/line/groupLink';
+import { canLinkLine, getClassroom, linkErrorMessage, linkGroupByRef, listTeacherGroups } from '@/lib/line/groupLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,37 +36,30 @@ export async function GET(request: NextRequest) {
   const { userId, classroom } = await getOwnedClassroom(classroomId);
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!classroom) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
-  const isExpired = classroom.line_connection_status === 'waiting'
-    && classroom.line_connection_token_expires_at
-    && new Date(classroom.line_connection_token_expires_at).getTime() <= Date.now();
-  if (isExpired) {
-    await createServiceSupabaseClient().from('classrooms').update({
-      line_connection_status: 'disconnected',
-      line_connection_token_hash: null,
-      line_connection_token: null,
-      line_connection_token_expires_at: null,
-    }).eq('id', classroomId);
-  }
-  const status = isExpired ? 'disconnected' : (classroom.line_connection_status || (classroom.line_group_id ? 'connected' : 'disconnected'));
-  // Only a connected group can be tested; skip the quota query while polling a waiting link.
-  const testQuota = classroom.line_group_id ? await getLineTestQuota(createServiceSupabaseClient(), userId, classroomId) : null;
-  // Groups the bot already sits in, asked only when the dialog opens (polling skips the LINE calls).
-  const wantsCandidates = request.nextUrl.searchParams.get('candidates') === '1' && !classroom.line_group_id;
-  const candidates = wantsCandidates ? await findCandidateGroups(createServiceSupabaseClient(), await teacherLineUid(userId)) : undefined;
+  // Linked or not; an old "waiting" request (from before groups were picked directly) counts as not linked.
+  const status = classroom.line_group_id ? 'connected' : 'disconnected';
+  const supabase = createServiceSupabaseClient();
+  const testQuota = classroom.line_group_id ? await getLineTestQuota(supabase, userId, classroomId) : null;
+  // Groups the bot is in with this teacher, asked only when the dialog opens or refreshes (LINE calls).
+  const wantsGroups = request.nextUrl.searchParams.get('groups') === '1' && !classroom.line_group_id;
+  const lineUid = wantsGroups ? await teacherLineUid(userId) : null;
+  const groups = lineUid
+    ? (await listTeacherGroups(supabase, { id: userId, lineUid }, [])).groups.filter((group) => !group.linkedClassroomId)
+    : wantsGroups ? [] : undefined;
   return NextResponse.json({
     status,
     groupName: classroom.line_group_name || undefined,
     connectedAt: classroom.line_connected_at,
-    expiresAt: isExpired ? undefined : classroom.line_connection_token_expires_at,
     testQuota: testQuota || undefined,
-    candidates,
+    groups: groups?.map(({ ref, groupName }) => ({ ref, groupName })),
+    lineLinked: wantsGroups ? Boolean(lineUid) : undefined,
   });
 }
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
-  const action = body.action as 'create' | 'test' | 'disconnect' | 'link-group' | 'claim' | undefined;
+  const action = body.action as 'test' | 'disconnect' | 'link-group' | undefined;
   if (!classroomId || !action) return NextResponse.json({ error: 'classroomId and action are required' }, { status: 400 });
 
   const { userId, classroom } = await getOwnedClassroom(classroomId);
@@ -138,55 +120,19 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  if (action === 'link-group' || action === 'claim') {
-    if (classroom.line_group_id) {
-      return NextResponse.json({ error: 'ห้องเรียนนี้เชื่อมกับกลุ่ม LINE อื่นอยู่แล้ว' }, { status: 409 });
-    }
+  if (action === 'link-group') {
+    // A group the bot is in, picked in the dialog (or the group whose button
+    // opened "สร้างห้องเรียนใหม่"): LINE confirms the teacher is a member.
+    const ref = typeof body.groupRef === 'string' ? body.groupRef : '';
+    if (!ref) return NextResponse.json({ error: 'groupRef is required' }, { status: 400 });
     const linkClassroom = await getClassroom(supabase, classroomId);
     if (!linkClassroom || !canLinkLine(linkClassroom, userId)) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
-
-    if (action === 'link-group') {
-      // A group the bot is already in, picked in the dialog: LINE confirms the teacher is a member.
-      const groupId = typeof body.groupId === 'string' ? body.groupId : '';
-      const lineUid = await teacherLineUid(userId);
-      if (!groupId || !lineUid) return NextResponse.json({ error: 'groupId is required' }, { status: 400 });
-      const result = await linkCandidateGroup(supabase, { id: userId, lineUid }, linkClassroom, groupId);
-      if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason) }, { status: 409 });
-      return NextResponse.json({ status: 'connected', groupName: result.groupName, connectedAt: new Date().toISOString() });
-    }
-
-    // "claim": a classroom just created from the bot's "สร้างห้องเรียนใหม่" link.
-    const token = typeof body.token === 'string' ? body.token : '';
-    const groupId = await claimLinkToken(supabase, token, userId);
-    if (!groupId) return NextResponse.json({ error: linkErrorMessage('expired') }, { status: 410 });
-    // The bot may have been removed since the link was sent.
-    if (!(await getGroupSummary(groupId).catch(() => null))) {
-      return NextResponse.json({ error: 'Pudding Bot ไม่ได้อยู่ในกลุ่มนั้นแล้ว กรุณาเชิญบอทเข้ากลุ่มอีกครั้ง' }, { status: 409 });
-    }
-    const linked = await findLinkedClassroom(supabase, groupId);
-    // A group linked to another of this teacher's classrooms moves here (they chose it in the group).
-    if (linked && !canUnlinkLine(linked, userId)) return NextResponse.json({ error: linkErrorMessage('group-taken') }, { status: 409 });
-    const result = await linkClassroomToGroup(supabase, groupId, linkClassroom, linked);
-    if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason) }, { status: 409 });
+    const lineUid = await teacherLineUid(userId);
+    if (!lineUid) return NextResponse.json({ error: 'บัญชีครูยังไม่ได้เชื่อม LINE กรุณาเข้าสู่ระบบด้วย LINE' }, { status: 409 });
+    const result = await linkGroupByRef(supabase, { id: userId, lineUid }, linkClassroom, ref, { move: body.move === true });
+    if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason), reason: result.reason }, { status: 409 });
     return NextResponse.json({ status: 'connected', groupName: result.groupName, connectedAt: new Date().toISOString() });
   }
 
-  // "create": record which teacher wants to connect this classroom. Only that
-  // teacher's own message or tap in a LINE group links it (see the webhook),
-  // so other teachers or students in the group cannot. No pairing code. Groups
-  // the bot already sits in with this teacher come back as `candidates`, to
-  // link with one click (action "link-group").
-  if (classroom.line_group_id) {
-    return NextResponse.json({ status: 'connected', groupName: classroom.line_group_name || undefined });
-  }
-  const lineUid = await teacherLineUid(userId);
-  if (!lineUid) {
-    return NextResponse.json({ error: 'บัญชีครูยังไม่ได้เชื่อม LINE กรุณาเข้าสู่ระบบด้วย LINE' }, { status: 409 });
-  }
-  const [armed, candidates] = await Promise.all([
-    armConnectRequest(supabase, userId, classroomId),
-    findCandidateGroups(supabase, lineUid),
-  ]);
-  if (armed.error) return NextResponse.json({ error: armed.error }, { status: 500 });
-  return NextResponse.json({ status: 'waiting', expiresAt: armed.expiresAt, candidates });
+  return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
 }

@@ -66,7 +66,7 @@ Start a message with **`พุดดิ้ง`** or **`pudding`**, then a comman
 | Open work | `งาน`, `การบ้าน`, `ค้าง`, `todo` |
 | Open the app | `หน้าหลัก`, `ลิงก์`, `home` |
 | Status | `สถานะ`, `status` |
-| Link / move / unlink this group (teachers) | `เชื่อม`, `ย้ายกลุ่ม`, `connect` |
+| Link button for this group (teachers only) | `เชื่อม`, `ย้ายกลุ่ม`, `connect` |
 
 Anything else replies with help. See [docs/LINE_SETUP_GUIDE.md](docs/LINE_SETUP_GUIDE.md#8-bot-commands).
 
@@ -229,7 +229,7 @@ Set these in `.env` locally and in **Vercel → Settings → Environment Variabl
    | 14 | `supabase_quiz_exit_update.sql` | Quiz exit counting |
    | 15 | `supabase_reminder_unsent_update.sql` | Reminders the bot could not send |
    | 16 | `supabase_quiz_away_update.sql` | Live away-from-quiz tracking |
-   | 17 | `supabase_line_connect_flow_update.sql` | Link LINE groups from the web, LIFF page or group, in any order |
+   | 17 | `supabase_line_connect_flow_update.sql` | Pick the LINE group and classroom to link (LIFF page / web) |
 
 3. Schedule the deadline reminders: edit the URL and `<CRON_SECRET>` in **`supabase_reminder_cron.sql`**, then run it. It calls `/api/line/reminders` every 5 minutes.
 4. Verify with `npm run db:verify`. `npm run db:setup` can apply the schema with a `DATABASE_URL` (Supabase pooler connection string).

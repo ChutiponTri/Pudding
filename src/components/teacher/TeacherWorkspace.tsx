@@ -10,7 +10,7 @@ import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeach
 import { teacherRoleBadgeClass, teacherRoleLabel } from '@/lib/utils/teacherRole';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
-import { LineGroupConnectSteps, type LineCandidateGroup } from '@/components/LineGroupConnectSteps';
+import { LineGroupConnectSteps, type LineGroupChoice } from '@/components/LineGroupConnectSteps';
 import { dataService, type ClassroomChangeEvent } from '@/lib/supabase/dataService';
 import { fetchCached, readCache, TEACHER_DASHBOARD_CACHE_KEY, watchClassrooms } from '@/lib/cache/sessionCache';
 import { useAcademicCalendar } from '@/lib/hooks/useAcademicCalendar';
@@ -266,13 +266,15 @@ export function TeacherWorkspace({
     groupName?: string;
     expiresAt?: string;
     connectedAt?: string;
-    candidates?: LineCandidateGroup[];
+    groups?: LineGroupChoice[];
+    lineLinked?: boolean;
   }>({ status: 'disconnected' });
   const [isLineConnectionLoading, setIsLineConnectionLoading] = useState(false);
-  const [linkingGroupId, setLinkingGroupId] = useState<string | null>(null);
-  /** From the bot's "สร้างห้องเรียนใหม่" link: the next classroom created here links to that LINE group. */
-  const [pendingLineLink, setPendingLineLink] = useState<{ token: string; groupName?: string } | null>(null);
-  const createFromLinkRef = useRef<{ token?: string; groupName?: string } | null>(null);
+  const [linkingGroupRef, setLinkingGroupRef] = useState<string | null>(null);
+  const [refreshingGroups, setRefreshingGroups] = useState(false);
+  /** From the LIFF page's "สร้างห้องเรียนใหม่สำหรับกลุ่มนี้": the classroom created here links to that LINE group. */
+  const [pendingLineLink, setPendingLineLink] = useState<{ groupRef: string; groupName?: string } | null>(null);
+  const createFromLinkRef = useRef<{ groupRef?: string; groupName?: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Course-level Learning Indicators & Rubrics Settings Modal
@@ -422,39 +424,38 @@ export function TeacherWorkspace({
     }
   };
 
-  const handleOpenLineConnectionPopup = (cls: Classroom) => {
-    setManagingClassroom(null);
-    setLineConnectionClassroom(cls);
-    const status = lineConnectionStatuses[cls.id] || cls.line_connection_status || (cls.line_group_id ? 'connected' : 'disconnected');
-    setLineConnection({
-      status,
-      groupName: cls.line_group_name,
-      expiresAt: cls.line_connection_token_expires_at,
-      connectedAt: cls.line_connected_at,
-    });
-    // Fresh status, plus groups the bot already sits in with this teacher (one-click link).
-    if (status !== 'connected') {
-      fetch(`/api/line/connections?classroomId=${encodeURIComponent(cls.id)}&candidates=1`, { cache: 'no-store' })
-        .then((response) => (response.ok ? response.json() : null))
-        .then((result) => {
-          if (!result) return;
-          setLineConnection(result);
-          setLineConnectionStatuses((current) => ({ ...current, [cls.id]: result.status }));
-        })
-        .catch(() => {});
+  /** Status plus the groups the bot is in with this teacher (LINE checks membership, so only on open/refresh). */
+  const loadLineGroups = async (classroomId: string) => {
+    setRefreshingGroups(true);
+    try {
+      const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(classroomId)}&groups=1`, { cache: 'no-store' });
+      if (!response.ok) return;
+      const result = await response.json();
+      setLineConnection(result);
+      setLineConnectionStatuses((current) => ({ ...current, [classroomId]: result.status }));
+    } catch {} finally {
+      setRefreshingGroups(false);
     }
   };
 
-  const handleLineConnection = async (action: 'create' | 'test' | 'disconnect' | 'link-group', groupId?: string) => {
+  const handleOpenLineConnectionPopup = (cls: Classroom) => {
+    setManagingClassroom(null);
+    setLineConnectionClassroom(cls);
+    const status = cls.line_group_id || lineConnectionStatuses[cls.id] === 'connected' ? 'connected' : 'disconnected';
+    setLineConnection({ status, groupName: cls.line_group_name, connectedAt: cls.line_connected_at });
+    if (status !== 'connected') void loadLineGroups(cls.id);
+  };
+
+  const handleLineConnection = async (action: 'test' | 'disconnect' | 'link-group', groupRef?: string) => {
     const activeClassroom = lineConnectionClassroom || managingClassroom;
     if (!activeClassroom) return;
     setIsLineConnectionLoading(true);
-    if (action === 'link-group') setLinkingGroupId(groupId || null);
+    if (action === 'link-group') setLinkingGroupRef(groupRef || null);
     try {
       const response = await fetch('/api/line/connections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ classroomId: activeClassroom.id, action, groupId }),
+        body: JSON.stringify({ classroomId: activeClassroom.id, action, groupRef }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'LINE connection failed');
@@ -465,28 +466,25 @@ export function TeacherWorkspace({
           ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group')
           : action === 'test'
           ? tr('ส่งข้อความทดสอบแล้ว', 'Test message sent') + testQuotaNote(result.testQuota, tr)
-          : result.status === 'connected'
-          ? tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`)
-          : result.candidates?.length
-          ? tr('พบกลุ่มที่มีบอทอยู่แล้ว เลือกกลุ่ม หรือเชิญบอทเข้ากลุ่มอื่นภายใน 24 ชม.', 'Pick a group the bot is already in, or invite it to another group within 24 hours')
-          : tr('พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย (ภายใน 24 ชม.)', 'Ready: add Pudding Bot to your LINE group (within 24 hours)')
+          : tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`)
       );
     } catch (error) {
       showToast(error instanceof Error ? error.message : tr('ไม่สามารถเชื่อมต่อ LINE Group ได้', 'Could not connect the LINE group'));
     } finally {
       setIsLineConnectionLoading(false);
-      setLinkingGroupId(null);
+      setLinkingGroupRef(null);
     }
   };
 
   // ?createClassroom=1 (from the LIFF page or the bot's "สร้างห้องเรียนใหม่"
-  // link, which adds lineLink=<token>&groupName=...): open the create form once
-  // the workspace has loaded, and link the new classroom to that group.
+  // link, which adds lineGroup=<ref>&groupName=...): open the create form once
+  // the workspace has loaded, and link the new classroom to that group (the
+  // server asks LINE whether this teacher is in it).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('createClassroom') !== '1') return;
-    createFromLinkRef.current = { token: params.get('lineLink') || undefined, groupName: params.get('groupName') || undefined };
-    for (const key of ['createClassroom', 'lineLink', 'groupName', 'openExternalBrowser']) params.delete(key);
+    createFromLinkRef.current = { groupRef: params.get('lineGroup') || undefined, groupName: params.get('groupName') || undefined };
+    for (const key of ['createClassroom', 'lineGroup', 'groupName', 'openExternalBrowser']) params.delete(key);
     const query = params.toString();
     window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
   }, []);
@@ -497,26 +495,23 @@ export function TeacherWorkspace({
     void loadAllData({ useCache: true });
   }, [clerkUser?.id]);
 
-  // While a classroom waits for the bot to join a group, poll its status so the
-  // dialog and class card flip to "connected" as soon as the webhook links it.
-  const waitingLineClassroomId = lineConnection.status === 'waiting'
-    ? (lineConnectionClassroom || managingClassroom)?.id
-    : undefined;
+  // While the LINE dialog is open and not linked, notice a link made from LINE (the teacher's LIFF page).
+  const openLineClassroomId = lineConnectionClassroom && lineConnection.status !== 'connected' ? lineConnectionClassroom.id : undefined;
   useEffect(() => {
-    if (!waitingLineClassroomId) return;
+    if (!openLineClassroomId) return;
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(waitingLineClassroomId)}`, { cache: 'no-store' });
+        const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(openLineClassroomId)}`, { cache: 'no-store' });
         if (!response.ok) return;
         const result = await response.json();
-        if (result.status === 'waiting') return;
-        setLineConnection((current) => ({ ...result, candidates: current.candidates }));
-        setLineConnectionStatuses((current) => ({ ...current, [waitingLineClassroomId]: result.status }));
-        if (result.status === 'connected') showToast(tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`));
+        if (result.status !== 'connected') return;
+        setLineConnection(result);
+        setLineConnectionStatuses((current) => ({ ...current, [openLineClassroomId]: 'connected' }));
+        showToast(tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`));
       } catch {}
-    }, 3000);
+    }, 5000);
     return () => clearInterval(interval);
-  }, [waitingLineClassroomId, tr]);
+  }, [openLineClassroomId, tr]);
 
   // Real-time subscription for instant dashboard updates & notifications when students join
   useEffect(() => {
@@ -989,7 +984,7 @@ export function TeacherWorkspace({
     createFromLinkRef.current = null;
     handleOpenCreateClassModal();
     if (request.groupName) setClassNameInput(request.groupName);
-    if (request.token) setPendingLineLink({ token: request.token, groupName: request.groupName });
+    if (request.groupRef) setPendingLineLink({ groupRef: request.groupRef, groupName: request.groupName });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
@@ -1051,7 +1046,7 @@ export function TeacherWorkspace({
           const response = await fetch('/api/line/connections', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ classroomId: created.id, action: 'claim', token: link.token }),
+            body: JSON.stringify({ classroomId: created.id, action: 'link-group', groupRef: link.groupRef }),
           });
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error || 'LINE link failed');
@@ -2827,8 +2822,8 @@ export function TeacherWorkspace({
                   <MessageCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>
                     {tr(
-                      `ห้องเรียนนี้จะเชื่อมกับกลุ่ม LINE${pendingLineLink.groupName ? ` “${pendingLineLink.groupName}”` : ''} ทันทีหลังสร้าง (ลิงก์ใช้ได้ 30 นาที)`,
-                      `This classroom links to the LINE group${pendingLineLink.groupName ? ` “${pendingLineLink.groupName}”` : ''} as soon as it is created (link valid for 30 minutes)`
+                      `ห้องเรียนนี้จะเชื่อมกับกลุ่ม LINE${pendingLineLink.groupName ? ` “${pendingLineLink.groupName}”` : ''} ทันทีหลังสร้าง`,
+                      `This classroom links to the LINE group${pendingLineLink.groupName ? ` “${pendingLineLink.groupName}”` : ''} as soon as it is created`
                     )}
                   </span>
                 </div>
@@ -3366,12 +3361,14 @@ export function TeacherWorkspace({
               </div>
             ) : (
               <LineGroupConnectSteps
-                status={lineConnection.status}
                 botFriend={teacherLineLink.botFriend}
                 addFriendUrl={teacherLineLink.addFriendUrl}
-                candidates={lineConnection.candidates}
-                onLinkGroup={(groupId) => handleLineConnection('link-group', groupId)}
-                linkingGroupId={linkingGroupId}
+                groups={lineConnection.groups}
+                lineLinked={lineConnection.lineLinked}
+                onLinkGroup={(ref) => handleLineConnection('link-group', ref)}
+                linkingRef={linkingGroupRef}
+                onRefresh={() => lineConnectionClassroom && loadLineGroups(lineConnectionClassroom.id)}
+                refreshing={refreshingGroups}
               />
             )}
 
@@ -3381,11 +3378,10 @@ export function TeacherWorkspace({
               {lineConnection.status !== 'connected' && (
                 <button
                   type="button"
-                  onClick={() => handleLineConnection('create')}
-                  disabled={isLineConnectionLoading}
-                  className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-xs cursor-pointer disabled:opacity-50"
+                  onClick={() => setLineConnectionClassroom(null)}
+                  className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer"
                 >
-                  {isLineConnectionLoading ? tr('กำลังเตรียม...', 'Preparing...') : lineConnection.status === 'waiting' ? tr('เริ่มรอใหม่ (24 ชม.)', 'Restart wait (24 h)') : tr('เชื่อม LINE Group', 'Connect LINE group')}
+                  {tr('ปิด', 'Close')}
                 </button>
               )}
               {lineConnection.status === 'connected' && (

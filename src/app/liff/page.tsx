@@ -927,8 +927,21 @@ export default function LiffStudentPage() {
           throw new Error("ไม่พบ LINE_LIFF_ID ในระบบ กรุณาตรวจสอบการตั้งค่า .env");
         }
 
+        // A teacher page opened through this LIFF app (liff.line.me/<id>/connect...)
+        // lands here first. Hand it over without running the student flow, so a
+        // teacher's LINE account never gets a student profile synced.
+        const pendingState = new URLSearchParams(window.location.search).get("liff.state") || "";
+        const teacherPath = /^\/?connect(?:[/?#]|$)/.test(pendingState);
+
         const liff = (await liffModule).default;
         await liff.init({ liffId: id });
+
+        if (teacherPath) {
+          if (window.location.pathname.replace(/\/+$/, "") === "/liff") {
+            window.location.replace(`/liff/${pendingState.replace(/^\/+/, "")}`);
+          }
+          return;
+        }
 
         if (!isMounted) return;
         setLiffInstance(liff);

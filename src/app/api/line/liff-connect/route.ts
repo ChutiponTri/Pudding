@@ -4,17 +4,14 @@ import { verifyLineToken } from '@/lib/auth/actor';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { leaveGroup } from '@/lib/line/messaging';
 import {
-  armConnectRequest,
   canLinkLine,
   canUnlinkLine,
-  cancelConnectRequest,
-  findCandidateGroups,
   findTeacherByLineUid,
   getClassroom,
-  linkCandidateGroup,
   linkErrorMessage,
+  linkGroupByRef,
   listLinkableClassrooms,
-  signalLineStatus,
+  listTeacherGroups,
   unlinkClassroom,
   type LineTeacher,
   type ServiceClient,
@@ -26,10 +23,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Teacher's "connect a LINE group" page inside LINE (/liff/connect, the rich
- * menu's link). The caller is the LINE account in the LIFF token, verified
- * with LINE; it must be an approved teacher's LINE sign-in. No Clerk session
- * is needed, so it works straight from the LINE chat.
+ * Teacher's "connect a LINE group" page inside LINE (/liff/connect): opened
+ * from the bot's button in a group (?g=<group ref>) or the rich menu. The
+ * caller is the LINE account in the LIFF token, verified with LINE, and must
+ * be an approved teacher's LINE sign-in. Students get 403 and no data. No
+ * Clerk session is needed, so it works straight from LINE.
  */
 async function liffTeacher(request: NextRequest): Promise<{ teacher: LineTeacher } | { response: NextResponse }> {
   const token = request.headers.get(LINE_TOKEN_HEADER);
@@ -37,7 +35,7 @@ async function liffTeacher(request: NextRequest): Promise<{ teacher: LineTeacher
   if (!lineUid) return { response: NextResponse.json({ error: 'กรุณาเปิดหน้านี้จาก LINE อีกครั้ง', code: 'unauthorized' }, { status: 401 }) };
   const teacher = await findTeacherByLineUid(createServiceSupabaseClient(), lineUid);
   if (!teacher) {
-    return { response: NextResponse.json({ error: 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับบัญชีครูใน Pudding กรุณาเข้าสู่ระบบเว็บ Pudding ด้วย LINE (บัญชีเดียวกัน) ก่อน', code: 'not-teacher' }, { status: 403 }) };
+    return { response: NextResponse.json({ error: 'หน้านี้สำหรับคุณครูเท่านั้น', code: 'not-teacher' }, { status: 403 }) };
   }
   if (teacher.access !== 'ok') {
     return { response: NextResponse.json({ error: teacherAccessMessage(teacher.access), code: teacher.access }, { status: 403 }) };
@@ -49,36 +47,30 @@ function term(classroom: { semester?: number | null; year_ce?: number | null; ac
   return classroom.semester && classroom.year_ce ? `${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year || '';
 }
 
-async function overview(supabase: ServiceClient, teacher: LineTeacher) {
-  const [classrooms, candidates] = await Promise.all([
-    listLinkableClassrooms(supabase, teacher.id),
-    findCandidateGroups(supabase, teacher.lineUid),
-  ]);
-  const now = Date.now();
+async function overview(supabase: ServiceClient, teacher: LineTeacher, focusRef?: string | null) {
+  const classrooms = await listLinkableClassrooms(supabase, teacher.id);
+  const { groups, focus } = await listTeacherGroups(supabase, teacher, classrooms, focusRef);
+  const refByClassroom = new Map(groups.filter((group) => group.linkedClassroomId).map((group) => [group.linkedClassroomId as string, group.ref]));
   return {
     teacher: { firstName: teacher.first_name || '' },
-    candidates,
-    classrooms: classrooms.map((item) => {
-      const waiting = item.line_connection_status === 'waiting'
-        && item.line_connection_token === teacher.id
-        && Boolean(item.line_connection_token_expires_at && new Date(item.line_connection_token_expires_at).getTime() > now);
-      return {
-        id: item.id,
-        title: classroomTitle(item),
-        term: term(item),
-        status: item.line_group_id ? 'connected' : waiting ? 'waiting' : 'disconnected',
-        groupName: item.line_group_name || undefined,
-        expiresAt: waiting ? item.line_connection_token_expires_at : undefined,
-        canUnlink: canUnlinkLine(item, teacher.id),
-      };
-    }),
+    groups,
+    focus,
+    classrooms: classrooms.map((item) => ({
+      id: item.id,
+      title: classroomTitle(item),
+      term: term(item),
+      linked: Boolean(item.line_group_id),
+      groupName: item.line_group_name || undefined,
+      groupRef: refByClassroom.get(item.id),
+      canUnlink: canUnlinkLine(item, teacher.id),
+    })),
   };
 }
 
 export async function GET(request: NextRequest) {
   const caller = await liffTeacher(request);
   if ('response' in caller) return caller.response;
-  return NextResponse.json(await overview(createServiceSupabaseClient(), caller.teacher));
+  return NextResponse.json(await overview(createServiceSupabaseClient(), caller.teacher, request.nextUrl.searchParams.get('g')));
 }
 
 export async function POST(request: NextRequest) {
@@ -86,29 +78,20 @@ export async function POST(request: NextRequest) {
   if ('response' in caller) return caller.response;
   const { teacher } = caller;
   const body = await request.json().catch(() => ({}));
-  const action = body.action as 'arm' | 'link-group' | 'cancel' | 'disconnect' | undefined;
+  const action = body.action as 'link' | 'disconnect' | undefined;
   const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
+  const focusRef = typeof body.focusRef === 'string' ? body.focusRef : null;
   if (!action || !classroomId) return NextResponse.json({ error: 'action and classroomId are required' }, { status: 400 });
 
   const supabase = createServiceSupabaseClient();
   const classroom = await getClassroom(supabase, classroomId);
   if (!classroom || !canLinkLine(classroom, teacher.id)) return NextResponse.json({ error: 'ไม่พบห้องเรียนนี้' }, { status: 404 });
 
-  if (action === 'arm') {
-    if (classroom.line_group_id) return NextResponse.json({ error: linkErrorMessage('classroom-taken') }, { status: 409 });
-    const armed = await armConnectRequest(supabase, teacher.id, classroom.id);
-    if (armed.error) return NextResponse.json({ error: armed.error }, { status: 500 });
-    signalLineStatus(classroom.id);
-  } else if (action === 'link-group') {
-    const groupId = typeof body.groupId === 'string' ? body.groupId : '';
-    if (!groupId) return NextResponse.json({ error: 'groupId is required' }, { status: 400 });
-    const result = await linkCandidateGroup(supabase, teacher, classroom, groupId);
-    if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason) }, { status: 409 });
-  } else if (action === 'cancel') {
-    if (classroom.line_connection_token === teacher.id) {
-      await cancelConnectRequest(supabase, classroom.id);
-      signalLineStatus(classroom.id);
-    }
+  if (action === 'link') {
+    const ref = typeof body.groupRef === 'string' ? body.groupRef : '';
+    if (!ref) return NextResponse.json({ error: 'กรุณาเลือกกลุ่ม LINE' }, { status: 400 });
+    const result = await linkGroupByRef(supabase, teacher, classroom, ref, { move: body.move === true });
+    if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason), reason: result.reason }, { status: 409 });
   } else if (action === 'disconnect') {
     if (!canUnlinkLine(classroom, teacher.id)) return NextResponse.json({ error: 'การยกเลิกการเชื่อมทำได้โดยคุณครูเจ้าของห้อง' }, { status: 403 });
     const groupId = classroom.line_group_id;
@@ -124,5 +107,5 @@ export async function POST(request: NextRequest) {
   } else {
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   }
-  return NextResponse.json(await overview(supabase, teacher));
+  return NextResponse.json(await overview(supabase, teacher, focusRef));
 }

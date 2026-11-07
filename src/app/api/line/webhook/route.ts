@@ -1,28 +1,14 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { getGroupSummary, isGroupMember, leaveGroup, pushLineGroupText, replyLineButtons, replyLineConfirm, replyLineText, replyLineTextWithLinkButton, replyLineTextWithQuickReplies, type LineAction } from '@/lib/line/messaging';
+import { getGroupSummary, pushLineGroupText, replyLineButtons, replyLineText, replyLineTextWithLinkButton, replyLineTextWithQuickReplies } from '@/lib/line/messaging';
 import {
-  canLinkLine,
-  canUnlinkLine,
-  cancelConnectRequest,
-  claimGroupPrompt,
-  createLinkToken,
+  ensureBotGroup,
   findLinkedClassroom,
   findTeacherByLineUid,
-  findWaitingClassrooms,
-  forgetPendingGroup,
-  getClassroom,
-  isTeacherOf,
-  linkClassroomToGroup,
-  linkErrorMessage,
+  forgetBotGroup,
   liffConnectUrl,
-  listLinkableClassrooms,
-  rememberPendingGroup,
   signalLineStatus,
-  unlinkClassroom,
-  webUrl,
-  type LineTeacher,
   type LinkClassroom,
   type ServiceClient,
 } from '@/lib/line/groupLink';
@@ -168,323 +154,61 @@ async function handleMemberJoined(supabase: ServiceClient, groupId: string, repl
   // Mid-burst: just keep the burst going.
   await supabase.from('classrooms').update({ line_member_joined_at: joinedAt }).eq('id', classroom.id);
 }
-function classroomLabel(classroom: LinkClassroom) {
-  const term = classroom.semester && classroom.year_ce
-    ? `ภาคเรียน ${classroom.semester}/${classroom.year_ce + 543}`
-    : classroom.academic_year || '';
-  return [`“${classroomTitle(classroom)}”`, term].filter(Boolean).join(' · ');
-}
-
-/** Links the group and says so in the group (a free reply). */
-async function linkGroup(
-  supabase: ServiceClient,
-  groupId: string,
-  classroom: LinkClassroom,
-  replyToken: string | undefined,
-  replacing?: LinkClassroom
-) {
-  const result = await linkClassroomToGroup(supabase, groupId, classroom, replacing);
-  if (!result.ok) {
-    await replySafely(replyToken, linkErrorMessage(result.reason));
-    return;
-  }
-  await replySafely(
-    replyToken,
-    `✅ เชื่อมกลุ่มนี้กับ “${classroomTitle(classroom)}” เรียบร้อยแล้ว${replacing ? ` (ยกเลิกการเชื่อมกับ “${classroomTitle(replacing)}”)` : ''} ระบบพร้อมส่งแจ้งเตือนการบ้าน\n\n${classroomJoinText(classroom, getLiffUrl())}\n\n💡 คุณครู/TA พิมพ์ "พุดดิ้ง" เพื่อดูคำสั่งทั้งหมด (บอทตอบเฉพาะคุณครูและ TA ของห้อง)`
-  );
-}
-
-/** Asks the requesting teacher to confirm before a group is linked or moved. */
-async function promptLink(replyToken: string | undefined, classroom: LinkClassroom, text: string, replacing?: LinkClassroom) {
+/**
+ * The group's "เชื่อมห้องเรียน" button: a link to the teacher's LIFF page with
+ * this group preselected. Everyone in the group sees it, but the page only
+ * opens for an approved teacher who LINE confirms is in this group; a student
+ * who taps it gets a "teachers only" page and nothing is changed.
+ */
+async function replyConnectButton(supabase: ServiceClient, groupId: string, replyToken: string | undefined, text: string) {
   if (!replyToken) return;
-  const yes = new URLSearchParams({ pudding: 'link', classroomId: classroom.id });
-  if (replacing) yes.set('replace', replacing.id);
+  const group = await ensureBotGroup(supabase, groupId);
   try {
-    await replyLineConfirm(
-      replyToken,
+    await replyLineButtons(replyToken, {
       text,
-      { label: replacing ? 'ย้ายมาห้องนี้' : 'เชื่อมกลุ่ม', data: yes.toString() },
-      { label: 'ยกเลิก', data: new URLSearchParams({ pudding: 'cancel', classroomId: classroom.id }).toString() }
-    );
+      actions: [{ type: 'uri', label: '🔗 เชื่อมห้องเรียน', uri: liffConnectUrl(group?.ref) }],
+    });
   } catch (error) {
-    console.error('LINE confirm reply failed:', error);
-  }
-}
-
-const PICK_ACTION: LineAction = { type: 'postback', label: '🔗 เชื่อมห้องเรียน', data: 'pudding=pick', displayText: 'เชื่อมห้องเรียน' };
-
-const JOIN_GREETING = 'สวัสดีค่ะ 👋 คุณครูแตะปุ่มด้านล่างเพื่อเชื่อมกลุ่มนี้กับห้องเรียนใน Pudding';
-
-/** The "เชื่อมห้องเรียน" button. Anyone sees it; only an approved teacher's tap does anything. */
-async function replyPickButton(replyToken: string | undefined, text: string) {
-  if (!replyToken) return;
-  try {
-    await replyLineButtons(replyToken, { text, actions: [PICK_ACTION] });
-  } catch (error) {
-    console.error('LINE pick button reply failed:', error);
+    console.error('LINE connect button reply failed:', error);
     // A reply token works once; it is still unused when LINE rejected the message.
-    await replySafely(replyToken, `${text}\n(หรือพิมพ์ "พุดดิ้ง เชื่อม")`);
+    await replySafely(replyToken, `${text}\n${liffConnectUrl(group?.ref)}`);
   }
 }
+
+const CONNECT_BUTTON_TEXT = 'สวัสดีค่ะ 👋 Pudding Bot พร้อมแล้ว\nคุณครูแตะปุ่มด้านล่างเพื่อเลือกห้องเรียนที่จะเชื่อมกับกลุ่มนี้ (สำหรับคุณครูเท่านั้น)';
 
 /**
  * Bot added to a group. LINE does not say who added it, so nothing is linked
- * here. The group is remembered (the web and LIFF page can then offer it); a
- * teacher who already asked to connect a classroom and is in the group gets a
- * confirm button, everyone else the "เชื่อมห้องเรียน" button.
+ * here: the group is remembered and gets the "เชื่อมห้องเรียน" link button.
  */
 async function handleBotJoined(supabase: ServiceClient, groupId: string, replyToken: string | undefined) {
+  const summary = await getGroupSummary(groupId).catch(() => null);
+  await ensureBotGroup(supabase, groupId, summary?.groupName);
   const linked = await findLinkedClassroom(supabase, groupId);
   if (linked) {
     await replySafely(replyToken, `Pudding เชื่อมต่อแล้ว: ${classroomTitle(linked)}`);
     return;
   }
-  const summary = await getGroupSummary(groupId).catch(() => null);
-  await rememberPendingGroup(supabase, groupId, summary?.groupName);
-
-  const waiting = await findWaitingClassrooms(supabase);
-  const requesterIds = [...new Set(waiting.map((item) => item.line_connection_token as string))];
-  const { data: requesters } = requesterIds.length
-    ? await supabase.from('users').select('id, teacher_line_uid, first_name, last_name, institution, teacher_approval').in('id', requesterIds).not('teacher_line_uid', 'is', null)
-    : { data: [] as Array<{ id: string; teacher_line_uid: string; first_name?: string; last_name?: string; institution?: string; teacher_approval?: string }> };
-  const matches: LinkClassroom[] = [];
-  for (const requester of (requesters || []).filter((row) => teacherAccessOf(row) === 'ok')) {
-    let member = false;
-    try {
-      member = await isGroupMember(groupId, requester.teacher_line_uid as string);
-    } catch (error) {
-      console.error('LINE group membership check failed:', error);
-    }
-    if (member) matches.push(...waiting.filter((item) => item.line_connection_token === requester.id));
-  }
-
-  if (matches.length === 1) {
-    await promptLink(replyToken, matches[0], `เชื่อมกลุ่มนี้กับห้องเรียน ${classroomLabel(matches[0])}?`);
-  } else {
-    await replyPickButton(replyToken, JOIN_GREETING);
-  }
+  await replyConnectButton(supabase, groupId, replyToken, CONNECT_BUTTON_TEXT);
 }
 
-/**
- * A message in a group from someone who may be a teacher. Only an approved
- * teacher's own message counts: it completes their waiting request, or, in a
- * group that is not linked yet, gets the "เชื่อมห้องเรียน" button once.
- * A group already linked to another classroom is never taken silently: its
- * own teacher is asked to confirm the move (e.g. reusing last semester's
- * group), and other teachers' groups are refused.
- *
- * Returns true when the message was used for linking.
- */
-async function handleLinkMessage(supabase: ServiceClient, groupId: string, lineUserId: string, replyToken: string | undefined): Promise<boolean> {
+/** "พุดดิ้ง เชื่อม" from a teacher: the same link button, whether the group is linked or not. */
+async function handleConnectCommand(supabase: ServiceClient, groupId: string, lineUserId: string | undefined, replyToken: string | undefined) {
   const teacher = await findTeacherByLineUid(supabase, lineUserId);
-  if (!teacher || teacher.access !== 'ok') return false;
-  const [classroom] = await findWaitingClassrooms(supabase, teacher.id);
-  if (!classroom) {
-    if (!(await claimGroupPrompt(supabase, groupId))) return false;
-    await replyPickButton(replyToken, 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียน คุณครูแตะปุ่มด้านล่างเพื่อเลือกห้องเรียน');
-    return true;
-  }
-
-  const linked = await findLinkedClassroom(supabase, groupId);
-  if (!linked) {
-    await linkGroup(supabase, groupId, classroom, replyToken);
-    return true;
-  }
-  // Ask once per group; later chat while still waiting goes through as normal.
-  if (classroom.line_connection_token_hash === groupId) return false;
-  await supabase.from('classrooms').update({ line_connection_token_hash: groupId }).eq('id', classroom.id);
-  if (canUnlinkLine(linked, teacher.id)) {
-    await promptLink(
-      replyToken,
-      classroom,
-      `กลุ่มนี้เชื่อมกับห้อง ${classroomLabel(linked)} อยู่แล้ว\nย้ายกลุ่มนี้มาใช้กับห้อง ${classroomLabel(classroom)} แทนหรือไม่?`,
-      linked
-    );
-  } else {
-    await replySafely(replyToken, `กลุ่มนี้เชื่อมกับ “${classroomTitle(linked)}” ของคุณครูท่านอื่นแล้ว จึงเชื่อมกับ “${classroomTitle(classroom)}” ไม่ได้\nกรุณาใช้กลุ่ม LINE อื่น`);
-  }
-  return true;
-}
-
-/** LINE shows at most 13 quick replies; one row per classroom. */
-const MAX_PICK_CLASSROOMS = 12;
-
-/**
- * The group's connect menu for an approved teacher ("เชื่อมห้องเรียน" tap or
- * "พุดดิ้ง เชื่อม"). It follows the group's state:
- *   - not linked: their free classrooms to pick, plus "สร้างห้องเรียนใหม่"
- *   - linked to their classroom: move to another classroom / unlink
- *   - linked to another teacher's classroom: refused
- * `move` lists classrooms to move the linked group to.
- */
-async function handleGroupConnectMenu(supabase: ServiceClient, groupId: string, teacher: LineTeacher, replyToken: string | undefined, mode: 'menu' | 'move' = 'menu') {
-  if (!replyToken) return;
-  const linked = await findLinkedClassroom(supabase, groupId);
-  if (linked && !isTeacherOf(linked, teacher.id)) {
-    await replySafely(replyToken, `กลุ่มนี้เชื่อมกับ “${classroomTitle(linked)}” ของคุณครูท่านอื่นแล้ว`);
-    return;
-  }
-  if (linked && (mode === 'menu' || !canUnlinkLine(linked, teacher.id))) {
-    const text = `กลุ่มนี้เชื่อมกับห้อง ${classroomLabel(linked)} แล้ว`;
-    if (!canUnlinkLine(linked, teacher.id)) {
-      await replySafely(replyToken, `${text}\n(การย้ายหรือยกเลิกการเชื่อม ทำได้โดยคุณครูเจ้าของห้อง)`);
-      return;
-    }
-    try {
-      await replyLineButtons(replyToken, {
-        text,
-        actions: [
-          { type: 'postback', label: '🔁 ย้ายไปห้องอื่น', data: new URLSearchParams({ pudding: 'move', classroomId: linked.id }).toString(), displayText: 'ย้ายกลุ่มไปห้องอื่น' },
-          { type: 'postback', label: '⛔ ยกเลิกการเชื่อม', data: new URLSearchParams({ pudding: 'unlink-ask', classroomId: linked.id }).toString(), displayText: 'ยกเลิกการเชื่อม' },
-        ],
-      });
-    } catch (error) {
-      console.error('LINE linked menu reply failed:', error);
-    }
-    return;
-  }
-
-  const all = await listLinkableClassrooms(supabase, teacher.id, { unlinkedOnly: true });
-  const classes = all.slice(0, MAX_PICK_CLASSROOMS);
-  const [token, summary] = await Promise.all([
-    createLinkToken(supabase, groupId, teacher.id),
-    getGroupSummary(groupId).catch(() => null),
-  ]);
-  const createParams = new URLSearchParams({ createClassroom: '1' });
-  if (token) createParams.set('lineLink', token);
-  if (summary?.groupName) createParams.set('groupName', summary.groupName);
-  // Opens the teacher's own browser, where their Pudding sign-in lives.
-  createParams.set('openExternalBrowser', '1');
-  const createAction: LineAction = { type: 'uri', label: '➕ สร้างห้องเรียนใหม่', uri: webUrl(`/classrooms?${createParams}`) };
-
-  const heading = linked
-    ? `ย้ายกลุ่มนี้จาก “${classroomTitle(linked)}” ไปห้องไหนคะ?`
-    : `คุณครู${teacher.first_name || ''} เลือกห้องเรียนที่จะเชื่อมกับกลุ่มนี้`;
-  const replace: Record<string, string> = linked ? { replace: linked.id } : {};
-  try {
-    if (!classes.length) {
-      await replyLineButtons(replyToken, {
-        text: `${heading}\nยังไม่มีห้องเรียนที่ว่างอยู่ สร้างห้องใหม่แล้วระบบจะเชื่อมกลุ่มนี้ให้ทันที`,
-        actions: [createAction],
-      });
-      return;
-    }
-    await replyLineButtons(replyToken, {
-      intro: [
-        heading,
-        '',
-        ...classes.map((item, index) => `${index + 1}. ${classroomLabel(item)}`),
-        all.length > classes.length ? `\n(แสดง ${classes.length} ห้องล่าสุด จากทั้งหมด ${all.length} ห้อง)` : '',
-      ].filter((line, index, lines) => line !== '' || index < lines.length - 1).join('\n').trim(),
-      text: 'แตะหมายเลขห้องด้านล่าง 👇 หรือสร้างห้องเรียนใหม่สำหรับกลุ่มนี้',
-      actions: [createAction],
-      quickReplies: classes.map((item, index) => ({
-        type: 'postback',
-        label: `${index + 1}. ${classroomTitle(item)}`,
-        data: new URLSearchParams({ pudding: 'link', classroomId: item.id, ...replace }).toString(),
-        displayText: `เชื่อม ${classroomTitle(item)}`,
-      })),
-    });
-  } catch (error) {
-    console.error('LINE classroom picker reply failed:', error);
-  }
-}
-
-/**
- * Taps on the bot's buttons in a group. LINE tells us who tapped: students
- * and strangers are ignored, a teacher who is not approved is told why, and
- * every action re-checks that this teacher may change this classroom.
- */
-async function handleLinkPostback(supabase: ServiceClient, groupId: string, lineUserId: string | undefined, data: string, replyToken: string | undefined) {
-  const params = new URLSearchParams(data);
-  const action = params.get('pudding');
-  const teacher = await findTeacherByLineUid(supabase, lineUserId);
-  if (!teacher) return;
+  if (!teacher) return; // students and strangers: no reply
   if (teacher.access !== 'ok') {
     await replySafely(replyToken, teacherAccessMessage(teacher.access));
     return;
   }
-  if (action === 'pick') {
-    await handleGroupConnectMenu(supabase, groupId, teacher, replyToken);
-    return;
-  }
-  if (action === 'keep') {
-    await replySafely(replyToken, 'ยังเชื่อมกลุ่มนี้ไว้เหมือนเดิมค่ะ');
-    return;
-  }
-
-  const classroomId = params.get('classroomId');
-  const classroom = classroomId ? await getClassroom(supabase, classroomId) : null;
-  // Not their classroom (or it is gone): nothing to say in front of the class.
-  if (!classroom || !canLinkLine(classroom, teacher.id)) return;
-
-  if (action === 'cancel') {
-    if (classroom.line_connection_status !== 'waiting' || classroom.line_connection_token !== teacher.id) return;
-    await cancelConnectRequest(supabase, classroom.id);
-    signalLineStatus(classroom.id);
-    await replySafely(replyToken, `ยกเลิกการเชื่อม “${classroomTitle(classroom)}” แล้ว`);
-    return;
-  }
-
-  if (action === 'move' || action === 'unlink-ask' || action === 'unlink') {
-    if (classroom.line_group_id !== groupId || !canUnlinkLine(classroom, teacher.id)) {
-      await replySafely(replyToken, 'สถานะกลุ่มเปลี่ยนไปแล้ว หรือคุณครูไม่มีสิทธิ์เปลี่ยนการเชื่อมของห้องนี้');
-      return;
-    }
-    if (action === 'move') {
-      await handleGroupConnectMenu(supabase, groupId, teacher, replyToken, 'move');
-    } else if (action === 'unlink-ask') {
-      if (!replyToken) return;
-      try {
-        await replyLineConfirm(
-          replyToken,
-          `ยกเลิกการเชื่อมกลุ่มนี้กับ “${classroomTitle(classroom)}”?\nบอทจะออกจากกลุ่มและหยุดส่งแจ้งเตือน`,
-          { label: 'ยกเลิกการเชื่อม', data: new URLSearchParams({ pudding: 'unlink', classroomId: classroom.id }).toString() },
-          { label: 'ไม่ใช่', data: 'pudding=keep' }
-        );
-      } catch (error) {
-        console.error('LINE unlink confirm failed:', error);
-      }
-    } else {
-      const { error } = await unlinkClassroom(supabase, classroom.id);
-      if (error) {
-        await replySafely(replyToken, 'ยกเลิกการเชื่อมไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
-        return;
-      }
-      await replySafely(replyToken, `ยกเลิกการเชื่อมกับ “${classroomTitle(classroom)}” แล้ว บอทขอตัวออกจากกลุ่มนะคะ 👋\n(เชื่อมใหม่ได้โดยเชิญ Pudding Bot เข้ากลุ่มอีกครั้ง)`);
-      // The "leave" webhook that follows finds no linked classroom and does nothing.
-      try {
-        await leaveGroup(groupId);
-      } catch (leaveError) {
-        console.warn('LINE bot could not leave the group:', leaveError);
-      }
-    }
-    return;
-  }
-
-  if (action !== 'link') return;
-  if (classroom.line_group_id) {
-    await replySafely(replyToken, classroom.line_group_id === groupId
-      ? `กลุ่มนี้เชื่อมกับ “${classroomTitle(classroom)}” อยู่แล้ว`
-      : `“${classroomTitle(classroom)}” เชื่อมกับกลุ่ม LINE อื่นอยู่แล้ว (ยกเลิกการเชื่อมกลุ่มเดิมก่อน)`);
-    return;
-  }
   const linked = await findLinkedClassroom(supabase, groupId);
-  const replaceId = params.get('replace');
-  if (!linked) {
-    await linkGroup(supabase, groupId, classroom, replyToken);
-  } else if (linked.id === replaceId && canUnlinkLine(linked, teacher.id)) {
-    await linkGroup(supabase, groupId, classroom, replyToken, linked);
-  } else if (canUnlinkLine(linked, teacher.id)) {
-    await promptLink(
-      replyToken,
-      classroom,
-      `กลุ่มนี้เชื่อมกับห้อง ${classroomLabel(linked)} อยู่แล้ว\nย้ายกลุ่มนี้มาใช้กับห้อง ${classroomLabel(classroom)} แทนหรือไม่?`,
-      linked
-    );
-  } else {
-    await replySafely(replyToken, `กลุ่มนี้เชื่อมกับ “${classroomTitle(linked)}” ของคุณครูท่านอื่นแล้ว จึงไม่ได้เปลี่ยนแปลงอะไร`);
-  }
+  await replyConnectButton(
+    supabase,
+    groupId,
+    replyToken,
+    linked
+      ? `กลุ่มนี้เชื่อมกับ “${classroomTitle(linked)}” อยู่\nแตะปุ่มด้านล่างเพื่อย้ายไปห้องอื่นหรือยกเลิกการเชื่อม (สำหรับคุณครู)`
+      : 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียน\nแตะปุ่มด้านล่างเพื่อเลือกห้องเรียน (สำหรับคุณครู)'
+  );
 }
 
 /** "เชื่อมกลุ่ม" typed (or sent by a rich-menu text button) in the teacher's 1:1 chat. */
@@ -504,7 +228,7 @@ async function handleConnectKeyword(supabase: ServiceClient, lineUserId: string 
   }
   try {
     await replyLineButtons(replyToken, {
-      intro: 'เชื่อมกลุ่ม LINE กับห้องเรียนได้ 2 แบบ เลือกแบบที่สะดวกค่ะ\n\n1️⃣ เชิญ Pudding Bot เข้ากลุ่มห้องเรียน แล้วแตะ “เชื่อมห้องเรียน” ในข้อความของบอท\n2️⃣ เปิดหน้าเชื่อมกลุ่ม เลือกห้องเรียน แล้วค่อยเชิญบอทเข้ากลุ่ม (ถ้าบอทอยู่ในกลุ่มแล้ว เลือกกลุ่มได้ทันที)',
+      intro: 'เชื่อมกลุ่ม LINE กับห้องเรียน\n1️⃣ เชิญ Pudding Bot เข้ากลุ่ม LINE ของห้องเรียน\n2️⃣ แตะ “เชื่อมห้องเรียน” ในข้อความของบอท หรือเปิดหน้าเชื่อมกลุ่มด้านล่าง แล้วเลือกกลุ่มและห้องเรียน',
       text: 'แตะเพื่อเปิดหน้าเชื่อมกลุ่ม 👇',
       actions: [{ type: 'uri', label: '🔗 เปิดหน้าเชื่อมกลุ่ม', uri: liffConnectUrl() }],
     });
@@ -680,9 +404,9 @@ export async function POST(request: NextRequest) {
       await handleBotJoined(supabase, groupId, event.replyToken);
       continue;
     }
+    // Taps on buttons from older bot messages (confirm / classroom list): answer with the link button.
     if (groupId && event.type === 'postback') {
-      const data = event.postback?.data || '';
-      if (new URLSearchParams(data).has('pudding')) await handleLinkPostback(supabase, groupId, lineUserId, data, event.replyToken);
+      if (new URLSearchParams(event.postback?.data || '').has('pudding')) await handleConnectCommand(supabase, groupId, lineUserId, event.replyToken);
       continue;
     }
     // Bot removed from (or left) a group: unlink that classroom in the UI.
@@ -696,7 +420,7 @@ export async function POST(request: NextRequest) {
       }).eq('line_group_id', groupId).select('id');
       if (error) console.error('LINE classroom auto-unlink failed:', error);
       signalLineStatus(...(unlinked || []).map((row) => row.id));
-      await forgetPendingGroup(supabase, groupId);
+      await forgetBotGroup(supabase, groupId);
       continue;
     }
     // Teacher adds / blocks the bot in their 1:1 chat.
@@ -724,18 +448,10 @@ export async function POST(request: NextRequest) {
 
     const studentCommand = groupId && event.type === 'message' ? parseStudentCommand(normalizedText) : null;
 
-    // "พุดดิ้ง เชื่อม": the group's connect menu (link, move or unlink), linked or not.
+    // "พุดดิ้ง เชื่อม": the link button to the teacher's connect page.
     if (groupId && studentCommand === 'connect') {
-      const teacher = await findTeacherByLineUid(supabase, lineUserId);
-      if (teacher?.access === 'ok') await handleGroupConnectMenu(supabase, groupId, teacher, event.replyToken);
-      else if (teacher) await replySafely(event.replyToken, teacherAccessMessage(teacher.access));
+      await handleConnectCommand(supabase, groupId, lineUserId, event.replyToken);
       continue;
-    }
-
-    // A teacher's message in the group completes their waiting request, or
-    // (group not linked yet) gets the "เชื่อมห้องเรียน" button once.
-    if (groupId && lineUserId && event.type === 'message') {
-      if (await handleLinkMessage(supabase, groupId, lineUserId, event.replyToken)) continue;
     }
 
     // Group chat: only a teacher's or TA's "พุดดิ้ง" / "pudding" message gets a (free) reply.
