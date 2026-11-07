@@ -8,6 +8,7 @@
 --                    leave). `ref` is a random id used in links instead of the
 --                    LINE group id; the server still asks LINE whether the
 --                    teacher is a member before linking.
+--   line_unlinked_bot_groups  view: bot groups with no classroom linked
 --
 -- Also clears old "waiting" requests, and removes the tables from the earlier
 -- version of this script (line_pending_groups, line_link_tokens) if you ran it.
@@ -50,6 +51,14 @@ SET line_connection_status = 'disconnected',
     line_connection_token_expires_at = NULL
 WHERE line_connection_status = 'waiting' AND line_group_id IS NULL;
 
+-- Groups no classroom is linked to: the web and LIFF page read this in one query.
+CREATE OR REPLACE VIEW public.line_unlinked_bot_groups
+WITH (security_invoker = true) AS
+SELECT g.group_id, g.ref, g.group_name, g.joined_at
+FROM public.line_bot_groups g
+WHERE NOT EXISTS (SELECT 1 FROM public.classrooms c WHERE c.line_group_id = g.group_id);
+
 -- Server (service_role) only, like every other table after the security lockdown.
 ALTER TABLE public.line_bot_groups ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.line_bot_groups FROM anon, authenticated;
+REVOKE ALL ON public.line_unlinked_bot_groups FROM anon, authenticated;

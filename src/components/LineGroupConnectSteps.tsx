@@ -4,7 +4,9 @@ import React from 'react';
 import { Loader2, RefreshCw, Users } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
-export type LineGroupChoice = { ref: string; groupName?: string };
+import type { LineGroupChoice } from '@/lib/line/lineGroupChoices';
+
+export type { LineGroupChoice };
 
 /**
  * Linking a classroom to a LINE group from the web: the groups Pudding Bot is

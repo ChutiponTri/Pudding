@@ -139,13 +139,68 @@ export async function findBotGroupByRef(supabase: ServiceClient, ref: string | n
   return data ? { groupId: data.group_id as string, ref: data.ref as string, groupName: (data.group_name as string | null) || undefined } : null;
 }
 
-async function isMember(groupId: string, lineUid: string) {
+/**
+ * "Is this teacher in this group?" answers from LINE, remembered per server
+ * instance: yes for 10 minutes, no for 1 minute (a teacher may join the group
+ * any moment). `fresh` (the refresh button, and every link) asks LINE again.
+ */
+const MEMBER_YES_MS = 10 * 60 * 1000;
+const MEMBER_NO_MS = 60 * 1000;
+const memberCache = new Map<string, { member: boolean; until: number }>();
+
+async function isMember(groupId: string, lineUid: string, options: { fresh?: boolean } = {}) {
+  const key = `${groupId}|${lineUid}`;
+  const cached = memberCache.get(key);
+  if (!options.fresh && cached && cached.until > Date.now()) return cached.member;
   try {
-    return await isGroupMember(groupId, lineUid);
+    const member = await isGroupMember(groupId, lineUid);
+    if (memberCache.size > 5000) memberCache.clear();
+    memberCache.set(key, { member, until: Date.now() + (member ? MEMBER_YES_MS : MEMBER_NO_MS) });
+    return member;
   } catch (error) {
     console.error('LINE group membership check failed:', error);
     return false;
   }
+}
+
+type GroupRow = { group_id: string; ref: string; group_name: string | null };
+
+/** Recently joined groups that no classroom is linked to: one query on the view, two without it. */
+async function recentUnlinkedGroups(supabase: ServiceClient): Promise<GroupRow[]> {
+  const since = new Date(Date.now() - UNLINKED_GROUP_MAX_AGE_MS).toISOString();
+  const { data, error } = await supabase
+    .from('line_unlinked_bot_groups')
+    .select('group_id, ref, group_name')
+    .gte('joined_at', since)
+    .order('joined_at', { ascending: false })
+    .limit(MAX_UNLINKED_GROUPS);
+  if (!error) return (data || []) as GroupRow[];
+  // View missing (run supabase_line_connect_flow_update.sql): filter here instead.
+  const { data: rows } = await supabase
+    .from('line_bot_groups')
+    .select('group_id, ref, group_name')
+    .gte('joined_at', since)
+    .order('joined_at', { ascending: false })
+    .limit(MAX_UNLINKED_GROUPS * 2);
+  const ids = (rows || []).map((row) => row.group_id as string);
+  if (!ids.length) return [];
+  const { data: linked } = await supabase.from('classrooms').select('line_group_id').in('line_group_id', ids);
+  const linkedIds = new Set((linked || []).map((row) => row.line_group_id as string));
+  return ((rows || []) as GroupRow[]).filter((row) => !linkedIds.has(row.group_id)).slice(0, MAX_UNLINKED_GROUPS);
+}
+
+/**
+ * Unlinked groups the bot is in that LINE confirms this teacher is a member
+ * of (the membership checks run side by side and are remembered briefly).
+ */
+export async function listUnlinkedTeacherGroups(
+  supabase: ServiceClient,
+  lineUid: string,
+  options: { fresh?: boolean } = {}
+): Promise<Array<{ ref: string; groupName?: string }>> {
+  const rows = await recentUnlinkedGroups(supabase);
+  const checks = await Promise.all(rows.map((row) => isMember(row.group_id, lineUid, options)));
+  return rows.filter((_, index) => checks[index]).map((row) => ({ ref: row.ref, groupName: row.group_name || undefined }));
 }
 
 /** A group the teacher may pick: they are in it (LINE says so) and the bot is too. */
@@ -166,45 +221,38 @@ export async function listTeacherGroups(
   supabase: ServiceClient,
   teacher: { id: string; lineUid: string },
   classrooms: LinkClassroom[],
-  focusRef?: string | null
+  focusRef?: string | null,
+  options: { fresh?: boolean } = {}
 ): Promise<{ groups: TeacherGroup[]; focus?: TeacherGroup | { ref: string; error: string } }> {
-  const since = new Date(Date.now() - UNLINKED_GROUP_MAX_AGE_MS).toISOString();
   const linkedIds = classrooms.map((item) => item.line_group_id).filter(Boolean) as string[];
-  const [recent, own, focusGroup] = await Promise.all([
-    supabase.from('line_bot_groups').select('group_id, ref, group_name').gte('joined_at', since).order('joined_at', { ascending: false }).limit(MAX_UNLINKED_GROUPS * 2),
-    linkedIds.length ? supabase.from('line_bot_groups').select('group_id, ref, group_name').in('group_id', linkedIds) : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
+  const [unlinked, own, focusGroup] = await Promise.all([
+    listUnlinkedTeacherGroups(supabase, teacher.lineUid, options),
+    linkedIds.length
+      ? supabase.from('line_bot_groups').select('group_id, ref, group_name').in('group_id', linkedIds)
+      : Promise.resolve({ data: [] as GroupRow[] }),
     findBotGroupByRef(supabase, focusRef),
   ]);
-  const rows = [...((recent.data || []) as Array<Record<string, unknown>>)];
-  if (focusGroup && !rows.some((row) => row.group_id === focusGroup.groupId)) {
-    rows.unshift({ group_id: focusGroup.groupId, ref: focusGroup.ref, group_name: focusGroup.groupName || null });
-  }
-  const ids = rows.map((row) => row.group_id as string);
-  const { data: linkedRows } = ids.length
-    ? await supabase.from('classrooms').select('id, line_group_id').in('line_group_id', ids)
-    : { data: [] as Array<{ id: string; line_group_id: string }> };
-  const linkedTo = new Map((linkedRows || []).map((row) => [row.line_group_id as string, row.id as string]));
   const mine = new Map(classrooms.filter((item) => item.line_group_id).map((item) => [item.line_group_id as string, item.id]));
-
-  // Unlinked ones need LINE to confirm membership; ones linked to other teachers are skipped.
-  const unlinked = rows.filter((row) => !linkedTo.has(row.group_id as string)).slice(0, MAX_UNLINKED_GROUPS);
-  const checks = await Promise.all(unlinked.map((row) => isMember(row.group_id as string, teacher.lineUid)));
-  const groups: TeacherGroup[] = unlinked
-    .filter((_, index) => checks[index])
-    .map((row) => ({ ref: row.ref as string, groupName: (row.group_name as string | null) || undefined }));
-  for (const row of (own.data || []) as Array<Record<string, unknown>>) {
-    groups.push({ ref: row.ref as string, groupName: (row.group_name as string | null) || undefined, linkedClassroomId: mine.get(row.group_id as string) });
+  const groups: TeacherGroup[] = [...unlinked];
+  for (const row of (own.data || []) as GroupRow[]) {
+    groups.push({ ref: row.ref, groupName: row.group_name || undefined, linkedClassroomId: mine.get(row.group_id) });
   }
 
   let focus: TeacherGroup | { ref: string; error: string } | undefined;
   if (focusRef) {
-    if (!focusGroup) {
+    const found = groups.find((group) => group.ref === focusRef);
+    if (found) {
+      focus = found;
+    } else if (!focusGroup) {
       focus = { ref: focusRef, error: 'ไม่พบกลุ่มนี้ (บอทอาจถูกนำออกจากกลุ่มแล้ว) กรุณาเชิญ Pudding Bot เข้ากลุ่มอีกครั้ง' };
+    } else if (await findLinkedClassroom(supabase, focusGroup.groupId)) {
+      focus = { ref: focusRef, error: 'กลุ่มนี้เชื่อมกับห้องเรียนของคุณครูท่านอื่นแล้ว' };
+    } else if (await isMember(focusGroup.groupId, teacher.lineUid, { fresh: true })) {
+      // An unlinked group older than the recent list: still offered when opened from its own button.
+      focus = { ref: focusGroup.ref, groupName: focusGroup.groupName };
+      groups.unshift(focus);
     } else {
-      const found = groups.find((group) => group.ref === focusRef);
-      if (found) focus = found;
-      else if (linkedTo.has(focusGroup.groupId)) focus = { ref: focusRef, error: 'กลุ่มนี้เชื่อมกับห้องเรียนของคุณครูท่านอื่นแล้ว' };
-      else focus = { ref: focusRef, error: 'ไม่พบคุณครูในกลุ่มนี้ เปิดปุ่มนี้จากบัญชี LINE ที่อยู่ในกลุ่มและใช้เข้าสู่ระบบ Pudding' };
+      focus = { ref: focusRef, error: 'ไม่พบคุณครูในกลุ่มนี้ เปิดปุ่มนี้จากบัญชี LINE ที่อยู่ในกลุ่มและใช้เข้าสู่ระบบ Pudding' };
     }
   }
   return { groups, focus };
@@ -236,7 +284,7 @@ export async function linkGroupByRef(
   if (!group) return { ok: false, reason: 'not-found' };
   if (classroom.line_group_id === group.groupId) return { ok: true, groupName: group.groupName };
   if (classroom.line_group_id) return { ok: false, reason: 'classroom-taken' };
-  if (!(await isMember(group.groupId, teacher.lineUid))) return { ok: false, reason: 'not-member' };
+  if (!(await isMember(group.groupId, teacher.lineUid, { fresh: true }))) return { ok: false, reason: 'not-member' };
 
   const linked = await findLinkedClassroom(supabase, group.groupId);
   if (linked && (!options.move || !canUnlinkLine(linked, teacher.id))) {

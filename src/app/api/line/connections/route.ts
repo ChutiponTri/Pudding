@@ -6,7 +6,7 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
-import { canLinkLine, getClassroom, linkErrorMessage, linkGroupByRef, listTeacherGroups } from '@/lib/line/groupLink';
+import { canLinkLine, getClassroom, linkErrorMessage, linkGroupByRef, listUnlinkedTeacherGroups } from '@/lib/line/groupLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,29 +30,37 @@ async function teacherLineUid(userId: string) {
   return (data?.teacher_line_uid as string | null | undefined) || null;
 }
 
+/**
+ * GET ?groups=1: the LINE groups the bot is in with the signed-in teacher and
+ * no classroom linked yet. It is per teacher (the same for every classroom),
+ * so the dashboard asks once and reuses it; `fresh=1` (the refresh button)
+ * asks LINE again instead of using remembered membership answers.
+ * GET ?classroomId=…: that classroom's LINE status.
+ */
 export async function GET(request: NextRequest) {
-  const classroomId = request.nextUrl.searchParams.get('classroomId');
-  if (!classroomId) return NextResponse.json({ error: 'classroomId is required' }, { status: 400 });
+  const params = request.nextUrl.searchParams;
+  const classroomId = params.get('classroomId');
+  if (!classroomId) {
+    if (params.get('groups') !== '1') return NextResponse.json({ error: 'classroomId is required' }, { status: 400 });
+    const { userId } = await auth();
+    if (!userId || !(await canUseTeacherApp(userId))) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const lineUid = await teacherLineUid(userId);
+    if (!lineUid) return NextResponse.json({ groups: [], lineLinked: false });
+    const groups = await listUnlinkedTeacherGroups(createServiceSupabaseClient(), lineUid, { fresh: params.get('fresh') === '1' });
+    return NextResponse.json({ groups, lineLinked: true });
+  }
+
   const { userId, classroom } = await getOwnedClassroom(classroomId);
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!classroom) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
   // Linked or not; an old "waiting" request (from before groups were picked directly) counts as not linked.
   const status = classroom.line_group_id ? 'connected' : 'disconnected';
-  const supabase = createServiceSupabaseClient();
-  const testQuota = classroom.line_group_id ? await getLineTestQuota(supabase, userId, classroomId) : null;
-  // Groups the bot is in with this teacher, asked only when the dialog opens or refreshes (LINE calls).
-  const wantsGroups = request.nextUrl.searchParams.get('groups') === '1' && !classroom.line_group_id;
-  const lineUid = wantsGroups ? await teacherLineUid(userId) : null;
-  const groups = lineUid
-    ? (await listTeacherGroups(supabase, { id: userId, lineUid }, [])).groups.filter((group) => !group.linkedClassroomId)
-    : wantsGroups ? [] : undefined;
+  const testQuota = classroom.line_group_id ? await getLineTestQuota(createServiceSupabaseClient(), userId, classroomId) : null;
   return NextResponse.json({
     status,
     groupName: classroom.line_group_name || undefined,
     connectedAt: classroom.line_connected_at,
     testQuota: testQuota || undefined,
-    groups: groups?.map(({ ref, groupName }) => ({ ref, groupName })),
-    lineLinked: wantsGroups ? Boolean(lineUid) : undefined,
   });
 }
 

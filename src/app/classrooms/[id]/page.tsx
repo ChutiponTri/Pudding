@@ -13,7 +13,8 @@ import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, write
 import { quietly } from '@/lib/net/fetchActivity';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
 import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
-import { LineGroupConnectSteps, type LineGroupChoice } from '@/components/LineGroupConnectSteps';
+import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
+import { dropLineGroup, prefetchLineGroups, useLineGroupChoices } from '@/lib/line/lineGroupChoices';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { StudentRosterModal, type StudentRosterTab } from '@/components/StudentRosterModal';
@@ -340,12 +341,11 @@ export default function ClassroomWorkspacePage() {
     groupName?: string;
     expiresAt?: string;
     connectedAt?: string;
-    groups?: LineGroupChoice[];
-    lineLinked?: boolean;
   }>({ status: 'disconnected' });
   const [isLineLoading, setIsLineLoading] = useState(false);
   const [linkingGroupRef, setLinkingGroupRef] = useState<string | null>(null);
-  const [refreshingGroups, setRefreshingGroups] = useState(false);
+  // Groups the bot is in with this teacher: shared, remembered list (see lineGroupChoices).
+  const lineGroups = useLineGroupChoices(showLineConnectModal);
   const [teacherBot, setTeacherBot] = useState<{ botFriend?: boolean | null; addFriendUrl?: string }>({});
 
   // Teacher's bot friendship (for the "add Pudding Bot" hint) when the dialog opens.
@@ -366,17 +366,11 @@ export default function ClassroomWorkspacePage() {
     } : null));
   };
 
-  /** Status plus the groups the bot is in with this teacher (LINE checks membership, so only on open/refresh). */
-  const loadLineGroups = async () => {
-    if (!classroomId) return;
-    setRefreshingGroups(true);
-    try {
-      const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(classroomId)}&groups=1`, { cache: 'no-store' });
-      if (response.ok) setLineConnection(await response.json());
-    } catch {} finally {
-      setRefreshingGroups(false);
-    }
-  };
+  // Not linked yet: warm the group list in the background so the dialog opens with it.
+  const lineUnlinked = Boolean(classroom && !classroom.line_group_id);
+  useEffect(() => {
+    if (lineUnlinked) prefetchLineGroups();
+  }, [lineUnlinked]);
 
   // While the dialog is open and not linked, notice a link made from LINE (the teacher's LIFF page).
   useEffect(() => {
@@ -408,6 +402,7 @@ export default function ClassroomWorkspacePage() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'LINE connection failed');
+      if (action === 'link-group' && groupRef) dropLineGroup(groupRef);
       setLineConnection(result);
       setClassroom((prev) => (prev ? {
         ...prev,
@@ -1912,8 +1907,10 @@ export default function ClassroomWorkspacePage() {
                 type="button"
                 onClick={() => {
                   setShowLineConnectModal(true);
-                  setLineConnection((current) => ({ ...current, groups: undefined }));
-                  void loadLineGroups();
+                  fetch(`/api/line/connections?classroomId=${encodeURIComponent(classroom.id)}`, { cache: 'no-store' })
+                    .then((response) => (response.ok ? response.json() : null))
+                    .then((result) => result && setLineConnection(result))
+                    .catch(() => {});
                 }}
                 className="min-w-0 h-9 sm:h-auto px-2 sm:px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] sm:text-xs font-bold inline-flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 shadow-xs transition-all cursor-pointer"
               >
@@ -3121,12 +3118,12 @@ export default function ClassroomWorkspacePage() {
               <LineGroupConnectSteps
                 botFriend={teacherBot.botFriend}
                 addFriendUrl={teacherBot.addFriendUrl}
-                groups={lineConnection.groups}
-                lineLinked={lineConnection.lineLinked}
+                groups={lineGroups.groups}
+                lineLinked={lineGroups.lineLinked}
                 onLinkGroup={(ref) => handleLineConnection('link-group', ref)}
                 linkingRef={linkingGroupRef}
-                onRefresh={loadLineGroups}
-                refreshing={refreshingGroups}
+                onRefresh={lineGroups.refresh}
+                refreshing={lineGroups.refreshing}
               />
             )}
 
