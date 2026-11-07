@@ -166,16 +166,22 @@ async function handleMemberJoined(supabase: ServiceClient, groupId: string, repl
 async function replyConnectButton(supabase: ServiceClient, groupId: string, replyToken: string | undefined, text: string) {
   if (!replyToken) return;
   const group = await ensureBotGroup(supabase, groupId);
+  if (!group) {
+    // No ref to put in the link (the page only works for one group): ask to try again.
+    await replySafely(replyToken, 'ขออภัยค่ะ ระบบขัดข้อง พิมพ์ “พุดดิ้ง เชื่อม” ในกลุ่มนี้อีกครั้ง');
+    return;
+  }
+  const url = liffConnectUrl(group.ref);
   try {
     await replyLineButtons(replyToken, {
       image: connectGuideImage(),
       text,
-      actions: [{ type: 'uri', label: '🔗 เชื่อมห้องเรียน', uri: liffConnectUrl(group?.ref) }],
+      actions: [{ type: 'uri', label: '🔗 เชื่อมห้องเรียน', uri: url }],
     });
   } catch (error) {
     console.error('LINE connect button reply failed:', error);
     // A reply token works once; it is still unused when LINE rejected the message.
-    await replySafely(replyToken, `${text}\n${liffConnectUrl(group?.ref)}`);
+    await replySafely(replyToken, `${text}\n${url}`);
   }
 }
 
@@ -210,7 +216,7 @@ async function handleConnectCommand(supabase: ServiceClient, groupId: string, li
     groupId,
     replyToken,
     linked
-      ? `กลุ่มนี้เชื่อมกับ “${classroomTitle(linked)}” อยู่\nแตะปุ่มด้านล่างเพื่อย้ายไปห้องอื่นหรือยกเลิกการเชื่อม (สำหรับคุณครู)`
+      ? `กลุ่มนี้เชื่อมกับ “${classroomTitle(linked)}” อยู่\nแตะปุ่มด้านล่างเพื่อยกเลิกการเชื่อม (สำหรับคุณครู)`
       : 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียน\nแตะปุ่มด้านล่างเพื่อเลือกห้องเรียน (สำหรับคุณครู)'
   );
 }
@@ -230,7 +236,7 @@ async function handleTestCommand(supabase: ServiceClient, teacherId: string, cla
 
   if (!target) {
     if (!linked.length) {
-      await replySafely(replyToken, `⚠️ ยังไม่มีห้องเรียนที่เชื่อมกลุ่ม LINE\nเชื่อมกลุ่มก่อน แล้วค่อยทดสอบส่งข้อความ\nเปิดหน้าเชื่อมกลุ่ม: ${liffConnectUrl()}`);
+      await replySafely(replyToken, `⚠️ ยังไม่มีห้องเรียนที่เชื่อมกลุ่ม LINE\nเชื่อมกลุ่มก่อน แล้วค่อยทดสอบส่งข้อความ\nเชิญ Pudding Bot เข้ากลุ่ม LINE ของห้องเรียน แล้วแตะปุ่ม “เชื่อมห้องเรียน” ในกลุ่ม`);
       return;
     }
     const choices = linked.slice(0, 13);
@@ -253,11 +259,11 @@ async function handleTestCommand(supabase: ServiceClient, teacherId: string, cla
   }
   const lines = [`${result.tone === 'warn' ? '⚠️' : '❌'} ${result.message}`, `📘 ${classroomTitle(target)}`];
   // Not (or no longer) linked: offer the way back.
-  if (result.code === 'no_group' || result.unlinked) lines.push(`เปิดหน้าเชื่อมกลุ่ม: ${liffConnectUrl()}`);
+  if (result.code === 'no_group' || result.unlinked) lines.push('เชิญ Pudding Bot เข้ากลุ่ม LINE ของห้อง แล้วแตะปุ่ม “เชื่อมห้องเรียน” ในกลุ่ม');
   await replySafely(replyToken, lines.join('\n'));
 }
 
-/** "เชื่อมกลุ่ม" typed (or a rich-menu text button, or the FAQ's "เชื่อมกลุ่ม LINE") in the 1:1 chat. */
+/** "เชื่อมกลุ่ม" typed (or the FAQ's "เชื่อมกลุ่ม LINE") in the 1:1 chat. */
 const CONNECT_KEYWORDS = new Set(['เชื่อมกลุ่ม', 'เชื่อมกลุ่มline', 'เชื่อมไลน์กลุ่ม', 'เชื่อมline', 'เชื่อมlinegroup', 'เชื่อมต่อกลุ่ม', 'เชื่อมบอท', 'เชื่อมบอทline', 'เชื่อมห้องเรียน', 'connect', 'connectgroup']);
 const isConnectKeyword = (text: string) =>
   CONNECT_KEYWORDS.has(text.toLowerCase().replace(/[\s#🔗]/gu, '')) || parseStudentCommand(text) === 'connect';
@@ -328,15 +334,15 @@ async function replyPrivateConnect(supabase: ServiceClient, lineUserId: string |
         'วิธีเชื่อม (ดูภาพด้านบน)',
         '1️⃣ เปิดกลุ่ม LINE ของห้อง → ☰ → เชิญ → Pudding Bot',
         '2️⃣ แตะ “เชื่อมห้องเรียน” ในข้อความของบอทในกลุ่ม',
-        '3️⃣ เลือกกลุ่มและห้องเรียน แล้วกด “เชื่อมกลุ่มกับห้องเรียนนี้”',
+        '3️⃣ เลือกห้องเรียน แล้วกด “เชื่อมกลุ่มกับห้องเรียนนี้”',
         '',
-        '💡 บอทอยู่ในกลุ่มแล้ว? แตะ “เปิดหน้าเชื่อมกลุ่ม” ด้านล่างได้เลย'
+        '💡 บอทอยู่ในกลุ่มแล้ว? เลือกกลุ่มที่ยังไม่ได้เชื่อมในหน้าห้องเรียนบนเว็บได้เช่นกัน'
       );
     } else {
-      lines.push('', 'ย้ายกลุ่มไปห้องใหม่ หรือยกเลิกการเชื่อม ทำได้ที่ “เปิดหน้าเชื่อมกลุ่ม” ด้านล่าง');
+      lines.push('', 'ยกเลิกการเชื่อมได้ในหน้าห้องเรียนบนเว็บ');
     }
     text = lines.join('\n');
-    const connectPage: LineAction = { type: 'uri', label: '🔗 เปิดหน้าเชื่อมกลุ่ม', uri: liffConnectUrl() };
+    const connectPage: LineAction = { type: 'uri', label: '🔗 เชื่อมกลุ่มบนเว็บ', uri: webUrl('/classrooms?openExternalBrowser=1') };
     const createClassroom: LineAction = { type: 'uri', label: '➕ สร้างห้องเรียน', uri: webUrl('/classrooms?createClassroom=1&openExternalBrowser=1') };
     const website: LineAction = { type: 'uri', label: '💻 เปิดเว็บ Pudding', uri: webUrl('/dashboard?openExternalBrowser=1') };
     card = {
@@ -577,7 +583,7 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // 1:1 chat: "เชื่อมกลุ่ม" (typed, or a rich-menu text button) opens the connect page.
+    // 1:1 chat: "เชื่อมกลุ่ม" (typed) gets the how-to-connect reply.
     if (event.type === 'message' && isConnectKeyword(normalizedText)) {
       await replyPrivateConnect(supabase, lineUserId, event.replyToken, 'connect');
       continue;

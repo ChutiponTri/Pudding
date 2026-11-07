@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
     if (!linkClassroom || !canLinkLine(linkClassroom, userId)) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
     const lineUid = await teacherLineUid(userId);
     if (!lineUid) return NextResponse.json({ error: 'บัญชีครูยังไม่ได้เชื่อม LINE กรุณาเข้าสู่ระบบด้วย LINE' }, { status: 409 });
-    const result = await linkGroupByRef(supabase, { id: userId, lineUid }, linkClassroom, ref, { move: body.move === true });
+    const result = await linkGroupByRef(supabase, { id: userId, lineUid }, linkClassroom, ref);
     if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason), reason: result.reason }, { status: 409 });
     return NextResponse.json({ status: 'connected', groupName: result.groupName, connectedAt: new Date().toISOString() });
   }

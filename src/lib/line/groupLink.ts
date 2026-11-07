@@ -10,7 +10,7 @@ import { teacherAccessOf, type TeacherAccess } from '@/lib/utils/teacherProfile'
 /**
  * Linking a classroom to a LINE group: the teacher picks a group the bot is
  * in and one of their classrooms, on the LIFF page (/liff/connect, opened from
- * the bot's button in the group or the rich menu) or in the web dialog.
+ * the bot's button in the group) or in the web dialog.
  * Nothing waits for a message. Groups the bot is in live in line_bot_groups
  * under an opaque `ref`, so links never carry the LINE group id; LINE itself
  * confirms the teacher is a member before anything is linked.
@@ -389,9 +389,9 @@ export function connectGuideImage() {
   };
 }
 
-/** The teacher's LIFF connect page (rich-menu link); `ref` preselects the group whose button was tapped. */
-export function liffConnectUrl(ref?: string) {
+/** The teacher's LIFF connect page for the group whose button was tapped (the only way in). */
+export function liffConnectUrl(ref: string) {
   const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
-  const query = ref ? `?g=${encodeURIComponent(ref)}` : '';
+  const query = `?g=${encodeURIComponent(ref)}`;
   return liffId ? `https://liff.line.me/${liffId}/connect${query}` : webUrl(`/liff/connect${query}`);
 }

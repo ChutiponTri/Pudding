@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
-  title: "พุดดิ้ง (Pudding) - LINE LIFF นักเรียน",
+  title: "พุดดิ้ง (Pudding)",
   description: "ระบบทำข้อสอบและส่งการบ้านออนไลน์ผ่าน LINE สำหรับนักเรียน",
 };
 

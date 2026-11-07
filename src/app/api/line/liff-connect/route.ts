@@ -24,7 +24,8 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Teacher's "connect a LINE group" page inside LINE (/liff/connect): opened
- * from the bot's button in a group (?g=<group ref>) or the rich menu. The
+ * only from the bot's button in a group (?g=<group ref>), and only that group
+ * can be linked, and only while it has no classroom. The
  * caller is the LINE account in the LIFF token, verified with LINE, and must
  * be an approved teacher's LINE sign-in. Students get 403 and no data. No
  * Clerk session is needed, so it works straight from LINE.
@@ -91,8 +92,8 @@ export async function POST(request: NextRequest) {
     const ref = typeof body.groupRef === 'string' ? body.groupRef : '';
     if (!ref) return NextResponse.json({ error: 'กรุณาเลือกกลุ่ม LINE' }, { status: 400 });
     // Opened from a group's button: only that group can be linked here.
-    if (focusRef && ref !== focusRef) return NextResponse.json({ error: 'เชื่อมได้เฉพาะกลุ่มที่เปิดหน้านี้มา' }, { status: 400 });
-    const result = await linkGroupByRef(supabase, teacher, classroom, ref, { move: body.move === true });
+    if (!focusRef || ref !== focusRef) return NextResponse.json({ error: 'เชื่อมได้เฉพาะกลุ่มที่เปิดหน้านี้มา' }, { status: 400 });
+    const result = await linkGroupByRef(supabase, teacher, classroom, ref);
     if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason), reason: result.reason }, { status: 409 });
   } else if (action === 'disconnect') {
     if (!canUnlinkLine(classroom, teacher.id)) return NextResponse.json({ error: 'การยกเลิกการเชื่อมทำได้โดยคุณครูเจ้าของห้อง' }, { status: 403 });

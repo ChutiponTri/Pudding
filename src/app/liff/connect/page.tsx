@@ -19,9 +19,10 @@ const groupLabel = (group?: { groupName?: string }) => group?.groupName || "ก�
 
 /**
  * /liff/connect (teachers only): pick a LINE group the bot is in and a
- * classroom, then link them, all on this page. Opened from the bot's
- * "เชื่อมห้องเรียน" button in a group (?g=<ref> locks the page to that group,
- * so the teacher only picks the classroom) or the rich menu (free group pick). The server checks the LINE account is an approved teacher and
+ * classroom, then link them, all on this page. Only opened from the bot's
+ * "เชื่อมห้องเรียน" button in a group: ?g=<ref> locks the page to that group,
+ * so the teacher only picks the classroom. Without ?g it shows how to get the
+ * button (there is no rich-menu entry). The server checks the LINE account is an approved teacher and
  * that LINE lists them in the group; students see a "teachers only" screen and
  * get no data.
  */
@@ -92,6 +93,10 @@ export default function TeacherConnectPage() {
         setLiff(sdk);
         setToken(accessToken);
         setFocusRef(ref);
+        if (!ref) {
+          setBlocked({ message: "เปิดหน้านี้จากปุ่ม “เชื่อมห้องเรียน” ในกลุ่ม LINE", code: "no-group" });
+          return;
+        }
         await load(accessToken, ref);
       } catch (err) {
         if (alive) setBlocked({ message: err instanceof Error ? err.message : "เกิดข้อผิดพลาด" });
@@ -149,22 +154,18 @@ export default function TeacherConnectPage() {
   const linkedRooms = useMemo(() => data?.classrooms.filter((item) => item.linked) || [], [data]);
 
   // What the main button does for the current choice.
-  const plan: { label: string; move: boolean } | { blocked: string } | null = (() => {
+  const plan: { label: string } | { blocked: string } | null = (() => {
     if (!group || !room) return null;
     if (room.linked && room.id !== group.linkedClassroomId) return { blocked: `“${room.title}” เชื่อมกับกลุ่ม “${room.groupName || "LINE"}” อยู่ ยกเลิกการเชื่อมเดิมก่อน` };
     if (room.id === group.linkedClassroomId) return { blocked: "ห้องนี้เชื่อมกับกลุ่มนี้อยู่แล้ว" };
-    if (groupOwner) {
-      return groupOwner.canUnlink
-        ? { label: `ย้ายกลุ่มจาก “${groupOwner.title}” มาห้องนี้`, move: true }
-        : { blocked: `กลุ่มนี้เชื่อมกับ “${groupOwner.title}” และคุณครูไม่มีสิทธิ์ย้าย` };
-    }
-    return { label: "เชื่อมกลุ่มกับห้องเรียนนี้", move: false };
+    // Only a group with no classroom can be linked; unlink the old one first.
+    if (groupOwner) return { blocked: `กลุ่มนี้เชื่อมกับ “${groupOwner.title}” อยู่ ยกเลิกการเชื่อมเดิมก่อน` };
+    return { label: "เชื่อมกลุ่มกับห้องเรียนนี้" };
   })();
 
   const connect = async () => {
     if (!group || !room || !plan || "blocked" in plan) return;
-    if (plan.move && !window.confirm(`ย้ายกลุ่ม “${groupLabel(group)}” จาก “${groupOwner?.title}” มาที่ “${room.title}”?`)) return;
-    const ok = await post({ action: "link", classroomId: room.id, groupRef: group.ref, move: plan.move }, "link");
+    const ok = await post({ action: "link", classroomId: room.id, groupRef: group.ref }, "link");
     if (ok) setDone({ group: groupLabel(group), classroom: room.title });
   };
 
@@ -179,9 +180,9 @@ export default function TeacherConnectPage() {
       <header className="px-4 sm:px-6 pt-4 pb-3 bg-amber-500 text-slate-950">
         <div className="flex items-center gap-2">
           <GraduationCap className="w-5 h-5" />
-          <h1 className="text-base font-black">เชื่อมกลุ่ม LINE กับห้องเรียน</h1>
+          <h1 className="text-lg font-black">เชื่อมกลุ่ม LINE กับห้องเรียน</h1>
         </div>
-        <p className="text-[11px] font-bold opacity-80 mt-0.5">
+        <p className="text-xs font-bold opacity-80 mt-0.5">
           สำหรับคุณครู{data?.teacher.firstName ? ` • คุณครู${data.teacher.firstName}` : ""}
         </p>
       </header>
@@ -199,9 +200,16 @@ export default function TeacherConnectPage() {
               {blocked.code === "not-teacher" ? <Lock className="w-7 h-7 text-slate-600 dark:text-slate-300" /> : <ShieldAlert className="w-7 h-7 text-rose-600" />}
             </div>
             <div className="space-y-1">
-              <p className="text-sm font-black text-slate-900 dark:text-white">{blocked.message}</p>
+              <p className="text-base font-black text-slate-900 dark:text-white">{blocked.message}</p>
+              {blocked.code === "no-group" && (
+                <ol className="text-sm text-left text-slate-600 dark:text-slate-300 list-decimal pl-5 space-y-0.5 max-w-xs mx-auto">
+                  <li>เปิดกลุ่ม LINE ของห้องเรียน → เมนู ☰ → เชิญ → เลือก Pudding Bot</li>
+                  <li>แตะปุ่ม “เชื่อมห้องเรียน” ในข้อความของบอท</li>
+                  <li>เลือกห้องเรียนที่จะเชื่อม</li>
+                </ol>
+              )}
               {blocked.code === "not-teacher" && (
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <p className="text-sm text-slate-500 dark:text-slate-400">
                   นักเรียนไม่ต้องทำอะไรในหน้านี้ค่ะ<br />คุณครูที่ยังไม่ได้ใช้ Pudding ให้เข้าสู่ระบบเว็บด้วย LINE บัญชีนี้ก่อน
                 </p>
               )}
@@ -234,11 +242,11 @@ export default function TeacherConnectPage() {
           <div className="py-8 text-center space-y-4">
             <CheckCircle2 className="mx-auto w-14 h-14 text-line" />
             <div className="space-y-1">
-              <p className="text-base font-black text-slate-900 dark:text-white">เชื่อมเรียบร้อยแล้ว</p>
+              <p className="text-lg font-black text-slate-900 dark:text-white">เชื่อมเรียบร้อยแล้ว</p>
               <p className="text-sm text-slate-600 dark:text-slate-300">
                 กลุ่ม “{done.group}” ↔ “{done.classroom}”
               </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">ในกลุ่ม พิมพ์ “พุดดิ้ง เข้าห้อง” เพื่อส่งลิงก์เข้าห้องเรียนให้นักเรียน</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">ในกลุ่ม พิมพ์ “พุดดิ้ง เข้าห้อง” เพื่อส่งลิงก์เข้าห้องเรียนให้นักเรียน</p>
             </div>
             <div className="flex flex-col gap-2 max-w-xs mx-auto">
               {liff?.isInClient() && (
@@ -265,7 +273,7 @@ export default function TeacherConnectPage() {
             {message && (
               <p
                 role={message.tone === "error" ? "alert" : "status"}
-                className={`text-xs p-2.5 rounded-xl ring-1 ${
+                className={`text-sm p-2.5 rounded-xl ring-1 ${
                   message.tone === "error"
                     ? "bg-rose-50 dark:bg-rose-950/40 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200"
                     : "bg-emerald-50 dark:bg-emerald-950/40 ring-emerald-200 dark:ring-emerald-900 text-emerald-900 dark:text-emerald-200"
@@ -278,13 +286,13 @@ export default function TeacherConnectPage() {
             {/* Step 1: group */}
             <section className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xs font-black text-slate-700 dark:text-slate-300">{locked ? "1. กลุ่ม LINE" : "1. เลือกกลุ่ม LINE"}</h2>
-                <button type="button" onClick={refresh} disabled={refreshing} className="text-[11px] font-bold text-amber-700 dark:text-amber-400 inline-flex items-center gap-1 cursor-pointer disabled:opacity-60">
+                <h2 className="text-sm font-bold text-slate-900 dark:text-white">{locked ? "1. กลุ่ม LINE" : "1. เลือกกลุ่ม LINE"}</h2>
+                <button type="button" onClick={refresh} disabled={refreshing} className="text-xs font-bold text-amber-700 dark:text-amber-400 inline-flex items-center gap-1 cursor-pointer disabled:opacity-60">
                   <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} /> รีเฟรช
                 </button>
               </div>
               {focusError && (
-                <p role="alert" className="text-xs p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200">
+                <p role="alert" className="text-sm p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 ring-1 ring-rose-200 dark:ring-rose-900 text-rose-800 dark:text-rose-200">
                   {focusError}
                 </p>
               )}
@@ -293,7 +301,7 @@ export default function TeacherConnectPage() {
                   <Users className="w-5 h-5 shrink-0 text-amber-600" />
                   <span className="flex-1 min-w-0">
                     <span className="block text-sm font-bold text-slate-900 dark:text-white truncate">{groupLabel(group)}</span>
-                    <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    <span className="block text-xs text-slate-500 dark:text-slate-400 truncate">
                       {groupOwner ? `เชื่อมกับ “${groupOwner.title}” อยู่` : "กลุ่มที่เปิดมา • ยังไม่ได้เชื่อม"}
                     </span>
                   </span>
@@ -301,7 +309,7 @@ export default function TeacherConnectPage() {
                 </div>
               )}
               {!locked && !data.groups.length && (
-                <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800 text-xs text-slate-600 dark:text-slate-300 space-y-1.5">
+                <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800 text-sm text-slate-600 dark:text-slate-300 space-y-1.5">
                   <p className="font-bold text-slate-800 dark:text-slate-100">ยังไม่พบกลุ่มที่มี Pudding Bot และคุณครูอยู่ด้วยกัน</p>
                   <ol className="list-decimal pl-4 space-y-0.5">
                     <li>เปิดกลุ่ม LINE ของห้องเรียน → เมนู ☰ → เชิญ → เลือก Pudding Bot</li>
@@ -327,7 +335,7 @@ export default function TeacherConnectPage() {
                       <Users className={`w-5 h-5 shrink-0 ${selected ? "text-amber-600" : "text-slate-400"}`} />
                       <span className="flex-1 min-w-0">
                         <span className="block text-sm font-bold text-slate-900 dark:text-white truncate">{groupLabel(item)}</span>
-                        <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        <span className="block text-xs text-slate-500 dark:text-slate-400 truncate">
                           {owner ? `เชื่อมกับ “${owner.title}” อยู่` : "ยังไม่ได้เชื่อม"}
                           {item.ref === focusRef ? " • กลุ่มที่เปิดมา" : ""}
                         </span>
@@ -340,9 +348,9 @@ export default function TeacherConnectPage() {
 
             {/* Step 2: classroom */}
             <section className="space-y-2">
-              <h2 className="text-xs font-black text-slate-700 dark:text-slate-300">2. เลือกห้องเรียน</h2>
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white">2. เลือกห้องเรียน</h2>
               {!data.classrooms.length && (
-                <p className="text-xs text-slate-500 dark:text-slate-400 p-3 rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800">
+                <p className="text-sm text-slate-500 dark:text-slate-400 p-3 rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800">
                   ยังไม่มีห้องเรียน สร้างห้องเรียนใหม่ด้านล่างได้เลย
                 </p>
               )}
@@ -363,7 +371,7 @@ export default function TeacherConnectPage() {
                     >
                       <span className="flex-1 min-w-0">
                         <span className="block text-sm font-bold text-slate-900 dark:text-white truncate">{item.title}</span>
-                        <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        <span className="block text-xs text-slate-500 dark:text-slate-400 truncate">
                           {item.term}
                           {item.linked ? ` • ${here ? "เชื่อมกับกลุ่มนี้" : `เชื่อมกับ “${item.groupName || "กลุ่ม LINE"}”`}` : ""}
                         </span>
@@ -391,13 +399,13 @@ export default function TeacherConnectPage() {
 
             {linkedRooms.length > 0 && (
               <section className="space-y-2">
-                <h2 className="text-xs font-black text-slate-700 dark:text-slate-300">เชื่อมแล้ว ({linkedRooms.length})</h2>
+                <h2 className="text-sm font-bold text-slate-900 dark:text-white">เชื่อมแล้ว ({linkedRooms.length})</h2>
                 {linkedRooms.map((item) => (
                   <div key={item.id} className="flex items-center gap-3 p-3 rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800">
                     <CheckCircle2 className="w-5 h-5 shrink-0 text-line" />
                     <span className="flex-1 min-w-0">
                       <span className="block text-sm font-bold text-slate-900 dark:text-white truncate">{item.title}</span>
-                      <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate">กลุ่ม “{item.groupName || "LINE"}”</span>
+                      <span className="block text-xs text-slate-500 dark:text-slate-400 truncate">กลุ่ม “{item.groupName || "LINE"}”</span>
                     </span>
                     {item.canUnlink && (
                       <button
@@ -421,7 +429,7 @@ export default function TeacherConnectPage() {
       {!loading && !blocked && data && !done && (
         <footer className="fixed inset-x-0 bottom-0 flex justify-center pointer-events-none">
           <div className="w-full max-w-md md:max-w-2xl lg:max-w-3xl p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white/95 dark:bg-slate-950/95 backdrop-blur border-t border-slate-200 dark:border-slate-800 space-y-1.5 pointer-events-auto">
-            {plan && "blocked" in plan && <p className="text-[11px] text-center text-amber-800 dark:text-amber-300">{plan.blocked}</p>}
+            {plan && "blocked" in plan && <p className="text-xs text-center text-amber-800 dark:text-amber-300">{plan.blocked}</p>}
             <button
               type="button"
               onClick={connect}
