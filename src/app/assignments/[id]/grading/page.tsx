@@ -22,6 +22,7 @@ import { formatDateTime } from '@/lib/utils/datetime';
 import { AntiCheatingBadge } from '@/components/AntiCheatingBadge';
 import { IntegrityAuditModal } from '@/components/IntegrityAuditModal';
 import { GradingWorkspace } from '@/components/GradingWorkspace';
+import { PageSkeleton } from '@/components/LoadingState';
 import { AttachmentList } from '@/components/AssignmentAttachments';
 import { assignmentAttachments } from '@/lib/utils/referenceWork';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
@@ -832,6 +833,12 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         ]
       : []),
   ];
+
+  // First open with nothing cached yet: placeholders shaped like the page, not an empty
+  // header and "no data" (which would read as a missing assignment).
+  if (loading && !assignment) {
+    return <PageSkeleton variant="grading" />;
+  }
 
   return (
     <div className="space-y-5 sm:space-y-6 pb-20">

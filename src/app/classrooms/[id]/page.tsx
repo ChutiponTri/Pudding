@@ -10,6 +10,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { createPortal } from 'react-dom';
 import { dataService } from '@/lib/supabase/dataService';
 import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
+import { quietly } from '@/lib/net/fetchActivity';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
 import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
@@ -97,6 +98,7 @@ import {
   Loader2,
   MessageCircle,
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/LoadingState';
 
 
 type Tab = 'overview' | 'classwork' | 'attendance' | 'people' | 'grades';
@@ -431,13 +433,17 @@ export default function ClassroomWorkspacePage() {
     }
     const startedAt = cacheVersion();
     try {
-      // Fire all requests concurrently in parallel
-      const [current, classAssignments, postsRes, attRes] = await Promise.all([
-        dataService.getClassroomById(classroomId),
-        dataService.getAssignmentsByClassroomId(classroomId),
-        fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' }),
-        fetch(`/api/attendance?classroomId=${encodeURIComponent(classroomId)}&allRecords=1`, { cache: 'no-store' }),
-      ]);
+      // Fire all requests concurrently in parallel. With the cached copy already
+      // on screen this is a silent refresh (no loading signal).
+      const background = !!hit;
+      const fetchAll = () =>
+        Promise.all([
+          dataService.getClassroomById(classroomId),
+          dataService.getAssignmentsByClassroomId(classroomId),
+          fetch(`/api/classrooms/posts?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' }),
+          fetch(`/api/attendance?classroomId=${encodeURIComponent(classroomId)}&allRecords=1`, { cache: 'no-store' }),
+        ]);
+      const [current, classAssignments, postsRes, attRes] = await (background ? quietly(fetchAll) : fetchAll());
 
       setClassroom(current);
       setAssignments(classAssignments);
@@ -455,7 +461,12 @@ export default function ClassroomWorkspacePage() {
 
       // Concurrently fetch submissions for all assignments to show submit counts;
       // the snapshot is cached once they are in (only when every part loaded).
-      const submissionsLoaded = classAssignments.length > 0 ? refreshSubmissions(classAssignments) : Promise.resolve([]);
+      const submissionsLoaded =
+        classAssignments.length > 0
+          ? background
+            ? quietly(() => refreshSubmissions(classAssignments))
+            : refreshSubmissions(classAssignments)
+          : Promise.resolve([]);
       if (teacherId && current && nextPosts && attendance) {
         const posts = nextPosts;
         submissionsLoaded.then((subs) => {
@@ -1771,14 +1782,8 @@ export default function ClassroomWorkspacePage() {
   }, [tab, hasClassroom]);
 
   if (loading && !classroom) {
-    return (
-      <div className="min-h-dvh flex items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
-        <div className="text-center space-y-3">
-          <div className="w-10 h-10 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-bold text-slate-500">{tr('กำลังเข้าสู่ห้องเรียน...', 'Opening classroom...')}</p>
-        </div>
-      </div>
-    );
+    // The classroom page's own layout as placeholders, not a blank screen with a spinner.
+    return <PageSkeleton variant="classroom" label={tr('กำลังเข้าสู่ห้องเรียน...', 'Opening classroom...')} />;
   }
 
   if (!classroom) {

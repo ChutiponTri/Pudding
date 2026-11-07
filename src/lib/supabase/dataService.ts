@@ -16,6 +16,7 @@ import {
 } from '@/types/database';
 import { createClient, isSupabaseConfigured } from './client';
 import { authFetch } from '@/lib/auth/lineSession';
+import { beginFetch } from '@/lib/net/fetchActivity';
 import type { QuizOpenResult } from '@/lib/utils/quizExit';
 import { reportLineUnsent, type LinePostStatus, type LineShare } from '@/lib/utils/lineShare';
 import { invalidateSessionCache } from '@/lib/cache/sessionCache';
@@ -54,7 +55,14 @@ function uniqueById<T extends { id: string }>(rows: T[]): T[] {
 const isReadAction = (action: string) => /^(get|search|find)/.test(action) || action === 'rosterFingerprint' || action === 'syncClerkUser';
 
 /** Runs one server data action as the current user; throws the server's message on failure. */
+/**
+ * Background checks that never hold up what the page shows: not shown as page loading
+ * (the roster poll, and the profile/approval re-check on sign-in and tab focus).
+ */
+const QUIET_ACTIONS = new Set(['rosterFingerprint', 'syncClerkUser']);
+
 async function call<T>(action: string, ...args: unknown[]): Promise<T> {
+  const done = QUIET_ACTIONS.has(action) ? () => {} : beginFetch();
   try {
     const res = await authFetch('/api/data', {
       method: 'POST',
@@ -66,16 +74,22 @@ async function call<T>(action: string, ...args: unknown[]): Promise<T> {
     if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
     return json.result as T;
   } finally {
+    done();
     // Also after a failure: the write may have partly applied.
     if (!isReadAction(action)) invalidateSessionCache();
   }
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const res = await authFetch(url, { cache: 'no-store' });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
-  return json as T;
+  const done = beginFetch();
+  try {
+    const res = await authFetch(url, { cache: 'no-store' });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+    return json as T;
+  } finally {
+    done();
+  }
 }
 
 /** What roster subscribers receive. */

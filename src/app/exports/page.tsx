@@ -27,6 +27,7 @@ import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semeste
 import { buildReports, type ReportId } from '@/lib/export/teacherReports';
 import { createXlsx, sheetToCsv, XLSX_MIME } from '@/lib/export/xlsx';
 import { createZip, downloadBlob } from '@/lib/storage/zip';
+import { PageSkeleton } from '@/components/LoadingState';
 
 type Format = 'xlsx' | 'csv';
 
@@ -278,7 +279,7 @@ function ExportsContent() {
 
 export default function ExportsPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<PageSkeleton variant="form" />}>
       <ExportsContent />
     </Suspense>
   );

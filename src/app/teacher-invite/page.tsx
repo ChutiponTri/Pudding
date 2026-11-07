@@ -19,6 +19,7 @@ import {
   Sparkles,
   BookOpen,
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/LoadingState';
 
 function TeacherInviteContent() {
   const { tr } = useLanguage();
@@ -108,14 +109,7 @@ function TeacherInviteContent() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-semibold text-slate-500">{tr('กำลังตรวจสอบคำเชิญ...', 'Checking invite...')}</p>
-        </div>
-      </div>
-    );
+    return <PageSkeleton variant="card" label={tr('กำลังตรวจสอบคำเชิญ...', 'Checking invite...')} />;
   }
 
   if (isLoaded && !isSignedIn && inviteCode && !errorMessage) {
@@ -317,11 +311,7 @@ function TeacherInviteContent() {
 export default function TeacherInvitePage() {
   return (
     <Suspense
-      fallback={
-        <div className="min-h-dvh flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-          <div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" />
-        </div>
-      }
+      fallback={<PageSkeleton variant="card" />}
     >
       <TeacherInviteContent />
     </Suspense>

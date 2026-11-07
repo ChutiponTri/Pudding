@@ -78,6 +78,7 @@ import { TEACHER_PROFILE_UPDATED_EVENT, isTeacherProfileComplete } from '@/lib/u
 import { canonicalInstitution, institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
 import { SemesterSelect } from '@/components/SemesterSelect';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
+import { SkeletonBlock } from '@/components/LoadingState';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { StudentRosterModal } from '@/components/StudentRosterModal';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader, MODAL_SHEET_FORM } from '@/components/ModalSheet';
@@ -1422,7 +1423,7 @@ export function TeacherWorkspace({
             </div>
           </div>
           <p className="text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums text-slate-900 dark:text-white mt-1.5 sm:mt-3">
-            {workSummary.total}
+            {loading && !classrooms.length ? <span className="text-slate-300 dark:text-slate-600 animate-pulse">–</span> : workSummary.total}
           </p>
           <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('งาน', 'Work')}</span>
           <span className="text-[11px] text-violet-600 dark:text-violet-400 font-semibold mt-1 hidden sm:flex items-center gap-1">
@@ -1451,7 +1452,7 @@ export function TeacherWorkspace({
             </div>
           </div>
           <p className={`text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums mt-1.5 sm:mt-3 ${pendingGradingCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-white'}`}>
-            {pendingGradingCount}
+            {loading && !classrooms.length ? <span className="text-slate-300 dark:text-slate-600 animate-pulse">–</span> : pendingGradingCount}
           </p>
           <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('รอตรวจ', 'To grade')}</span>
           {pendingGradingCount > 0 ? (
@@ -1483,7 +1484,7 @@ export function TeacherWorkspace({
             </div>
           </div>
           <p className="text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums text-slate-900 dark:text-white mt-1.5 sm:mt-3">
-            {filteredClassrooms.length}
+            {loading && !classrooms.length ? <span className="text-slate-300 dark:text-slate-600 animate-pulse">–</span> : filteredClassrooms.length}
           </p>
           <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('ห้องเรียน', 'Classes')}</span>
           <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold mt-1 hidden sm:flex items-center gap-1">
@@ -1510,7 +1511,7 @@ export function TeacherWorkspace({
             </div>
           </div>
           <p className="text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums text-slate-900 dark:text-white mt-1.5 sm:mt-3">
-            {totalStudents}
+            {loading && !classrooms.length ? <span className="text-slate-300 dark:text-slate-600 animate-pulse">–</span> : totalStudents}
           </p>
           <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('นักเรียน', 'Students')}</span>
           <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 hidden sm:flex items-center gap-1">
@@ -1621,6 +1622,20 @@ export function TeacherWorkspace({
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {language === 'th' ? 'ลองคำค้นอื่น หรือเลือกภาคเรียนอื่น' : 'Try another search or semester.'}
               </p>
+            </div>
+          ) : visibleCourses.length === 0 && loading ? (
+            // Still loading: course-card placeholders, not the "no courses yet" message.
+            <div className="space-y-3 sm:space-y-6" aria-busy="true">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="p-4 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                  <SkeletonBlock className="h-5 w-1/3" />
+                  <SkeletonBlock className="h-3.5 w-1/2" />
+                  <div className="grid sm:grid-cols-2 gap-3 pt-1">
+                    <SkeletonBlock className="h-20" />
+                    <SkeletonBlock className="h-20 hidden sm:block" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : visibleCourses.length === 0 ? (
             <div className="text-center py-16 px-6 bg-white dark:bg-slate-900 rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 space-y-4">

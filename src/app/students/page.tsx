@@ -14,6 +14,7 @@ import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 import { institutionLabel } from '@/lib/data/thaiInstitutions';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
+import { PageSkeleton } from '@/components/LoadingState';
 
 type StudentFields = Pick<User, 'first_name' | 'last_name' | 'student_id' | 'institution'>;
 type StudentRow = { student: User; classrooms: Classroom[] };
@@ -240,11 +241,7 @@ function StudentsContent() {
 export default function StudentsPage() {
   return (
     <Suspense
-      fallback={
-        <div className="min-h-[50dvh] flex items-center justify-center">
-          <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-        </div>
-      }
+      fallback={<PageSkeleton variant="list" />}
     >
       <StudentsContent />
     </Suspense>

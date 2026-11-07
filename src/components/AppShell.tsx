@@ -9,6 +9,7 @@ import { SessionCacheSync } from '@/components/SessionCacheSync';
 import { LineSharePopup } from '@/components/LineSharePopup';
 import { UnsentReminderNotice } from '@/components/UnsentReminderNotice';
 import { PENDING_APPROVAL_PATH, TeacherProfileGate } from '@/components/TeacherProfileGate';
+import { FetchActivityBar } from '@/components/LoadingState';
 
 export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
@@ -58,6 +59,7 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
     return (
       <>
         <SessionCacheSync />
+        <FetchActivityBar />
         {children}
       </>
     );
@@ -66,6 +68,8 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
   return (
     <div className="min-h-dvh flex flex-col">
       <SessionCacheSync />
+      {/* Any page still fetching data shows it (top bar + chip). */}
+      <FetchActivityBar />
       {/* Every teacher page waits until name, last name and institution are set
           and the admin has approved the account. */}
       <TeacherProfileGate />

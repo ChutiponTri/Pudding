@@ -31,6 +31,7 @@ import { useAcademicCalendar } from '@/lib/hooks/useAcademicCalendar';
 import { TermDatesSettings } from '@/components/TermDatesSettings';
 import { ALL_SEMESTERS, filterClassroomsBySemester, semesterKeyFromParam, semesterKeyOf, semesterOptions } from '@/lib/utils/semesterFilter';
 import { applySavedOrder, mergeVisibleOrder, useSidebarPrefs } from '@/lib/hooks/useSidebarPrefs';
+import { quietly } from '@/lib/net/fetchActivity';
 
 /** Subject group key for classrooms with neither a course name nor a code. */
 const GENERAL_KEY = '__general__';
@@ -173,8 +174,9 @@ export const GlobalClassroomSidebar: React.FC = () => {
     let cancelled = false;
     let settled = false;
     setLoading(true);
-    dataService
-      .getClassroomList()
+    // A list already painted (saved in this tab by every load) refreshes silently.
+    const hasCopy = readCachedList(teacherId) !== null;
+    (hasCopy ? quietly(() => dataService.getClassroomList()) : dataService.getClassroomList())
       .then((data) => {
         writeCachedList(teacherId, data);
         if (!cancelled) setList({ teacherId, items: data });

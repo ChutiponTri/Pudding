@@ -11,6 +11,8 @@
  * A stale entry is still shown at once, then replaced by a background fetch.
  */
 
+import { quietly } from '@/lib/net/fetchActivity';
+
 const MAX_AGE_LIVE_MS = 5 * 60 * 1000;
 const MAX_AGE_OFFLINE_MS = 30 * 1000;
 const TAB_CHANNEL = 'pudding_session_cache';
@@ -106,7 +108,9 @@ export function fetchCached<T>(key: string, owner: string, load: () => Promise<T
   const startedAt = version;
   const running = inflight.get(key);
   if (running && running.owner === owner && running.version === startedAt) return running.promise as Promise<T>;
-  const promise = load().then((value) => {
+  // A copy is already on screen (stale or not): refresh it without the loading signal.
+  const shown = entries.get(key)?.owner === owner;
+  const promise = (shown ? quietly(load) : load()).then((value) => {
     writeCache(key, owner, value, startedAt);
     return value;
   });

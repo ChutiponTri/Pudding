@@ -29,6 +29,7 @@ import {
 export const PENDING_APPROVAL_PATH = '/pending-approval';
 const AUTH_PATH = /^\/(sign-in|sign-up)(\/|$)/;
 import type { User } from '@/types/database';
+import { ShellSkeleton } from '@/components/LoadingState';
 
 const inputClass =
   'w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm sm:text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400';
@@ -246,8 +247,9 @@ export function TeacherProfileGate() {
     // not checked yet in a browser that has never seen this teacher approved.
     const cover = !onPendingPage && (blocked || (knownAccess === null && approvedHere === false));
     return cover ? (
-      <div className="fixed inset-0 z-85 bg-slate-50 dark:bg-slate-950 flex items-center justify-center" aria-busy="true">
-        <Loader2 className="w-6 h-6 animate-spin text-amber-500" />
+      // Still covers the page (it may be off limits), but drawn as the app's layout in placeholders.
+      <div className="fixed inset-0 z-85 bg-slate-50 dark:bg-slate-950 overflow-hidden">
+        <ShellSkeleton />
       </div>
     ) : null;
   }

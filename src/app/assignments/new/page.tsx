@@ -51,6 +51,7 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react';
+import { PageSkeleton } from '@/components/LoadingState';
 
 /** An attachment in the form; `file` = picked but not uploaded yet (url is a blob preview). */
 type AttachmentDraft = AssignmentAttachment & { uid: string; file?: File };
@@ -423,8 +424,10 @@ function NewAssignmentContent() {
                   ...tpl,
                   assignment: tpl.assignment && { ...tpl.assignment, classroom_name: tr('งานที่แชร์มา', 'shared work') },
                 }), () => ({ assignment: null, questions: [] as Question[] }))
-              : dataService.getAssignmentById(sourceId!),
-            editId ? dataService.getSubmissionsByAssignmentIds([editId], { includeStudents: false }) : Promise.resolve([]),
+              : cachedCall(`assignmentSource:${sourceId}`, teacherId, () => dataService.getAssignmentById(sourceId!)),
+            editId
+              ? cachedCall(`assignmentSubs:${editId}`, teacherId, () => dataService.getSubmissionsByAssignmentIds([editId], { includeStudents: false }))
+              : Promise.resolve([]),
           ]);
           if (!assignment) {
             alert(language === 'th' ? 'ไม่พบงานนี้ อาจถูกลบไปแล้ว' : 'This assignment no longer exists');
@@ -1105,6 +1108,12 @@ function NewAssignmentContent() {
       </WorkContextBanner>
     );
   };
+
+  // Opening an existing work (edit / copy / template / retake): placeholders until it is filled
+  // in, so the teacher never starts typing into an empty form that is about to be replaced.
+  if (loading && (editId || copyId || templateToken || retakeOfParam)) {
+    return <PageSkeleton variant="form" label={language === 'th' ? 'กำลังโหลดข้อมูลงาน…' : 'Loading the work…'} />;
+  }
 
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-6 pb-24">
@@ -2277,9 +2286,8 @@ function NewAssignmentContent() {
 }
 
 export default function NewAssignmentPage() {
-  const { tr } = useLanguage();
   return (
-    <React.Suspense fallback={<div className="p-8 text-center text-sm text-slate-400">{tr('กำลังโหลด...', 'Loading...')}</div>}>
+    <React.Suspense fallback={<PageSkeleton variant="form" />}>
       <NewAssignmentContent />
     </React.Suspense>
   );
