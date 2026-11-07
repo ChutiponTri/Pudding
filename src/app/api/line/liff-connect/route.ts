@@ -11,7 +11,7 @@ import {
   linkErrorMessage,
   linkGroupByRef,
   listLinkableClassrooms,
-  listTeacherGroups,
+  loadFocusGroup,
   unlinkClassroom,
   type LineTeacher,
   type ServiceClient,
@@ -48,13 +48,13 @@ function term(classroom: { semester?: number | null; year_ce?: number | null; ac
   return classroom.semester && classroom.year_ce ? `${classroom.semester}/${classroom.year_ce + 543}` : classroom.academic_year || '';
 }
 
-async function overview(supabase: ServiceClient, teacher: LineTeacher, focusRef?: string | null) {
-  const classrooms = await listLinkableClassrooms(supabase, teacher.id);
-  const { groups, focus } = await listTeacherGroups(supabase, teacher, classrooms, focusRef);
-  const refByClassroom = new Map(groups.filter((group) => group.linkedClassroomId).map((group) => [group.linkedClassroomId as string, group.ref]));
+/** The page's data: only the group whose button opened it, plus the teacher's classrooms. */
+async function overview(supabase: ServiceClient, teacher: LineTeacher, focusRef: string, options: { fresh?: boolean } = {}) {
+  const loading = listLinkableClassrooms(supabase, teacher.id);
+  const [classrooms, focus] = await Promise.all([loading, loadFocusGroup(supabase, teacher, loading, focusRef, options)]);
   return {
     teacher: { firstName: teacher.first_name || '' },
-    groups,
+    groups: 'error' in focus ? [] : [focus],
     focus,
     classrooms: classrooms.map((item) => ({
       id: item.id,
@@ -62,7 +62,6 @@ async function overview(supabase: ServiceClient, teacher: LineTeacher, focusRef?
       term: term(item),
       linked: Boolean(item.line_group_id),
       groupName: item.line_group_name || undefined,
-      groupRef: refByClassroom.get(item.id),
       canUnlink: canUnlinkLine(item, teacher.id),
     })),
   };
@@ -71,7 +70,10 @@ async function overview(supabase: ServiceClient, teacher: LineTeacher, focusRef?
 export async function GET(request: NextRequest) {
   const caller = await liffTeacher(request);
   if ('response' in caller) return caller.response;
-  return NextResponse.json(await overview(createServiceSupabaseClient(), caller.teacher, request.nextUrl.searchParams.get('g')));
+  const params = request.nextUrl.searchParams;
+  const ref = params.get('g');
+  if (!ref) return NextResponse.json({ error: 'เปิดหน้านี้จากปุ่ม “เชื่อมห้องเรียน” ในกลุ่ม LINE', code: 'no-group' }, { status: 400 });
+  return NextResponse.json(await overview(createServiceSupabaseClient(), caller.teacher, ref, { fresh: params.get('fresh') === '1' }));
 }
 
 export async function POST(request: NextRequest) {
@@ -81,7 +83,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const action = body.action as 'link' | 'disconnect' | undefined;
   const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
-  const focusRef = typeof body.focusRef === 'string' ? body.focusRef : null;
+  const focusRef = typeof body.focusRef === 'string' ? body.focusRef : '';
+  if (!focusRef) return NextResponse.json({ error: 'เปิดหน้านี้จากปุ่ม “เชื่อมห้องเรียน” ในกลุ่ม LINE', code: 'no-group' }, { status: 400 });
   if (!action || !classroomId) return NextResponse.json({ error: 'action and classroomId are required' }, { status: 400 });
 
   const supabase = createServiceSupabaseClient();
@@ -92,7 +95,7 @@ export async function POST(request: NextRequest) {
     const ref = typeof body.groupRef === 'string' ? body.groupRef : '';
     if (!ref) return NextResponse.json({ error: 'กรุณาเลือกกลุ่ม LINE' }, { status: 400 });
     // Opened from a group's button: only that group can be linked here.
-    if (!focusRef || ref !== focusRef) return NextResponse.json({ error: 'เชื่อมได้เฉพาะกลุ่มที่เปิดหน้านี้มา' }, { status: 400 });
+    if (ref !== focusRef) return NextResponse.json({ error: 'เชื่อมได้เฉพาะกลุ่มที่เปิดหน้านี้มา' }, { status: 400 });
     const result = await linkGroupByRef(supabase, teacher, classroom, ref);
     if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason), reason: result.reason }, { status: 409 });
   } else if (action === 'disconnect') {

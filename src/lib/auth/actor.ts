@@ -44,16 +44,15 @@ export async function verifyLineToken(token: string): Promise<string | null> {
   if (cached && cached.expiresAt > Date.now()) return cached.lineUid;
 
   try {
-    const verify = await fetch(`https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(token)}`, { cache: 'no-store' });
+    // Both LINE calls at once; the profile is used only if the token checks out.
+    const [verify, profile] = await Promise.all([
+      fetch(`https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(token)}`, { cache: 'no-store' }),
+      fetch('https://api.line.me/v2/profile', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }),
+    ]);
     if (!verify.ok) return null;
     const info = (await verify.json()) as { client_id?: string; expires_in?: number };
     const channelId = lineChannelId();
     if (!channelId || info.client_id !== channelId || !info.expires_in || info.expires_in <= 0) return null;
-
-    const profile = await fetch('https://api.line.me/v2/profile', {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: 'no-store',
-    });
     if (!profile.ok) return null;
     const { userId } = (await profile.json()) as { userId?: string };
     if (!userId) return null;

@@ -6,7 +6,7 @@ import { CheckCircle2, GraduationCap, Loader2, Lock, Plus, RefreshCw, ShieldAler
 import { LINE_TOKEN_HEADER } from "@/lib/auth/lineSession";
 
 type Group = { ref: string; groupName?: string; linkedClassroomId?: string };
-type Room = { id: string; title: string; term: string; linked: boolean; groupName?: string; groupRef?: string; canUnlink: boolean };
+type Room = { id: string; title: string; term: string; linked: boolean; groupName?: string; canUnlink: boolean };
 type Overview = {
   teacher: { firstName: string };
   groups: Group[];
@@ -56,8 +56,8 @@ export default function TeacherConnectPage() {
   }, []);
 
   const load = useCallback(
-    async (accessToken: string, ref: string | null) => {
-      const res = await fetch(`/api/line/liff-connect${ref ? `?g=${encodeURIComponent(ref)}` : ""}`, {
+    async (accessToken: string, ref: string, fresh = false) => {
+      const res = await fetch(`/api/line/liff-connect?g=${encodeURIComponent(ref)}${fresh ? "&fresh=1" : ""}`, {
         headers: { [LINE_TOKEN_HEADER]: accessToken },
         cache: "no-store",
       });
@@ -113,7 +113,7 @@ export default function TeacherConnectPage() {
     setRefreshing(true);
     setMessage(null);
     try {
-      await load(token, focusRef);
+      if (focusRef) await load(token, focusRef, true);
     } finally {
       setRefreshing(false);
     }

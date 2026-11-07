@@ -212,50 +212,29 @@ export type TeacherGroup = {
 };
 
 /**
- * Groups this teacher can pick: unlinked groups the bot joined recently that
- * LINE confirms they are a member of, plus the groups already linked to their
- * own classrooms (to move them). `focusRef` (the group whose button was
- * tapped) is always checked, however old.
+ * The one group the LIFF connect page is for (the group whose button was
+ * tapped), checked for this teacher: the bot's record, who it is linked to,
+ * and LINE's word that the teacher is in it. The record and the classrooms
+ * come in together, then the membership check and (only when the group is not
+ * one of the teacher's own links) the linked-classroom lookup run side by side.
  */
-export async function listTeacherGroups(
+export async function loadFocusGroup(
   supabase: ServiceClient,
   teacher: { id: string; lineUid: string },
-  classrooms: LinkClassroom[],
-  focusRef?: string | null,
+  classroomsLoading: Promise<LinkClassroom[]>,
+  ref: string,
   options: { fresh?: boolean } = {}
-): Promise<{ groups: TeacherGroup[]; focus?: TeacherGroup | { ref: string; error: string } }> {
-  const linkedIds = classrooms.map((item) => item.line_group_id).filter(Boolean) as string[];
-  const [unlinked, own, focusGroup] = await Promise.all([
-    listUnlinkedTeacherGroups(supabase, teacher.lineUid, options),
-    linkedIds.length
-      ? supabase.from('line_bot_groups').select('group_id, ref, group_name').in('group_id', linkedIds)
-      : Promise.resolve({ data: [] as GroupRow[] }),
-    findBotGroupByRef(supabase, focusRef),
+): Promise<TeacherGroup | { ref: string; error: string }> {
+  const [group, classrooms] = await Promise.all([findBotGroupByRef(supabase, ref), classroomsLoading]);
+  if (!group) return { ref, error: 'ไม่พบกลุ่มนี้ (บอทอาจถูกนำออกจากกลุ่มแล้ว) กรุณาเชิญ Pudding Bot เข้ากลุ่มอีกครั้ง' };
+  const own = classrooms.find((item) => item.line_group_id === group.groupId);
+  const [member, other] = await Promise.all([
+    isMember(group.groupId, teacher.lineUid, options),
+    own ? Promise.resolve(null) : findLinkedClassroom(supabase, group.groupId),
   ]);
-  const mine = new Map(classrooms.filter((item) => item.line_group_id).map((item) => [item.line_group_id as string, item.id]));
-  const groups: TeacherGroup[] = [...unlinked];
-  for (const row of (own.data || []) as GroupRow[]) {
-    groups.push({ ref: row.ref, groupName: row.group_name || undefined, linkedClassroomId: mine.get(row.group_id) });
-  }
-
-  let focus: TeacherGroup | { ref: string; error: string } | undefined;
-  if (focusRef) {
-    const found = groups.find((group) => group.ref === focusRef);
-    if (found) {
-      focus = found;
-    } else if (!focusGroup) {
-      focus = { ref: focusRef, error: 'ไม่พบกลุ่มนี้ (บอทอาจถูกนำออกจากกลุ่มแล้ว) กรุณาเชิญ Pudding Bot เข้ากลุ่มอีกครั้ง' };
-    } else if (await findLinkedClassroom(supabase, focusGroup.groupId)) {
-      focus = { ref: focusRef, error: 'กลุ่มนี้เชื่อมกับห้องเรียนของคุณครูท่านอื่นแล้ว' };
-    } else if (await isMember(focusGroup.groupId, teacher.lineUid, { fresh: true })) {
-      // An unlinked group older than the recent list: still offered when opened from its own button.
-      focus = { ref: focusGroup.ref, groupName: focusGroup.groupName };
-      groups.unshift(focus);
-    } else {
-      focus = { ref: focusRef, error: 'ไม่พบคุณครูในกลุ่มนี้ เปิดปุ่มนี้จากบัญชี LINE ที่อยู่ในกลุ่มและใช้เข้าสู่ระบบ Pudding' };
-    }
-  }
-  return { groups, focus };
+  if (other) return { ref, error: 'กลุ่มนี้เชื่อมกับห้องเรียนของคุณครูท่านอื่นแล้ว' };
+  if (!member) return { ref, error: 'ไม่พบคุณครูในกลุ่มนี้ เปิดปุ่มนี้จากบัญชี LINE ที่อยู่ในกลุ่มและใช้เข้าสู่ระบบ Pudding' };
+  return { ref: group.ref, groupName: group.groupName, linkedClassroomId: own?.id };
 }
 
 // ---------------------------------------------------------------------------
