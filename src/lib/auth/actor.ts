@@ -38,7 +38,7 @@ function lineChannelId() {
 }
 
 /** Resolves a LIFF access token to its LINE user id (cached briefly to save LINE API calls). */
-async function verifyLineToken(token: string): Promise<string | null> {
+export async function verifyLineToken(token: string): Promise<string | null> {
   const key = createHash('sha256').update(token).digest('hex');
   const cached = tokenCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.lineUid;

@@ -214,6 +214,42 @@ export async function replyLineConfirm(
   });
 }
 
+export type LineAction =
+  | { type: 'postback'; label: string; data: string; displayText?: string }
+  | { type: 'uri'; label: string; uri: string };
+
+function lineAction(action: LineAction) {
+  return action.type === 'postback'
+    ? { type: 'postback', label: fit(action.label, 20), data: action.data, displayText: fit(action.displayText || action.label, 300) }
+    : { type: 'uri', label: fit(action.label, 20), uri: action.uri };
+}
+
+/**
+ * Reply with an optional leading text, then a card of up to 4 buttons, with
+ * optional quick-reply buttons (up to 13) under it. Postback taps come back to
+ * the webhook carrying the tapper's LINE id, so a group can show them to
+ * everyone while only the right teacher's tap counts.
+ */
+export async function replyLineButtons(
+  replyToken: string,
+  options: { intro?: string; text: string; actions: LineAction[]; quickReplies?: LineAction[] }
+): Promise<void> {
+  const messages: Record<string, unknown>[] = [];
+  if (options.intro) messages.push({ type: 'text', text: fit(options.intro, 5000) });
+  if (options.actions.length) {
+    messages.push({
+      type: 'template',
+      altText: fit(options.text, 400),
+      template: { type: 'buttons', text: fit(options.text, 160), actions: options.actions.slice(0, 4).map(lineAction) },
+    });
+  } else {
+    messages.push({ type: 'text', text: fit(options.text, 5000) });
+  }
+  const items = (options.quickReplies || []).slice(0, 13).map((action) => ({ type: 'action', action: lineAction(action) }));
+  if (items.length) messages[messages.length - 1] = { ...messages[messages.length - 1], quickReply: { items } };
+  await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages });
+}
+
 const LINE_API_BASE = 'https://api.line.me/v2/bot';
 
 function lineAuthHeaders(): Record<string, string> {

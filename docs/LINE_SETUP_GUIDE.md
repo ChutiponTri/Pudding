@@ -70,7 +70,9 @@ Re-run `npm run line:verify`. The Clerk section should be all ✅.
 - Same provider as the bot (see section 3).
 - **Linked LINE Official Account:** choose Pudding Bot. If Clerk forwards LINE's `bot_prompt`, LINE then offers "add friend" during sign-up. If it doesn't, teachers get an **"+ เพิ่มเพื่อน Pudding Bot"** button in Pudding (section 6).
 
-**LIFF app (students):** the endpoint URL should be `https://<your-domain>/liff`.
+**LIFF app (students):** the endpoint URL should be `https://<your-domain>/liff`. The teacher page `/liff/connect` runs in the same LIFF app (`https://liff.line.me/<LIFF ID>/connect`), so the LIFF app's channel must be under the same provider as the bot and Clerk's LINE Login channel, or the teacher's LINE id won't match.
+
+**Rich menu (set by hand in LINE Official Account Manager → Rich menus):** add a button **เชื่อมกลุ่ม** with action **Link** → `https://liff.line.me/<LIFF ID>/connect`. It opens the teacher's connect page inside LINE. A **Text** action with `เชื่อมกลุ่ม` also works: the bot replies with a button to the same page.
 
 ---
 
@@ -97,15 +99,29 @@ Add `LINE_BOT_BASIC_ID` to the production environment too, then redeploy.
 4. If the card says **Pudding Bot: ยังไม่ได้เพิ่มเพื่อน**, press **+ เพิ่มเพื่อน Pudding Bot**. The bot greets you by name, and the card updates.
 
 ### Connect a classroom to a LINE group
-1. On the dashboard class card (or the classroom page → **เชื่อมบอท LINE**), press **เชื่อม LINE Group**. The status changes to **🟡 รอเพิ่มบอทเข้ากลุ่ม**, and Pudding waits for **15 minutes**.
-2. In LINE, open the classroom's group (you must be a member) and invite **Pudding Bot**.
-3. The bot replies **✅ เชื่อมกลุ่มนี้กับห้องเรียน “…” เรียบร้อยแล้ว**, followed by the student join link. Within a few seconds, Pudding shows **🟢 เชื่อมแล้ว: \<group name\>**.
+Do it in whichever order suits you. Only an **approved** teacher's own LINE account can link; students and other teachers' taps are ignored. Each LINE group links to one classroom.
 
-- **Bot already in the group?** Press **เชื่อม LINE Group** in Pudding, then send *any* message in the group. That completes the link.
-- **One at a time:** each teacher can have only one classroom waiting. Starting a new one cancels the previous wait.
+**A. Start in the LINE group (no web needed)**
+1. Invite **Pudding Bot** to the classroom's group. The bot replies with a **🔗 เชื่อมห้องเรียน** button.
+2. Tap it. The bot lists your classrooms that have no group yet. Tap the number of the classroom.
+3. No classroom yet? Tap **➕ สร้างห้องเรียนใหม่**. Pudding opens in your browser with the create form; the new classroom links to that group as soon as you save it (the link works for 30 minutes).
+- Bot already in the group? Type **พุดดิ้ง เชื่อม** in the group to get the same list.
+
+**B. Start on the web**
+1. On the dashboard class card (or the classroom page → **เชื่อมบอท LINE**), press **เชื่อม LINE Group**.
+2. If the bot is already in a group you are in, the dialog lists it: tap the group and it is linked.
+3. Otherwise the status becomes **🟡 รอเพิ่มบอทเข้ากลุ่ม** for **24 hours**. Invite the bot to the group; it asks **เชื่อมกลุ่มนี้กับห้องเรียน …?** → tap **เชื่อมกลุ่ม** (or just send any message in the group if the bot is already there).
+
+**C. Start from the bot's 1:1 chat**
+1. Tap **เชื่อมกลุ่ม** in the rich menu (or type `เชื่อมกลุ่ม`). The connect page opens inside LINE.
+2. Tap a classroom, then a group the bot is already in, or **กลุ่มอื่น (เชิญบอทภายหลัง)** and continue as in B.3.
+
+- **Moving a group to a new semester:** type **พุดดิ้ง เชื่อม** in the old group → **🔁 ย้ายไปห้องอื่น** → pick the new classroom.
+- **One wait at a time:** each teacher can have only one classroom waiting. Starting a new one cancels the previous wait.
 
 ### Disconnect
-- **From LINE:** remove Pudding Bot from the group. The classroom unlinks automatically.
+- **From LINE:** remove Pudding Bot from the group, or type **พุดดิ้ง เชื่อม** → **⛔ ยกเลิกการเชื่อม** (owner or co-teacher). The classroom unlinks automatically.
+- **From the connect page in LINE:** tap the unlink icon next to a linked classroom.
 - **From Pudding:** press **ยกเลิกการเชื่อมต่อ**. The classroom unlinks **and the bot leaves the group**.
 
 ### What a linked group gets
@@ -129,6 +145,8 @@ Add `LINE_BOT_BASIC_ID` to the production environment too, then redeploy.
 |---|---|---|
 | Group | `ขอรหัสเข้าห้อง` / `#pudding join` | Classroom code + join link |
 | Group | `#pudding status` | Whether the group is linked |
+| Group (teacher) | `พุดดิ้ง เชื่อม` | Link this group to a classroom, move it, or unlink it |
+| Teacher 1:1 chat | `เชื่อมกลุ่ม` (or the rich-menu button) | Opens the connect page inside LINE |
 | Teacher 1:1 chat | `#pudding status` | How many of your classrooms have a linked group |
 | Teacher 1:1 chat | `#pudding test <classroom id>` | Sends a test message to that classroom's group |
 | Anywhere | `#pudding help` | List of commands |
@@ -143,7 +161,9 @@ Add `LINE_BOT_BASIC_ID` to the production environment too, then redeploy.
 | LINE card: "พบบัญชีครูเดิมที่ใช้อีเมลเดียวกัน" | The teacher's old email/Google account row still holds this email. Clear the old row's email (section 10, part 2), or merge the accounts. |
 | LINE card says **ยังไม่เชื่อม**: "บัญชีนี้ไม่ได้เข้าสู่ระบบด้วย LINE" | The Clerk account has no LINE connection. Connect LINE (section 2, step 2), then reopen the dashboard. |
 | LINE card: "บัญชี LINE นี้ถูกใช้กับบัญชีอื่น" | That LINE account already belongs to another Pudding user, usually the same person's student LIFF profile. Use a different LINE account, or remove or merge the student row in `users`. |
-| Bot replies "ยังไม่พบห้องเรียนที่รอเชื่อมกลุ่มนี้" | No classroom was waiting, the 15-minute window expired, or the teacher who pressed connect is not in that group. Press **เชื่อม LINE Group** again, then send a message in the group. |
+| Tapping **เชื่อมห้องเรียน** does nothing | The tap came from a LINE account that is not a teacher's LINE sign-in (students are ignored on purpose). Pending or rejected teachers get a short reply instead. |
+| The web dialog doesn't list a group the bot is in | `supabase_line_connect_flow_update.sql` hasn't been run, the bot joined that group before it was run (type **พุดดิ้ง เชื่อม** in the group instead), or your LINE account isn't a member of it. |
+| Connect page in LINE says the account isn't linked | Sign in to the Pudding website with LINE (same account) first. If you already did, the LIFF channel is under a different provider (section 4). |
 | Linked, but the IDs never match (nothing links) | The LINE Login channel used by Clerk is under a different provider than the bot. Fix it in section 3. |
 | Sign-up stuck asking for an email | Clerk still requires email (section 3, step 1). |
 | No **+ เพิ่มเพื่อน Pudding Bot** button | `LINE_BOT_BASIC_ID` is missing on the deployed environment. |

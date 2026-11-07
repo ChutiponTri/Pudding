@@ -13,7 +13,7 @@ import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, write
 import { quietly } from '@/lib/net/fetchActivity';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
 import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
-import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
+import { LineGroupConnectSteps, type LineCandidateGroup } from '@/components/LineGroupConnectSteps';
 import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { StudentRosterModal, type StudentRosterTab } from '@/components/StudentRosterModal';
@@ -340,8 +340,10 @@ export default function ClassroomWorkspacePage() {
     groupName?: string;
     expiresAt?: string;
     connectedAt?: string;
+    candidates?: LineCandidateGroup[];
   }>({ status: 'disconnected' });
   const [isLineLoading, setIsLineLoading] = useState(false);
+  const [linkingGroupId, setLinkingGroupId] = useState<string | null>(null);
   const [teacherBot, setTeacherBot] = useState<{ botFriend?: boolean | null; addFriendUrl?: string }>({});
 
   // Teacher's bot friendship (for the "add Pudding Bot" hint) when the dialog opens.
@@ -362,7 +364,7 @@ export default function ClassroomWorkspacePage() {
         if (!response.ok) return;
         const result = await response.json();
         if (result.status === 'waiting') return;
-        setLineConnection(result);
+        setLineConnection((current) => ({ ...result, candidates: current.candidates }));
         setClassroom((prev) => (prev ? {
           ...prev,
           line_connection_status: result.status,
@@ -375,14 +377,15 @@ export default function ClassroomWorkspacePage() {
     return () => clearInterval(interval);
   }, [lineConnection.status, classroomId, tr]);
 
-  const handleLineConnection = async (action: 'create' | 'test' | 'disconnect') => {
+  const handleLineConnection = async (action: 'create' | 'test' | 'disconnect' | 'link-group', groupId?: string) => {
     if (!classroom) return;
     setIsLineLoading(true);
+    if (action === 'link-group') setLinkingGroupId(groupId || null);
     try {
       const response = await fetch('/api/line/connections', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ classroomId: classroom.id, action }),
+        body: JSON.stringify({ classroomId: classroom.id, action, groupId }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'LINE connection failed');
@@ -391,18 +394,24 @@ export default function ClassroomWorkspacePage() {
         ...prev,
         line_connection_status: result.status,
         ...(action === 'disconnect' ? { line_group_id: undefined, line_group_name: undefined } : {}),
+        ...(result.status === 'connected' ? { line_group_id: prev.line_group_id || 'linked', line_group_name: result.groupName } : {}),
       } : null));
       setNotice(
         action === 'disconnect'
           ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group')
           : action === 'test'
           ? tr('ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว', 'Test message sent to the LINE group') + testQuotaNote(result.testQuota, tr)
-          : tr('พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย', 'Ready: add Pudding Bot to your LINE group')
+          : result.status === 'connected'
+          ? tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`)
+          : result.candidates?.length
+          ? tr('พบกลุ่มที่มีบอทอยู่แล้ว เลือกกลุ่ม หรือเชิญบอทเข้ากลุ่มอื่นภายใน 24 ชม.', 'Pick a group the bot is already in, or invite it to another group within 24 hours')
+          : tr('พร้อมเชื่อมต่อ: เพิ่ม Pudding Bot เข้ากลุ่ม LINE ได้เลย (ภายใน 24 ชม.)', 'Ready: add Pudding Bot to your LINE group (within 24 hours)')
       );
     } catch (error) {
       setNotice((error as { message?: string } | null)?.message || tr('ไม่สามารถเชื่อมต่อ LINE Group ได้', 'Could not connect the LINE group'));
     } finally {
       setIsLineLoading(false);
+      setLinkingGroupId(null);
     }
   };
 
@@ -1888,7 +1897,7 @@ export default function ClassroomWorkspacePage() {
                 type="button"
                 onClick={() => {
                   setShowLineConnectModal(true);
-                  fetch(`/api/line/connections?classroomId=${classroom.id}`)
+                  fetch(`/api/line/connections?classroomId=${encodeURIComponent(classroom.id)}&candidates=1`, { cache: 'no-store' })
                     .then((r) => r.json())
                     .then((d) => setLineConnection(d))
                     .catch(() => {});
@@ -3096,7 +3105,14 @@ export default function ClassroomWorkspacePage() {
                 <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">{tr('หากนำบอทออกจากกลุ่ม การเชื่อมต่อจะยกเลิกเอง', 'Removing the bot from the group disconnects it automatically')}</p>
               </div>
             ) : (
-              <LineGroupConnectSteps status={lineConnection.status} botFriend={teacherBot.botFriend} addFriendUrl={teacherBot.addFriendUrl} />
+              <LineGroupConnectSteps
+                status={lineConnection.status}
+                botFriend={teacherBot.botFriend}
+                addFriendUrl={teacherBot.addFriendUrl}
+                candidates={lineConnection.candidates}
+                onLinkGroup={(groupId) => handleLineConnection('link-group', groupId)}
+                linkingGroupId={linkingGroupId}
+              />
             )}
 
             </ModalSheetBody>
@@ -3110,7 +3126,7 @@ export default function ClassroomWorkspacePage() {
                   onClick={() => handleLineConnection('create')}
                   className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  {isLineLoading ? tr('กำลังเตรียม...', 'Preparing...') : lineConnection.status === 'waiting' ? tr('เริ่มรอใหม่ (15 นาที)', 'Restart wait (15 min)') : tr('เชื่อม LINE Group', 'Connect LINE group')}
+                  {isLineLoading ? tr('กำลังเตรียม...', 'Preparing...') : lineConnection.status === 'waiting' ? tr('เริ่มรอใหม่ (24 ชม.)', 'Restart wait (24 h)') : tr('เชื่อม LINE Group', 'Connect LINE group')}
                 </button>
               ) : (
                 <>
