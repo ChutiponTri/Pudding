@@ -12,6 +12,8 @@ import type { Assignment } from '@/types/database';
 const MENU_WIDTH = 288;
 const MENU_GAP = 8;
 const VIEWPORT_MARGIN = 12;
+/** Matches the close transition below, so the menu unmounts once it has faded out. */
+const CLOSE_MS = 130;
 
 /**
  * The "new assignment / quiz" button. Opens a small menu right next to the
@@ -43,15 +45,30 @@ export function CreateWorkMenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  // The menu stays mounted while it animates out; `shown` drives the transition both ways.
+  const [rendered, setRendered] = useState(false);
+  const [shown, setShown] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [retakeOpen, setRetakeOpen] = useState(false);
-  const [position, setPosition] = useState<{ top: number; left: number; above: boolean } | null>(null);
+  // The retake picker opens with the "come back to" place read when it was chosen.
+  const [retakeOpen, setRetakeOpen] = useState<null | { from?: 'classroom' | 'dashboard' | 'works'; returnTo?: string }>(null);
+  const [position, setPosition] = useState<{ top: number; left: number; above: boolean; originX: number } | null>(null);
+
+  // Opened on the work list (also from the sidebar there): come back to the list, read at click time
+  // so tab / filter changes since render are kept. The creation page picks the quiz / homework tab.
+  const origin = () => {
+    const onWorks = typeof window !== 'undefined' && window.location.pathname.startsWith('/works');
+    if ((from === 'works' || (!from && onWorks)) && onWorks) {
+      return { from: 'works' as const, returnTo: `${window.location.pathname}${window.location.search}` };
+    }
+    return { from, returnTo };
+  };
 
   const query = (extra: Record<string, string>) => {
     const params = new URLSearchParams();
+    const back = origin();
     if (classroomId) params.set('classroomId', classroomId);
-    if (from) params.set('from', from);
-    if (returnTo) params.set('returnTo', returnTo);
+    if (back.from) params.set('from', back.from);
+    if (back.returnTo) params.set('returnTo', back.returnTo);
     for (const [key, value] of Object.entries(extra)) params.set(key, value);
     return `/assignments/new?${params}`;
   };
@@ -70,23 +87,45 @@ export function CreateWorkMenu({
     if (left < VIEWPORT_MARGIN) left = rect.left;
     left = Math.max(VIEWPORT_MARGIN, Math.min(left, window.innerWidth - width - VIEWPORT_MARGIN));
     const top = above ? rect.top - menuHeight - MENU_GAP : rect.bottom + MENU_GAP;
-    setPosition({ top: Math.max(VIEWPORT_MARGIN, top), left, above });
+    // Grow out of the trigger: the transform origin sits under (or over) its middle.
+    const originX = Math.max(16, Math.min(width - 16, rect.left + rect.width / 2 - left));
+    setPosition({ top: Math.max(VIEWPORT_MARGIN, top), left, above, originX });
   }, []);
 
+  // Open: mount hidden, place, then flip to shown on the next frame so the transition runs.
+  // Close: transition out, then unmount.
+  const openMenu = () => {
+    setRendered(true);
+    setOpen(true);
+  };
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setShown(false);
+  }, []);
+  // Unmount once the close transition has played (cancelled if it is opened again meanwhile).
+  useEffect(() => {
+    if (open || !rendered) return;
+    const timer = window.setTimeout(() => setRendered(false), CLOSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [open, rendered]);
+
   useLayoutEffect(() => {
-    if (open) place();
-  }, [open, place]);
+    if (!open || !rendered) return;
+    place();
+    const frame = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)));
+    return () => cancelAnimationFrame(frame);
+  }, [open, rendered, place]);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
       const target = e.target as Node;
       if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      setOpen(false);
+      closeMenu();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setOpen(false);
+        closeMenu();
         triggerRef.current?.focus();
       }
     };
@@ -94,18 +133,21 @@ export function CreateWorkMenu({
     document.addEventListener('keydown', onKey);
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
-    // Focus the first choice for keyboard users.
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
+    // Focus the first choice for keyboard users (once the menu is mounted).
+    const focusFrame = requestAnimationFrame(() =>
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true })
+    );
     return () => {
+      cancelAnimationFrame(focusFrame);
       document.removeEventListener('pointerdown', onDown);
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
     };
-  }, [open, place]);
+  }, [open, place, closeMenu]);
 
   const go = (href: string) => {
-    setOpen(false);
+    closeMenu();
     onNavigate?.();
     router.push(href);
   };
@@ -141,8 +183,8 @@ export function CreateWorkMenu({
       label: tr('สอบซ่อม', 'Retake quiz'),
       hint: tr('เฉพาะนักเรียนที่เลือก คะแนนแทนของเดิม', 'Chosen students; replaces their score'),
       onSelect: () => {
-        setOpen(false);
-        setRetakeOpen(true);
+        closeMenu();
+        setRetakeOpen(origin());
       },
     },
     {
@@ -152,7 +194,7 @@ export function CreateWorkMenu({
       label: tr('ใช้งานเดิม', 'Reuse earlier work'),
       hint: tr('เลือกงานจากห้องอื่นหรือภาคเรียนก่อน', 'From another classroom or term'),
       onSelect: () => {
-        setOpen(false);
+        closeMenu();
         setPickerOpen(true);
       },
     },
@@ -165,19 +207,24 @@ export function CreateWorkMenu({
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? closeMenu() : openMenu())}
         className={className}
       >
         {children}
       </button>
 
-      {open &&
+      {rendered &&
         createPortal(
           <div
             ref={menuRef}
             role="menu"
             aria-label={tr('สร้างอะไร', 'Create')}
-            style={{ top: position?.top ?? -9999, left: position?.left ?? -9999, width: Math.min(MENU_WIDTH, typeof window !== 'undefined' ? window.innerWidth - VIEWPORT_MARGIN * 2 : MENU_WIDTH) }}
+            style={{
+              top: position?.top ?? -9999,
+              left: position?.left ?? -9999,
+              width: Math.min(MENU_WIDTH, typeof window !== 'undefined' ? window.innerWidth - VIEWPORT_MARGIN * 2 : MENU_WIDTH),
+              transformOrigin: `${position?.originX ?? MENU_WIDTH / 2}px ${position?.above ? '100%' : '0%'}`,
+            }}
             onKeyDown={(e) => {
               if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
               e.preventDefault();
@@ -185,8 +232,10 @@ export function CreateWorkMenu({
               const index = items.indexOf(document.activeElement as HTMLElement);
               items[(index + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
             }}
-            className={`fixed z-90 p-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-900/10 dark:shadow-black/40 animate-in fade-in zoom-in-95 duration-150 ${
-              position?.above ? 'origin-bottom' : 'origin-top'
+            className={`fixed z-90 p-1.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-900/10 dark:shadow-black/40 will-change-[transform,opacity] motion-reduce:transition-none ${
+              shown
+                ? 'opacity-100 scale-100 translate-y-0 transition-[opacity,scale,translate] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]'
+                : `opacity-0 scale-95 ${position?.above ? 'translate-y-1' : '-translate-y-1'} pointer-events-none transition-[opacity,scale,translate] duration-[130ms] ease-in`
             }`}
           >
             {options.map((option, index) => {
@@ -219,10 +268,10 @@ export function CreateWorkMenu({
       {retakeOpen && (
         <RetakePicker
           classroomId={classroomId}
-          from={from}
-          returnTo={returnTo}
+          from={retakeOpen.from}
+          returnTo={retakeOpen.returnTo}
           onNavigate={onNavigate}
-          onClose={() => setRetakeOpen(false)}
+          onClose={() => setRetakeOpen(null)}
         />
       )}
       {pickerOpen && <ReuseWorkPicker targetClassroomId={classroomId} onPick={pick} onClose={closePicker} />}

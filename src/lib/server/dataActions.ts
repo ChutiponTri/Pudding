@@ -116,7 +116,7 @@ async function withTeacherAvatars<T extends { teachers?: ClassroomTeacher[] | nu
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
 const IN_CHUNK = 150;
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
-const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes', 'publish_at', 'attachments'] as const;
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes', 'publish_at', 'attachments', 'quiz_duration_minutes'] as const;
 const ATTACHMENTS_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการแนบหลายไฟล์ (ยังไม่มีคอลัมน์ attachments) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือแนบเพียง 1 รายการ';
 
@@ -2272,6 +2272,78 @@ export const dataActions = {
     // The student's LIFF page reloads their work and shows the edit / hand-in button.
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
     return { reopened_at: reopenedAt, reopen_until: reopenUntil };
+  },
+
+  /**
+   * "Let them take the quiz again" for one student: unlike "Allow edit" on
+   * homework, nothing of the earlier sheet is kept. Their answers, scores,
+   * logged events and counted quiz openings are deleted and the row goes back
+   * to 'pending' with a per-student permission (reopened_at / reopen_until),
+   * so they start a blank quiz, even after it closed. A row whose score came
+   * from a retake quiz is left alone (the retake holds that sheet). On a
+   * retake, the original quiz gets its own score back until the new sheet is in.
+   */
+  async resetQuizSubmission({ supabase, actor }: Ctx, submissionId: string, until?: unknown) {
+    const { classroom } = await requireTeacherOfSubmission(supabase, actor, submissionId);
+    const me = requireTeacher(actor);
+    const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
+    if (role === 'researcher') throw FORBIDDEN();
+    const { data: sub, error: readError } = await supabase.from('submissions').select('*').eq('id', submissionId).maybeSingle();
+    if (readError) throw toDatabaseError(readError, 'submissions');
+    if (!sub) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
+    const { data: assignment } = await supabase.from('assignments').select('*').eq('id', sub.assignment_id).maybeSingle<Assignment>();
+    if (!assignment) throw new HttpError(404, 'ไม่พบข้อสอบนี้');
+    if (!assignment.is_exam) throw new HttpError(400, 'ใช้ได้กับข้อสอบเท่านั้น — งานการบ้านใช้ "ให้แก้ไขงาน"');
+    if ((sub as Submission).retake_submission_id) {
+      throw new HttpError(409, 'คะแนนข้อนี้มาจากข้อสอบซ่อม — ให้สอบใหม่ที่หน้าข้อสอบซ่อมแทน');
+    }
+    // A quiz always gets a time limit: an open-ended permission would let them start whenever.
+    const reopenUntil = parseReopenUntil(until);
+    if (!reopenUntil) throw new HttpError(400, 'กรุณากำหนดเวลาให้สอบใหม่');
+    const now = new Date().toISOString();
+
+    const [answers, events, attempts] = await Promise.all([
+      supabase.from('submission_answers').delete().eq('submission_id', submissionId),
+      supabase.from('submission_events').delete().eq('submission_id', submissionId),
+      supabase.from('quiz_attempts').delete().eq('assignment_id', assignment.id).eq('student_id', sub.student_id),
+    ]);
+    if (answers.error) throw toDatabaseError(answers.error, 'submission_answers');
+    if (events.error) console.warn('[resetQuizSubmission] events cleanup failed:', events.error.message);
+    // Databases without quiz_attempts simply have nothing to clear.
+    if (attempts.error && !/quiz_attempts/.test(attempts.error.message) && attempts.error.code !== '42P01' && attempts.error.code !== 'PGRST205') {
+      throw toDatabaseError(attempts.error, 'quiz_attempts');
+    }
+
+    let reset: Record<string, unknown> = {
+      status: 'pending',
+      submitted_at: null,
+      started_at: now,
+      time_spent_seconds: 0,
+      tab_switch_count: 0,
+      total_time_away_seconds: 0,
+      is_flagged_suspicious: false,
+      total_score: null,
+      submitted_by: null,
+      quiz_exit_count: 0,
+      auto_forfeited: false,
+      reopened_at: now,
+      reopen_until: reopenUntil,
+      updated_at: now,
+    };
+    // Older databases lack some of these columns: drop the missing one and try again.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const { error } = await supabase.from('submissions').update(reset).eq('id', submissionId);
+      if (!error) break;
+      const missing = Object.keys(reset).find((column) => error.message.includes(column));
+      if (/reopen(ed_at|_until)/.test(error.message)) throw new HttpError(503, REOPEN_MIGRATION_MESSAGE);
+      if (!missing || attempt === 5) throw toDatabaseError(error, 'submissions');
+      const { [missing]: _dropped, ...rest } = reset;
+      reset = rest;
+    }
+    if (isRetake(assignment)) await syncRetakeScores(supabase, assignment, [submissionId]);
+    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId: assignment.id }));
+    return { ...(sub as Submission), ...reset } as Submission;
   },
 
   /**

@@ -449,7 +449,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   type ReopenTarget = { key: string; sub: Submission | null; rosterId?: string; name: string };
   const [reopeningKey, setReopeningKey] = useState<string | null>(null);
   const [retakeOpen, setRetakeOpen] = useState(false);
-  const [reopenDialog, setReopenDialog] = useState<(ReopenTarget & { kind: 'edit' | 'handin'; minutes: number }) | null>(null);
+  // retry: a handed-in quiz taken again from a blank sheet ("ให้สอบใหม่").
+  type ReopenKind = 'edit' | 'handin' | 'retry';
+  const [reopenDialog, setReopenDialog] = useState<(ReopenTarget & { kind: ReopenKind; minutes: number }) | null>(null);
   // Re-renders now and then so a time-limited permission drops off when it runs out, and
   // exactly when a scheduled publish time or a deadline passes (status flips without a refresh).
   const scheduleTarget = useMemo(() => (assignment ? [assignment] : []), [assignment]);
@@ -470,11 +472,15 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     });
   };
 
-  const saveReopen = async (target: ReopenTarget, kind: 'edit' | 'handin', minutes: number | null) => {
+  const saveReopen = async (target: ReopenTarget, kind: ReopenKind, minutes: number | null) => {
     const until = minutes ? minutesFromNow(minutes) : null;
     setReopeningKey(target.key);
     try {
-      if (target.sub) {
+      if (kind === 'retry' && target.sub && until) {
+        const subId = target.sub.id;
+        const row = await dataService.resetQuizSubmission(subId, until);
+        applySubmissionChange((prev) => prev.map((s) => (s.id === subId ? { ...s, ...row } : s)));
+      } else if (target.sub) {
         const subId = target.sub.id;
         const result = await dataService.setSubmissionReopened(subId, true, until);
         applySubmissionChange((prev) => prev.map((s) => (s.id === subId ? { ...s, ...result } : s)));
@@ -487,7 +493,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       setReopenDialog(null);
       const when = until ? ` · ${th ? 'ถึง' : 'until'} ${formatDateTime(until, language)}` : '';
       showToast(
-        kind === 'edit'
+        kind === 'retry'
+          ? (th ? `เปิดให้ ${target.name} สอบใหม่แล้ว (เริ่มจากกระดาษเปล่า)` : `${target.name} can retake it now (blank sheet)`) + when
+          : kind === 'edit'
           ? (th ? `เปิดให้ ${target.name} แก้ไขงานแล้ว` : `${target.name} can edit now`) + when
           : (th ? `เปิดให้ ${target.name} ส่งงานแล้ว` : `${target.name} can hand in now`) + when
       );
@@ -498,8 +506,18 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     }
   };
 
-  const requestReopen = (target: ReopenTarget, kind: 'edit' | 'handin') => {
+  const requestReopen = (target: ReopenTarget, kind: ReopenKind) => {
     if (!assignment) return;
+    if (kind === 'retry') {
+      // Always timed: suggest the quiz's own length.
+      const start = Date.parse(assignment.publish_at || assignment.created_at || '');
+      const derived = Math.round((Date.parse(assignment.due_date) - start) / 60000);
+      const quizMinutes = Number(assignment.quiz_duration_minutes) > 0
+        ? Number(assignment.quiz_duration_minutes)
+        : Number.isFinite(derived) && derived > 0 && derived <= 24 * 60 ? derived : 30;
+      setReopenDialog({ ...target, kind, minutes: Math.max(10, quizMinutes) });
+      return;
+    }
     const suggestion = reopenTimeSuggestion(getAssignmentWindow(assignment));
     if (!suggestion.needsTime) {
       void saveReopen(target, kind, null);
@@ -555,7 +573,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         <span className="absolute inset-0 rounded-full bg-orange-400 animate-ping opacity-60" />
         <span className="relative w-2 h-2 rounded-full bg-orange-500" />
       </span>
-      {kind === 'edit' ? (th ? 'เปิดให้แก้ไข' : 'Editing allowed') : th ? 'เปิดให้ส่ง' : 'Hand-in allowed'}
+      {kind === 'edit' ? (th ? 'เปิดให้แก้ไข' : 'Editing allowed') : assignment?.is_exam ? (th ? 'เปิดให้สอบ' : 'Quiz open') : th ? 'เปิดให้ส่ง' : 'Hand-in allowed'}
       <span className="font-semibold opacity-75">· {untilLabel(sub.reopen_until)}</span>
       <button
         type="button"
@@ -567,25 +585,35 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       </button>
     </span>
   );
-  const reopenButton = (target: ReopenTarget, kind: 'edit' | 'handin', className = '') => (
+  const reopenButton = (target: ReopenTarget, kind: ReopenKind, className = '') => (
     <button
       type="button"
       onClick={() => requestReopen(target, kind)}
       disabled={reopeningKey === target.key}
-      title={kind === 'edit'
+      title={kind === 'retry'
+        ? th ? 'ให้นักเรียนคนนี้สอบใหม่ — คำตอบและคะแนนเดิมจะถูกลบ เริ่มจากกระดาษเปล่า' : 'Let this student take the quiz again — earlier answers and score are deleted'
+        : kind === 'edit'
         ? th ? 'ให้นักเรียนคนนี้แก้งานที่ส่งแล้ว (เช่น แนบไฟล์ผิด)' : 'Let this student fix and hand in again'
         : th ? 'ให้นักเรียนคนนี้ส่งงานได้ แม้เลยกำหนดหรือปิดรับแล้ว' : 'Let this student hand in, even after it closed'}
       className={`inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-xl text-[11px] sm:text-xs font-black whitespace-nowrap bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25 cursor-pointer active:scale-[0.97] transition-all disabled:opacity-50 ${className}`}
     >
-      {reopeningKey === target.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : kind === 'edit' ? <PencilLine className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-      {kind === 'edit' ? (th ? 'ให้แก้ไขงาน' : 'Allow edit') : th ? 'ให้ส่งงาน' : 'Allow hand-in'}
+      {reopeningKey === target.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : kind === 'retry' ? <RotateCcw className="w-3.5 h-3.5" /> : kind === 'edit' ? <PencilLine className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
+      {kind === 'retry' ? (th ? 'ให้สอบใหม่' : 'Allow retake') : kind === 'edit' ? (th ? 'ให้แก้ไขงาน' : 'Allow edit') : th ? 'ให้ส่งงาน' : 'Allow hand-in'}
     </button>
   );
 
-  /** Handed-in homework: "Allow edit", or the running permission with its time left. */
+  /**
+   * Handed-in homework: "Allow edit", or the running permission with its time left.
+   * Handed-in quiz: "Allow retake" (a blank sheet; the earlier answers are deleted).
+   */
   const reopenControl = (sub: Submission, className = '') => {
-    if (assignment?.is_exam || !isHandedIn(sub) || !canReopen()) return null;
+    if (!assignment || !isHandedIn(sub) || !canReopen()) return null;
     const name = studentLabel(sub);
+    if (assignment.is_exam) {
+      // A score copied from a retake quiz is retaken there, not here.
+      if (sub.retake_submission_id) return null;
+      return reopenButton({ key: sub.id, sub, name }, 'retry', className);
+    }
     if (isReopenActive(sub, nowTick)) return reopenBadge(sub, name, 'edit');
     return reopenButton({ key: sub.id, sub, name }, 'edit', className);
   };

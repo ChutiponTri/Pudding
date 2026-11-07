@@ -149,6 +149,11 @@ export interface Assignment {
   retake_of?: string | null;
   /** Retake quiz: roster ids (classroom.students[].id) who may see and take it; missing = everyone. */
   retake_student_ids?: string[] | null;
+  /**
+   * Quiz only: minutes students get once it is published. due_date is set to
+   * publish time + this, also when a draft or scheduled quiz is published early.
+   */
+  quiz_duration_minutes?: number | null;
 }
 
 export type QuestionType = 'multiple_choice' | 'short_answer' | 'file_upload' | 'true_false';

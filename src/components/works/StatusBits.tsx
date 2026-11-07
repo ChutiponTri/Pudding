@@ -243,7 +243,7 @@ export function BulkStatusDialog({
         try {
           if (kind === 'publish') {
             const updated = await dataService.publishAssignmentNow(c.assignment.id);
-            changes.push({ id: c.assignment.id, change: { publish_at: updated?.publish_at || new Date().toISOString() } });
+            changes.push({ id: c.assignment.id, change: { publish_at: updated?.publish_at || new Date().toISOString(), ...(updated?.due_date ? { due_date: updated.due_date } : {}) } });
           } else {
             const extendedUntil = mode === 'extended' ? new Date(until).toISOString() : undefined;
             const updated = await dataService.updateAssignmentDeadlineOverride(c.assignment.id, { status_override: mode, extended_until: extendedUntil });

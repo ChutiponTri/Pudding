@@ -2699,18 +2699,19 @@ export default function ClassroomWorkspacePage() {
                   {tr('กำลังโหลดคะแนน...', 'Loading grades...')}
                 </div>
               ) : (
-                <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-                <table className="w-full min-w-160 text-xs">
+                // Columns keep their natural width; the table scrolls sideways (name stays pinned) instead of squeezing.
+                <div className="overflow-x-auto overscroll-x-contain [scrollbar-width:thin] -mx-4 sm:mx-0 px-4 sm:px-0 pb-1">
+                <table className="w-max min-w-full text-xs border-separate border-spacing-0">
                   <thead>
-                    <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 text-left">
-                      <th className="p-3 sticky left-0 z-10 bg-white dark:bg-slate-900">{tr('ชื่อ-นามสกุล', 'Full name')}</th>
-                      <th className="p-3">{tr('รหัสนักเรียน', 'Student ID')}</th>
+                    <tr className="text-slate-400 text-left [&>th]:border-b [&>th]:border-slate-200 dark:[&>th]:border-slate-800">
+                      <th className="p-3 sticky left-0 z-10 bg-white dark:bg-slate-900 whitespace-nowrap shadow-[1px_0_0_0] shadow-slate-200 dark:shadow-slate-800">{tr('ชื่อ-นามสกุล', 'Full name')}</th>
+                      <th className="p-3 whitespace-nowrap">{tr('รหัสนักเรียน', 'Student ID')}</th>
                       {gradeColumns.map((item) => (
-                        <th key={item.id} className="p-3 text-center">
-                          <span className="block truncate max-w-28 mx-auto font-bold text-slate-700 dark:text-slate-300">
+                        <th key={item.id} className="p-3 text-center min-w-24 align-bottom" title={item.title}>
+                          <span className="block truncate w-28 mx-auto font-bold text-slate-700 dark:text-slate-300">
                             {item.title}
                           </span>
-                          <span className="text-[10px] text-slate-400 font-normal">
+                          <span className="text-[10px] text-slate-400 font-normal whitespace-nowrap">
                             ({tr('เต็ม', 'out of')} {item.total_points || 20})
                           </span>
                         </th>
@@ -2719,11 +2720,11 @@ export default function ClassroomWorkspacePage() {
                   </thead>
                   <tbody>
                     {(classroom.students || []).map((student) => (
-                      <tr key={student.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850">
-                        <td className="p-3 font-bold text-slate-900 dark:text-white sticky left-0 bg-white dark:bg-slate-900 whitespace-nowrap">
+                      <tr key={student.id} className="group [&>td]:border-b [&>td]:border-slate-100 dark:[&>td]:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850">
+                        <td className="p-3 font-bold text-slate-900 dark:text-white sticky left-0 z-1 bg-white dark:bg-slate-900 group-hover:bg-slate-50 dark:group-hover:bg-slate-850 whitespace-nowrap shadow-[1px_0_0_0] shadow-slate-200 dark:shadow-slate-800">
                           {student.first_name} {student.last_name}
                         </td>
-                        <td className="p-3 text-slate-500 font-mono">{student.student_id || '-'}</td>
+                        <td className="p-3 text-slate-500 font-mono whitespace-nowrap">{student.student_id || '-'}</td>
                         {gradeColumns.map((item) => {
                           const sub = findStudentSubmission(submissions, item.id, student);
                           return (

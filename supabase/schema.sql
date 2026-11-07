@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   attachments JSONB,                          -- Up to 3 {kind, url, name}; sample_work_url mirrors the first
   retake_of TEXT REFERENCES public.assignments(id) ON DELETE SET NULL, -- Retake quiz: the original quiz
   retake_student_ids TEXT[],                  -- Retake quiz: roster ids allowed to take it (NULL = everyone)
+  quiz_duration_minutes INTEGER,              -- Quiz: minutes to do it after publishing (due_date = publish + this)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

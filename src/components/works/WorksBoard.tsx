@@ -258,7 +258,7 @@ export function WorksBoard() {
     for (const c of list) {
       try {
         const updated = await dataService.publishAssignmentNow(c.assignment.id);
-        patch(c.assignment.id, { publish_at: updated?.publish_at || new Date().toISOString() });
+        patch(c.assignment.id, { publish_at: updated?.publish_at || new Date().toISOString(), ...(updated?.due_date ? { due_date: updated.due_date } : {}) });
         done++;
       } catch (err) {
         firstError ||= errorText(err, tr('เผยแพร่ไม่สำเร็จ', 'Could not publish'));

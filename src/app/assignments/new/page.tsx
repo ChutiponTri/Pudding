@@ -174,6 +174,19 @@ function WorkContextBanner({
 /** The clock, read in event handlers (kept outside the component: not render work). */
 const clockNow = () => Date.now();
 
+const DEFAULT_QUIZ_MINUTES = 60;
+const MAX_QUIZ_MINUTES = 24 * 60;
+const QUIZ_MINUTE_PRESETS = [10, 15, 20, 30, 45, 60, 90, 120];
+
+/** A saved quiz's minutes: stored, or read from its deadline (older quizzes); a default when neither fits. */
+function quizMinutesOf(assignment: Assignment) {
+  const stored = Number(assignment.quiz_duration_minutes);
+  if (stored > 0) return Math.min(stored, MAX_QUIZ_MINUTES);
+  const startIso = assignment.publish_at && !isAssignmentDraft(assignment) ? assignment.publish_at : assignment.created_at;
+  const minutes = Math.round((Date.parse(assignment.due_date) - Date.parse(startIso || '')) / 60000);
+  return Number.isFinite(minutes) && minutes > 0 && minutes <= MAX_QUIZ_MINUTES ? minutes : DEFAULT_QUIZ_MINUTES;
+}
+
 function NewAssignmentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -183,7 +196,7 @@ function NewAssignmentContent() {
   // Opened from the grading hub: go back to the same view (only /grading paths are accepted).
   // Opened from the work list: back to it (only /works paths are accepted).
   const returnParam = searchParams.get('returnTo');
-  const returnTo =
+  const allowedReturn =
     (urlFrom === 'grading' && returnParam?.startsWith('/grading')) || (urlFrom === 'works' && returnParam?.startsWith('/works'))
       ? returnParam
       : null;
@@ -234,11 +247,25 @@ function NewAssignmentContent() {
   // Form fields
   const [isExam, setIsExam] = useState(() => !editId && ((!copyId && urlMode === 'quiz') || !!retakeOfParam));
   const [trackModeToggle, modeIndicator] = useSlidingIndicator(isExam);
+  // Back to the work list on the tab of what is being made (quiz → quizzes, homework → assignments).
+  const returnTo = (() => {
+    if (!allowedReturn?.startsWith('/works')) return allowedReturn;
+    const [path, query = ''] = allowedReturn.split('?');
+    const params = new URLSearchParams(query);
+    if (isExam) params.set('tab', 'quiz');
+    else params.delete('tab');
+    const next = params.toString();
+    return next ? `${path}?${next}` : path;
+  })();
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
   const [existingGroups, setExistingGroups] = useState<string[]>([]);
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState(() => daysFromNowAt(7, 23, 59));
+  // Quiz: minutes students get once it is published (the deadline follows the publish time).
+  const [quizMinutes, setQuizMinutes] = useState(String(DEFAULT_QUIZ_MINUTES));
+  // The edited quiz's minutes as loaded: unchanged, its saved deadline is kept as is.
+  const [loadedQuizMinutes, setLoadedQuizMinutes] = useState<string | null>(null);
   // Release: now, at a scheduled time (prepare work ahead for class time), or
   // kept as a draft that only the teacher publishes, by hand.
   const [releaseMode, setReleaseMode] = useState<'now' | 'schedule' | 'draft'>('draft');
@@ -257,6 +284,25 @@ function NewAssignmentContent() {
   }, []);
   // Already visible to students: the release time can no longer be changed.
   const editIsPublished = !!editingAssignment && (!editingAssignment.publish_at || new Date(editingAssignment.publish_at).getTime() <= clock);
+  const quizMinutesValue = Math.floor(Number(quizMinutes));
+  const quizMinutesValid = quizMinutesValue >= 1 && quizMinutesValue <= MAX_QUIZ_MINUTES;
+  // When the quiz clock starts: its publish time (null for a draft: when the teacher publishes it).
+  const quizStartMs = (now: number) =>
+    editIsPublished && editingAssignment
+      ? Date.parse(editingAssignment.publish_at || editingAssignment.created_at || '') || now
+      : schedulePublish
+      ? Date.parse(publishAt) || now
+      : saveAsDraft
+      ? null
+      : now;
+  /** The deadline saved with the work: a quiz's is its start + minutes (a draft's is a placeholder, reset when published). */
+  const effectiveDueDate = (now: number) => {
+    if (!isExam) return dueDate;
+    // Same minutes from the same start: the saved deadline stays (older quizzes may not be start + minutes exactly).
+    const sameStart = editIsPublished || (schedulePublish && Date.parse(publishAt) === Date.parse(editingAssignment?.publish_at || ''));
+    if (editingAssignment?.is_exam && loadedQuizMinutes === quizMinutes && sameStart) return editingAssignment.due_date;
+    return new Date((quizStartMs(now) ?? now) + quizMinutesValue * 60000).toISOString();
+  };
 
   // Homework attachments (links, Google Drive, images / PDFs). Picked files
   // stay in the browser (blob preview) until the assignment is saved.
@@ -475,6 +521,11 @@ function NewAssignmentContent() {
           // A copy can't start with a deadline that has already passed.
           const dueMs = assignment.due_date ? new Date(assignment.due_date).getTime() : NaN;
           setDueDate(assignment.due_date && (editId || dueMs > Date.now()) ? assignment.due_date : daysFromNowAt(7, 23, 59));
+          if (assignment.is_exam) {
+            const minutes = String(quizMinutesOf(assignment));
+            setQuizMinutes(minutes);
+            setLoadedQuizMinutes(editId ? minutes : null);
+          }
           const publishMs = assignment.publish_at ? new Date(assignment.publish_at).getTime() : NaN;
           if (isAssignmentDraft(assignment)) {
             setReleaseMode('draft');
@@ -744,10 +795,20 @@ function NewAssignmentContent() {
       document.getElementById('retake-students')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
+    if (isExam && !quizMinutesValid) {
+      alert(tr(`กรุณาระบุเวลาทำข้อสอบ 1–${MAX_QUIZ_MINUTES} นาที`, `Enter a quiz time of 1–${MAX_QUIZ_MINUTES} minutes`));
+      document.getElementById('quiz-minutes')?.focus();
+      return;
+    }
+    const dueDate = effectiveDueDate(clockNow());
     // An edit may keep a deadline that has already passed; only a new one must be ahead.
     const dueChanged = !editingAssignment || new Date(dueDate).getTime() !== new Date(editingAssignment.due_date).getTime();
     if (dueChanged && dueDate && new Date(dueDate).getTime() <= clockNow()) {
-      alert(language === 'th' ? 'กำหนดส่งต้องเป็นเวลาในอนาคต' : 'The due date must be in the future');
+      alert(
+        isExam
+          ? tr('เวลาทำข้อสอบนับจากเวลาที่เผยแพร่ไปแล้ว — เพิ่มจำนวนนาทีเพื่อให้ยังปิดรับในอนาคต', 'The quiz time counts from when it was published and would already be over — add more minutes')
+          : language === 'th' ? 'กำหนดส่งต้องเป็นเวลาในอนาคต' : 'The due date must be in the future'
+      );
       return;
     }
     if (schedulePublish && !editIsPublished) {
@@ -907,6 +968,7 @@ function NewAssignmentContent() {
           description,
           is_exam: isExam,
           due_date: dueDate || editingAssignment.due_date,
+          ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
           ...(!editIsPublished && schedulePublish ? { publish_at: new Date(publishAt).toISOString() } : {}),
           ...(!editIsPublished && saveAsDraft ? { publish_at: DRAFT_PUBLISH_AT } : {}),
           reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
@@ -928,6 +990,7 @@ function NewAssignmentContent() {
           if (description !== (before.description || '')) changed.description = description;
           if (dueDate && new Date(dueDate).getTime() !== new Date(before.due_date).getTime()) changed.due_date = dueDate;
           if (isExam !== !!before.is_exam) changed.is_exam = isExam;
+          if (isExam && quizMinutesValue !== Number(before.quiz_duration_minutes)) changed.quiz_duration_minutes = quizMinutesValue;
           const sameQuestion = (a: Pick<Question, 'type' | 'question_text'>, b: Pick<Question, 'type' | 'question_text'>) =>
             a.type === b.type && (a.question_text || '').trim() === (b.question_text || '').trim();
           for (const sib of siblings) {
@@ -972,6 +1035,7 @@ function NewAssignmentContent() {
             description,
             is_exam: isExam,
             due_date: dueDate || daysFromNowAt(7, 23, 59),
+            ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
             publish_at: saveAsDraft ? DRAFT_PUBLISH_AT : schedulePublish ? new Date(publishAt).toISOString() : undefined,
             reminder_cron: reminderCron,
             reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
@@ -1115,26 +1179,23 @@ function NewAssignmentContent() {
     return <PageSkeleton variant="form" label={language === 'th' ? 'กำลังโหลดข้อมูลงาน…' : 'Loading the work…'} />;
   }
 
+  // Back to where the form was opened from (the work list: on the tab of what is being made).
+  const goBack = () => {
+    if (returnTo) router.push(returnTo);
+    else if (isFromDashboard) router.push('/dashboard');
+    else {
+      const targetId = urlClassroomId || selectedClassroomIds[0];
+      router.push(targetId ? `/classrooms/${targetId}?tab=classwork` : '/dashboard');
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-6 pb-24">
       {/* Dynamic Back Button based on entry source */}
       <div>
         <button
           type="button"
-          onClick={() => {
-            if (returnTo) {
-              router.push(returnTo);
-            } else if (isFromDashboard) {
-              router.push('/dashboard');
-            } else {
-              const targetId = urlClassroomId || selectedClassroomIds[0];
-              if (targetId) {
-                router.push(`/classrooms/${targetId}?tab=classwork`);
-              } else {
-                router.push('/dashboard');
-              }
-            }
-          }}
+          onClick={goBack}
           className="inline-flex items-center gap-1.5 sm:gap-2 max-w-full px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:border-amber-300 hover:text-amber-700 dark:hover:text-amber-400 transition-all shadow-xs cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -1675,7 +1736,63 @@ function NewAssignmentContent() {
               )}
             </div>
 
-            {/* Due Date */}
+            {/* Due Date (homework) / minutes to do it after publishing (quiz) */}
+            {isExam ? (
+            <div className="space-y-2">
+              <label htmlFor="quiz-minutes" className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-amber-500" />
+                <span><MobileText short={tr('เวลาทำข้อสอบ', 'Quiz time')} full={tr('เวลาทำข้อสอบ (นับจากเผยแพร่)', 'Time to do the quiz (from publishing)')} /></span>
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {QUIZ_MINUTE_PRESETS.map((minutes) => {
+                  const active = quizMinutesValue === minutes;
+                  return (
+                    <button
+                      key={minutes}
+                      type="button"
+                      onClick={() => setQuizMinutes(String(minutes))}
+                      aria-pressed={active}
+                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-amber-500 border-amber-500 text-slate-950'
+                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-amber-400'
+                      }`}
+                    >
+                      {minutes >= 60 && minutes % 60 === 0 ? tr(`${minutes / 60} ชม.`, `${minutes / 60} h`) : tr(`${minutes} นาที`, `${minutes} min`)}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="relative max-w-48">
+                <input
+                  id="quiz-minutes"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={MAX_QUIZ_MINUTES}
+                  step={1}
+                  value={quizMinutes}
+                  onChange={(e) => setQuizMinutes(e.target.value)}
+                  aria-invalid={!quizMinutesValid}
+                  className={`w-full pl-3.5 pr-14 py-2.5 rounded-xl border text-sm font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 ${
+                    quizMinutesValid ? 'border-slate-200 dark:border-slate-700' : 'border-rose-400 dark:border-rose-600'
+                  }`}
+                />
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">{tr('นาที', 'min')}</span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {(() => {
+                  if (!quizMinutesValid) return tr(`ระบุ 1–${MAX_QUIZ_MINUTES} นาที`, `Enter 1–${MAX_QUIZ_MINUTES} minutes`);
+                  const start = quizStartMs(clock);
+                  if (start === null) return tr('เริ่มนับเวลาเมื่อกด "เผยแพร่" ฉบับร่างนี้', 'The clock starts when you publish this draft');
+                  return tr(
+                    `ปิดรับ ${formatDateTime(effectiveDueDate(clock), 'th')} • เปิดค้างไว้ส่งได้อีก ${QUIZ_LATE_GRACE_MINUTES} นาที (ส่งช้า)`,
+                    `Closes ${formatDateTime(effectiveDueDate(clock), 'en')} • open sheets get ${QUIZ_LATE_GRACE_MINUTES} more min (late)`
+                  );
+                })()}
+              </p>
+            </div>
+            ) : (
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5 text-amber-500" />
@@ -1684,19 +1801,14 @@ function NewAssignmentContent() {
               <DateTimeField value={dueDate} onChange={setDueDate} presets="deadline" />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 <MobileText
-                  short={isExam
-                    ? (language === 'th' ? 'ปิดรับข้อสอบเมื่อถึงเวลานี้' : 'The quiz closes at this time.')
-                    : (language === 'th' ? `ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง` : `Late work accepted for ${LATE_WINDOW_HOURS}h.`)}
-                  full={isExam
-                    ? (language === 'th'
-                      ? `ปิดรับเมื่อถึงเวลา • เปิดค้างไว้ส่งได้อีก ${QUIZ_LATE_GRACE_MINUTES} นาที (ส่งช้า, นักเรียนไม่เห็น)`
-                      : `Closes at this time • open sheets get ${QUIZ_LATE_GRACE_MINUTES} more min (late, hidden from students)`)
-                    : (language === 'th'
-                      ? `หลังเวลานี้ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดเอง`
-                      : `Late work for ${LATE_WINDOW_HOURS}h after, then closes`)}
+                  short={language === 'th' ? `ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง` : `Late work accepted for ${LATE_WINDOW_HOURS}h.`}
+                  full={language === 'th'
+                    ? `หลังเวลานี้ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดเอง`
+                    : `Late work for ${LATE_WINDOW_HOURS}h after, then closes`}
                 />
               </p>
             </div>
+            )}
 
             {/* LINE Reminder Setting (homework only — quizzes close at the deadline) */}
             {!isExam && (
@@ -2216,7 +2328,7 @@ function NewAssignmentContent() {
         <div className="sticky bottom-[max(env(safe-area-inset-bottom),0.75rem)] z-20 w-fit ml-auto sm:w-auto sm:ml-0 p-2 sm:p-3 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-end gap-2 sm:gap-3">
           <button
             type="button"
-            onClick={() => router.back()}
+            onClick={() => (returnTo ? goBack() : router.back())}
             className="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             {t('common.cancel')}

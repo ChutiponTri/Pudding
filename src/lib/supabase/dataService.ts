@@ -926,6 +926,11 @@ export const dataService = {
     return call<Submission>('allowStudentHandIn', assignmentId, rosterId, until);
   },
 
+  /** Quiz: wipes one student's sheet and lets them take it again (blank) until `until`. */
+  async resetQuizSubmission(submissionId: string, until: string): Promise<Submission> {
+    return call<Submission>('resetQuizSubmission', submissionId, until);
+  },
+
   /**
    * Records that roster students handed in nothing (an official 0 on every
    * question). The server allows it only after the deadline or once closed.

@@ -132,8 +132,10 @@ export async function POST(request: NextRequest) {
   if (publishNow) {
     if (isAssignmentPublished(previous)) return NextResponse.json({ assignment: previous });
     const wasDraft = isAssignmentDraft(previous);
+    // A timed quiz runs for its minutes from the moment it is published, so its deadline moves with it.
+    const durationMs = previous.is_exam && Number(previous.quiz_duration_minutes) > 0 ? Number(previous.quiz_duration_minutes) * 60_000 : 0;
     // A draft may have sat past its deadline; publishing it would open already-closed work.
-    if (wasDraft && new Date(previous.due_date).getTime() <= Date.now()) {
+    if (wasDraft && !durationMs && new Date(previous.due_date).getTime() <= Date.now()) {
       return NextResponse.json({ error: 'กำหนดส่งของฉบับร่างนี้ผ่านไปแล้ว กรุณาแก้ไขกำหนดส่งก่อนเผยแพร่' }, { status: 400 });
     }
     // Every choice / true-false question needs its correct answer before students see the work.
@@ -149,7 +151,7 @@ export async function POST(request: NextRequest) {
     const nowIso = new Date().toISOString();
     const { data: published, error: publishError } = await supabase
       .from('assignments')
-      .update({ publish_at: nowIso })
+      .update({ publish_at: nowIso, ...(durationMs ? { due_date: new Date(Date.parse(nowIso) + durationMs).toISOString() } : {}) })
       .eq('id', assignmentId)
       .select('*')
       .maybeSingle<Assignment>();
@@ -188,7 +190,12 @@ export async function POST(request: NextRequest) {
         .map((post) =>
           supabase
             .from('classroom_posts')
-            .update({ metadata: { ...post.metadata, publishAt: nowIso }, created_at: nowIso })
+            .update({
+              metadata: { ...post.metadata, publishAt: nowIso, ...(durationMs ? { dueDate: published.due_date } : {}) },
+              created_at: nowIso,
+              // The post spells out the deadline, which moved with the early start.
+              ...(durationMs ? { body: assignmentPostBody(published) } : {}),
+            })
             .eq('id', post.id)
         )
     );

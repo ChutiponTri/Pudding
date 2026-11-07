@@ -14,6 +14,7 @@ import { ASSIGNMENT_STATUS_CLASSES, getAssignmentStatus, getAssignmentWindow } f
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { formatDateTime } from '@/lib/utils/datetime';
 import type { Assignment, Classroom } from '@/types/database';
+import { popupBackdropClass, popupPanelClass, usePopupTransition } from '@/components/ModalSheet';
 
 type KindFilter = 'all' | 'homework' | 'quiz';
 
@@ -81,10 +82,13 @@ export function ReuseWorkPicker({
     };
   }, [source, teacherId]);
 
+  // Closing plays the exit animation first.
+  const { shown, close } = usePopupTransition(onClose);
+
   // Escape closes; the page behind does not scroll.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') close();
     };
     window.addEventListener('keydown', onKey);
     const overflow = document.body.style.overflow;
@@ -93,7 +97,7 @@ export function ReuseWorkPicker({
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = overflow;
     };
-  }, [onClose]);
+  }, [close]);
 
   const termOptions = useMemo(() => semesterOptions([], classrooms || [], currentPeriod.yearCE), [classrooms, currentPeriod.yearCE]);
   const visibleClassrooms = useMemo(() => {
@@ -120,16 +124,17 @@ export function ReuseWorkPicker({
   // On <body>: a menu inside a sticky / blurred header would otherwise clip it to that header.
   return createPortal(
     <div
-      className="fixed inset-0 z-95 flex items-stretch sm:items-center justify-center bg-slate-950/50 backdrop-blur-sm sm:p-6 animate-in fade-in duration-150"
+      className="fixed inset-0 z-95 flex items-stretch sm:items-center justify-center sm:p-6"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) close();
       }}
     >
+      <div className={`absolute inset-0 bg-slate-950/50 backdrop-blur-sm pointer-events-none ${popupBackdropClass(shown)}`} aria-hidden />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="reuse-work-title"
-        className="w-full sm:max-w-2xl h-dvh sm:h-[min(88dvh,760px)] flex flex-col bg-white dark:bg-slate-900 sm:rounded-3xl sm:border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden"
+        className={`relative w-full sm:max-w-2xl h-dvh sm:h-[min(88dvh,760px)] flex flex-col bg-white dark:bg-slate-900 sm:rounded-3xl sm:border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden ${popupPanelClass(shown)}`}
       >
         {/* Header with the two steps */}
         <div className="shrink-0 px-4 sm:px-6 pt-[calc(env(safe-area-inset-top)+1rem)] sm:pt-5 pb-4 border-b border-slate-100 dark:border-slate-800 space-y-3">
@@ -164,7 +169,7 @@ export function ReuseWorkPicker({
             </div>
             <button
               type="button"
-              onClick={onClose}
+              onClick={close}
               aria-label={tr('ปิด', 'Close')}
               className="w-9 h-9 shrink-0 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >

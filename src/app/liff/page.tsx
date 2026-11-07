@@ -3695,7 +3695,6 @@ export default function LiffStudentPage() {
                       <input
                         type="text"
                         inputMode="numeric"
-                        autoFocus
                         value={proxyNumberInput}
                         onChange={(e) => {
                           setProxyNumberInput(e.target.value);
@@ -4224,13 +4223,20 @@ export default function LiffStudentPage() {
               {/* Submit bar */}
               <div className={`fixed bottom-0 inset-x-0 z-40 mx-auto w-full ${FRAME} px-4 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] bg-linear-to-t from-slate-50 via-slate-50/95 to-slate-50/0 dark:from-slate-950 dark:via-slate-950/95 dark:to-slate-950/0 flex flex-col`}>
                 {/* Quiz: live countdown, with toasts (never blocking) at 5 min, 1 min and the bell. */}
-                {activeAssignment.is_exam && getAssignmentWindow(activeAssignment).deadline !== null && (
-                  <QuizTimer
-                    key={activeAssignment.id}
-                    deadline={getAssignmentWindow(activeAssignment).deadline!}
-                    onPhase={(phase) => setQuizTimeUp(phase === "up")}
-                  />
-                )}
+                {activeAssignment.is_exam && (() => {
+                  // A personal permission from the teacher (e.g. "ให้สอบใหม่") runs on its own clock.
+                  const own = editingSubmission || (activeProxy ? undefined : submissions[activeAssignment.id]);
+                  const classDeadline = getAssignmentWindow(activeAssignment).deadline;
+                  const personal = own && isReopenActive(own) && own.reopen_until ? Date.parse(own.reopen_until) : NaN;
+                  const deadline = Number.isFinite(personal) ? Math.max(personal, classDeadline ?? 0) : classDeadline;
+                  return deadline !== null ? (
+                    <QuizTimer
+                      key={`${activeAssignment.id}|${deadline}`}
+                      deadline={deadline}
+                      onPhase={(phase) => setQuizTimeUp(phase === "up")}
+                    />
+                  ) : null;
+                })()}
                 <button
                   type="button"
                   disabled={isSubmitting || uploadingQuestionId !== null}

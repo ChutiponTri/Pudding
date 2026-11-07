@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Clock, Loader2, Minus, PencilLine, Plus, Send, X } from 'lucide-react';
+import { AlertTriangle, Clock, Loader2, Minus, PencilLine, Plus, RotateCcw, Send, X } from 'lucide-react';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { formatDateTime } from '@/lib/utils/datetime';
@@ -58,8 +58,8 @@ export function ReopenTimeDialog({
   onClose,
 }: {
   studentName: string;
-  /** edit: handed-in homework; handin: nothing handed in yet (or recorded as missing). */
-  kind: 'edit' | 'handin';
+  /** edit: handed-in homework; handin: nothing handed in yet (or recorded as missing); retry: a quiz taken again, blank. */
+  kind: 'edit' | 'handin' | 'retry';
   deadline: number | null;
   defaultMinutes: number;
   busy?: boolean;
@@ -85,7 +85,9 @@ export function ReopenTimeDialog({
   };
   const left = deadline !== null ? deadline - now : null;
 
-  const title = kind === 'edit'
+  const title = kind === 'retry'
+    ? th ? `ให้ ${studentName} สอบใหม่` : `Let ${studentName} retake`
+    : kind === 'edit'
     ? th ? `ให้ ${studentName} แก้ไขงาน` : `Let ${studentName} edit`
     : th ? `ให้ ${studentName} ส่งงาน` : `Let ${studentName} hand in`;
 
@@ -94,7 +96,7 @@ export function ReopenTimeDialog({
       <ModalSheetHeader>
         <div className="flex items-center gap-3 min-w-0">
           <span className="w-10 h-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-orange-500/30">
-            {kind === 'edit' ? <PencilLine className="w-5 h-5" /> : <Send className="w-5 h-5" />}
+            {kind === 'retry' ? <RotateCcw className="w-5 h-5" /> : kind === 'edit' ? <PencilLine className="w-5 h-5" /> : <Send className="w-5 h-5" />}
           </span>
           <div className="min-w-0">
             <h2 id="reopen-time-title" className="text-sm sm:text-base font-black text-slate-900 dark:text-white truncate">{title}</h2>
@@ -122,6 +124,16 @@ export function ReopenTimeDialog({
         }}
       >
         <ModalSheetBody className="space-y-4">
+          {kind === 'retry' && (
+            <div className="flex items-start gap-2 p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-xs text-rose-700 dark:text-rose-300 font-semibold">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                {th
+                  ? 'คำตอบ คะแนน และบันทึกการออกจากหน้าจอของครั้งก่อนจะถูกลบทั้งหมด นักเรียนเริ่มทำข้อสอบใหม่จากกระดาษเปล่า'
+                  : 'The earlier answers, score and screen-exit log are deleted. The student starts the quiz again from a blank sheet.'}
+              </span>
+            </div>
+          )}
           {deadline !== null && (
             <div className="flex items-start gap-2 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-600 dark:text-slate-300">
               <Clock className="w-4 h-4 shrink-0 mt-0.5 text-slate-400" />
@@ -141,7 +153,9 @@ export function ReopenTimeDialog({
 
           <div className="space-y-2">
             <label htmlFor="reopen-minutes" className="text-xs font-bold text-slate-700 dark:text-slate-200">
-              {th ? 'ให้เวลานักเรียนคนนี้ (นาที)' : 'Time for this student (minutes)'}
+              {kind === 'retry'
+                ? th ? 'เวลาให้เริ่มและส่งข้อสอบใหม่ (นาที)' : 'Time to take and hand in the quiz again (minutes)'
+                : th ? 'ให้เวลานักเรียนคนนี้ (นาที)' : 'Time for this student (minutes)'}
             </label>
             <div className="flex items-stretch gap-2">
               <button
@@ -206,7 +220,11 @@ export function ReopenTimeDialog({
           )}
 
           <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-            {kind === 'edit'
+            {kind === 'retry'
+              ? th
+                ? 'ระบบนับการออกจากหน้าจอใหม่ตั้งแต่ต้น • ส่งแล้วตรวจอัตโนมัติเหมือนเดิม'
+                : 'Screen exits are counted from zero again • auto-graded on hand-in as usual'
+              : kind === 'edit'
               ? th
                 ? 'ส่งใหม่แล้วคะแนนเดิมถูกล้างเพื่อตรวจใหม่'
                 : 'Handing in again clears the score for regrading'
@@ -230,8 +248,10 @@ export function ReopenTimeDialog({
             disabled={!valid || busy}
             className="h-11 px-5 rounded-2xl text-sm font-black bg-orange-500 hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 inline-flex items-center gap-2 cursor-pointer active:scale-[0.98] transition-transform disabled:opacity-50"
           >
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : kind === 'edit' ? <PencilLine className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-            {kind === 'edit'
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : kind === 'retry' ? <RotateCcw className="w-4 h-4" /> : kind === 'edit' ? <PencilLine className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+            {kind === 'retry'
+              ? th ? 'ล้างคำตอบและให้สอบใหม่' : 'Clear and allow retake'
+              : kind === 'edit'
               ? th ? 'เปิดให้แก้ไข' : 'Allow edit'
               : th ? 'เปิดให้ส่ง' : 'Allow hand-in'}
           </button>
