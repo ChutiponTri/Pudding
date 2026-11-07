@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { getGroupSummary, pushLineGroupText, replyLineButtons, replyLineText, replyLineTextWithLinkButton, replyLineTextWithQuickReplies } from '@/lib/line/messaging';
+import { getGroupSummary, pushLineGroupText, replyLineButtons, replyLineText, replyLineTextWithLinkButton, replyLineTextWithQuickReplies, type LineAction } from '@/lib/line/messaging';
 import {
   connectGuideImage,
   ensureBotGroup,
@@ -9,12 +9,14 @@ import {
   findTeacherByLineUid,
   forgetBotGroup,
   liffConnectUrl,
+  listLinkableClassrooms,
   signalLineStatus,
+  webUrl,
   type LinkClassroom,
   type ServiceClient,
 } from '@/lib/line/groupLink';
 import { buildLiffUrl, withLiffLink } from '@/lib/line/liffLink';
-import { answerTeacherQuestion, teacherFollowUpWelcome, type BotReply } from '@/lib/line/teacherFaq';
+import { answerTeacherQuestion, faqMenuButtons, type BotReply } from '@/lib/line/teacherFaq';
 import { parseStudentCommand, studentHelpText, type StudentCommand } from '@/lib/line/studentCommands';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
@@ -213,32 +215,104 @@ async function handleConnectCommand(supabase: ServiceClient, groupId: string, li
   );
 }
 
-/** "เชื่อมกลุ่ม" typed (or sent by a rich-menu text button) in the teacher's 1:1 chat. */
-const CONNECT_KEYWORDS = new Set(['เชื่อมกลุ่ม', 'เชื่อมไลน์กลุ่ม', 'เชื่อมline', 'เชื่อมlinegroup', 'เชื่อมต่อกลุ่ม', 'เชื่อมบอท', 'เชื่อมบอทline', 'เชื่อมห้องเรียน', 'connect', 'connectgroup']);
-const isConnectKeyword = (text: string) => CONNECT_KEYWORDS.has(text.toLowerCase().replace(/[\s#🔗]/gu, ''));
+/** "เชื่อมกลุ่ม" typed (or a rich-menu text button, or the FAQ's "เชื่อมกลุ่ม LINE") in the 1:1 chat. */
+const CONNECT_KEYWORDS = new Set(['เชื่อมกลุ่ม', 'เชื่อมกลุ่มline', 'เชื่อมไลน์กลุ่ม', 'เชื่อมline', 'เชื่อมlinegroup', 'เชื่อมต่อกลุ่ม', 'เชื่อมบอท', 'เชื่อมบอทline', 'เชื่อมห้องเรียน', 'connect', 'connectgroup']);
+const isConnectKeyword = (text: string) =>
+  CONNECT_KEYWORDS.has(text.toLowerCase().replace(/[\s#🔗]/gu, '')) || parseStudentCommand(text) === 'connect';
 
-async function handleConnectKeyword(supabase: ServiceClient, lineUserId: string | undefined, replyToken: string | undefined) {
+const MAX_LISTED_CLASSROOMS = 6;
+
+/**
+ * The 1:1 chat's welcome (after "add friend") and its answer to "เชื่อมกลุ่ม" /
+ * "พุดดิ้ง เชื่อม". Unlike the group card, which everyone in a class sees, this
+ * one talks to the person: an approved teacher gets their own classrooms
+ * (linked n/m, which ones are still missing) and buttons to act; a teacher
+ * waiting for approval, or someone who is not a teacher yet (or a student),
+ * gets what to do next. Always: the guide picture, the message, a button card
+ * with the FAQ menu as quick replies. All replies, so no message quota.
+ */
+async function replyPrivateConnect(supabase: ServiceClient, lineUserId: string | undefined, replyToken: string | undefined, mode: 'follow' | 'connect') {
   if (!replyToken) return;
+  const faq: LineAction[] = faqMenuButtons().map((label) => ({ type: 'message', label, text: label }));
   const teacher = await findTeacherByLineUid(supabase, lineUserId);
+
+  let text: string;
+  let card: { text: string; actions: LineAction[] };
   if (!teacher) {
-    await replySafely(replyToken, 'บัญชี LINE นี้ยังไม่ได้เชื่อมกับบัญชีครูใน Pudding กรุณาเข้าสู่ระบบเว็บ Pudding ด้วย LINE (บัญชีเดียวกับแชทนี้) ก่อนนะคะ');
-    return;
+    text = [
+      mode === 'follow' ? 'สวัสดีค่ะ 👋 ยินดีต้อนรับสู่ Pudding 🍮' : 'บัญชี LINE นี้ยังไม่ได้เป็นบัญชีครูใน Pudding',
+      '',
+      '👩‍🏫 คุณครู: เข้าสู่ระบบเว็บ Pudding ด้วย LINE บัญชีนี้ก่อน (ปุ่มด้านล่าง) แล้วบอทจะจำคุณครูได้ทันที จากนั้นทำตามขั้นตอนฝั่ง “สำหรับคุณครู” ในภาพ',
+      '',
+      '👩‍🎓 นักเรียน: ไม่ต้องทำอะไรในแชทนี้ แตะ “เข้าร่วมห้องเรียน” ในกลุ่ม LINE ของห้องได้เลย (ฝั่ง “สำหรับนักเรียน” ในภาพ)',
+    ].join('\n');
+    card = {
+      text: 'คุณครูเริ่มต้นที่นี่ 👇',
+      actions: [{ type: 'uri', label: '🔑 เข้าสู่ระบบ Pudding', uri: webUrl('/sign-in?openExternalBrowser=1') }],
+    };
+  } else if (teacher.access !== 'ok') {
+    text = [
+      `${mode === 'follow' ? 'สวัสดีค่ะ 👋 ' : ''}คุณครู${teacher.first_name || ''}`,
+      '',
+      teacherAccessMessage(teacher.access),
+      '',
+      'เมื่อบัญชีพร้อมใช้งาน คุณครูเชื่อมกลุ่ม LINE ได้ตามขั้นตอนในภาพ',
+    ].join('\n');
+    card = {
+      text: 'ตรวจสอบบัญชีครู 👇',
+      actions: [{ type: 'uri', label: '👤 ดูสถานะบัญชี', uri: webUrl('/pending-approval?openExternalBrowser=1') }],
+    };
+  } else {
+    const classrooms = await listLinkableClassrooms(supabase, teacher.id);
+    const unlinked = classrooms.filter((item) => !item.line_group_id);
+    const linkedCount = classrooms.length - unlinked.length;
+    const name = teacher.first_name ? `คุณครู${teacher.first_name}` : 'คุณครู';
+    const lines = [mode === 'follow' ? `✅ สวัสดีค่ะ ${name} บัญชี LINE นี้เชื่อมกับ Pudding แล้ว` : `🔗 เชื่อมกลุ่ม LINE · ${name}`, ''];
+    if (!classrooms.length) {
+      lines.push('ยังไม่มีห้องเรียน เริ่มจากสร้างรายวิชาและห้องเรียนบนเว็บก่อนนะคะ (ปุ่ม “สร้างห้องเรียน” ด้านล่าง)');
+    } else {
+      lines.push(`📊 เชื่อมกลุ่มแล้ว ${linkedCount}/${classrooms.length} ห้อง`);
+      if (unlinked.length) {
+        lines.push('', 'ห้องที่ยังไม่ได้เชื่อม:');
+        lines.push(...unlinked.slice(0, MAX_LISTED_CLASSROOMS).map((item) => `• ${classroomTitle(item)}`));
+        if (unlinked.length > MAX_LISTED_CLASSROOMS) lines.push(`• และอีก ${unlinked.length - MAX_LISTED_CLASSROOMS} ห้อง`);
+      } else {
+        lines.push('เชื่อมครบทุกห้องแล้ว 🎉');
+      }
+    }
+    if (!classrooms.length || unlinked.length) {
+      lines.push(
+        '',
+        'วิธีเชื่อม (ดูภาพด้านบน)',
+        '1️⃣ เปิดกลุ่ม LINE ของห้อง → ☰ → เชิญ → Pudding Bot',
+        '2️⃣ แตะ “เชื่อมห้องเรียน” ในข้อความของบอทในกลุ่ม',
+        '3️⃣ เลือกกลุ่มและห้องเรียน แล้วกด “เชื่อมกลุ่มกับห้องเรียนนี้”',
+        '',
+        '💡 บอทอยู่ในกลุ่มแล้ว? แตะ “เปิดหน้าเชื่อมกลุ่ม” ด้านล่างได้เลย'
+      );
+    } else {
+      lines.push('', 'ย้ายกลุ่มไปห้องใหม่ หรือยกเลิกการเชื่อม ทำได้ที่ “เปิดหน้าเชื่อมกลุ่ม” ด้านล่าง');
+    }
+    text = lines.join('\n');
+    const connectPage: LineAction = { type: 'uri', label: '🔗 เปิดหน้าเชื่อมกลุ่ม', uri: liffConnectUrl() };
+    const createClassroom: LineAction = { type: 'uri', label: '➕ สร้างห้องเรียน', uri: webUrl('/classrooms?createClassroom=1&openExternalBrowser=1') };
+    const website: LineAction = { type: 'uri', label: '💻 เปิดเว็บ Pudding', uri: webUrl('/dashboard?openExternalBrowser=1') };
+    card = {
+      text: classrooms.length ? 'จัดการการเชื่อมกลุ่ม 👇' : 'เริ่มจากสร้างห้องเรียน 👇',
+      actions: classrooms.length ? [connectPage, createClassroom, website] : [createClassroom, connectPage, website],
+    };
   }
-  if (teacher.access !== 'ok') {
-    await replySafely(replyToken, teacherAccessMessage(teacher.access));
-    return;
-  }
+
   try {
-    await replyLineButtons(replyToken, {
-      image: connectGuideImage(),
-      intro: 'เชื่อมกลุ่ม LINE กับห้องเรียน\n1️⃣ เชิญ Pudding Bot เข้ากลุ่ม LINE ของห้องเรียน\n2️⃣ แตะ “เชื่อมห้องเรียน” ในข้อความของบอท หรือเปิดหน้าเชื่อมกลุ่มด้านล่าง แล้วเลือกกลุ่มและห้องเรียน',
-      text: 'แตะเพื่อเปิดหน้าเชื่อมกลุ่ม 👇',
-      actions: [{ type: 'uri', label: '🔗 เปิดหน้าเชื่อมกลุ่ม', uri: liffConnectUrl() }],
-    });
+    await replyLineButtons(replyToken, { image: connectGuideImage(), intro: text, text: card.text, actions: card.actions, quickReplies: faq });
   } catch (error) {
-    console.error('LINE connect keyword reply failed:', error);
+    console.error('LINE private connect reply failed:', error);
+    // A reply token works once; it is still unused when LINE rejected the message.
+    const links = card.actions.map((action) => (action.type === 'uri' ? `${action.label}: ${action.uri}` : '')).filter(Boolean);
+    await replySafely(replyToken, [text, '', ...links].join('\n'));
   }
 }
+
 
 /** Teacher or TA of the classroom; students, researchers and strangers are not. */
 async function isClassroomStaff(supabase: ServiceClient, classroom: LinkClassroom, lineUserId: string | undefined) {
@@ -428,15 +502,13 @@ export async function POST(request: NextRequest) {
     }
     // Teacher adds / blocks the bot in their 1:1 chat.
     if (!groupId && lineUserId && (event.type === 'follow' || event.type === 'unfollow')) {
-      const { data: teacher } = await supabase
+      await supabase
         .from('users')
         .update({ line_bot_friend: event.type === 'follow' })
         .eq('teacher_line_uid', lineUserId)
-        .eq('role', 'teacher')
-        .select('first_name')
-        .maybeSingle();
-      // Follows the LINE OA greeting (its 4 setup steps), picking up where this teacher is.
-      if (event.type === 'follow') await replyBotSafely(event.replyToken, teacherFollowUpWelcome(teacher));
+        .eq('role', 'teacher');
+      // Follows the LINE OA greeting: the guide picture and where this teacher is.
+      if (event.type === 'follow') await replyPrivateConnect(supabase, lineUserId, event.replyToken, 'follow');
       continue;
     }
     if (groupId && event.type === 'memberJoined') {
@@ -465,7 +537,7 @@ export async function POST(request: NextRequest) {
 
     // 1:1 chat: "เชื่อมกลุ่ม" (typed, or a rich-menu text button) opens the connect page.
     if (event.type === 'message' && isConnectKeyword(normalizedText)) {
-      await handleConnectKeyword(supabase, lineUserId, event.replyToken);
+      await replyPrivateConnect(supabase, lineUserId, event.replyToken, 'connect');
       continue;
     }
 

@@ -108,7 +108,7 @@ The teacher picks the group and the classroom directly; nothing waits for a mess
 - Students can tap the same button. They get a **หน้านี้สำหรับคุณครูเท่านั้น** screen with a link back to the student app, and no classroom data.
 - Bot already in the group, or the card scrolled away? A teacher types **พุดดิ้ง เชื่อม** in the group to get the button again (students get no reply).
 
-**From the bot's 1:1 chat:** the rich-menu **เชื่อมกลุ่ม** link opens the same page without a group preselected. It lists the groups the bot is in with you.
+**From the bot's 1:1 chat:** the rich-menu **เชื่อมกลุ่ม** link opens the same page without a group preselected. It lists the groups the bot is in with you. Typing **เชื่อมกลุ่ม** or **พุดดิ้ง เชื่อม** in the 1:1 chat (and the welcome after adding the bot as a friend) sends the guide picture, the teacher's own status (groups linked n/m and the classrooms still missing one) and buttons for the connect page, a new classroom and the website. Non-teachers get sign-in steps for teachers and a "nothing to do here" note for students; teachers waiting for approval get their account status.
 
 **From the web:** the dialog (dashboard class card, or classroom page → **เชื่อมบอท LINE**) lists the groups the bot is in with you. Click one to link it. Invited the bot just now? Press **รีเฟรช**.
 

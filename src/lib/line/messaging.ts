@@ -216,12 +216,16 @@ export async function replyLineConfirm(
 
 export type LineAction =
   | { type: 'postback'; label: string; data: string; displayText?: string }
-  | { type: 'uri'; label: string; uri: string };
+  | { type: 'uri'; label: string; uri: string }
+  /** Tapping sends `text` as the user's own message. */
+  | { type: 'message'; label: string; text: string };
 
 function lineAction(action: LineAction) {
-  return action.type === 'postback'
-    ? { type: 'postback', label: fit(action.label, 20), data: action.data, displayText: fit(action.displayText || action.label, 300) }
-    : { type: 'uri', label: fit(action.label, 20), uri: action.uri };
+  if (action.type === 'postback') {
+    return { type: 'postback', label: fit(action.label, 20), data: action.data, displayText: fit(action.displayText || action.label, 300) };
+  }
+  if (action.type === 'message') return { type: 'message', label: fit(action.label, 20), text: fit(action.text, 300) };
+  return { type: 'uri', label: fit(action.label, 20), uri: action.uri };
 }
 
 /**

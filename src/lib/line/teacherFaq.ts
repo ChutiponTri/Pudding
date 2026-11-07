@@ -1,11 +1,11 @@
 /**
- * What Pudding Bot says in its 1:1 chat with a teacher: the welcome that
- * follows the LINE OA greeting, and answers to everyday "how do I…" questions.
+ * What Pudding Bot says in its 1:1 chat with a teacher: answers to everyday
+ * "how do I…" questions.
  * Never used in group chats. Written for teachers, not engineers: names the
  * buttons they see on the website, never paths or technical terms.
  *
- * The LINE OA greeting (set in LINE Official Account Manager) already lists
- * the 4 setup steps; the follow-up below continues from it, so keep both in step.
+ * The welcome after "add friend" and the "เชื่อมกลุ่ม" answer are built in
+ * the webhook (replyPrivateConnect), since they show the teacher's own classrooms.
  */
 
 export const PUDDING_WEB_URL = 'https://www.pudding-p.com';
@@ -292,6 +292,9 @@ export type BotReply = { text: string; quickReplies: string[] };
 
 const categoryButtons = () => CATEGORIES.map((c) => c.label);
 
+/** The FAQ's category buttons (quick replies under the bot's 1:1 messages). */
+export const faqMenuButtons = categoryButtons;
+
 function mainMenu(text = 'อยากรู้เรื่องไหนคะ? เลือกหมวดด้านล่าง หรือพิมพ์คำถามสั้น ๆ ได้เลย เช่น "เชื่อมกลุ่ม" "เช็กชื่อ"'): BotReply {
   return { text, quickReplies: categoryButtons() };
 }
@@ -308,33 +311,6 @@ function answer(entry: FaqEntry): BotReply {
   // Next steps: the other questions of the same group, then back to the menu.
   const related = FAQ.filter((e) => e.category === entry.category && e !== entry).map((e) => e.label);
   return { text: entry.answer, quickReplies: [...related, MAIN_MENU_LABEL] };
-}
-
-/** Second welcome, sent by the bot right after the LINE OA greeting (which lists the 4 steps). */
-export function teacherFollowUpWelcome(teacher: { first_name?: string | null } | null): BotReply {
-  if (teacher) {
-    return {
-      text: `✅ ข้อ 1 เรียบร้อย! บัญชี LINE นี้เชื่อมกับ Pudding แล้ว${teacher.first_name ? ` (คุณครู${teacher.first_name})` : ''}
-
-ต่อด้วยข้อ 2–3:
-• สร้างรายวิชาและห้องเรียนบนเว็บ (ถ้ายังไม่มี)
-• เชิญ Pudding เข้ากลุ่ม LINE ของห้อง แล้วแตะ "เชื่อมห้องเรียน" ในข้อความของบอท เลือกกลุ่มและห้องเรียนได้เลย (หรือแตะ "เชื่อมกลุ่ม" ในเมนูด้านล่าง)
-
-มีคำถาม แตะหมวดด้านล่าง หรือพิมพ์ถามได้ตลอดค่ะ 🍮`,
-      quickReplies: categoryButtons(),
-    };
-  }
-  return {
-    text: `เริ่มจากข้อ 1 ได้เลยค่ะ 👇
-เปิด ${PUDDING_WEB_URL}
-กด "เข้าสู่ระบบ" แล้วเลือกเข้าด้วย LINE (บัญชีเดียวกับที่แชทนี้) บอทจะจำคุณครูได้ทันที
-
-เมื่อสร้างรายวิชาและห้องเรียนแล้ว ทำต่อข้อ 2–4 ตามข้อความด้านบนได้เลย
-มีคำถาม แตะหมวดด้านล่าง หรือพิมพ์ถามได้ตลอดค่ะ 🍮
-
-👩‍🎓 ถ้าเป็นนักเรียน: แตะลิงก์ที่คุณครูส่งในกลุ่ม LINE เพื่อเข้าห้องเรียนได้เลย`,
-    quickReplies: categoryButtons(),
-  };
 }
 
 /**
