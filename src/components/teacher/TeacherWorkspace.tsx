@@ -2051,9 +2051,6 @@ export function TeacherWorkspace({
                                   className={`min-w-0 flex-1 flex items-center gap-1.5 py-2 ${canDragSections ? '' : 'pl-2'}`}
                                 >
                                   <span className="min-w-0 truncate text-[15px] font-black text-slate-900 dark:text-white">{cls.name}</span>
-                                  <span className="shrink-0 font-mono text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded">
-                                    {cls.invite_code || 'OMU'}
-                                  </span>
                                   {selectedSemesterKey === 'all' && (
                                     <span className="shrink-0 text-[10px] font-bold text-amber-900 dark:text-amber-300 bg-amber-100/90 dark:bg-amber-950/80 px-1.5 py-0.5 rounded">
                                       {cls.semester === 3 ? tr('ซัมเมอร์', 'S') : `${tr('ท.', 'T')}${cls.semester || 1}`}
