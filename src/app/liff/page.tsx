@@ -513,7 +513,7 @@ export default function LiffStudentPage() {
   const enrolledClassroomIdsRef = useRef<Set<string>>(new Set());
   const currentAcademicPeriod = useMemo(() => getDefaultAcademicPeriod(), []);
   const [studentPortalTab, setStudentPortalTab] = useState<"overview" | "courses" | "course">("overview");
-  const [courseTab, setCourseTab] = useState<"timeline" | "work" | "attendance">("timeline");
+  const [courseTab, setCourseTab] = useState<"timeline" | "work" | "attendance" | "proxy">("timeline");
   const [courseAttendance, setCourseAttendance] = useState<
     { id: string; title: string; starts_at: string; status: string; on_time_until_minutes?: number; late_until_minutes?: number }[]
   >([]);
@@ -719,7 +719,6 @@ export default function LiffStudentPage() {
   }, [activeAssignment?.id]);
 
   // Borrowed phone: a classmate whose own phone has a problem submits through this one.
-  const [isProxySheetOpen, setIsProxySheetOpen] = useState(false);
   const [proxyNumberInput, setProxyNumberInput] = useState("");
   const [proxyLookupError, setProxyLookupError] = useState<string | null>(null);
   const [isProxyLookingUp, setIsProxyLookingUp] = useState(false);
@@ -766,12 +765,28 @@ export default function LiffStudentPage() {
     }
   };
 
+  /** "Done, give the phone back": forget the classmate and leave the tab. */
   const closeProxySheet = () => {
-    setIsProxySheetOpen(false);
     setProxyFriend(null);
     setProxyNumberInput("");
     setProxyLookupError(null);
+    setCourseTab("timeline");
   };
+
+  // The borrowed-phone tab only lives inside an admitted classroom, and the classmate is
+  // forgotten once the tab (or classroom) is left, so the owner never keeps acting for them.
+  // Doing the classmate's work keeps them (the tab shows again when that work closes).
+  useEffect(() => {
+    if (activeAssignment) return;
+    const tabUsable = Boolean(selectedClassroom) && !isSelectedClassroomPending;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (courseTab === "proxy" && !tabUsable) setCourseTab("timeline");
+    if (proxyFriend && (courseTab !== "proxy" || !tabUsable || proxyFriend.classroomId !== selectedClassroom?.id)) {
+      setProxyFriend(null);
+      setProxyNumberInput("");
+      setProxyLookupError(null);
+    }
+  }, [courseTab, selectedClassroom, isSelectedClassroomPending, activeAssignment, proxyFriend]);
 
   // Anti-Cheating Tracking State ("ตรวจจับเวลาแอบกดออกจอ")
   const [tabSwitchCount, setTabSwitchCount] = useState<number>(0);
@@ -2446,6 +2461,19 @@ export default function LiffStudentPage() {
     }
   }, [seenScoresKey]);
 
+  /** The result no longer needs announcing on the home screen (opened here, or from the teacher's LINE link). */
+  const markScoreSeen = (s: Submission) => {
+    if (s.total_score == null) return;
+    setSeenScores((prev) => {
+      if (prev[s.id] === Number(s.total_score)) return prev;
+      const next = { ...prev, [s.id]: Number(s.total_score) };
+      try {
+        if (seenScoresKey) localStorage.setItem(seenScoresKey, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
   /**
    * Sheets already opened show at once: from memory this session, or from this
    * phone's storage after the app was closed (this LINE account only). A fresh
@@ -2487,6 +2515,8 @@ export default function LiffStudentPage() {
     const cacheKey = `result|${s.id}|${s.submitted_at || ""}|${s.reopened_at || ""}|${s.total_score ?? ""}|${s.results_hidden ? "h" : ""}`;
     const cached = readSheet(cacheKey, gradedDetailCacheRef.current);
     setViewingGradedSub({ assignment: a, submission: s, questions: cached?.questions ?? null, answers: cached?.answers ?? {} });
+    // Seen once opened, even if the details fail to load.
+    markScoreSeen(s);
     let detail: { questions: Question[]; answers: Record<string, SubmissionAnswer> };
     try {
       detail = await dataService.getStudentResult(s.id);
@@ -2498,16 +2528,6 @@ export default function LiffStudentPage() {
     saveSheet(cacheKey, gradedDetailCacheRef.current, { questions: detail.questions, answers: detail.answers });
     // Only fill the sheet that is still open (the student may have closed it or opened another).
     setViewingGradedSub((prev) => (prev?.submission.id === s.id ? { ...prev, ...detail, loadFailed: false } : prev));
-    // Once a graded result is opened, it no longer needs announcing on the overview.
-    if (gradedSubmissionIds.has(s.id) && s.total_score != null) {
-      setSeenScores((prev) => {
-        const next = { ...prev, [s.id]: Number(s.total_score) };
-        try {
-          if (seenScoresKey) localStorage.setItem(seenScoresKey, JSON.stringify(next));
-        } catch {}
-        return next;
-      });
-    }
   };
 
   // Apply a LINE deep link once the first load has finished.
@@ -2539,6 +2559,8 @@ export default function LiffStudentPage() {
       if (assignmentClassroom) setSelectedClassroom(assignmentClassroom);
       setCourseTab("work");
       const submission = submissions[assignment.id];
+      // Came from the teacher's link (e.g. "ประกาศคะแนน"): its home banner goes away.
+      if (submission) markScoreSeen(submission);
       if (submission && hasResult(assignment)) handleOpenGradedDetail(assignment, submission);
       else handleOpenAssignment(assignment);
     } else if (link.view) {
@@ -3115,11 +3137,17 @@ export default function LiffStudentPage() {
               </div>
             )}
 
-            {/* New results: shown until the student opens each one */}
+            {/* New results: shown until the student opens each one (or its LINE link).
+                One row that scrolls sideways, so many results at once never push the to-do list down. */}
             {newResults.length > 0 && (
               <section className="space-y-2.5">
-                <SectionTitle icon={<Sparkles className="w-4 h-4 text-emerald-600" />} title="ประกาศคะแนนใหม่" count={newResults.length} />
-                <div className="grid gap-2.5 md:grid-cols-2 liff-stagger">
+                <SectionTitle
+                  icon={<Sparkles className="w-4 h-4 text-emerald-600" />}
+                  title="ประกาศคะแนนใหม่"
+                  count={newResults.length}
+                  action={newResults.length > 1 ? <span className="text-[11px] font-semibold text-slate-400">เลื่อนดู →</span> : undefined}
+                />
+                <div className="-mx-4 sm:-mx-6 px-4 sm:px-6 scroll-px-4 sm:scroll-px-6 flex gap-2.5 overflow-x-auto snap-x snap-mandatory overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden liff-stagger">
                   {newResults.map((assignment) => {
                     const submission = submissions[assignment.id];
                     const resultClass = classrooms.find((c) => c.id === assignment.classroom_id);
@@ -3129,15 +3157,15 @@ export default function LiffStudentPage() {
                         key={assignment.id}
                         type="button"
                         onClick={() => handleOpenGradedDetail(assignment, submission)}
-                        className="liff-sheen w-full text-left p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20 flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-transform"
+                        className={`liff-sheen ${newResults.length > 1 ? "w-[78%] max-w-72" : "w-full"} shrink-0 snap-start text-left p-3.5 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-md shadow-emerald-600/20 flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-transform`}
                       >
                         <div className="min-w-0">
-                          <p className="text-[11px] font-semibold text-emerald-50/90">🎉 คุณครูตรวจแล้ว • {resultClass ? subjectName(resultClass) : "รายวิชา"}</p>
+                          <p className="text-[11px] font-semibold text-emerald-50/90 truncate">🎉 {resultClass ? subjectName(resultClass) : "รายวิชา"}</p>
                           <p className="text-sm font-bold truncate">{assignment.title}</p>
-                          <p className="text-[11px] text-emerald-50/90 mt-0.5">แตะเพื่อดูคะแนนและความเห็นรายข้อ</p>
+                          <p className="text-[11px] text-emerald-50/90 mt-0.5 truncate">แตะเพื่อดูคะแนน</p>
                         </div>
-                        <span className="liff-pop shrink-0 px-3 py-1.5 rounded-2xl bg-white/20 font-black tabular-nums">
-                          <span className="text-xl">{submission.total_score}</span>
+                        <span className="liff-pop shrink-0 px-2.5 py-1 rounded-2xl bg-white/20 font-black tabular-nums">
+                          <span className="text-lg">{submission.total_score}</span>
                           <span className="text-xs font-bold">/{total}</span>
                         </span>
                       </button>
@@ -3627,6 +3655,161 @@ export default function LiffStudentPage() {
               </section>
             )}
 
+            {/* TAB: BORROWED PHONE — hand in work / check in for a classmate of the same school and classroom */}
+            {courseTab === 'proxy' && selectedClassroom && !isSelectedClassroomPending && (
+              <section className={`${CARD} p-4 sm:p-5 space-y-4 liff-rise`}>
+                <div className="flex items-start gap-3">
+                  <span className="w-11 h-11 rounded-2xl bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
+                    <Smartphone className="w-5 h-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">ส่งแทนเพื่อน (ยืมเครื่อง)</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5">
+                      ให้เพื่อนที่โทรศัพท์มีปัญหาใช้เครื่องนี้ส่งงานของตัวเอง เพื่อนต้องเรียน {subjectName(selectedClassroom)} ห้องเดียวกัน ({classAndTerm(selectedClassroom)}) — คุณครูจะเห็นว่าส่งจากเครื่องของคุณ
+                    </p>
+                  </div>
+                </div>
+
+                {!proxyFriend ? (
+                  <form
+                    className="space-y-3"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleProxyLookup();
+                    }}
+                  >
+                    <Field label="รหัสนักเรียนของเพื่อน (กรอกแค่ 3 ตัวท้ายก็ได้)" required>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        autoFocus
+                        value={proxyNumberInput}
+                        onChange={(e) => {
+                          setProxyNumberInput(e.target.value);
+                          setProxyLookupError(null);
+                        }}
+                        placeholder="เช่น 101 หรือ 54101"
+                        className={INPUT}
+                      />
+                    </Field>
+                    {proxyLookupError && (
+                      <p role="alert" className="flex items-start gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <span>{proxyLookupError}</span>
+                      </p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={isProxyLookingUp || !proxyNumberInput.trim()}
+                      className="w-full h-12 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
+                    >
+                      {isProxyLookingUp && <Loader2 className="w-4 h-4 animate-spin" />}
+                      <span>ค้นหาเพื่อน</span>
+                    </button>
+                  </form>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/50 ring-1 ring-sky-200 dark:ring-sky-900">
+                      <Avatar src={proxyFriend.avatar_url} firstName={proxyFriend.first_name} lastName={proxyFriend.last_name} className="w-11 h-11 text-sm shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{proxyFriend.first_name} {proxyFriend.last_name}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">รหัส {proxyFriend.studentNumber}</p>
+                        <p className="text-[11px] text-slate-400 truncate">{subjectName(selectedClassroom)} • {classAndTerm(selectedClassroom)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProxyFriend(null);
+                          setProxyNumberInput("");
+                        }}
+                        className="text-xs font-semibold text-sky-700 dark:text-sky-300 hover:underline cursor-pointer shrink-0"
+                      >
+                        ไม่ใช่คนนี้
+                      </button>
+                    </div>
+
+                    {(() => {
+                      const openSessions = courseAttendance.filter((session) => session.status === "open");
+                      const openWork = assignments.filter((a) => a.classroom_id === proxyFriend.classroomId && getAssignmentWindow(a).acceptsSubmissions);
+                      if (!openSessions.length && !openWork.length) {
+                        return <EmptyState icon="🎉" text="ตอนนี้ไม่มีงานหรือคาบเช็กชื่อที่เปิดอยู่" />;
+                      }
+                      return (
+                        <>
+                          {openSessions.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-bold text-slate-500">เช็กชื่อ</p>
+                              {openSessions.map((session) => {
+                                const done = proxyFriend.checkedSessionIds.includes(session.id);
+                                return (
+                                  <div key={session.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700">
+                                    <p className="min-w-0 text-sm font-semibold text-slate-900 dark:text-white truncate">{session.title}</p>
+                                    {done ? (
+                                      <Pill tone="emerald">เช็กชื่อแล้ว</Pill>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={isCheckingIn}
+                                        onClick={() => {
+                                          if (!confirm(`ยืนยันเช็กชื่อ “${session.title}” ให้ ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nคุณครูจะเห็นว่าเช็กชื่อจากเครื่องของคุณ`)) return;
+                                          handleStudentCheckIn(session.id, undefined, proxyFriend);
+                                        }}
+                                        className="shrink-0 h-9 px-3.5 rounded-xl bg-line hover:bg-line-dark text-white text-xs font-bold disabled:opacity-60 cursor-pointer"
+                                      >
+                                        เช็กชื่อให้เพื่อน
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {openWork.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-bold text-slate-500">งานและข้อสอบที่เปิดรับ</p>
+                              {openWork.map((a) => {
+                                const done = proxyFriend.submittedAssignmentIds.includes(a.id);
+                                return (
+                                  <div key={a.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700">
+                                    <div className="min-w-0">
+                                      <p className="text-[11px] font-semibold text-slate-400">{isRetake(a) ? "🔁 สอบซ่อม" : a.is_exam ? "📝 ข้อสอบ" : "📋 งาน"}</p>
+                                      <p className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-2">{a.title}</p>
+                                    </div>
+                                    {done ? (
+                                      <Pill tone="emerald">ส่งแล้ว</Pill>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (!confirm(`ยืนยันเริ่มทำ${a.is_exam ? "ข้อสอบ" : "งาน"} “${a.title}” แทน ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nสิ่งที่ส่งจะบันทึกเป็นของเพื่อน และคุณครูจะเห็นว่าส่งจากเครื่องของคุณ`)) return;
+                                          handleOpenAssignment(a, proxyFriend);
+                                        }}
+                                        className="shrink-0 h-9 px-3.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold cursor-pointer"
+                                      >
+                                        ทำให้เพื่อน
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+
+                    <button
+                      type="button"
+                      onClick={closeProxySheet}
+                      className="w-full h-12 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      เสร็จแล้ว คืนเครื่อง
+                    </button>
+                  </div>
+                )}
+              </section>
+            )}
+
             {/* Bottom tab bar */}
             <nav className={`fixed bottom-0 inset-x-0 z-40 mx-auto w-full ${FRAME} bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)]`}>
               <div className={`grid ${isSelectedClassroomPending ? 'grid-cols-3' : 'grid-cols-4'} px-1 py-1.5`}>
@@ -3634,16 +3817,16 @@ export default function LiffStudentPage() {
                   { key: 'timeline', label: 'ไทม์ไลน์', icon: Megaphone },
                   { key: 'work', label: 'งาน / ข้อสอบ', icon: BookOpen },
                   { key: 'attendance', label: 'เช็กชื่อ', icon: CalendarCheck },
-                  // Not a page: opens the lending sheet (a classmate's phone has a problem). Admitted students only.
+                  // Lend this phone to a classmate whose phone has a problem. Admitted students only.
                   ...(isSelectedClassroomPending ? [] : [{ key: 'proxy', label: 'ส่งแทนเพื่อน', icon: Users }] as const),
                 ] as const).map(({ key, label, icon: Icon }) => {
-                  const isActive = key === 'proxy' ? isProxySheetOpen : courseTab === key;
+                  const isActive = courseTab === key;
                   return (
                     <button
                       key={key}
-                      onClick={() => (key === 'proxy' ? setIsProxySheetOpen(true) : setCourseTab(key))}
+                      onClick={() => setCourseTab(key)}
                       title={key === 'proxy' ? 'เพื่อนโทรศัพท์มีปัญหา? ให้เพื่อนยืมเครื่องนี้ส่งงาน/เช็กชื่อ' : undefined}
-                      aria-current={isActive && key !== 'proxy' ? 'page' : undefined}
+                      aria-current={isActive ? 'page' : undefined}
                       className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                         isActive ? 'text-line' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
                       }`}
@@ -3667,7 +3850,7 @@ export default function LiffStudentPage() {
             <button
               onClick={() => {
                 if (confirmLeaveWork()) {
-                  if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
+                  if (activeProxy && proxyFriend) setCourseTab("proxy");
                   setActiveAssignment(null);
                 }
               }}
@@ -3708,7 +3891,7 @@ export default function LiffStudentPage() {
               <SuspiciousLabel />
               <button
                 onClick={() => {
-                  if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
+                  if (activeProxy && proxyFriend) setCourseTab("proxy");
                   setActiveAssignment(null);
                 }}
                 className="w-full h-11 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
@@ -3755,7 +3938,7 @@ export default function LiffStudentPage() {
                 <button
                   onClick={() => {
                     // Back to the lending sheet so the classmate can hand in the next piece of work.
-                    if (activeProxy && proxyFriend) setIsProxySheetOpen(true);
+                    if (activeProxy && proxyFriend) setCourseTab("proxy");
                     setActiveAssignment(null);
                   }}
                   className="h-11 px-2 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md cursor-pointer active:scale-[0.98] transition-transform"
@@ -4065,164 +4248,6 @@ export default function LiffStudentPage() {
         <SubmitConfirmSheet review={submitReview} submitting={isSubmitting} onConfirm={confirmSubmitTask} onClose={closeSubmitReview} />
       )}
 
-      {/* BORROWED PHONE: hand in work / check in for a classmate of the same school and classroom */}
-      {isProxySheetOpen && selectedClassroom && !activeAssignment && (
-        <Sheet onClose={closeProxySheet}>
-          <div className="flex items-start gap-3">
-            <span className="w-11 h-11 rounded-2xl bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 flex items-center justify-center shrink-0">
-              <Smartphone className="w-5 h-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">ส่งแทนเพื่อน (ยืมเครื่อง)</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-0.5">
-                ให้เพื่อนที่โทรศัพท์มีปัญหาใช้เครื่องนี้ส่งงานของตัวเอง เพื่อนต้องเรียน {subjectName(selectedClassroom)} ห้องเดียวกัน ({classAndTerm(selectedClassroom)}) — คุณครูจะเห็นว่าส่งจากเครื่องของคุณ
-              </p>
-            </div>
-            <button type="button" onClick={closeProxySheet} aria-label="ปิด" className="w-9 h-9 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 cursor-pointer shrink-0">
-              <X className="w-4.5 h-4.5" />
-            </button>
-          </div>
-
-          {!proxyFriend ? (
-            <form
-              className="space-y-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleProxyLookup();
-              }}
-            >
-              <Field label="รหัสนักเรียนของเพื่อน (กรอกแค่ 3 ตัวท้ายก็ได้)" required>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoFocus
-                  value={proxyNumberInput}
-                  onChange={(e) => {
-                    setProxyNumberInput(e.target.value);
-                    setProxyLookupError(null);
-                  }}
-                  placeholder="เช่น 101 หรือ 54101"
-                  className={INPUT}
-                />
-              </Field>
-              {proxyLookupError && (
-                <p role="alert" className="flex items-start gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{proxyLookupError}</span>
-                </p>
-              )}
-              <button
-                type="submit"
-                disabled={isProxyLookingUp || !proxyNumberInput.trim()}
-                className="w-full h-12 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
-              >
-                {isProxyLookingUp && <Loader2 className="w-4 h-4 animate-spin" />}
-                <span>ค้นหาเพื่อน</span>
-              </button>
-            </form>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/50 ring-1 ring-sky-200 dark:ring-sky-900">
-                <Avatar src={proxyFriend.avatar_url} firstName={proxyFriend.first_name} lastName={proxyFriend.last_name} className="w-11 h-11 text-sm shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{proxyFriend.first_name} {proxyFriend.last_name}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">รหัส {proxyFriend.studentNumber}</p>
-                  <p className="text-[11px] text-slate-400 truncate">{subjectName(selectedClassroom)} • {classAndTerm(selectedClassroom)}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProxyFriend(null);
-                    setProxyNumberInput("");
-                  }}
-                  className="text-xs font-semibold text-sky-700 dark:text-sky-300 hover:underline cursor-pointer shrink-0"
-                >
-                  ไม่ใช่คนนี้
-                </button>
-              </div>
-
-              {(() => {
-                const openSessions = courseAttendance.filter((session) => session.status === "open");
-                const openWork = assignments.filter((a) => a.classroom_id === proxyFriend.classroomId && getAssignmentWindow(a).acceptsSubmissions);
-                if (!openSessions.length && !openWork.length) {
-                  return <EmptyState icon="🎉" text="ตอนนี้ไม่มีงานหรือคาบเช็กชื่อที่เปิดอยู่" />;
-                }
-                return (
-                  <>
-                    {openSessions.length > 0 && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-bold text-slate-500">เช็กชื่อ</p>
-                        {openSessions.map((session) => {
-                          const done = proxyFriend.checkedSessionIds.includes(session.id);
-                          return (
-                            <div key={session.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700">
-                              <p className="min-w-0 text-sm font-semibold text-slate-900 dark:text-white truncate">{session.title}</p>
-                              {done ? (
-                                <Pill tone="emerald">เช็กชื่อแล้ว</Pill>
-                              ) : (
-                                <button
-                                  type="button"
-                                  disabled={isCheckingIn}
-                                  onClick={() => {
-                                    if (!confirm(`ยืนยันเช็กชื่อ “${session.title}” ให้ ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nคุณครูจะเห็นว่าเช็กชื่อจากเครื่องของคุณ`)) return;
-                                    handleStudentCheckIn(session.id, undefined, proxyFriend);
-                                  }}
-                                  className="shrink-0 h-9 px-3.5 rounded-xl bg-line hover:bg-line-dark text-white text-xs font-bold disabled:opacity-60 cursor-pointer"
-                                >
-                                  เช็กชื่อให้เพื่อน
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {openWork.length > 0 && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-bold text-slate-500">งานและข้อสอบที่เปิดรับ</p>
-                        {openWork.map((a) => {
-                          const done = proxyFriend.submittedAssignmentIds.includes(a.id);
-                          return (
-                            <div key={a.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700">
-                              <div className="min-w-0">
-                                <p className="text-[11px] font-semibold text-slate-400">{isRetake(a) ? "🔁 สอบซ่อม" : a.is_exam ? "📝 ข้อสอบ" : "📋 งาน"}</p>
-                                <p className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-2">{a.title}</p>
-                              </div>
-                              {done ? (
-                                <Pill tone="emerald">ส่งแล้ว</Pill>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (!confirm(`ยืนยันเริ่มทำ${a.is_exam ? "ข้อสอบ" : "งาน"} “${a.title}” แทน ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nสิ่งที่ส่งจะบันทึกเป็นของเพื่อน และคุณครูจะเห็นว่าส่งจากเครื่องของคุณ`)) return;
-                                    setIsProxySheetOpen(false);
-                                    handleOpenAssignment(a, proxyFriend);
-                                  }}
-                                  className="shrink-0 h-9 px-3.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold cursor-pointer"
-                                >
-                                  ทำให้เพื่อน
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
-
-              <button
-                type="button"
-                onClick={closeProxySheet}
-                className="w-full h-12 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                เสร็จแล้ว คืนเครื่อง
-              </button>
-            </div>
-          )}
-        </Sheet>
-      )}
 
       {/* STUDENT PROFILE MODAL (mandatory first time, editable later) */}
       {isStudentIdModalOpen && (
