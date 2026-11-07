@@ -90,6 +90,8 @@ export async function POST(request: NextRequest) {
   if (action === 'link') {
     const ref = typeof body.groupRef === 'string' ? body.groupRef : '';
     if (!ref) return NextResponse.json({ error: 'กรุณาเลือกกลุ่ม LINE' }, { status: 400 });
+    // Opened from a group's button: only that group can be linked here.
+    if (focusRef && ref !== focusRef) return NextResponse.json({ error: 'เชื่อมได้เฉพาะกลุ่มที่เปิดหน้านี้มา' }, { status: 400 });
     const result = await linkGroupByRef(supabase, teacher, classroom, ref, { move: body.move === true });
     if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason), reason: result.reason }, { status: 409 });
   } else if (action === 'disconnect') {

@@ -20,8 +20,8 @@ const groupLabel = (group?: { groupName?: string }) => group?.groupName || "ก�
 /**
  * /liff/connect (teachers only): pick a LINE group the bot is in and a
  * classroom, then link them, all on this page. Opened from the bot's
- * "เชื่อมห้องเรียน" button in a group (?g=<ref> preselects that group) or the
- * rich menu. The server checks the LINE account is an approved teacher and
+ * "เชื่อมห้องเรียน" button in a group (?g=<ref> locks the page to that group,
+ * so the teacher only picks the classroom) or the rich menu (free group pick). The server checks the LINE account is an approved teacher and
  * that LINE lists them in the group; students see a "teachers only" screen and
  * get no data.
  */
@@ -41,7 +41,12 @@ export default function TeacherConnectPage() {
 
   const apply = useCallback((overview: Overview) => {
     setData(overview);
-    // Keep the teacher's choice if it is still on the list; else the tapped group, else the only one.
+    // Opened from a group's button: that group only, never another one.
+    if (overview.focus) {
+      setGroupRef("error" in overview.focus ? null : overview.focus.ref);
+      return;
+    }
+    // Keep the teacher's choice if it is still on the list; else the only one.
     setGroupRef((current) => {
       if (current && overview.groups.some((group) => group.ref === current)) return current;
       const focus = overview.focus && !("error" in overview.focus) ? overview.focus.ref : null;
@@ -140,6 +145,7 @@ export default function TeacherConnectPage() {
   const room = data?.classrooms.find((item) => item.id === classroomId);
   const groupOwner = group?.linkedClassroomId ? data?.classrooms.find((item) => item.id === group.linkedClassroomId) : undefined;
   const focusError = data?.focus && "error" in data.focus ? data.focus.error : null;
+  const locked = Boolean(focusRef);
   const linkedRooms = useMemo(() => data?.classrooms.filter((item) => item.linked) || [], [data]);
 
   // What the main button does for the current choice.
@@ -240,7 +246,7 @@ export default function TeacherConnectPage() {
                   กลับไปที่ LINE
                 </button>
               )}
-              <button
+              {!locked && <button
                 type="button"
                 onClick={() => {
                   setDone(null);
@@ -249,7 +255,7 @@ export default function TeacherConnectPage() {
                 className="h-11 rounded-xl ring-1 ring-slate-300 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm cursor-pointer"
               >
                 เชื่อมกลุ่มอื่น
-              </button>
+              </button>}
             </div>
           </div>
         )}
@@ -272,7 +278,7 @@ export default function TeacherConnectPage() {
             {/* Step 1: group */}
             <section className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xs font-black text-slate-700 dark:text-slate-300">1. เลือกกลุ่ม LINE</h2>
+                <h2 className="text-xs font-black text-slate-700 dark:text-slate-300">{locked ? "1. กลุ่ม LINE" : "1. เลือกกลุ่ม LINE"}</h2>
                 <button type="button" onClick={refresh} disabled={refreshing} className="text-[11px] font-bold text-amber-700 dark:text-amber-400 inline-flex items-center gap-1 cursor-pointer disabled:opacity-60">
                   <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} /> รีเฟรช
                 </button>
@@ -282,7 +288,19 @@ export default function TeacherConnectPage() {
                   {focusError}
                 </p>
               )}
-              {!data.groups.length && (
+              {locked && group && (
+                <div className="flex items-center gap-3 p-3 rounded-2xl ring-2 ring-amber-500 bg-amber-50 dark:bg-amber-950/30">
+                  <Users className="w-5 h-5 shrink-0 text-amber-600" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-bold text-slate-900 dark:text-white truncate">{groupLabel(group)}</span>
+                    <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                      {groupOwner ? `เชื่อมกับ “${groupOwner.title}” อยู่` : "กลุ่มที่เปิดมา • ยังไม่ได้เชื่อม"}
+                    </span>
+                  </span>
+                  <Lock className="w-4 h-4 shrink-0 text-slate-400" aria-label="เปลี่ยนกลุ่มไม่ได้" />
+                </div>
+              )}
+              {!locked && !data.groups.length && (
                 <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800 text-xs text-slate-600 dark:text-slate-300 space-y-1.5">
                   <p className="font-bold text-slate-800 dark:text-slate-100">ยังไม่พบกลุ่มที่มี Pudding Bot และคุณครูอยู่ด้วยกัน</p>
                   <ol className="list-decimal pl-4 space-y-0.5">
@@ -291,7 +309,7 @@ export default function TeacherConnectPage() {
                   </ol>
                 </div>
               )}
-              <div role="radiogroup" aria-label="กลุ่ม LINE" className="space-y-2">
+              {!locked && <div role="radiogroup" aria-label="กลุ่ม LINE" className="space-y-2">
                 {data.groups.map((item) => {
                   const selected = item.ref === groupRef;
                   const owner = item.linkedClassroomId ? data.classrooms.find((c) => c.id === item.linkedClassroomId) : undefined;
@@ -317,7 +335,7 @@ export default function TeacherConnectPage() {
                     </button>
                   );
                 })}
-              </div>
+              </div>}
             </section>
 
             {/* Step 2: classroom */}
