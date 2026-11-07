@@ -157,6 +157,23 @@ const TIMELINE_DOT: Record<string, string> = {
 /** Whole seconds (at least 1) since a Date.now() timestamp. */
 const secondsSince = (start: number) => Math.max(1, Math.round((Date.now() - start) / 1000));
 
+/**
+ * Deep-link params from a LINE message. liff.init normally moves `liff.state`
+ * into the URL, but read it too in case it has not happened yet.
+ */
+function deepLinkParams(): { assignmentId?: string; view?: string; post?: string; classId?: string; code?: string } {
+  if (typeof window === "undefined") return {};
+  const params = new URLSearchParams(window.location.search);
+  const state = params.get("liff.state");
+  if (state && state.includes("?")) {
+    new URLSearchParams(state.slice(state.indexOf("?") + 1)).forEach((value, key) => {
+      if (!params.has(key)) params.set(key, value);
+    });
+  }
+  const get = (key: string) => params.get(key) || undefined;
+  return { assignmentId: get("assignmentId"), view: get("view"), post: get("post"), classId: get("classId"), code: get("code") };
+}
+
 function formatTimeLeft(deadline: number | null): string {
   if (!deadline) return "ไม่มีกำหนดส่ง";
   const minutes = Math.ceil((deadline - Date.now()) / 60000);
@@ -825,6 +842,11 @@ export default function LiffStudentPage() {
   // Deep link from a LINE message (?assignmentId=…, ?view=attendance), applied
   // once the student's classrooms, work and submissions have loaded.
   const pendingDeepLinkRef = useRef<{ classroomId?: string; assignmentId?: string; view?: "timeline" | "work" | "attendance"; postId?: string } | null>(null);
+  // Opened from a LINE link: show "opening…" instead of the home screen until the
+  // link is applied, so students never see home flash before their work opens.
+  const [openingLink, setOpeningLink] = useState<"work" | "class" | null>(null);
+  // The linked work's questions, requested as soon as LINE gives a token (in parallel with the home load).
+  const assignmentPrefetchRef = useRef<{ id: string; promise: ReturnType<typeof dataService.getAssignmentById> } | null>(null);
   // An announcement opened from its LINE link: shown in a popup once that classroom's posts load.
   const pendingPostRef = useRef<string | null>(null);
   // The announcement shown in a popup (tapped in the timeline, or opened from LINE).
@@ -922,6 +944,18 @@ export default function LiffStudentPage() {
 
         // Every API call carries this token; the server verifies it with LINE.
         setLineAccessToken(liff.getAccessToken());
+
+        // A deep link (liff.init has already moved liff.state into the URL): hold the
+        // home screen back and start loading the linked work right away.
+        const link = deepLinkParams();
+        if (link.assignmentId || link.view || link.post || link.classId || link.code) {
+          setOpeningLink(link.assignmentId ? "work" : "class");
+          if (link.assignmentId) {
+            const promise = dataService.getAssignmentById(link.assignmentId);
+            promise.catch(() => {});
+            assignmentPrefetchRef.current = { id: link.assignmentId, promise };
+          }
+        }
 
         // Returning student: show their last home screen right away while the
         // profile sync and fresh data load in parallel. Only this LINE account's
@@ -1500,7 +1534,12 @@ export default function LiffStudentPage() {
     try {
       // One data-service call loads the assignment and its questions together.
       // A quiz opening is counted on the server at the same time (quizExit.ts).
-      const questionsRequest = dataService.getAssignmentById(a.id);
+      const prefetched = assignmentPrefetchRef.current;
+      assignmentPrefetchRef.current = null;
+      const questionsRequest =
+        prefetched && prefetched.id === a.id && !edit
+          ? prefetched.promise.catch(() => dataService.getAssignmentById(a.id))
+          : dataService.getAssignmentById(a.id);
       // A forfeit is decided (and its blank sheet handed in) by the opening alone: show it without waiting for the questions.
       questionsRequest.catch(() => {});
       const opened = a.is_exam && !edit ? await dataService.openQuizAttempt(a.id, forFriend?.studentNumber) : null;
@@ -2473,8 +2512,12 @@ export default function LiffStudentPage() {
 
   // Apply a LINE deep link once the first load has finished.
   useEffect(() => {
+    if (isLoadingData || !currentStudent) return;
+    // Batched with whatever the link opens below, so home never paints in between.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpeningLink(null);
     const link = pendingDeepLinkRef.current;
-    if (!link || isLoadingData || !currentStudent) return;
+    if (!link) return;
     pendingDeepLinkRef.current = null;
     // Still waiting for the teacher: show the ring and open the link once admitted.
     const targetClassroomId = link.classroomId || assignments.find((item) => item.id === link.assignmentId)?.classroom_id;
@@ -2720,6 +2763,24 @@ export default function LiffStudentPage() {
       created_at: attendance.starts_at || new Date().toISOString()
     })),
   ].sort((a, b) => (new Date(b.created_at).getTime() || 0) - (new Date(a.created_at).getTime() || 0));
+
+  // Opened from a LINE link: a short "opening" screen instead of the home screen.
+  if (openingLink && !activeAssignment) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center gap-5 min-h-dvh">
+        <div className="relative">
+          <BrandLogo priority className="h-24 w-auto" />
+          <Loader2 className="w-7 h-7 text-line animate-spin absolute -bottom-1.5 -right-1.5 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md" />
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            {openingLink === "work" ? "กำลังเปิดงาน..." : "กำลังเปิดห้องเรียน..."}
+          </h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">รอสักครู่</p>
+        </div>
+      </div>
+    );
+  }
 
   const answeredCount = activeQuestions.filter((q) => (studentAnswers[q.id]?.text || "").trim() || studentAnswers[q.id]?.file_url || studentAnswers[q.id]?.link?.trim()).length;
   const isPendingIn = (cls: Classroom) =>

@@ -1204,8 +1204,16 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="font-bold text-[13px] leading-snug text-slate-900 dark:text-white truncate">{fullName}</p>
-                      <p className="text-[10px] leading-tight mt-0.5 text-slate-400 font-mono truncate">
-                        {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ไม่มีรหัสนักเรียน' : 'No student ID')}
+                      <p className="text-[10px] leading-tight mt-0.5 text-slate-400 truncate">
+                        <span className="font-mono">
+                          {student?.student_id ? `${language === 'th' ? 'รหัส' : 'ID'} ${student.student_id}` : (language === 'th' ? 'ไม่มีรหัสนักเรียน' : 'No student ID')}
+                        </span>
+                        {/* Borrowed phone: shown under the name (like the desktop table) instead of an extra row. */}
+                        {sub?.submitted_by && isHandedIn(sub) && (
+                          <span className="text-slate-500 dark:text-slate-400">
+                            {' · 📱 '}{th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
+                          </span>
+                        )}
                       </p>
                     </div>
                     {sub && (isGraded || isHandedIn(sub)) && (isGraded ? (
@@ -1259,15 +1267,13 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                             ? t('grading.status_badges.late')
                             : t('grading.status_badges.pending')}
                         </span>
-                        <span className="min-w-0 truncate text-slate-400">
+                        <span className="min-w-0 flex-1 truncate text-slate-400">
                           {sub.submitted_at && formatDateTime(sub.submitted_at, language)}
                           <span className="font-mono"> · {Math.floor(sub.time_spent_seconds / 60)} {t('common.minutes')}</span>
                         </span>
-                      </div>
-
-                      {(tracksAway || sub.submitted_by) && (
-                        <div className="flex flex-wrap items-center gap-1.5 pl-[42px]">
-                          {tracksAway && (
+                        {/* Integrity chip rides on the status line so a card stays two rows under the name. */}
+                        {tracksAway && (
+                          <span className="shrink-0">
                             <AntiCheatingBadge
                               isFlagged={sub.is_flagged_suspicious}
                               tabSwitchCount={sub.tab_switch_count}
@@ -1278,14 +1284,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                               // The chip only: the counts and every event are in the log it opens.
                               showDetails={false}
                             />
-                          )}
-                          {sub.submitted_by && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[11px] font-bold">
-                              📱 {th ? 'ส่งจากเครื่องของ' : 'Sent via'} {sub.submitted_by_name || (th ? 'เพื่อน' : 'a classmate')}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                          </span>
+                        )}
+                      </div>
 
                       <div className="flex items-stretch gap-1.5 pl-[42px]">
                         {reopenControl(sub, 'flex-1')}

@@ -53,13 +53,27 @@ export const AntiCheatingBadge: React.FC<AntiCheatingBadgeProps> = ({
   const isModerate = !isSevere && (switches > 0 || away > 0);
 
   if (!isSevere && !isModerate) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 whitespace-nowrap"
-        title={th ? 'พฤติกรรมปกติ ไม่พบการออกจากหน้าข้อสอบ' : 'Normal behaviour, never left the quiz'}
+    const normalTitle = th ? 'พฤติกรรมปกติ ไม่พบการออกจากหน้าข้อสอบ' : 'Normal behaviour, never left the quiz';
+    const normalContent = (
+      <>
+        <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+        <span>{th ? 'ปกติ' : 'Normal'}</span>
+        {onClick && <ChevronRight className="w-3.5 h-3.5 opacity-60" />}
+      </>
+    );
+    // Clickable like the other levels, so the teacher can still open the timeline (opened/handed-in times).
+    return onClick ? (
+      <button
+        type="button"
+        onClick={onClick}
+        className="inline-flex items-center gap-1 h-6 pl-2 pr-1 rounded-full ring-1 text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900 dark:hover:bg-emerald-900/50"
+        title={th ? `${normalTitle} — ดูบันทึกพฤติกรรม` : `${normalTitle} — view log`}
       >
-        <ShieldCheck className="w-3.5 h-3.5" />
-        {th ? 'ปกติ' : 'Normal'}
+        {normalContent}
+      </button>
+    ) : (
+      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 whitespace-nowrap" title={normalTitle}>
+        {normalContent}
       </span>
     );
   }
