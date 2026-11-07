@@ -162,6 +162,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // Audit modal state
   const [auditSubmission, setAuditSubmission] = useState<Submission | null>(null);
   const [auditEvents, setAuditEvents] = useState<SubmissionEvent[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const auditEventsCacheRef = useRef(new Map<string, SubmissionEvent[]>());
+  const auditRequestRef = useRef(0);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
 
   // Grading workspace modal state
@@ -337,15 +340,24 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   }, [assignmentId, signalClassroomId]);
 
   // Open Integrity Audit Modal
+  // The popup opens at once (counts and start/hand-in times are already on the row);
+  // the event log loads behind it. Logs seen this visit show instantly next time.
   const handleOpenAudit = async (submission: Submission) => {
+    const cached = auditEventsCacheRef.current.get(submission.id);
+    const request = ++auditRequestRef.current;
     setAuditSubmission(submission);
+    setAuditEvents(cached || []);
+    setAuditLoading(!cached);
+    setIsAuditModalOpen(true);
     try {
       const events = await dataService.getSubmissionEvents(submission.id);
-      setAuditEvents(events);
+      auditEventsCacheRef.current.set(submission.id, events);
+      if (request === auditRequestRef.current) setAuditEvents(events);
     } catch {
-      setAuditEvents([]);
+      if (request === auditRequestRef.current && !cached) setAuditEvents([]);
+    } finally {
+      if (request === auditRequestRef.current) setAuditLoading(false);
     }
-    setIsAuditModalOpen(true);
   };
 
   // Open Grading Workspace
@@ -1539,6 +1551,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           isOpen={isAuditModalOpen}
           submission={auditSubmission}
           events={auditEvents}
+          loading={auditLoading}
           onClose={() => setIsAuditModalOpen(false)}
         />
       )}

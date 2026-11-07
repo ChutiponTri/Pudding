@@ -21,6 +21,7 @@ import {
   MousePointer2,
   Play,
   Send,
+  Loader2,
 } from 'lucide-react';
 
 interface IntegrityAuditModalProps {
@@ -28,6 +29,8 @@ interface IntegrityAuditModalProps {
   onClose: () => void;
   submission: Submission | null;
   events: SubmissionEvent[];
+  /** The event log is still loading: the counts on the submission show meanwhile. */
+  loading?: boolean;
 }
 
 /** Trips away from the quiz: the only events with a length. */
@@ -65,7 +68,7 @@ function offset(at: string, start: number) {
 const clock = (at: string) =>
   new Date(at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({ isOpen, onClose, submission, events }) => {
+export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({ isOpen, onClose, submission, events, loading = false }) => {
   const { t, language } = useLanguage();
   const th = language === 'th';
 
@@ -97,8 +100,8 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({ isOpen
   const metrics = [
     { label: th ? 'ออกจากหน้าข้อสอบ' : 'Left the quiz', value: `${switches}`, unit: th ? 'ครั้ง' : '×', alert: switches >= SUSPICIOUS_TAB_SWITCHES, icon: Layers },
     { label: th ? 'เวลานอกหน้าข้อสอบ' : 'Time away', value: formatSeconds(away, th), unit: '', alert: away >= SUSPICIOUS_AWAY_SECONDS, icon: Clock },
-    { label: th ? 'คลุม / คัดลอก' : 'Select / copy', value: `${copies}`, unit: th ? 'ครั้ง' : '×', alert: copies > 0, icon: Copy },
-    { label: th ? 'วางข้อความ' : 'Paste', value: `${pastes}`, unit: th ? 'ครั้ง' : '×', alert: pastes > 0, icon: ClipboardPaste },
+    { label: th ? 'คลุม / คัดลอก' : 'Select / copy', value: loading ? '…' : `${copies}`, unit: th ? 'ครั้ง' : '×', alert: copies > 0, icon: Copy },
+    { label: th ? 'วางข้อความ' : 'Paste', value: loading ? '…' : `${pastes}`, unit: th ? 'ครั้ง' : '×', alert: pastes > 0, icon: ClipboardPaste },
   ];
 
   const riskTone = isHighRisk
@@ -196,16 +199,27 @@ export const IntegrityAuditModal: React.FC<IntegrityAuditModalProps> = ({ isOpen
         <div>
           <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-1.5">
             <span>{t('grading.audit_modal.event_timeline')}</span>
+            {loading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" aria-label={th ? 'กำลังโหลด' : 'Loading'} />
+            ) : (
             <span className="text-xs text-slate-500 font-normal">
               ({sorted.length} {th ? 'รายการ' : sorted.length === 1 ? 'event' : 'events'})
             </span>
+            )}
           </h4>
 
           <ol className="relative space-y-2.5 before:absolute before:left-[15px] before:top-3 before:bottom-3 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-800">
             {hasStart &&
               row('start', { icon: Play, tone: 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/60 ring-sky-200 dark:ring-sky-900' }, th ? 'เริ่มทำข้อสอบ' : 'Started the quiz', submission.started_at)}
 
-            {sorted.length === 0 && (
+            {loading && sorted.length === 0 && (
+              <li className="relative pl-11 space-y-2" aria-hidden>
+                <div className="h-12 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                <div className="h-12 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
+              </li>
+            )}
+
+            {!loading && sorted.length === 0 && (
               <li className="relative pl-11">
                 <p className="p-3 text-center border border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-slate-400 text-xs">
                   {th ? 'ไม่พบพฤติกรรมผิดปกติระหว่างทำข้อสอบ' : 'Nothing unusual was recorded during this quiz.'}
