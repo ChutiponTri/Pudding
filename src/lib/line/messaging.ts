@@ -232,9 +232,17 @@ function lineAction(action: LineAction) {
  */
 export async function replyLineButtons(
   replyToken: string,
-  options: { intro?: string; text: string; actions: LineAction[]; quickReplies?: LineAction[] }
+  options: {
+    /** An image sent first (tap to view full screen). LINE wants HTTPS JPEG/PNG; the preview at most 1 MB. */
+    image?: { originalContentUrl: string; previewImageUrl: string };
+    intro?: string;
+    text: string;
+    actions: LineAction[];
+    quickReplies?: LineAction[];
+  }
 ): Promise<void> {
   const messages: Record<string, unknown>[] = [];
+  if (options.image) messages.push({ type: 'image', ...options.image });
   if (options.intro) messages.push({ type: 'text', text: fit(options.intro, 5000) });
   if (options.actions.length) {
     messages.push({

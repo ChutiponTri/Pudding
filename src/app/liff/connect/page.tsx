@@ -206,13 +206,13 @@ export default function TeacherConnectPage() {
                   ไปหน้าห้องเรียนของนักเรียน
                 </button>
               )}
-              {(blocked.code === "not-teacher" || blocked.code === "incomplete" || blocked.code === "pending" || blocked.code === "rejected") && (
+              {(blocked.code === "incomplete" || blocked.code === "pending" || blocked.code === "rejected") && (
                 <button
                   type="button"
-                  onClick={() => openWeb(blocked.code === "not-teacher" ? "/sign-in" : "/pending-approval")}
+                  onClick={() => openWeb("/pending-approval")}
                   className="h-11 rounded-xl ring-1 ring-slate-300 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm cursor-pointer"
                 >
-                  {blocked.code === "not-teacher" ? "คุณครู: เข้าสู่ระบบเว็บ Pudding" : "ดูสถานะบัญชีบนเว็บ"}
+                  ดูสถานะบัญชีบนเว็บ
                 </button>
               )}
               {liff?.isInClient() && (

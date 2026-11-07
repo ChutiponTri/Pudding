@@ -328,6 +328,19 @@ export function webUrl(path: string) {
   return `${base}${path}`;
 }
 
+/**
+ * The "how to connect" picture (teacher and student steps) sent with the
+ * connect button. Files live in public/; bump the version after replacing
+ * them, since LINE caches images by URL.
+ */
+const CONNECT_GUIDE_VERSION = '1';
+export function connectGuideImage() {
+  return {
+    originalContentUrl: webUrl(`/Pudding-LINE-Conn-Guide.jpg?v=${CONNECT_GUIDE_VERSION}`),
+    previewImageUrl: webUrl(`/Pudding-LINE-Conn-Guide-preview.jpg?v=${CONNECT_GUIDE_VERSION}`),
+  };
+}
+
 /** The teacher's LIFF connect page (rich-menu link); `ref` preselects the group whose button was tapped. */
 export function liffConnectUrl(ref?: string) {
   const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;

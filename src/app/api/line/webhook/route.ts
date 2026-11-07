@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getGroupSummary, pushLineGroupText, replyLineButtons, replyLineText, replyLineTextWithLinkButton, replyLineTextWithQuickReplies } from '@/lib/line/messaging';
 import {
+  connectGuideImage,
   ensureBotGroup,
   findLinkedClassroom,
   findTeacherByLineUid,
@@ -165,6 +166,7 @@ async function replyConnectButton(supabase: ServiceClient, groupId: string, repl
   const group = await ensureBotGroup(supabase, groupId);
   try {
     await replyLineButtons(replyToken, {
+      image: connectGuideImage(),
       text,
       actions: [{ type: 'uri', label: '🔗 เชื่อมห้องเรียน', uri: liffConnectUrl(group?.ref) }],
     });
@@ -228,6 +230,7 @@ async function handleConnectKeyword(supabase: ServiceClient, lineUserId: string 
   }
   try {
     await replyLineButtons(replyToken, {
+      image: connectGuideImage(),
       intro: 'เชื่อมกลุ่ม LINE กับห้องเรียน\n1️⃣ เชิญ Pudding Bot เข้ากลุ่ม LINE ของห้องเรียน\n2️⃣ แตะ “เชื่อมห้องเรียน” ในข้อความของบอท หรือเปิดหน้าเชื่อมกลุ่มด้านล่าง แล้วเลือกกลุ่มและห้องเรียน',
       text: 'แตะเพื่อเปิดหน้าเชื่อมกลุ่ม 👇',
       actions: [{ type: 'uri', label: '🔗 เปิดหน้าเชื่อมกลุ่ม', uri: liffConnectUrl() }],
