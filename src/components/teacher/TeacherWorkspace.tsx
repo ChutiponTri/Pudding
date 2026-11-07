@@ -9,7 +9,8 @@ import { Avatar } from '@/components/Avatar';
 import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeacherPanel';
 import { teacherRoleBadgeClass, teacherRoleLabel } from '@/lib/utils/teacherRole';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
+import { lineMessagesLeftNote, testQuotaNote, type LineTestQuotaInfo } from '@/lib/utils/lineTestQuotaNote';
+import { ActionToast, networkErrorMessage, readActionResult, useActionToast } from '@/components/ActionToast';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dropLineGroup, prefetchLineGroups, useLineGroupChoices } from '@/lib/line/lineGroupChoices';
 import { dataService, type ClassroomChangeEvent } from '@/lib/supabase/dataService';
@@ -50,7 +51,6 @@ import {
   X,
   MessageCircle,
   Copy,
-  Check,
   Sliders,
   ArrowUp,
   ArrowDown,
@@ -275,7 +275,7 @@ export function TeacherWorkspace({
   /** From the LIFF page's "สร้างห้องเรียนใหม่สำหรับกลุ่มนี้": the classroom created here links to that LINE group. */
   const [pendingLineLink, setPendingLineLink] = useState<{ groupRef: string; groupName?: string } | null>(null);
   const createFromLinkRef = useRef<{ groupRef?: string; groupName?: string } | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const { toast, showToast, hideToast } = useActionToast();
 
   // Course-level Learning Indicators & Rubrics Settings Modal
   const [editingCourseIndicators, setEditingCourseIndicators] = useState<Course | null>(null);
@@ -342,10 +342,6 @@ export function TeacherWorkspace({
       ? `รายวิชา ${courseCodeInput.trim().toUpperCase()} มีอยู่แล้วใน${formatAcademicPeriod(courseSemesterInput, courseYearInput, language)} กรุณาเลือกภาคเรียนอื่น`
       : `Course ${courseCodeInput.trim().toUpperCase()} already exists in ${formatAcademicPeriod(courseSemesterInput, courseYearInput, language)}. Please choose another semester.`;
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
 
   // Classroom ids for realtime filtering, kept in a ref so the subscription
   // does not restart on every reload.
@@ -448,20 +444,27 @@ export function TeacherWorkspace({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ classroomId: activeClassroom.id, action, groupRef }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'LINE connection failed');
+      const result = await readActionResult(response, tr);
+      const data = result.data as { status?: 'connected' | 'disconnected'; groupName?: string; connectedAt?: string; testQuota?: LineTestQuotaInfo; lineMessagesLeft?: number };
+      // The server may have found the link broken (bot removed from the group) and undone it.
+      if (data.status) {
+        setLineConnection((current) => ({ ...current, ...data, status: data.status! }));
+        setLineConnectionStatuses((current) => ({ ...current, [activeClassroom.id]: data.status! }));
+      }
+      if (!result.ok) {
+        showToast(result.message, result.tone);
+        return;
+      }
       if (action === 'link-group' && groupRef) dropLineGroup(groupRef);
-      setLineConnection(result);
-      setLineConnectionStatuses((current) => ({ ...current, [activeClassroom.id]: result.status }));
       showToast(
         action === 'disconnect'
           ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group')
           : action === 'test'
-          ? tr('ส่งข้อความทดสอบแล้ว', 'Test message sent') + testQuotaNote(result.testQuota, tr)
-          : tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`)
+          ? tr(`ส่งข้อความทดสอบเข้ากลุ่ม${data.groupName ? ` “${data.groupName}”` : ''} แล้ว`, `Test message sent${data.groupName ? ` to “${data.groupName}”` : ''}`) + testQuotaNote(data.testQuota, tr) + lineMessagesLeftNote(data.lineMessagesLeft, tr)
+          : tr(`เชื่อม LINE Group${data.groupName ? ` “${data.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${data.groupName ? ` “${data.groupName}”` : ''} connected`)
       );
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : tr('ไม่สามารถเชื่อมต่อ LINE Group ได้', 'Could not connect the LINE group'));
+    } catch {
+      showToast(networkErrorMessage(tr), 'error');
     } finally {
       setIsLineConnectionLoading(false);
       setLinkingGroupRef(null);
@@ -1047,7 +1050,7 @@ export function TeacherWorkspace({
           const groupName = result.groupName || link.groupName;
           showToast(tr(`สร้างห้องเรียนและเชื่อมกลุ่ม LINE${groupName ? ` “${groupName}”` : ''} แล้ว`, `Classroom created and linked to LINE group${groupName ? ` “${groupName}”` : ''}`));
         } catch (error) {
-          showToast(tr('สร้างห้องเรียนแล้ว แต่เชื่อมกลุ่ม LINE ไม่สำเร็จ: ', 'Classroom created, but the LINE group was not linked: ') + (error instanceof Error ? error.message : ''));
+          showToast(tr('สร้างห้องเรียนแล้ว แต่เชื่อมกลุ่ม LINE ไม่สำเร็จ: ', 'Classroom created, but the LINE group was not linked: ') + (error instanceof Error ? error.message : ''), 'warn');
         }
       } else {
         showToast(language === 'th' ? 'สร้างห้องเรียนใหม่สำเร็จ' : 'New classroom created');
@@ -1372,12 +1375,7 @@ export function TeacherWorkspace({
   return (
     <div className="space-y-4 sm:space-y-8 pb-20">
       {/* Toast Notice */}
-      {toastMessage && (
-        <div className="fixed bottom-[max(env(safe-area-inset-bottom),1rem)] inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-60 p-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold shadow-2xl flex items-center gap-2.5 text-sm animate-in fade-in slide-in-from-bottom-5">
-          <Check className="w-4 h-4" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
+      <ActionToast toast={toast} onClose={hideToast} />
 
       {view === 'dashboard' && (
         <>

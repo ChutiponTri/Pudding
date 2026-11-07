@@ -290,6 +290,20 @@ export async function getGroupSummary(groupId: string): Promise<{ groupName?: st
   return response.json();
 }
 
+/**
+ * Whether the bot is still in the group: 'gone' only when LINE says so
+ * (404/403), 'unknown' when LINE could not be asked (network, 5xx, no token).
+ */
+export async function groupPresence(groupId: string): Promise<{ state: 'in'; groupName?: string } | { state: 'gone' } | { state: 'unknown' }> {
+  try {
+    const response = await fetch(`${LINE_API_BASE}/group/${encodeURIComponent(groupId)}/summary`, { headers: lineAuthHeaders(), cache: 'no-store' });
+    if (response.ok) return { state: 'in', groupName: ((await response.json()) as { groupName?: string }).groupName };
+    return response.status === 404 || response.status === 403 ? { state: 'gone' } : { state: 'unknown' };
+  } catch {
+    return { state: 'unknown' };
+  }
+}
+
 /** Makes the bot leave the group. A 404 means it already left, which is fine. */
 export async function leaveGroup(groupId: string): Promise<void> {
   const response = await fetch(`${LINE_API_BASE}/group/${encodeURIComponent(groupId)}/leave`, {

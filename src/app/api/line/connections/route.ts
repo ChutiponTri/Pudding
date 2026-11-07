@@ -3,10 +3,10 @@ import { canUseTeacherApp } from '@/lib/server/teacherProfileGuard';
 import { getLineTestQuota, releaseLineTestSend, reserveLineTestSend } from '@/lib/server/lineTestQuota';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
+import { groupPresence, groupPushAffordable, isLineQuotaError, LineApiError, leaveGroup, pushLineGroupText } from '@/lib/line/messaging';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
-import { canLinkLine, getClassroom, linkErrorMessage, linkGroupByRef, listUnlinkedTeacherGroups } from '@/lib/line/groupLink';
+import { canLinkLine, getClassroom, linkErrorMessage, linkGroupByRef, listUnlinkedTeacherGroups, unlinkClassroom, type ServiceClient } from '@/lib/line/groupLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -98,35 +98,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'disconnected' });
   }
 
-  if (action === 'test') {
-    if (!classroom.line_group_id) return NextResponse.json({ error: 'LINE Group is not connected' }, { status: 409 });
-    // Each test is billed per group member, so it is rationed (see lineTestQuota).
-    const reservation = await reserveLineTestSend(supabase, { teacherId: userId, classroomId, source: 'web' });
-    // Everyone is limited, the admin included (raise the LINE_TEST_LIMIT_* env vars instead).
-    if (!reservation.ok) {
-      return NextResponse.json(
-        { error: reservation.message, testQuota: reservation.quota },
-        { status: 429, headers: reservation.retryAfterSeconds ? { 'Retry-After': String(reservation.retryAfterSeconds) } : undefined }
-      );
-    }
-    try {
-      await pushLineGroupText(
-        classroom.line_group_id,
-        withLiffLink(`✅ Pudding เชื่อมต่อ “${classroomTitle(classroom)}” สำเร็จแล้ว`, 'นักเรียนกดเพื่อเข้าห้องเรียน', { classroomId: classroom.id, inviteCode: classroom.invite_code })
-      );
-    } catch (pushError) {
-      // Nothing was delivered, so it does not count.
-      await releaseLineTestSend(supabase, reservation.id);
-      console.error('LINE test push failed:', pushError);
-      return NextResponse.json({ error: 'ส่งข้อความทดสอบไม่สำเร็จ กรุณาตรวจว่าบอทยังอยู่ในกลุ่ม LINE' }, { status: 502 });
-    }
-    return NextResponse.json({
-      status: 'connected',
-      groupName: classroom.line_group_name || undefined,
-      connectedAt: classroom.line_connected_at,
-      testQuota: reservation.quota,
-    });
-  }
+  if (action === 'test') return sendTestMessage(supabase, userId, classroom);
 
   if (action === 'link-group') {
     // A group the bot is in, picked in the dialog (or the group whose button
@@ -143,4 +115,87 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+}
+
+type TestClassroom = { id: string; line_group_id?: string | null; line_group_name?: string | null; line_connected_at?: string | null; invite_code?: string | null } & Parameters<typeof classroomTitle>[0];
+
+/** A failed test send, in words the teacher can act on. `tone` picks the toast style. */
+function testFailure(status: number, code: string, error: string, extra: Record<string, unknown> = {}, tone: 'error' | 'warn' = 'error') {
+  return NextResponse.json({ error, code, tone, ...extra }, { status });
+}
+
+/**
+ * "ทดสอบส่งข้อความ": push one message to the linked group. Checked first, so
+ * the teacher learns why instead of a generic failure:
+ *   - the bot is no longer in the group (the link is then removed: it can't work)
+ *   - this month's LINE messages don't cover the group (one per member)
+ *   - this teacher/classroom used up their test sends (rationing)
+ * and a push LINE still refuses is explained by its status.
+ */
+async function sendTestMessage(supabase: ServiceClient, userId: string, classroom: TestClassroom) {
+  const groupId = classroom.line_group_id;
+  const groupLabel = classroom.line_group_name ? `“${classroom.line_group_name}”` : 'LINE';
+  if (!groupId) return testFailure(409, 'no_group', 'ห้องเรียนนี้ยังไม่ได้เชื่อมกลุ่ม LINE', { status: 'disconnected' }, 'warn');
+
+  const [presence, budget] = await Promise.all([groupPresence(groupId), groupPushAffordable(groupId)]);
+  if (presence.state === 'gone') {
+    await unlinkClassroom(supabase, classroom.id);
+    return testFailure(
+      409,
+      'bot_not_in_group',
+      `Pudding Bot ไม่ได้อยู่ในกลุ่ม ${groupLabel} แล้ว ระบบจึงยกเลิกการเชื่อมให้ เชิญบอทเข้ากลุ่มอีกครั้งแล้วเชื่อมใหม่`,
+      { status: 'disconnected' }
+    );
+  }
+  if (budget.affordable === false) {
+    return testFailure(
+      429,
+      'line_quota',
+      budget.remaining != null && budget.members != null
+        ? `โควตาข้อความ LINE เดือนนี้เหลือ ${budget.remaining} ข้อความ แต่กลุ่มนี้มีสมาชิก ${budget.members} คน (ส่งเข้ากลุ่มนับ 1 ข้อความต่อสมาชิก 1 คน) จึงยังไม่ได้ส่ง โควตาจะเริ่มใหม่ต้นเดือนหน้า`
+        : 'โควตาข้อความ LINE เดือนนี้ไม่พอสำหรับกลุ่มนี้ จึงยังไม่ได้ส่ง โควตาจะเริ่มใหม่ต้นเดือนหน้า',
+      {},
+      'warn'
+    );
+  }
+
+  // Each test is billed per group member, so it is rationed (see lineTestQuota).
+  // Everyone is limited, the admin included (raise the LINE_TEST_LIMIT_* env vars instead).
+  const reservation = await reserveLineTestSend(supabase, { teacherId: userId, classroomId: classroom.id, source: 'web' });
+  if (!reservation.ok) {
+    return NextResponse.json(
+      { error: reservation.message, code: 'test_limit', tone: 'warn', testQuota: reservation.quota },
+      { status: 429, headers: reservation.retryAfterSeconds ? { 'Retry-After': String(reservation.retryAfterSeconds) } : undefined }
+    );
+  }
+  try {
+    await pushLineGroupText(
+      groupId,
+      withLiffLink(`✅ Pudding เชื่อมต่อ “${classroomTitle(classroom)}” สำเร็จแล้ว`, 'นักเรียนกดเพื่อเข้าห้องเรียน', { classroomId: classroom.id, inviteCode: classroom.invite_code })
+    );
+  } catch (pushError) {
+    // Nothing was delivered, so it does not count.
+    await releaseLineTestSend(supabase, reservation.id);
+    console.error('LINE test push failed:', pushError);
+    if (isLineQuotaError(pushError)) {
+      return testFailure(429, 'line_quota', 'โควตาข้อความ LINE เดือนนี้หมดแล้ว จึงส่งไม่ได้ โควตาจะเริ่มใหม่ต้นเดือนหน้า', {}, 'warn');
+    }
+    const status = pushError instanceof LineApiError ? pushError.status : 0;
+    if (status === 429) return testFailure(429, 'rate_limited', 'LINE ขอให้รอสักครู่ กรุณาลองใหม่ในอีก 1 นาที', {}, 'warn');
+    if (status === 401 || !(pushError instanceof LineApiError)) {
+      return testFailure(503, 'bot_config', 'การตั้งค่าบอท LINE บนเซิร์ฟเวอร์ไม่ถูกต้อง (Channel access token) กรุณาแจ้งผู้ดูแลระบบ');
+    }
+    if (status === 400 || status === 403 || status === 404) {
+      return testFailure(502, 'push_refused', `LINE ไม่รับข้อความเข้ากลุ่ม ${groupLabel} (รหัส ${status}) ตรวจว่าบอทยังอยู่ในกลุ่ม แล้วลองใหม่`);
+    }
+    return testFailure(502, 'line_error', `ระบบ LINE ขัดข้องชั่วคราว (รหัส ${status}) กรุณาลองใหม่อีกครั้ง`);
+  }
+  const left = budget.remaining != null && budget.members != null ? Math.max(0, budget.remaining - budget.members) : null;
+  return NextResponse.json({
+    status: 'connected',
+    groupName: presence.state === 'in' ? presence.groupName || classroom.line_group_name || undefined : classroom.line_group_name || undefined,
+    connectedAt: classroom.line_connected_at,
+    testQuota: reservation.quota,
+    lineMessagesLeft: left ?? undefined,
+  });
 }

@@ -12,7 +12,8 @@ import { dataService } from '@/lib/supabase/dataService';
 import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
 import { quietly } from '@/lib/net/fetchActivity';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
-import { testQuotaNote } from '@/lib/utils/lineTestQuotaNote';
+import { lineMessagesLeftNote, testQuotaNote, type LineTestQuotaInfo } from '@/lib/utils/lineTestQuotaNote';
+import { ActionToast, networkErrorMessage, readActionResult, useActionToast } from '@/components/ActionToast';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dropLineGroup, prefetchLineGroups, useLineGroupChoices } from '@/lib/line/lineGroupChoices';
 import { DateTimeField } from '@/components/DateTimeField';
@@ -344,6 +345,8 @@ export default function ClassroomWorkspacePage() {
   }>({ status: 'disconnected' });
   const [isLineLoading, setIsLineLoading] = useState(false);
   const [linkingGroupRef, setLinkingGroupRef] = useState<string | null>(null);
+  // LINE dialog results show as a toast: the page notice sits behind the open dialog.
+  const { toast, showToast, hideToast } = useActionToast();
   // Groups the bot is in with this teacher: shared, remembered list (see lineGroupChoices).
   const lineGroups = useLineGroupChoices(showLineConnectModal);
   const [teacherBot, setTeacherBot] = useState<{ botFriend?: boolean | null; addFriendUrl?: string }>({});
@@ -383,7 +386,7 @@ export default function ClassroomWorkspacePage() {
         if (result.status !== 'connected') return;
         setLineConnection(result);
         applyLineStatus(result);
-        setNotice(tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`));
+        showToast(tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`));
       } catch {}
     }, 5000);
     return () => clearInterval(interval);
@@ -400,25 +403,33 @@ export default function ClassroomWorkspacePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ classroomId: classroom.id, action, groupRef }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'LINE connection failed');
+      const result = await readActionResult(response, tr);
+      const data = result.data as { status?: 'connected' | 'disconnected'; groupName?: string; connectedAt?: string; testQuota?: LineTestQuotaInfo; lineMessagesLeft?: number };
+      // The server may have found the link broken (bot removed from the group) and undone it.
+      if (data.status) {
+        setLineConnection((current) => ({ ...current, ...data, status: data.status! }));
+        setClassroom((prev) => (prev ? {
+          ...prev,
+          line_connection_status: data.status,
+          ...(data.status === 'disconnected' ? { line_group_id: undefined, line_group_name: undefined } : {}),
+          ...(data.status === 'connected' ? { line_group_id: prev.line_group_id || 'linked', line_group_name: data.groupName || prev.line_group_name } : {}),
+        } : null));
+      }
+      if (!result.ok) {
+        showToast(result.message, result.tone);
+        return;
+      }
       if (action === 'link-group' && groupRef) dropLineGroup(groupRef);
-      setLineConnection(result);
-      setClassroom((prev) => (prev ? {
-        ...prev,
-        line_connection_status: result.status,
-        ...(action === 'disconnect' ? { line_group_id: undefined, line_group_name: undefined } : {}),
-        ...(result.status === 'connected' ? { line_group_id: prev.line_group_id || 'linked', line_group_name: result.groupName } : {}),
-      } : null));
-      setNotice(
+      // A toast (not the page notice), so it shows above the open dialog.
+      showToast(
         action === 'disconnect'
           ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group')
           : action === 'test'
-          ? tr('ส่งข้อความทดสอบเข้ากลุ่ม LINE แล้ว', 'Test message sent to the LINE group') + testQuotaNote(result.testQuota, tr)
-          : tr(`เชื่อม LINE Group${result.groupName ? ` “${result.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${result.groupName ? ` “${result.groupName}”` : ''} connected`)
+          ? tr(`ส่งข้อความทดสอบเข้ากลุ่ม${data.groupName ? ` “${data.groupName}”` : ''} แล้ว`, `Test message sent${data.groupName ? ` to “${data.groupName}”` : ''}`) + testQuotaNote(data.testQuota, tr) + lineMessagesLeftNote(data.lineMessagesLeft, tr)
+          : tr(`เชื่อม LINE Group${data.groupName ? ` “${data.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${data.groupName ? ` “${data.groupName}”` : ''} connected`)
       );
-    } catch (error) {
-      setNotice((error as { message?: string } | null)?.message || tr('ไม่สามารถเชื่อมต่อ LINE Group ได้', 'Could not connect the LINE group'));
+    } catch {
+      showToast(networkErrorMessage(tr), 'error');
     } finally {
       setIsLineLoading(false);
       setLinkingGroupRef(null);
@@ -3162,6 +3173,7 @@ export default function ClassroomWorkspacePage() {
             </ModalSheetFooter>
         </ModalSheet>
       )}
+      <ActionToast toast={toast} onClose={hideToast} />
     </div>
   );
 }
