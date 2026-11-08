@@ -66,6 +66,7 @@ export function cardTriggerText(
 export function parseCardTrigger(text: string): CardTrigger | null {
   if (!text.includes('card=')) return null;
   const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
+  const teacherLiffId = process.env.LINE_TEACHER_LIFF_ID || process.env.NEXT_PUBLIC_LINE_TEACHER_LIFF_ID;
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
     let url: URL;
     try {
@@ -75,7 +76,7 @@ export function parseCardTrigger(text: string): CardTrigger | null {
     }
     // A LIFF link, or our reminder picture's address (/cards/line/…, see remindPicture).
     const ours = url.hostname === 'liff.line.me'
-      ? !liffId || url.pathname.startsWith(`/${liffId}`)
+      ? !liffId || url.pathname.startsWith(`/${liffId}`) || (!!teacherLiffId && url.pathname.startsWith(`/${teacherLiffId}`))
       : url.pathname.startsWith('/liff') || url.pathname.startsWith('/cards/line/');
     if (!ours) continue;
     const raw = url.searchParams.get('card');

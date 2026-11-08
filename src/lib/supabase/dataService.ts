@@ -18,7 +18,7 @@ import { createClient, isSupabaseConfigured } from './client';
 import { authFetch } from '@/lib/auth/lineSession';
 import { beginFetch } from '@/lib/net/fetchActivity';
 import type { QuizOpenResult } from '@/lib/utils/quizExit';
-import { reportLineUnsent, type LinePostStatus, type LineShare } from '@/lib/utils/lineShare';
+import { pendingLineShare, reportLineUnsent, type LinePostStatus, type LineShare } from '@/lib/utils/lineShare';
 import { invalidateSessionCache } from '@/lib/cache/sessionCache';
 import { classroomSignalChannel, type ClassroomSignal } from '@/lib/realtime/signals';
 
@@ -643,15 +643,22 @@ export const dataService = {
    * and the result says why.
    */
   async reannounceAssignment(assignmentId: string, title?: string): Promise<LinePostStatus> {
-    const res = await authFetch('/api/assignments/override', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ assignmentId, action: 'reannounce' }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
-    reportLineUnsent(json.line, json.share, title, json.message);
-    return (json.line as LinePostStatus) || 'sent';
+    // The popup opens at the tap; the server's answer fills it in.
+    const popup = pendingLineShare(title);
+    try {
+      const res = await authFetch('/api/assignments/override', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assignmentId, action: 'reannounce' }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+      popup.settle(json.line, json.share, title, json.message);
+      return (json.line as LinePostStatus) || 'sent';
+    } catch (error) {
+      popup.cancel();
+      throw error;
+    }
   },
 
   /**
@@ -660,16 +667,26 @@ export const dataService = {
    * rationing, LINE refused) the share popup opens instead. 'none' = everyone handed in.
    */
   async remindAssignment(assignmentId: string, title?: string): Promise<LinePostStatus | 'none'> {
-    const res = await authFetch('/api/assignments/override', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ assignmentId, action: 'remind' }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
-    if (json.line === 'none') return 'none';
-    reportLineUnsent(json.line, json.share, title ? `ทวงงาน: ${title}` : undefined, json.message);
-    return (json.line as LinePostStatus) || 'sent';
+    // The popup opens at the tap; the server's answer fills it in.
+    const popup = pendingLineShare(title ? `ทวงงาน: ${title}` : undefined);
+    try {
+      const res = await authFetch('/api/assignments/override', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assignmentId, action: 'remind' }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+      if (json.line === 'none') {
+        popup.cancel();
+        return 'none';
+      }
+      popup.settle(json.line, json.share, title ? `ทวงงาน: ${title}` : undefined, json.message);
+      return (json.line as LinePostStatus) || 'sent';
+    } catch (error) {
+      popup.cancel();
+      throw error;
+    }
   },
 
   /**
@@ -678,15 +695,22 @@ export const dataService = {
    * the share popup opens instead (same fallback as remindAssignment).
    */
   async announceResults(assignmentId: string, title?: string): Promise<{ line: LinePostStatus; closed: boolean; assignment: Assignment | null }> {
-    const res = await authFetch('/api/assignments/override', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ assignmentId, action: 'announce_results' }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
-    reportLineUnsent(json.line, json.share, title ? `ประกาศคะแนน: ${title}` : undefined, json.message);
-    return { line: (json.line as LinePostStatus) || 'sent', closed: !!json.closed, assignment: (json.assignment as Assignment) || null };
+    // The popup opens at the tap; the server's answer fills it in.
+    const popup = pendingLineShare(title ? `ประกาศคะแนน: ${title}` : undefined);
+    try {
+      const res = await authFetch('/api/assignments/override', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assignmentId, action: 'announce_results' }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+      popup.settle(json.line, json.share, title ? `ประกาศคะแนน: ${title}` : undefined, json.message);
+      return { line: (json.line as LinePostStatus) || 'sent', closed: !!json.closed, assignment: (json.assignment as Assignment) || null };
+    } catch (error) {
+      popup.cancel();
+      throw error;
+    }
   },
 
   /**
@@ -694,28 +718,42 @@ export const dataService = {
    * group (same fallback as remindAssignment: share popup whenever it cannot).
    */
   async inviteStudentsInLine(classroomId: string, title?: string): Promise<LinePostStatus> {
-    const res = await authFetch('/api/classrooms/students', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'invite_line', classroomId }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
-    reportLineUnsent(json.line, json.share, title ? `เชิญเข้าห้อง: ${title}` : undefined, json.message);
-    return (json.line as LinePostStatus) || 'sent';
+    // The popup opens at the tap; the server's answer fills it in.
+    const popup = pendingLineShare(title ? `เชิญเข้าห้อง: ${title}` : undefined);
+    try {
+      const res = await authFetch('/api/classrooms/students', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'invite_line', classroomId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+      popup.settle(json.line, json.share, title ? `เชิญเข้าห้อง: ${title}` : undefined, json.message);
+      return (json.line as LinePostStatus) || 'sent';
+    } catch (error) {
+      popup.cancel();
+      throw error;
+    }
   },
 
   /** A timeline post sent to the class LINE group again (same fallback as remindAssignment). */
   async resendPost(postId: string, title?: string): Promise<LinePostStatus> {
-    const res = await authFetch('/api/classrooms/posts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'resend', id: postId }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
-    reportLineUnsent(json.line, json.share, title, json.message);
-    return (json.line as LinePostStatus) || 'sent';
+    // The popup opens at the tap; the server's answer fills it in.
+    const popup = pendingLineShare(title);
+    try {
+      const res = await authFetch('/api/classrooms/posts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'resend', id: postId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+      popup.settle(json.line, json.share, title, json.message);
+      return (json.line as LinePostStatus) || 'sent';
+    } catch (error) {
+      popup.cancel();
+      throw error;
+    }
   },
 
   /** Share token so other teachers can copy this work (see /assignments/new?template=). */

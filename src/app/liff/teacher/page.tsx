@@ -29,6 +29,41 @@ const isView = (value: string | null): value is TeacherView => !!value && value 
 
 type Blocked = { message: string; code?: string; connectUrl?: string };
 
+/** The LIFF app id inside a LINE context token (a JWT in the first page load's #hash). */
+function liffIdInHash(): string | null {
+  try {
+    const token = new URLSearchParams(window.location.hash.slice(1)).get("context_token");
+    const part = token?.split(".")[1];
+    if (!part) return null;
+    const json = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof json.liffId === "string" ? json.liffId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which LIFF app opened this page: the teacher menu's own app (new menu cards),
+ * or the student app (menu cards posted before it existed, which come here
+ * through /liff). liff.init must get that app's id, or it fails with
+ * "Invalid LIFF ID". The SDK keeps each app's session as LIFF_STORE:<id>:….
+ */
+function openingLiffId(mainId: string, teacherId: string): string {
+  if (!teacherId || teacherId === mainId) return mainId;
+  const fromHash = liffIdInHash();
+  if (fromHash === teacherId || fromHash === mainId) return fromHash;
+  const has = (id: string) => {
+    try {
+      return sessionStorage.getItem(`LIFF_STORE:${id}:context`) !== null || localStorage.getItem(`LIFF_STORE:${id}:context`) !== null;
+    } catch {
+      return false;
+    }
+  };
+  if (has(teacherId)) return teacherId;
+  if (has(mainId)) return mainId;
+  return teacherId;
+}
+
 /**
  * /liff/teacher?g=<group ref>&view=<page>: the teacher menu of a class LINE
  * group, opened from the bot's menu card. Same data and rules as the teacher
@@ -51,8 +86,14 @@ export default function TeacherLiffPage() {
     (async () => {
       try {
         const liffModule = import("@line/liff");
-        let id = process.env.NEXT_PUBLIC_LINE_LIFF_ID || "";
-        if (!id) id = (await (await fetch("/api/liff/config")).json()).liffId || "";
+        let mainId = process.env.NEXT_PUBLIC_LINE_LIFF_ID || "";
+        let teacherId = process.env.NEXT_PUBLIC_LINE_TEACHER_LIFF_ID || "";
+        if (!mainId) {
+          const config = await (await fetch("/api/liff/config")).json();
+          mainId = config.liffId || "";
+          teacherId ||= config.teacherLiffId || "";
+        }
+        const id = openingLiffId(mainId, teacherId);
         if (!id) throw new Error("ไม่พบ LINE_LIFF_ID ในระบบ");
         const sdk = (await liffModule).default;
         await sdk.init({ liffId: id });

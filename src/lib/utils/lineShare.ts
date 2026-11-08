@@ -32,6 +32,10 @@ export type LineUnsentDetail = LineShare & {
   note?: string;
   /** Offers "no need to send" (e.g. a deadline reminder): the teacher drops it for good. */
   onDismiss?: () => void;
+  /** Set by pendingLineShare: the entry its later answer replaces. */
+  pendingId?: string;
+  /** Shown at the tap while the server is still preparing it (pendingLineShare). */
+  pending?: boolean;
 };
 
 /**
@@ -41,4 +45,41 @@ export type LineUnsentDetail = LineShare & {
 export function reportLineUnsent(line: unknown, share: LineShare | null | undefined, title?: string, note?: string, onDismiss?: () => void) {
   if (typeof window === 'undefined' || !share || !isUnsent(line)) return;
   window.dispatchEvent(new CustomEvent<LineUnsentDetail>(LINE_UNSENT_EVENT, { detail: { reason: line, ...share, title, note, onDismiss } }));
+}
+
+/** Window event that drops a waiting popup (pendingLineShare's cancel). */
+export const LINE_PENDING_CANCEL_EVENT = 'pudding-line-pending-cancel';
+
+let pendingCounter = 0;
+
+/**
+ * Opens the share popup at the tap, before the server has answered, so the
+ * teacher is not left waiting on a blank screen (the server needs several
+ * database round trips first). `settle` fills it in with what the server sent
+ * (or closes it when that was not something to share); `cancel` closes it
+ * (an error, or nothing to send).
+ */
+export function pendingLineShare(title?: string) {
+  if (typeof window === 'undefined') return { settle: reportLineUnsent, cancel: () => {} };
+  const pendingId = `pending-${Date.now()}-${++pendingCounter}`;
+  let done = false;
+  window.dispatchEvent(
+    new CustomEvent<LineUnsentDetail>(LINE_UNSENT_EVENT, { detail: { reason: 'card', text: '', url: null, title, pendingId, pending: true } })
+  );
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    window.dispatchEvent(new CustomEvent<{ pendingId: string }>(LINE_PENDING_CANCEL_EVENT, { detail: { pendingId } }));
+  };
+  const settle: typeof reportLineUnsent = (line, share, settledTitle, note, onDismiss) => {
+    if (done) return;
+    if (!share || !isUnsent(line)) return cancel();
+    done = true;
+    window.dispatchEvent(
+      new CustomEvent<LineUnsentDetail>(LINE_UNSENT_EVENT, {
+        detail: { reason: line, ...share, title: settledTitle ?? title, note, onDismiss, pendingId },
+      })
+    );
+  };
+  return { settle, cancel };
 }

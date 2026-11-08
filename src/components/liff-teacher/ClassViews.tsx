@@ -82,7 +82,15 @@ function QuickSend() {
 }
 
 export function HomeView() {
-  const { go, teacher, classroom, fromGroup, permission, askPermission } = useKit();
+  const { go, teacher, classroom, fromGroup, permission, askPermission, liff } = useKit();
+  /** Where LINE says this page was opened (group/room = the class chat); shown to tell why sending asks for a group. */
+  const openedIn = (() => {
+    try {
+      return liff.getContext()?.type || "none";
+    } catch {
+      return "none";
+    }
+  })();
   return (
     <Page title={`สวัสดีค่ะ คุณครู${teacher.firstName}`} back={false}>
       <Card className="bg-violet-50! dark:bg-violet-950/40! space-y-0.5">
@@ -90,7 +98,7 @@ export function HomeView() {
         <p className="font-black text-violet-950 dark:text-white">{classroom.title}</p>
         {classroom.groupName && <p className="text-[11px] text-slate-500">กลุ่ม LINE: {classroom.groupName}</p>}
         {!fromGroup ? (
-          <p className="text-[11px] font-bold pt-1 text-slate-500">ℹ️ เปิดจากนอกกลุ่ม: เมื่อส่ง จะให้เลือกกลุ่มเอง (เปิดจากการ์ดเมนูในกลุ่มเพื่อส่งเข้ากลุ่มทันที)</p>
+          <p className="text-[11px] font-bold pt-1 text-slate-500">ℹ️ เปิดจากนอกกลุ่ม: เมื่อส่ง จะให้เลือกกลุ่มเอง (เปิดจากการ์ดเมนูในกลุ่มเพื่อส่งเข้ากลุ่มทันที) <span className="font-normal text-slate-400">[{openedIn}]</span></p>
         ) : permission === "unavailable" ? (
           <p className="text-[11px] font-bold pt-1 text-amber-700">⚠️ LINE ยังไม่เปิดสิทธิ์ส่งข้อความให้แอปนี้ (chat_message.write) ตอนนี้ต้องเลือกกลุ่มเอง</p>
         ) : permission === "prompt" ? (

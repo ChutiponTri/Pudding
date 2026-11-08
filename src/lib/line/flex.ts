@@ -173,10 +173,20 @@ export type TeacherView =
   | 'help'
   | 'guide';
 
-/** The teacher LIFF page for this group; opened from the group, so it can post cards back into it. */
+/**
+ * The teacher LIFF page for this group; opened from the group, so it can post
+ * cards back into it. With its own LIFF app (LINE_TEACHER_LIFF_ID, endpoint
+ * …/liff/teacher) the link opens that page directly. Without one it goes
+ * through the student app (liff.line.me/<id>/teacher → /liff → /liff/teacher),
+ * and LINE can lose the "opened from this group" context on that extra page
+ * load, so liff.sendMessages is not offered and the teacher has to pick the
+ * group by hand.
+ */
 export function liffTeacherUrl(ref: string, view: TeacherView) {
+  const teacherLiffId = process.env.LINE_TEACHER_LIFF_ID || process.env.NEXT_PUBLIC_LINE_TEACHER_LIFF_ID;
   const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
   const query = `?g=${encodeURIComponent(ref)}&view=${view}`;
+  if (teacherLiffId) return `https://liff.line.me/${teacherLiffId}${query}`;
   return liffId ? `https://liff.line.me/${liffId}/teacher${query}` : webUrl(`/liff/teacher${query}`);
 }
 

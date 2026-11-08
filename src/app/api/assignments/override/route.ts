@@ -33,9 +33,9 @@ export async function POST(request: NextRequest) {
   // A Clerk session, or the teacher LIFF pages inside LINE.
   const userId = await getTeacherUserId(request);
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const access = await getTeacherAccess(userId);
-  if (access !== 'ok') return teacherBlockedResponse(access);
-
+  // The access check and the work's row load together (one round trip less before the LINE popup fills in).
+  const accessPromise = getTeacherAccess(userId);
+  accessPromise.catch(() => {}); // awaited below; the early 400s must not leave it unhandled
   const body = await request.json().catch(() => ({}));
   const assignmentId = typeof body.assignmentId === 'string' ? body.assignmentId : '';
   const status = body.status_override as SubmissionOverrideStatus;
@@ -53,7 +53,11 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceSupabaseClient();
-  const { data: previous } = await supabase.from('assignments').select('*').eq('id', assignmentId).maybeSingle<Assignment>();
+  const [access, { data: previous }] = await Promise.all([
+    accessPromise,
+    supabase.from('assignments').select('*').eq('id', assignmentId).maybeSingle<Assignment>(),
+  ]);
+  if (access !== 'ok') return teacherBlockedResponse(access);
   if (!previous) return NextResponse.json({ error: 'ไม่พบงานนี้' }, { status: 404 });
 
   const { data: classroom } = await supabase
