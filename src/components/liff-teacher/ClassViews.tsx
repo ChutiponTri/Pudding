@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ExternalLink, UserCheck, Users, X } from "lucide-react";
+import { Check, ExternalLink, Loader2, Send, UserCheck, Users, X } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
 import { Button, Card, Empty, ErrorBox, Page, Pill, Skeleton, errorText, useKit, useViewData, type RosterData, type RosterStudent, type TeacherView } from "./kit";
 import { StatePill, useWork } from "./WorkViews";
@@ -200,6 +200,7 @@ export function GuideView() {
 }
 
 const COMMANDS: Array<[string, string]> = [
+  ["พุดดิ้ง เมนู", "การ์ดเมนูครูประจำไลน์กลุ่ม"],
   ["พุดดิ้ง เช็กชื่อ", "ลิงก์เช็กชื่อคาบที่เปิดอยู่"],
   ["พุดดิ้ง งาน", "สรุปงาน/ข้อสอบที่ยังเปิดรับ และเวลาที่เหลือ"],
   ["พุดดิ้ง ส่งงาน", "ลิงก์ส่งของแต่ละงาน"],
@@ -209,19 +210,62 @@ const COMMANDS: Array<[string, string]> = [
   ["พุดดิ้ง เชื่อม", "เชื่อม/ย้าย/ยกเลิกการเชื่อมกลุ่มนี้"],
 ];
 
+/**
+ * "คำสั่งพิเศษ": each command is a button. Tapping it sends the command text
+ * into the group as the teacher (straight in when opened from the group, else
+ * through the group picker), and the bot answers it there, as if typed.
+ */
 export function HelpView() {
+  const { postMessages, autoSend, toast } = useKit();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [sent, setSent] = useState<string | null>(null);
+  const send = async (command: string) => {
+    setBusy(command);
+    try {
+      const result = await postMessages([{ type: "text", text: command }], command);
+      if (result === "sent" || result === "shared") {
+        setSent(command);
+        setTimeout(() => setSent((current) => (current === command ? null : current)), 2500);
+      }
+    } catch (err) {
+      toast(errorText(err, "ส่งคำสั่งไม่สำเร็จ"), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
     <Page title="📖 คำสั่งพิเศษ">
-      <p className="text-xs text-slate-500">พิมพ์ในกลุ่ม LINE (เฉพาะคุณครูและ TA บอทจะตอบ ข้อความจากนักเรียนบอทไม่ตอบ) พิมพ์ “pudding” แทน “พุดดิ้ง” ก็ได้</p>
-      <Card className="divide-y divide-amber-100 dark:divide-slate-800 p-0!">
-        {COMMANDS.map(([command, what]) => (
-          <div key={command} className="px-4 py-3">
-            <p className="text-sm font-black text-amber-800 dark:text-amber-200">{command}</p>
-            <p className="text-xs text-slate-500">{what}</p>
-          </div>
-        ))}
+      <p className="text-xs text-slate-500">
+        แตะคำสั่งเพื่อส่งเข้ากลุ่ม{autoSend ? "ทันที" : " (เลือกกลุ่มของห้องนี้)"} แล้วบอทจะตอบในกลุ่ม • พิมพ์เองในกลุ่มก็ได้ (เฉพาะคุณครูและ TA บอทจะตอบ) พิมพ์ “pudding” แทน “พุดดิ้ง” ก็ได้
+      </p>
+      <Card className="divide-y divide-amber-100 dark:divide-slate-800 p-0! overflow-hidden">
+        {COMMANDS.map(([command, what]) => {
+          const isBusy = busy === command;
+          const isSent = sent === command;
+          return (
+            <button
+              key={command}
+              type="button"
+              disabled={!!busy}
+              onClick={() => send(command)}
+              className="w-full px-4 py-3 flex items-center gap-3 text-left cursor-pointer hover:bg-amber-50 dark:hover:bg-slate-800/60 active:bg-amber-100 dark:active:bg-slate-800 transition-colors disabled:cursor-default"
+            >
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-black text-amber-800 dark:text-amber-200">{command}</span>
+                <span className="block text-xs text-slate-500">{what}</span>
+              </span>
+              <span
+                className={`w-9 h-9 shrink-0 rounded-xl flex items-center justify-center transition-colors duration-300 ${
+                  isSent ? "bg-emerald-500 text-white" : "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
+                }`}
+              >
+                {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : isSent ? <Check className="liff-pop w-4 h-4" /> : <Send className="w-4 h-4" />}
+              </span>
+            </button>
+          );
+        })}
       </Card>
-      <p className="text-[11px] text-slate-400">💡 กดค้างที่การ์ดเมนูในกลุ่ม แล้วเลือก “ประกาศ” เพื่อปักหมุดเมนูไว้บนสุด</p>
+      <p className="text-[11px] text-slate-400">💡 กดค้างที่การ์ดเมนูในกลุ่ม แล้วเลือก “ประกาศ” เพื่อปักหมุดเมนูไว้บนสุด • หายไปแล้ว? ส่ง “พุดดิ้ง เมนู” เพื่อเรียกการ์ดเมนูใหม่</p>
     </Page>
   );
 }

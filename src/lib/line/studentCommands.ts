@@ -6,7 +6,7 @@
  * toward the LINE message quota (pushed messages do).
  */
 
-export type StudentCommand = 'help' | 'attendance' | 'submit' | 'join' | 'works' | 'home' | 'status' | 'connect';
+export type StudentCommand = 'help' | 'menu' | 'attendance' | 'submit' | 'join' | 'works' | 'home' | 'status' | 'connect';
 
 const KEYWORD = /^#?\s*(?:pudding|พุดดิ้ง|พุดดิง|พุดดิ่ง)\s*(.*)$/i;
 
@@ -15,6 +15,8 @@ const KEYWORD = /^#?\s*(?:pudding|พุดดิ้ง|พุดดิง|พ�
  * attendance (not home) and "ส่งงาน" is submit (not the works list).
  */
 const COMMAND_WORDS: Array<[StudentCommand, string[]]> = [
+  // The teacher menu card of this group ("เมนูครูประจำไลน์กลุ่ม").
+  ['menu', ['เมนู', 'menu']],
   // Teachers only: the link button to the connect page ("พุดดิ้ง เชื่อม").
   ['connect', ['เชื่อม', 'ย้ายห้อง', 'ย้ายกลุ่ม', 'ยกเลิกการเชื่อม', 'connect', 'unlink']],
   ['attendance', ['เช็กชื่อ', 'เช็คชื่อ', 'เชคชื่อ', 'มาเรียน', 'attendance', 'checkin', 'check-in']],
@@ -23,7 +25,7 @@ const COMMAND_WORDS: Array<[StudentCommand, string[]]> = [
   ['works', ['งาน', 'การบ้าน', 'ข้อสอบ', 'ค้าง', 'work', 'list', 'todo']],
   ['home', ['หน้าหลัก', 'ลิงก์', 'ลิงค์', 'เปิด', 'ห้องเรียน', 'home', 'link', 'app']],
   ['status', ['สถานะ', 'status']],
-  // Anything else (เมนู, ช่วย, คำสั่ง, …) falls through to help.
+  // Anything else (ช่วย, คำสั่ง, …) falls through to help.
 ];
 
 /** Old phrases that still work without the keyword. */
@@ -48,6 +50,7 @@ export function studentHelpText(classroomTitle?: string | null): string {
 สำหรับคุณครูและ TA พิมพ์ "พุดดิ้ง" ตามด้วยคำสั่ง
 บอทจะตอบให้ทุกคนในกลุ่มเห็น เช่น
 
+• พุดดิ้ง เมนู → การ์ดเมนูครูประจำไลน์กลุ่ม
 • พุดดิ้ง เช็กชื่อ → ลิงก์เช็กชื่อคาบที่เปิดอยู่
 • พุดดิ้ง งาน → สรุปงาน/ข้อสอบที่ยังเปิดรับ และเวลาที่เหลือ
 • พุดดิ้ง ส่งงาน → ลิงก์ส่งของแต่ละงาน

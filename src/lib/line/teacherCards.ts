@@ -172,11 +172,34 @@ export async function submitMessages(
 
 /** LINE's textV2 needs literal braces doubled. */
 const escapeBraces = (value: string) => value.replace(/[{}]/g, (brace) => brace + brace);
-const MAX_MENTIONS = 50;
+/**
+ * The @mention list after the reminder card, sized for a big class: a reply
+ * holds 5 messages, so the card plus up to 4 lists of 40 students (well under
+ * LINE's 100 mentions and 5000 characters per message), one numbered student
+ * per line. Anyone past that is counted at the end.
+ */
+const PER_MESSAGE = 40;
+const MAX_LIST_MESSAGES = 4;
+const MAX_TEXT = 4800;
+
+/** Runs `task` over `items`, `limit` at a time (LINE's member checks for a whole class). */
+async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const index = next++;
+        results[index] = await task(items[index]);
+      }
+    })
+  );
+  return results;
+}
 
 /**
  * The bot's answer to the reminder picture: the "ส่งให้ครูหน่อยน้า~" card,
- * then a message that @mentions each student who has not handed in and is
+ * then messages that @mention each student who has not handed in and is
  * in the group (LINE confirms membership; others are listed by name).
  * null = everyone has handed in.
  */
@@ -191,22 +214,35 @@ export async function remindReply(
   const { missing } = status;
   const card = remindCard(status.card);
 
+  const listed = missing.slice(0, PER_MESSAGE * MAX_LIST_MESSAGES);
   // Mention only students LINE says are in this group (a mention of anyone else would not work).
-  const candidates = missing.filter((s) => s.line_uid).slice(0, MAX_MENTIONS);
-  const inGroup = await Promise.all(candidates.map((s) => isGroupMember(groupId, s.line_uid!).catch(() => false)));
-  const mentionable = new Set(candidates.filter((_, index) => inGroup[index]).map((s) => s.id));
-  const substitution: Record<string, unknown> = {};
-  const parts = missing.map((student, index) => {
-    if (!mentionable.has(student.id)) return escapeBraces(studentLabel(student));
-    const key = `s${index}`;
-    substitution[key] = { type: 'mention', mentionee: { type: 'user', userId: student.line_uid } };
-    return `{${key}}`;
-  });
+  const inGroup = await mapLimit(listed, 10, (s) => (s.line_uid ? isGroupMember(groupId, s.line_uid).catch(() => false) : Promise.resolve(false)));
+
   const what = assignment.is_exam ? 'มาทำข้อสอบ' : 'มาส่งงานให้ครู';
-  const mention = {
-    type: 'textV2',
-    text: `☝️ พุดดิ้งขออนุญาตทวง นักเรียนต่อไปนี้${what}หน่อยน้า ทวง ทวง\n${parts.join('\n')}`.slice(0, 5000),
-    ...(Object.keys(substitution).length ? { substitution } : {}),
-  };
-  return [card, mention];
+  const header = `☝️ พุดดิ้งขออนุญาตทวง นักเรียนต่อไปนี้${what}หน่อยน้า ทวง ทวง (ยังไม่ส่ง ${missing.length} คน)`;
+  const chunks: Array<{ lines: string[]; substitution: Record<string, unknown>; length: number }> = [];
+  listed.forEach((student, index) => {
+    const mention = inGroup[index] && student.line_uid;
+    const line = `${index + 1}. ${mention ? `{s${index}}` : escapeBraces(studentLabel(student))}`;
+    let chunk = chunks[chunks.length - 1];
+    // A new message every PER_MESSAGE names, or before the text would get too long: never cut inside a line.
+    if (!chunk || chunk.lines.length >= PER_MESSAGE || chunk.length + line.length + 1 > MAX_TEXT) {
+      chunk = { lines: [], substitution: {}, length: header.length + 20 };
+      chunks.push(chunk);
+    }
+    chunk.lines.push(line);
+    chunk.length += line.length + 1;
+    if (mention) chunk.substitution[`s${index}`] = { type: 'mention', mentionee: { type: 'user', userId: student.line_uid } };
+  });
+  const rest = missing.length - listed.length;
+  const lists = chunks.slice(0, MAX_LIST_MESSAGES).map((chunk, index, all) => {
+    const head = index === 0 ? header : `(ต่อ ${index + 1}/${all.length})`;
+    const tail = index === all.length - 1 && rest > 0 ? `\n…และอีก ${rest} คน ดูรายชื่อครบได้ในเมนูครู` : '';
+    return {
+      type: 'textV2',
+      text: `${head}\n${chunk.lines.join('\n')}${tail}`,
+      ...(Object.keys(chunk.substitution).length ? { substitution: chunk.substitution } : {}),
+    };
+  });
+  return [card, ...lists];
 }

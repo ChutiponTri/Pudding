@@ -32,6 +32,7 @@ import {
   firstConnCard,
   inviteCard,
   menuCard,
+  liffTeacherUrl,
   reconnectedCard,
   removedCard,
   welcomeCard,
@@ -549,6 +550,16 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
 
   if (command === 'help') {
     await replySafely(replyToken, studentHelpText(title));
+  } else if (command === 'menu') {
+    // "พุดดิ้ง เมนู": the teacher menu card again (e.g. to pin it after it scrolled away).
+    const group = await ensureBotGroup(supabase, groupId, null);
+    if (!group) {
+      await replySafely(replyToken, 'เปิดเมนูครูไม่สำเร็จ ลองพิมพ์ “พุดดิ้ง เมนู” อีกครั้งค่ะ');
+      return;
+    }
+    await replyCards(replyToken, [menuCard(group.ref)], () =>
+      replySafely(replyToken, `🍮 เมนูครูประจำไลน์กลุ่ม\n📘 ${title}\n${liffTeacherUrl(group.ref, 'home')}`)
+    );
   } else if (command === 'join') {
     await replyClassroomJoinCode(replyToken, classroom, liffUrl);
   } else if (command === 'home') {

@@ -549,8 +549,35 @@ export type WorkStatusInput = {
  * หน่อยน้า~", answer to the teacher's ทวงงาน picture) and each page of the
  * "ส่งงาน" carousel ("พุดดิ้ง ส่งงาน") share this layout, with their own art.
  */
-function workStatusBubble(art: 'remind' | 'submit-work', input: WorkStatusInput, maxNames: number) {
-  const shown = input.names.slice(0, maxNames).join('\n') + (input.names.length > maxNames ? `\n…และอีก ${input.names.length - maxNames} คน` : '');
+/**
+ * Who has not handed in, sized for a phone: one name per line for a short
+ * list; past 8 names, two columns (half the height), up to `maxNames`, then
+ * "…และอีก N คน" (`moreNote` says where the rest are).
+ */
+function nameList(names: string[], maxNames: number, moreNote = ''): unknown[] {
+  if (!names.length) return [];
+  const shown = names.slice(0, maxNames);
+  const more = names.length - shown.length;
+  const tail = more > 0 ? [text(`…และอีก ${more} คน${moreNote ? ` ${moreNote}` : ''}`, { size: 'xs', color: COLORS.muted, margin: 'sm' })] : [];
+  if (shown.length <= 8) return [text(shown.join('\n'), { size: 'sm', color: COLORS.purpleDark, margin: 'sm' }), ...tail];
+  const rows: unknown[] = [];
+  for (let i = 0; i < shown.length; i += 2) {
+    rows.push({
+      type: 'box',
+      layout: 'horizontal',
+      spacing: 'md',
+      margin: i ? 'xs' : 'sm',
+      contents: [
+        text(shown[i], { size: 'xs', color: COLORS.purpleDark, flex: 1, wrap: false }),
+        // An empty cell keeps the last odd name in the left column.
+        text(shown[i + 1] || ' ', { size: 'xs', color: COLORS.purpleDark, flex: 1, wrap: false }),
+      ],
+    });
+  }
+  return [...rows, ...tail];
+}
+
+function workStatusBubble(art: 'remind' | 'submit-work', input: WorkStatusInput, maxNames: number, moreNote = '') {
   const footer: unknown[] = [button(input.isExam ? '📝 ทำข้อสอบ' : '📤 ส่งงาน', { type: 'uri', uri: input.url })];
   if (input.statusUrl) footer.push(statusLink(input.statusUrl));
   return bubble({
@@ -586,7 +613,7 @@ function workStatusBubble(art: 'remind' | 'submit-work', input: WorkStatusInput,
             text(input.names.length ? `${input.names.length} จาก ${input.total} คน` : 'ส่งครบแล้ว 🎉', { size: 'sm', weight: 'bold', color: '#E8780C' }),
           ],
         },
-        ...(input.names.length ? [text(shown, { size: 'sm', color: COLORS.purpleDark, margin: 'sm' })] : []),
+        ...nameList(input.names, maxNames, moreNote),
       ],
     },
     footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', paddingTop: '0px', contents: footer },
@@ -598,7 +625,8 @@ export function remindCard(input: WorkStatusInput): FlexMessage {
   return {
     type: 'flex',
     altText: fit(`🔔 ส่งให้ครูหน่อยน้า~ ${input.title}: ยังไม่ส่ง ${input.names.length} จาก ${input.total} คน`, 400),
-    contents: workStatusBubble('remind', input, 25),
+    // The @mention messages after the card list everyone, so the card keeps to 20 names.
+    contents: workStatusBubble('remind', input, 20, '(รายชื่อครบในข้อความถัดไป)'),
   };
 }
 
@@ -609,8 +637,8 @@ export function submitCarousel(works: WorkStatusInput[]): FlexMessage {
     type: 'flex',
     altText: fit(`📤 ส่งงาน: ${pages.map((work) => work.title).join(', ')}`, 400),
     contents: pages.length === 1
-      ? workStatusBubble('submit-work', pages[0], 15)
-      : { type: 'carousel', contents: pages.map((work) => workStatusBubble('submit-work', work, 10)) },
+      ? workStatusBubble('submit-work', pages[0], 20)
+      : { type: 'carousel', contents: pages.map((work) => workStatusBubble('submit-work', work, 12)) },
   };
 }
 
