@@ -107,10 +107,10 @@ export const Navbar: React.FC = () => {
         {/* Right Section: Theme Toggle, Language Switcher, Alerts & Profile */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* Light / Dark Mode Toggle (hidden below 360px to keep the bar on one line) */}
-          <ThemeToggle className="max-[359px]:hidden" />
+          <ThemeToggle />
 
           {/* Language Switcher */}
-          <LanguageSwitcher />
+          <LanguageSwitcher className="max-[359px]:hidden" />
 
           {/* Notification Button & Popover (only meaningful once signed in) */}
           <Show when={"signed-in"}>
