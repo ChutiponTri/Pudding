@@ -153,7 +153,7 @@ const isFreshCourseCache = (fetchedAt: number) => courseCacheTimestamp() - fetch
 
 const FRAME = "max-w-md md:max-w-2xl lg:max-w-3xl";
 const CARD = "rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200/70 dark:ring-slate-800 shadow-sm shadow-slate-900/3";
-const INPUT = "w-full h-12 px-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-line focus:bg-white dark:focus:bg-slate-900 outline-none transition-all";
+const INPUT = "w-full h-12 px-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-brand focus:bg-white dark:focus:bg-slate-900 outline-none transition-all";
 
 type Tone = "emerald" | "amber" | "rose" | "sky" | "violet" | "slate";
 const TONE_CLASSES: Record<Tone, string> = {
@@ -168,8 +168,8 @@ const ATTENDANCE_TONE: Record<string, Tone> = { on_time: "emerald", late: "amber
 const ATTENDANCE_SHORT: Record<string, string> = { on_time: "ตรงเวลา", late: "มาสาย", absent: "ขาด", excused: "ลา", idle: "รอเช็กชื่อ" };
 const TIMELINE_DOT: Record<string, string> = {
   announcement: "bg-amber-400 ring-amber-100 dark:ring-amber-950",
-  assignment: "bg-line ring-emerald-100 dark:ring-emerald-950",
-  exam: "bg-violet-500 ring-violet-100 dark:ring-violet-950",
+  assignment: "bg-brand ring-violet-100 dark:ring-violet-950",
+  exam: "bg-fuchsia-500 ring-fuchsia-100 dark:ring-fuchsia-950",
   attendance: "bg-sky-500 ring-sky-100 dark:ring-sky-950",
 };
 
@@ -2673,7 +2673,7 @@ export default function LiffStudentPage() {
       <div className="flex-1 flex flex-col items-center justify-center p-6 text-center gap-5 min-h-dvh">
         <div className="relative">
           <BrandLogo priority className="h-24 w-auto" />
-          <Loader2 className="w-7 h-7 text-line animate-spin absolute -bottom-1.5 -right-1.5 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md" />
+          <Loader2 className="w-7 h-7 text-brand animate-spin absolute -bottom-1.5 -right-1.5 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md" />
         </div>
         <div className="space-y-1">
           <h2 className="text-base font-bold text-slate-900 dark:text-white">กำลังเชื่อมต่อ LINE...</h2>
@@ -2719,17 +2719,17 @@ export default function LiffStudentPage() {
       { icon: "🛡️", tint: "bg-sky-100 dark:bg-sky-950", title: "ยืนยันตัวตนอัตโนมัติ", body: "ผูกคะแนนกับบัญชี LINE จริง ไม่สูญหายและปลอดภัย" },
     ];
     return (
-      <div className="flex-1 flex flex-col justify-between gap-8 px-6 pt-[max(env(safe-area-inset-top),2.5rem)] pb-[max(env(safe-area-inset-bottom),1.5rem)] min-h-dvh bg-radial-[at_50%_0%] from-emerald-500/15 via-transparent to-transparent">
+      <div className="flex-1 flex flex-col justify-between gap-8 px-6 pt-[max(env(safe-area-inset-top),2.5rem)] pb-[max(env(safe-area-inset-bottom),1.5rem)] min-h-dvh bg-radial-[at_50%_0%] from-violet-500/15 via-transparent to-transparent">
         <div className="text-center space-y-5 pt-6">
           <div className="relative inline-block">
             <BrandLogo priority className="h-28 w-auto mx-auto" />
-            <span className="absolute -bottom-2 -right-2 px-2.5 py-0.5 rounded-full bg-line text-white text-[11px] font-bold shadow-md ring-2 ring-white dark:ring-slate-950">
+            <span className="absolute -bottom-2 -right-2 px-2.5 py-0.5 rounded-full bg-brand text-white text-[11px] font-bold shadow-md ring-2 ring-white dark:ring-slate-950">
               LINE
             </span>
           </div>
           <div className="space-y-2">
             <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">พุดดิ้ง</h1>
-            <p className="text-sm font-semibold text-line">ห้องเรียนออนไลน์สำหรับนักเรียน</p>
+            <p className="text-sm font-semibold text-brand">ห้องเรียนออนไลน์สำหรับนักเรียน</p>
             <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
               เข้าสู่ระบบด้วย LINE เพื่อเข้าห้อง ส่งงาน และทำข้อสอบ
             </p>
@@ -2753,7 +2753,7 @@ export default function LiffStudentPage() {
         <div className="space-y-3 max-w-md w-full mx-auto">
           <button
             onClick={handleLineLogin}
-            className="w-full h-14 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-base shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2.5 transition-all active:scale-[0.98] cursor-pointer"
+            className="w-full h-14 rounded-2xl bg-[#06c755] hover:bg-[#05b34c] text-white font-bold text-base shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2.5 transition-all active:scale-[0.98] cursor-pointer"
           >
             <LogIn className="w-5 h-5" />
             <span>เข้าสู่ระบบด้วย LINE</span>
@@ -2847,7 +2847,7 @@ export default function LiffStudentPage() {
       <div className="flex-1 flex flex-col items-center justify-center p-6 text-center gap-5 min-h-dvh">
         <div className="relative">
           <BrandLogo priority className="h-24 w-auto" />
-          <Loader2 className="w-7 h-7 text-line animate-spin absolute -bottom-1.5 -right-1.5 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md" />
+          <Loader2 className="w-7 h-7 text-brand animate-spin absolute -bottom-1.5 -right-1.5 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md" />
         </div>
         <div className="space-y-1">
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
@@ -2866,7 +2866,7 @@ export default function LiffStudentPage() {
   return (
     <div className="flex-1 flex flex-col font-sans bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       {/* Top bar */}
-      <header className="sticky top-0 z-40 bg-line text-white shadow-sm shadow-emerald-900/10 pt-[env(safe-area-inset-top)]">
+      <header className="sticky top-0 z-40 bg-brand text-white shadow-sm shadow-violet-900/10 pt-[env(safe-area-inset-top)]">
         <div className="h-14 px-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-1 min-w-0">
           {!activeAssignment && (
@@ -2923,7 +2923,7 @@ export default function LiffStudentPage() {
                   role="menu"
                   className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xl shadow-slate-900/15 ring-1 ring-slate-200 dark:ring-slate-800 overflow-hidden animate-in fade-in slide-in-from-top-1"
                 >
-                  <div className="p-4 flex items-center gap-3 bg-emerald-50/70 dark:bg-emerald-950/30 border-b border-slate-100 dark:border-slate-800">
+                  <div className="p-4 flex items-center gap-3 bg-violet-50/70 dark:bg-violet-950/30 border-b border-slate-100 dark:border-slate-800">
                     <Avatar src={currentStudent.avatar} firstName={currentStudent.first_name} lastName={currentStudent.last_name} name={currentStudent.name} className="w-11 h-11 text-sm shrink-0" />
                     <div className="min-w-0">
                       <p className="text-sm font-bold truncate">
@@ -2953,7 +2953,7 @@ export default function LiffStudentPage() {
                       }}
                       className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                     >
-                      <UserCog className="w-4.5 h-4.5 text-line" />
+                      <UserCog className="w-4.5 h-4.5 text-brand" />
                       <span>แก้ไขข้อมูลส่วนตัว</span>
                     </button>
                     <button
@@ -2993,7 +2993,7 @@ export default function LiffStudentPage() {
               isNavOpen ? "translate-x-0" : "-translate-x-full"
             }`}
           >
-            <div className="bg-line text-white pt-[env(safe-area-inset-top)]">
+            <div className="bg-brand text-white pt-[env(safe-area-inset-top)]">
               <div className="h-14 px-4 flex items-center justify-between">
                 <span className="flex items-center gap-2 font-bold">
                   <BrandLogo className="h-9 w-auto" />
@@ -3019,7 +3019,7 @@ export default function LiffStudentPage() {
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left text-sm font-bold transition-colors cursor-pointer ${
                   !selectedClassroom
-                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+                    ? "bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"
                     : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
                 }`}
               >
@@ -3041,13 +3041,13 @@ export default function LiffStudentPage() {
                     }}
                     className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-2xl text-left transition-colors cursor-pointer ${
                       isSelected
-                        ? "bg-emerald-50 dark:bg-emerald-950/60 ring-1 ring-emerald-200 dark:ring-emerald-800"
+                        ? "bg-violet-50 dark:bg-violet-950/60 ring-1 ring-violet-200 dark:ring-violet-800"
                         : "hover:bg-slate-100 dark:hover:bg-slate-800"
                     }`}
                   >
-                    <BookOpen className={`w-4 h-4 mt-0.5 shrink-0 ${isSelected ? "text-emerald-600" : "text-slate-400"}`} />
+                    <BookOpen className={`w-4 h-4 mt-0.5 shrink-0 ${isSelected ? "text-violet-600" : "text-slate-400"}`} />
                     <span className="min-w-0 flex-1">
-                      <span className={`block text-sm font-bold leading-snug ${isSelected ? "text-emerald-700 dark:text-emerald-300" : "text-slate-900 dark:text-white"}`}>
+                      <span className={`block text-sm font-bold leading-snug ${isSelected ? "text-violet-700 dark:text-violet-300" : "text-slate-900 dark:text-white"}`}>
                         {subjectName(cls)}
                       </span>
                       <span className="block text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
@@ -3072,7 +3072,7 @@ export default function LiffStudentPage() {
                   setIsNavOpen(false);
                   setIsJoinModalOpen(true);
                 }}
-                className="w-full h-11 rounded-2xl bg-line hover:bg-line-dark text-white text-sm font-bold flex items-center justify-center gap-1.5 shadow-sm cursor-pointer active:scale-[0.98] transition-transform"
+                className="w-full h-11 rounded-2xl bg-brand hover:bg-brand-dark text-white text-sm font-bold flex items-center justify-center gap-1.5 shadow-sm cursor-pointer active:scale-[0.98] transition-transform"
               >
                 <Plus className="w-4 h-4" />
                 <span>เข้าร่วมรายวิชา</span>
@@ -3177,10 +3177,10 @@ export default function LiffStudentPage() {
                   <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : <CountUp value={openPendingAssignments.length} />}</p>
                   <p className="text-[11px] text-amber-50/90 mt-0.5">{isHomeworkListOpen ? 'แตะเพื่อซ่อนรายการ' : 'แตะเพื่อดูรายการ'}</p>
                 </button>
-                <div className="p-4 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-600/20">
-                  <p className="text-xs font-semibold text-emerald-50">ส่งแล้ว</p>
+                <div className="p-4 rounded-3xl bg-linear-to-br from-violet-500 to-purple-700 text-white shadow-lg shadow-violet-600/20">
+                  <p className="text-xs font-semibold text-violet-50">ส่งแล้ว</p>
                   <p className="text-3xl font-black mt-1 tabular-nums">{isLoadingData && !classrooms.length ? '–' : <CountUp value={completedAssignments.length} />}</p>
-                  <p className="text-[11px] text-emerald-50/90 mt-0.5">ดูงานที่ส่งได้ในแต่ละวิชา</p>
+                  <p className="text-[11px] text-violet-50/90 mt-0.5">ดูงานที่ส่งได้ในแต่ละวิชา</p>
                 </div>
               </div>
             </section>
@@ -3197,7 +3197,7 @@ export default function LiffStudentPage() {
             {newResults.length > 0 && (
               <section className="space-y-2.5">
                 <SectionTitle
-                  icon={<Sparkles className="w-4 h-4 text-emerald-600" />}
+                  icon={<Sparkles className="w-4 h-4 text-brand" />}
                   title="ประกาศคะแนนใหม่"
                   count={newResults.length}
                   action={newResults.length > 1 ? <span className="text-[11px] font-semibold text-slate-400">เลื่อนดู →</span> : undefined}
@@ -3212,12 +3212,12 @@ export default function LiffStudentPage() {
                         key={assignment.id}
                         type="button"
                         onClick={() => handleOpenGradedDetail(assignment, submission)}
-                        className={`liff-sheen ${newResults.length > 1 ? "w-[78%] max-w-72" : "w-full"} shrink-0 snap-start text-left p-3.5 rounded-3xl bg-linear-to-br from-emerald-500 to-teal-600 text-white shadow-md shadow-emerald-600/20 flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-transform`}
+                        className={`liff-sheen ${newResults.length > 1 ? "w-[78%] max-w-72" : "w-full"} shrink-0 snap-start text-left p-3.5 rounded-3xl bg-linear-to-br from-violet-500 to-purple-700 text-white shadow-md shadow-violet-600/20 flex items-center justify-between gap-3 cursor-pointer active:scale-[0.99] transition-transform`}
                       >
                         <div className="min-w-0">
-                          <p className="text-[11px] font-semibold text-emerald-50/90 truncate">🎉 {resultClass ? subjectName(resultClass) : "รายวิชา"}</p>
+                          <p className="text-[11px] font-semibold text-violet-50/90 truncate">🎉 {resultClass ? subjectName(resultClass) : "รายวิชา"}</p>
                           <p className="text-sm font-bold truncate">{assignment.title}</p>
-                          <p className="text-[11px] text-emerald-50/90 mt-0.5 truncate">แตะเพื่อดูคะแนน</p>
+                          <p className="text-[11px] text-violet-50/90 mt-0.5 truncate">แตะเพื่อดูคะแนน</p>
                         </div>
                         <span className="liff-pop shrink-0 px-2.5 py-1 rounded-2xl bg-white/20 font-black tabular-nums">
                           <span className="text-lg">{submission.total_score}</span>
@@ -3236,12 +3236,12 @@ export default function LiffStudentPage() {
                 {activeAttendanceList.map((item) => (
                   <div
                     key={item.session.id}
-                    className="p-4 rounded-3xl bg-white dark:bg-slate-900 ring-2 ring-line/60 shadow-lg shadow-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="p-4 rounded-3xl bg-white dark:bg-slate-900 ring-2 ring-brand/60 shadow-lg shadow-violet-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
                     <div className="min-w-0 flex items-start gap-3">
                       <span className="relative mt-1 flex w-3 h-3 shrink-0">
-                        <span className="absolute inline-flex h-full w-full rounded-full bg-line opacity-60 animate-ping" />
-                        <span className="relative inline-flex w-3 h-3 rounded-full bg-line" />
+                        <span className="absolute inline-flex h-full w-full rounded-full bg-brand opacity-60 animate-ping" />
+                        <span className="relative inline-flex w-3 h-3 rounded-full bg-brand" />
                       </span>
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">เปิดรับเช็กชื่ออยู่ตอนนี้</p>
@@ -3255,7 +3255,7 @@ export default function LiffStudentPage() {
                       type="button"
                       disabled={isCheckingIn}
                       onClick={() => scanAndCheckIn(item.classroom.id)}
-                      className="h-12 px-5 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md shadow-emerald-500/25 transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 active:scale-[0.98] disabled:opacity-60"
+                      className="h-12 px-5 rounded-2xl bg-brand hover:bg-brand-dark text-white font-bold text-sm shadow-md shadow-violet-500/25 transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 active:scale-[0.98] disabled:opacity-60"
                     >
                       {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
                       <span>{isCheckingIn ? 'กำลังเช็กชื่อ...' : 'สแกน QR เช็กชื่อ'}</span>
@@ -3329,7 +3329,7 @@ export default function LiffStudentPage() {
 
             {/* My classrooms */}
             <section className="space-y-3">
-              <SectionTitle icon={<BookOpen className="w-4 h-4 text-line" />} title="รายวิชาของฉัน" count={classrooms.length} />
+              <SectionTitle icon={<BookOpen className="w-4 h-4 text-brand" />} title="รายวิชาของฉัน" count={classrooms.length} />
               {classrooms.length === 0 && !isLoadingData ? (
                 <div className={`${CARD} text-center py-10 px-6 space-y-3`}>
                   <div className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 text-3xl flex items-center justify-center mx-auto">🎒</div>
@@ -3339,7 +3339,7 @@ export default function LiffStudentPage() {
                   </div>
                   <button
                     onClick={() => setIsJoinModalOpen(true)}
-                    className="h-11 px-5 rounded-2xl bg-line hover:bg-line-dark text-white text-sm font-bold cursor-pointer inline-flex items-center gap-1.5 active:scale-[0.98] transition-transform"
+                    className="h-11 px-5 rounded-2xl bg-brand hover:bg-brand-dark text-white text-sm font-bold cursor-pointer inline-flex items-center gap-1.5 active:scale-[0.98] transition-transform"
                   >
                     <Plus className="w-4 h-4" />
                     ใส่รหัสเข้าห้องเรียน
@@ -3359,9 +3359,9 @@ export default function LiffStudentPage() {
                           setSelectedClassroom(cls);
                           setCourseTab('timeline');
                         }}
-                        className={`${CARD} w-full min-w-0 text-left p-4 hover:ring-2 hover:ring-line/50 transition-all cursor-pointer flex items-center gap-3 active:scale-[0.99]`}
+                        className={`${CARD} w-full min-w-0 text-left p-4 hover:ring-2 hover:ring-brand/50 transition-all cursor-pointer flex items-center gap-3 active:scale-[0.99]`}
                       >
-                        <span className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-line flex items-center justify-center shrink-0">
+                        <span className="w-12 h-12 rounded-2xl bg-violet-50 dark:bg-violet-950/60 text-brand flex items-center justify-center shrink-0">
                           <School className="w-6 h-6" />
                         </span>
                         <div className="min-w-0 flex-1 space-y-0.5">
@@ -3448,7 +3448,7 @@ export default function LiffStudentPage() {
                               </time>
                             </div>
                             <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed wrap-break-word line-clamp-3">{item.body}</p>
-                            <span className="text-[11px] font-bold text-line flex items-center gap-0.5">อ่านประกาศ <ChevronRight className="w-3 h-3" /></span>
+                            <span className="text-[11px] font-bold text-brand flex items-center gap-0.5">อ่านประกาศ <ChevronRight className="w-3 h-3" /></span>
                           </button>
                         ) : (
                         <div className="space-y-1">
@@ -3498,7 +3498,7 @@ export default function LiffStudentPage() {
                       open={groupOpen}
                       onToggle={() => toggleWorkGroup(foldKey)}
                       chips={chips}
-                      icon={<Layers className="w-4 h-4 text-line" />}
+                      icon={<Layers className="w-4 h-4 text-brand" />}
                     />
                     <Collapse open={groupOpen}>
                     <div className="grid gap-2.5 md:grid-cols-2 pt-1 liff-stagger">
@@ -3531,7 +3531,7 @@ export default function LiffStudentPage() {
                             className={`w-full text-left p-4 rounded-2xl ring-1 transition-all cursor-pointer space-y-3 active:scale-[0.99] ${
                               isClosed
                                 ? 'bg-slate-50 dark:bg-slate-800/40 ring-slate-200 dark:ring-slate-800 opacity-75'
-                                : 'bg-slate-50/80 dark:bg-slate-800/60 ring-slate-200/80 dark:ring-slate-700/70 hover:ring-2 hover:ring-line/60'
+                                : 'bg-slate-50/80 dark:bg-slate-800/60 ring-slate-200/80 dark:ring-slate-700/70 hover:ring-2 hover:ring-brand/60'
                             }`}
                           >
                             <div className="flex items-start justify-between gap-3">
@@ -3588,7 +3588,7 @@ export default function LiffStudentPage() {
                               </span>
                               {/* Closed homework still opens read-only; a closed quiz does not. */}
                               {(!isClosed || !assignment.is_exam) && (
-                                <span className="font-bold text-line shrink-0 flex items-center gap-0.5">
+                                <span className="font-bold text-brand shrink-0 flex items-center gap-0.5">
                                   {isClosed ? 'ดูงาน' : isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : canHandInOverMissing(assignment, submission) ? 'ส่งงาน' : isGraded ? 'ดูผล' : 'ดูงานที่ส่ง') : handInAllowed ? 'ส่งงาน' : 'เริ่มทำ'}
                                   <ChevronRight className="w-3.5 h-3.5" />
                                 </span>
@@ -3665,7 +3665,7 @@ export default function LiffStudentPage() {
                                   <button
                                     onClick={() => scanAndCheckIn(selectedClassroom?.id)}
                                     disabled={isCheckingIn}
-                                    className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+                                    className="w-full h-12 rounded-2xl bg-brand hover:bg-brand-dark text-white font-bold text-sm shadow-md shadow-violet-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
                                   >
                                     {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
                                     {isCheckingIn ? 'กำลังเช็กชื่อ...' : 'สแกน QR บนหน้าจอคุณครู'}
@@ -3855,10 +3855,10 @@ export default function LiffStudentPage() {
                       title={key === 'proxy' ? 'เพื่อนโทรศัพท์มีปัญหา? ให้เพื่อนยืมเครื่องนี้ส่งงาน (เช็กชื่อแทนกันไม่ได้)' : undefined}
                       aria-current={isActive ? 'page' : undefined}
                       className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                        isActive ? 'text-line' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                        isActive ? 'text-brand' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
                       }`}
                     >
-                      <span className={`px-3.5 py-1 rounded-full transition-colors duration-300 ${isActive ? 'bg-emerald-50 dark:bg-emerald-950/60' : ''}`}>
+                      <span className={`px-3.5 py-1 rounded-full transition-colors duration-300 ${isActive ? 'bg-violet-50 dark:bg-violet-950/60' : ''}`}>
                         <Icon key={isActive ? 'on' : 'off'} className={`w-5 h-5 ${isActive ? 'liff-nudge' : ''}`} />
                       </span>
                       <span>{label}</span>
@@ -3928,7 +3928,7 @@ export default function LiffStudentPage() {
             </div>
           ) : submissionSuccess ? (
             <div className={`${CARD} w-full max-w-sm mx-auto text-center space-y-3.5 p-5 mt-4 animate-in fade-in zoom-in-95`}>
-              <div className="liff-pop w-14 h-14 rounded-full bg-emerald-100 dark:bg-emerald-950 text-line mx-auto flex! items-center justify-center">
+              <div className="liff-pop w-14 h-14 rounded-full bg-violet-100 dark:bg-violet-950 text-brand mx-auto flex! items-center justify-center">
                 <CheckCircle2 className="w-7 h-7" />
               </div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">
@@ -3939,11 +3939,11 @@ export default function LiffStudentPage() {
               {submittedResult?.submission.results_hidden ? (
                 <ResultsHiddenNote isExam={!!activeAssignment?.is_exam} compact />
               ) : submittedResult && submittedResult.total !== null ? (
-                <div className="liff-sheen liff-rise px-4 py-3 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white">
-                  <p className="text-[11px] font-semibold text-emerald-50">คะแนนของคุณ</p>
+                <div className="liff-sheen liff-rise px-4 py-3 rounded-2xl bg-linear-to-br from-violet-500 to-purple-700 text-white">
+                  <p className="text-[11px] font-semibold text-violet-50">คะแนนของคุณ</p>
                   <p className="text-3xl font-black tabular-nums">
                     <CountUp value={submittedResult.total} />
-                    <span className="text-lg font-bold text-emerald-100"> / {submittedResult.max}</span>
+                    <span className="text-lg font-bold text-violet-100"> / {submittedResult.max}</span>
                   </p>
                 </div>
               ) : submittedResult && submittedResult.autoScored > 0 ? (
@@ -3968,7 +3968,7 @@ export default function LiffStudentPage() {
                     if (activeProxy && proxyFriend) setCourseTab("proxy");
                     setActiveAssignment(null);
                   }}
-                  className="h-11 px-2 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md cursor-pointer active:scale-[0.98] transition-transform"
+                  className="h-11 px-2 rounded-2xl bg-brand hover:bg-brand-dark text-white font-bold text-sm shadow-md cursor-pointer active:scale-[0.98] transition-transform"
                 >
                   {activeProxy && proxyFriend ? "ส่งแทนเพื่อนต่อ" : "กลับหน้าหลัก"}
                 </button>
@@ -4020,7 +4020,7 @@ export default function LiffStudentPage() {
                     </div>
                     <div className="h-2 rounded-full bg-white/80 dark:bg-slate-800 overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-line transition-[width] duration-300"
+                        className="h-full rounded-full bg-brand transition-[width] duration-300"
                         style={{ width: `${(answeredCount / activeQuestions.length) * 100}%` }}
                       />
                     </div>
@@ -4082,7 +4082,7 @@ export default function LiffStudentPage() {
                     <div key={q.id} id={`question-${q.id}`} className={`${CARD} p-4 sm:p-5 space-y-4 scroll-mt-20`}>
                       <div className="flex items-start gap-3">
                         <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-colors ${
-                          isAnswered ? 'bg-line text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                          isAnswered ? 'bg-brand text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
                         }`}>
                           {isAnswered ? <CheckCircle2 className="w-4 h-4" /> : idx + 1}
                         </span>
@@ -4117,13 +4117,13 @@ export default function LiffStudentPage() {
                                 }
                                 className={`min-h-12 p-3 rounded-2xl text-left text-sm font-medium transition-all ring-1 flex items-center gap-3 cursor-pointer active:scale-[0.99] ${
                                   isSelected
-                                    ? "bg-emerald-50 dark:bg-emerald-950/40 ring-2 ring-line text-emerald-900 dark:text-emerald-100"
+                                    ? "bg-violet-50 dark:bg-violet-950/40 ring-2 ring-brand text-violet-900 dark:text-violet-100"
                                     : "bg-slate-50 dark:bg-slate-800/70 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 hover:ring-slate-300 dark:hover:ring-slate-600"
                                 }`}
                               >
                                 <span
                                   className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors ${
-                                    isSelected ? "bg-line text-white" : "bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-600"
+                                    isSelected ? "bg-brand text-white" : "bg-white dark:bg-slate-700 text-slate-500 dark:text-slate-300 ring-1 ring-slate-200 dark:ring-slate-600"
                                   }`}
                                 >
                                   {String.fromCharCode(65 + optIdx)}
@@ -4151,7 +4151,7 @@ export default function LiffStudentPage() {
                               }))
                             }
                             placeholder={isFileUpload ? "คำอธิบายไฟล์ (ถ้ามี)..." : "พิมพ์คำตอบที่นี่..."}
-                            className="w-full p-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm leading-relaxed focus:ring-2 focus:ring-line focus:bg-white dark:focus:bg-slate-900 outline-none transition-all resize-none overflow-y-auto"
+                            className="w-full p-3.5 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 text-sm leading-relaxed focus:ring-2 focus:ring-brand focus:bg-white dark:focus:bg-slate-900 outline-none transition-all resize-none overflow-y-auto"
                           />
                         </div>
                       )}
@@ -4162,7 +4162,7 @@ export default function LiffStudentPage() {
                               <label className={`flex-1 min-w-0 flex items-center justify-center gap-2 min-h-12 px-4 rounded-2xl border-2 border-dashed text-sm font-semibold cursor-pointer transition-colors ${
                                 answer?.file_url
                                   ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300'
-                                  : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-line hover:text-line'
+                                  : 'border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-brand hover:text-brand'
                               }`}>
                                 {isUploading ? (
                                   <Loader2 className="w-4 h-4 animate-spin shrink-0" />
@@ -4207,7 +4207,7 @@ export default function LiffStudentPage() {
                             </div>
                             {!answer?.file_url && (
                               <div className="space-y-1">
-                                <div className="flex items-center gap-2 px-3 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 focus-within:ring-2 focus-within:ring-line">
+                                <div className="flex items-center gap-2 px-3 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 bg-slate-50 dark:bg-slate-800/70 focus-within:ring-2 focus-within:ring-brand">
                                   <Link2 className="w-4 h-4 text-slate-400 shrink-0" />
                                   <input
                                     type="url"
@@ -4259,7 +4259,7 @@ export default function LiffStudentPage() {
                   className={`w-full h-14 rounded-2xl text-white font-bold text-base shadow-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 cursor-pointer ${
                     quizTimeUp && activeAssignment.is_exam
                       ? "bg-rose-600 hover:bg-rose-700 shadow-rose-600/30 ring-4 ring-rose-300/60 dark:ring-rose-800/60 animate-pulse"
-                      : "bg-line hover:bg-line-dark shadow-emerald-600/25"
+                      : "bg-brand hover:bg-brand-dark shadow-violet-600/25"
                   }`}
                 >
                   {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
@@ -4287,7 +4287,7 @@ export default function LiffStudentPage() {
       {isStudentIdModalOpen && (
         <Sheet>
           <div className="text-center space-y-2">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-2xl flex items-center justify-center mx-auto">🎓</div>
+            <div className="w-14 h-14 rounded-2xl bg-violet-100 dark:bg-violet-950 text-2xl flex items-center justify-center mx-auto">🎓</div>
             <h3 className="text-lg font-bold text-slate-900 dark:text-white">
               {isFirstTimeStudentId ? "ลงทะเบียนข้อมูลนักเรียน" : "แก้ไขข้อมูลนักเรียน"}
             </h3>
@@ -4382,7 +4382,7 @@ export default function LiffStudentPage() {
                 (!!inputEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inputEmail.trim()))
               }
               onClick={handleSaveStudentId}
-              className="flex-1 h-12 rounded-2xl bg-line hover:bg-line-dark text-white text-sm font-bold shadow-md cursor-pointer disabled:opacity-50 transition-all active:scale-[0.98]"
+              className="flex-1 h-12 rounded-2xl bg-brand hover:bg-brand-dark text-white text-sm font-bold shadow-md cursor-pointer disabled:opacity-50 transition-all active:scale-[0.98]"
             >
               {isSavingStudentId ? "กำลังบันทึก..." : "บันทึกข้อมูล"}
             </button>
@@ -4448,7 +4448,7 @@ export default function LiffStudentPage() {
               type="button"
               disabled={!joinInviteCode.trim()}
               onClick={handleJoinClassroom}
-              className="flex-1 h-12 rounded-2xl bg-line hover:bg-line-dark text-white text-sm font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform"
+              className="flex-1 h-12 rounded-2xl bg-brand hover:bg-brand-dark text-white text-sm font-bold cursor-pointer disabled:opacity-50 active:scale-[0.98] transition-transform"
             >
               เข้าร่วม
             </button>
@@ -4477,7 +4477,7 @@ export default function LiffStudentPage() {
             type="button"
             autoFocus
             onClick={() => setViewingPost(null)}
-            className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
+            className="w-full h-12 rounded-2xl bg-brand hover:bg-brand-dark text-white font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
           >
             ตกลง
           </button>
@@ -4584,7 +4584,7 @@ export default function LiffStudentPage() {
         <Sheet onClose={() => setViewingGradedSub(null)}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="w-11 h-11 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-xl flex items-center justify-center shrink-0">🏆</span>
+              <span className="w-11 h-11 rounded-2xl bg-violet-100 dark:bg-violet-950 text-xl flex items-center justify-center shrink-0">🏆</span>
               <div className="min-w-0">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
                   {gradedSubmissionIds.has(viewingGradedSub.submission.id) ? "ผลการประเมิน" : "งานที่ส่ง"}
@@ -4605,12 +4605,12 @@ export default function LiffStudentPage() {
           {viewingGradedSub.submission.is_flagged_suspicious && <SuspiciousLabel />}
 
           {gradedSubmissionIds.has(viewingGradedSub.submission.id) && viewingGradedSub.submission.total_score != null ? (
-            <div className="liff-sheen p-5 rounded-2xl bg-linear-to-br from-emerald-500 to-teal-600 text-white text-center space-y-1">
+            <div className="liff-sheen p-5 rounded-2xl bg-linear-to-br from-violet-500 to-purple-700 text-white text-center space-y-1">
               <p className="text-4xl font-black tabular-nums">
                 <CountUp value={Number(viewingGradedSub.submission.total_score)} />
-                <span className="text-xl font-bold text-emerald-100"> / {viewingGradedSub.assignment.total_points || 20}</span>
+                <span className="text-xl font-bold text-violet-100"> / {viewingGradedSub.assignment.total_points || 20}</span>
               </p>
-              <p className="text-sm font-semibold text-emerald-50">
+              <p className="text-sm font-semibold text-violet-50">
                 คิดเป็น {Math.round(((viewingGradedSub.submission.total_score || 0) / (viewingGradedSub.assignment.total_points || 20)) * 100)}%
               </p>
             </div>
@@ -4659,7 +4659,7 @@ export default function LiffStudentPage() {
                     </p>
                     {/* Scores only once the results are released (the server leaves them out before). */}
                     {score != null && (
-                      <span className="text-sm font-bold text-line shrink-0 tabular-nums">
+                      <span className="text-sm font-bold text-brand shrink-0 tabular-nums">
                         {score}/{q.max_score}
                       </span>
                     )}
@@ -4671,7 +4671,7 @@ export default function LiffStudentPage() {
                     <span className="text-xs font-semibold text-slate-400 block mb-0.5">คำตอบของคุณ</span>
                     {ans?.text_answer || "(ไม่มีข้อความ)"}
                     {ans?.file_url && (
-                      <a href={ans.file_url} target="_blank" rel="noreferrer" className="mt-1.5 flex items-center gap-1 text-xs font-semibold text-line hover:underline">
+                      <a href={ans.file_url} target="_blank" rel="noreferrer" className="mt-1.5 flex items-center gap-1 text-xs font-semibold text-brand hover:underline">
                         <Upload className="w-3 h-3" /> ดูไฟล์ที่แนบ
                       </a>
                     )}
@@ -4695,7 +4695,7 @@ export default function LiffStudentPage() {
                 onClick={() => handleEditSubmission(viewingGradedSub.assignment, viewingGradedSub.submission, viewingGradedSub.answers)}
                 // The edit form starts from the saved answers, so wait until they have loaded.
                 disabled={viewingGradedSub.questions === null}
-                className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform disabled:opacity-50 disabled:cursor-wait"
+                className="w-full h-12 rounded-2xl bg-brand hover:bg-brand-dark text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform disabled:opacity-50 disabled:cursor-wait"
               >
                 <PencilLine className="w-4 h-4" />
                 แก้ไขงานที่ส่ง
@@ -4713,7 +4713,7 @@ export default function LiffStudentPage() {
                   setViewingGradedSub(null);
                   handleOpenAssignment(a);
                 }}
-                className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform"
+                className="w-full h-12 rounded-2xl bg-brand hover:bg-brand-dark text-white font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] transition-transform"
               >
                 <PencilLine className="w-4 h-4" />
                 ส่งงานตอนนี้ (ส่งช้า)
@@ -4762,7 +4762,7 @@ function ChoiceResult({ question, options, answerText }: { question: Question; o
           const isPicked = oi === picked;
           const isRight = keyShown && isObjectiveAnswerCorrect(question, opt) === true;
           const tone = isRight
-            ? "bg-emerald-50 dark:bg-emerald-950/40 ring-emerald-300 dark:ring-emerald-800 text-emerald-900 dark:text-emerald-100"
+            ? "bg-violet-50 dark:bg-violet-950/40 ring-violet-300 dark:ring-violet-800 text-violet-900 dark:text-violet-100"
             : isPicked && keyShown
             ? "bg-rose-50 dark:bg-rose-950/40 ring-rose-300 dark:ring-rose-800 text-rose-900 dark:text-rose-100"
             : isPicked

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Check, ExternalLink, UserCheck, Users, X } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
-import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useViewData, type RosterData, type RosterStudent, type TeacherView } from "./kit";
+import { Button, Card, Empty, ErrorBox, Page, Pill, Skeleton, errorText, useKit, useViewData, type RosterData, type RosterStudent, type TeacherView } from "./kit";
 import { StatePill, useWork } from "./WorkViews";
 
 const studentName = (s: Partial<RosterStudent>) => `${s.first_name || ""} ${s.last_name || ""}`.trim() || "ไม่ระบุชื่อ";
@@ -93,9 +93,9 @@ export function HomeView() {
   })();
   return (
     <Page title={`สวัสดีค่ะ คุณครู${teacher.firstName}`} back={false}>
-      <Card className="bg-violet-50! dark:bg-violet-950/40! space-y-0.5">
-        <p className="text-[11px] font-bold text-violet-500">ห้องเรียนของกลุ่มนี้</p>
-        <p className="font-black text-violet-950 dark:text-white">{classroom.title}</p>
+      <Card className="bg-amber-50! dark:bg-amber-950/40! space-y-0.5">
+        <p className="text-[11px] font-bold text-amber-500">ห้องเรียนของกลุ่มนี้</p>
+        <p className="font-black text-slate-900 dark:text-white">{classroom.title}</p>
         {classroom.groupName && <p className="text-[11px] text-slate-500">กลุ่ม LINE: {classroom.groupName}</p>}
         {!fromGroup ? (
           <p className="text-[11px] font-bold pt-1 text-slate-500">ℹ️ เปิดจากนอกกลุ่ม: เมื่อส่ง จะให้เลือกกลุ่มเอง (เปิดจากการ์ดเมนูในกลุ่มเพื่อส่งเข้ากลุ่มทันที) <span className="font-normal text-slate-400">[{openedIn}]</span></p>
@@ -113,7 +113,7 @@ export function HomeView() {
       <QuickSend />
       {MENU.map((block, index) => (
         <div key={index} className="space-y-2">
-          {block.section && <p className="inline-block px-3 py-0.5 rounded-full bg-violet-600 text-white text-xs font-bold">{block.section}</p>}
+          {block.section && <p className="inline-block px-3 py-0.5 rounded-full bg-amber-500 text-white text-xs font-bold">{block.section}</p>}
           <div className="grid grid-cols-2 gap-2">
             {block.items.map((item) => (
               <button
@@ -121,7 +121,7 @@ export function HomeView() {
                 type="button"
                 onClick={() => go(item.view)}
                 className={`${item.wide ? "col-span-2" : ""} h-12 rounded-xl text-sm font-bold cursor-pointer active:scale-[0.98] transition-transform ${
-                  item.primary ? "bg-violet-600 text-white" : "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-200"
+                  item.primary ? "bg-amber-500 text-white" : "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
                 }`}
               >
                 {item.label}
@@ -152,7 +152,7 @@ export function InviteView() {
     <Page title="👥 เชิญนักเรียน">
       <Card className="text-center space-y-2">
         <p className="text-xs text-slate-500">รหัสเข้าห้อง</p>
-        <p className="text-4xl font-black tracking-widest text-violet-700 dark:text-violet-300">{classroom.inviteCode || "-"}</p>
+        <p className="text-4xl font-black tracking-widest text-amber-700 dark:text-amber-300">{classroom.inviteCode || "-"}</p>
         <p className="text-xs text-slate-500">นักเรียนกดปุ่มในการ์ด กรอกชื่อ แล้วรอคุณครูอนุมัติ</p>
       </Card>
       <Button onClick={send} busy={busy} className="w-full">📨 ส่งการ์ดเชิญเข้ากลุ่ม</Button>
@@ -172,7 +172,7 @@ export function GuideView() {
   return (
     <Page title="📣 แนะนำนักเรียน">
       <Card className="space-y-2 text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
-        <p className="font-bold text-violet-900 dark:text-violet-200">ส่งการ์ดต้อนรับเข้ากลุ่ม พร้อมวิธีใช้:</p>
+        <p className="font-bold text-amber-900 dark:text-amber-200">ส่งการ์ดต้อนรับเข้ากลุ่ม พร้อมวิธีใช้:</p>
         <ol className="list-decimal pl-5 space-y-1">
           <li>กดปุ่มในการ์ด กรอกชื่อเพื่อขอเข้าห้องเรียน แล้วรอคุณครูอนุมัติ</li>
           <li>เมื่อมีงาน คุณครูจะส่งการ์ดงานในกลุ่ม กด “ส่งงาน” หรือ “ทำแบบทดสอบ”</li>
@@ -213,10 +213,10 @@ export function HelpView() {
   return (
     <Page title="📖 คำสั่งพิเศษ">
       <p className="text-xs text-slate-500">พิมพ์ในกลุ่ม LINE (เฉพาะคุณครูและ TA บอทจะตอบ ข้อความจากนักเรียนบอทไม่ตอบ) พิมพ์ “pudding” แทน “พุดดิ้ง” ก็ได้</p>
-      <Card className="divide-y divide-violet-100 dark:divide-slate-800 p-0!">
+      <Card className="divide-y divide-amber-100 dark:divide-slate-800 p-0!">
         {COMMANDS.map(([command, what]) => (
           <div key={command} className="px-4 py-3">
-            <p className="text-sm font-black text-violet-800 dark:text-violet-200">{command}</p>
+            <p className="text-sm font-black text-amber-800 dark:text-amber-200">{command}</p>
             <p className="text-xs text-slate-500">{what}</p>
           </div>
         ))}
@@ -228,7 +228,7 @@ export function HelpView() {
 
 /** "จัดการห้องเรียน": approve join requests and see the roster. */
 export function ClassroomView() {
-  const { classroom, liff, toast } = useKit();
+  const { classroom, liff, toast, invalidate } = useKit();
   const roster = useViewData<RosterData>("roster");
   const [busy, setBusy] = useState<string | null>(null);
   const act = async (student: RosterStudent, admit: boolean) => {
@@ -236,8 +236,13 @@ export function ClassroomView() {
     try {
       if (admit) await dataService.admitStudentToClassroom(classroom.id, student.id);
       else await dataService.rejectStudentFromClassroom(classroom.id, student.id);
+      // Moved on screen right away; the server's list follows.
+      roster.mutate((current) => ({
+        pending: current.pending.filter((item) => item.id !== student.id),
+        students: admit ? [...current.students, student] : current.students,
+      }));
       toast(admit ? `อนุมัติ ${studentName(student)} แล้ว` : `ปฏิเสธ ${studentName(student)} แล้ว`);
-      roster.reload();
+      invalidate("roster", "work", "attendance");
     } catch (err) {
       toast(errorText(err), "error");
     } finally {
@@ -246,9 +251,9 @@ export function ClassroomView() {
   };
   const openWeb = () => liff.openWindow({ url: `${window.location.origin}/classrooms/${classroom.id}`, external: true });
   return (
-    <Page title="🏫 จัดการห้องเรียน">
+    <Page title="🏫 จัดการห้องเรียน" refreshing={roster.refreshing}>
       {roster.error && <ErrorBox text={roster.error} />}
-      {!roster.data && !roster.error && <Loading />}
+      {!roster.data && !roster.error && <Skeleton rows={4} />}
       {roster.data && (
         <>
           <Card className="space-y-3">
@@ -258,7 +263,7 @@ export function ClassroomView() {
             </div>
             {roster.data.pending.length === 0 && <p className="text-xs text-slate-400">ไม่มีคำขอเข้าห้อง</p>}
             {roster.data.pending.map((student) => (
-              <div key={student.id} className="flex items-center justify-between gap-2">
+              <div key={student.id} className="liff-rise flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-bold truncate">{studentName(student)}</p>
                   {student.student_id && <p className="text-[11px] text-slate-400">รหัส {student.student_id}</p>}
@@ -276,7 +281,7 @@ export function ClassroomView() {
           </Card>
           <Card className="space-y-2">
             <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-violet-600" />
+              <Users className="w-4 h-4 text-amber-600" />
               <p className="text-sm font-black text-slate-800 dark:text-white">นักเรียนในห้อง ({roster.data.students.length})</p>
             </div>
             {roster.data.students.length === 0 && <Empty text="ยังไม่มีนักเรียน" />}
@@ -305,13 +310,13 @@ export function ClassroomView() {
 export function StatusView() {
   const work = useWork();
   if (work.error) return <Page title="📊 เช็กสถานะ"><ErrorBox text={work.error} /></Page>;
-  if (!work.data) return <Page title="📊 เช็กสถานะ"><Loading /></Page>;
+  if (!work.data) return <Page title="📊 เช็กสถานะ"><Skeleton rows={4} /></Page>;
   const open = work.rows.filter((row) => row.win.acceptsSubmissions);
   const waiting = work.rows.filter((row) => row.win.isDraft || row.win.isScheduled).length;
   const toGrade = work.rows.reduce((sum, row) => sum + row.toGrade, 0);
   return (
-    <Page title="📊 เช็กสถานะ">
-      <div className="grid grid-cols-2 gap-2">
+    <Page title="📊 เช็กสถานะ" refreshing={work.refreshing}>
+      <div className="grid grid-cols-2 gap-2 liff-stagger">
         {[
           ["นักเรียน", work.data.students],
           ["รออนุมัติ", work.data.pending],
@@ -319,7 +324,7 @@ export function StatusView() {
           ["รอตรวจ", toGrade],
         ].map(([label, value]) => (
           <Card key={label as string} className="text-center py-3!">
-            <p className="text-2xl font-black text-violet-700 dark:text-violet-300">{value}</p>
+            <p className="text-2xl font-black text-amber-700 dark:text-amber-300">{value}</p>
             <p className="text-[11px] text-slate-500">{label}</p>
           </Card>
         ))}
@@ -339,8 +344,8 @@ export function StatusView() {
                   <Pill tone={row.missing ? "amber" : "green"}>ส่ง {row.handed}/{row.total}</Pill>
                 </span>
               </div>
-              <div className="h-1.5 rounded-full bg-violet-100 dark:bg-slate-800 overflow-hidden">
-                <div className="h-full bg-violet-500" style={{ width: `${Math.min(100, percent)}%` }} />
+              <div className="h-1.5 rounded-full bg-amber-100 dark:bg-slate-800 overflow-hidden">
+                <div className="h-full rounded-full bg-amber-500 transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, percent)}%` }} />
               </div>
             </div>
           );

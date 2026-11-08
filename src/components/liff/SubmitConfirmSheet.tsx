@@ -45,7 +45,7 @@ function AnsweredRing({ answered, total }: { answered: number; total: number }) 
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={offset}
-          className={`submit-ring ${complete ? 'stroke-line' : 'stroke-amber-500'}`}
+          className={`submit-ring ${complete ? 'stroke-brand' : 'stroke-amber-500'}`}
           style={{ ['--ring-from' as string]: `${circumference}` }}
         />
       </svg>
@@ -139,7 +139,7 @@ export function SubmitConfirmSheet({
               {review.total > 0 ? (
                 <AnsweredRing answered={review.answered} total={review.total} />
               ) : (
-                <span className="liff-pop w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-950 text-line flex! items-center justify-center shrink-0">
+                <span className="liff-pop w-16 h-16 rounded-full bg-violet-100 dark:bg-violet-950 text-brand flex! items-center justify-center shrink-0">
                   <CheckCircle2 className="w-8 h-8" />
                 </span>
               )}
@@ -187,9 +187,9 @@ export function SubmitConfirmSheet({
                 onClick={() => armed && !submitting && onConfirm()}
                 disabled={!armed || submitting}
                 aria-disabled={!armed || submitting}
-                className="relative overflow-hidden h-12 rounded-2xl bg-line/40 text-white font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform inline-flex items-center justify-center gap-1.5 disabled:cursor-wait shadow-lg shadow-emerald-600/25"
+                className="relative overflow-hidden h-12 rounded-2xl bg-brand/40 text-white font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform inline-flex items-center justify-center gap-1.5 disabled:cursor-wait shadow-lg shadow-emerald-600/25"
               >
-                <span aria-hidden className="submit-arm absolute inset-0 bg-line" style={{ ['--arm-ms' as string]: `${ARM_MS}ms` }} />
+                <span aria-hidden className="submit-arm absolute inset-0 bg-brand" style={{ ['--arm-ms' as string]: `${ARM_MS}ms` }} />
                 <span className="relative inline-flex items-center gap-1.5">
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   {submitting ? 'กำลังส่ง...' : 'ยืนยันส่ง'}

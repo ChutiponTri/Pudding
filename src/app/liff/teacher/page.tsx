@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { Liff } from "@line/liff";
 import { Link2, Lock } from "lucide-react";
 import { authFetch, setLineAccessToken, setLiffTeacherMode } from "@/lib/auth/lineSession";
-import { dataKindFor, KitProvider, Loading, type DataKind, type TeacherContext, type TeacherView } from "@/components/liff-teacher/kit";
+import { dataKindFor, KitProvider, Loading, type TeacherContext, type TeacherView } from "@/components/liff-teacher/kit";
+import { clearCache, readCache, writeCache } from "@/components/liff-teacher/cache";
 import { ClassroomView, GuideView, HelpView, HomeView, InviteView, StatusView } from "@/components/liff-teacher/ClassViews";
 import { AttendanceView } from "@/components/liff-teacher/AttendanceView";
 import { PublishView, RemindView, ResultsView } from "@/components/liff-teacher/WorkViews";
@@ -78,8 +79,8 @@ export default function TeacherLiffPage() {
   const [context, setContext] = useState<TeacherContext | null>(null);
   const [blocked, setBlocked] = useState<Blocked | null>(null);
   const [view, setView] = useState<TeacherView>("home");
-  /** The first page's data, which came with the classroom (one request to open the page). */
-  const [initialData, setInitialData] = useState<{ kind: DataKind; data: unknown } | null>(null);
+  /** This LINE account + group: the cache's scope (see liff-teacher/cache). */
+  const [cacheScope, setCacheScope] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -115,16 +116,36 @@ export default function TeacherLiffPage() {
           setBlocked({ message: "เปิดหน้านี้จากการ์ดเมนูครูในกลุ่ม LINE ของห้องเรียน", code: "no-group" });
           return;
         }
+        // Who is signed in to LINE here: the cache is theirs only.
+        let lineUser = "";
+        try {
+          lineUser = sdk.getContext()?.userId || sdk.getDecodedIDToken()?.sub || "";
+        } catch {
+          lineUser = "";
+        }
+        // No LINE id (should not happen): a scope of its own, so nothing saved is shared.
+        const scope = `${lineUser || `guest-${Math.random().toString(36).slice(2)}`}:${ref}`;
+        setCacheScope(scope);
+        // Opened before on this phone: the menu shows at once, and is checked with the server below.
+        const cached = lineUser ? readCache(`${scope}:ctx`) : null;
+        if (cached) setContext(cached.data as TeacherContext);
+
         const kind = dataKindFor(isView(startView) ? startView : "home");
         const res = await authFetch(`/api/line/liff-teacher?g=${encodeURIComponent(ref)}${kind ? `&view=${kind}` : ""}`, { cache: "no-store" });
         const json = await res.json().catch(() => ({}));
         if (!alive) return;
         if (!res.ok) {
+          // Not (or no longer) this group's teacher: nothing saved on this phone is shown again.
+          clearCache(scope);
+          setContext(null);
           setBlocked({ message: json.error || "โหลดข้อมูลไม่สำเร็จ", code: json.code, connectUrl: json.connectUrl });
           return;
         }
-        if (kind && json.data) setInitialData({ kind, data: json.data });
-        setContext(json as TeacherContext);
+        const fresh = { teacher: json.teacher, classroom: json.classroom } as TeacherContext;
+        // The first page's data came with it (one request to open the page).
+        if (kind && json.data) writeCache(`${scope}:${kind}`, json.data);
+        if (lineUser) writeCache(`${scope}:ctx`, fresh);
+        setContext(fresh);
       } catch (err) {
         if (alive) setBlocked({ message: err instanceof Error ? err.message : "เกิดข้อผิดพลาด" });
       }
@@ -155,10 +176,10 @@ export default function TeacherLiffPage() {
   if (blocked) {
     return (
       <div className="p-6 pt-16 text-center space-y-4">
-        <div className="w-14 h-14 mx-auto rounded-2xl bg-violet-100 dark:bg-violet-950 text-violet-700 flex items-center justify-center">
+        <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-100 dark:bg-amber-950/50 text-amber-700 flex items-center justify-center">
           {blocked.code === "not-linked" ? <Link2 className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
         </div>
-        <p className="font-black text-violet-950 dark:text-white">{blocked.code === "not-teacher" ? "สำหรับคุณครูเท่านั้น" : "ยังใช้งานเมนูนี้ไม่ได้"}</p>
+        <p className="font-black text-slate-900 dark:text-white">{blocked.code === "not-teacher" ? "สำหรับคุณครูเท่านั้น" : "ยังใช้งานเมนูนี้ไม่ได้"}</p>
         <p className="text-sm text-slate-600 dark:text-slate-300">{blocked.message}</p>
         {blocked.connectUrl && (
           <a href={blocked.connectUrl} className="inline-flex h-11 px-5 rounded-xl bg-emerald-500 text-white font-bold text-sm items-center gap-1.5">
@@ -177,8 +198,11 @@ export default function TeacherLiffPage() {
 
   const View = VIEWS[view];
   return (
-    <KitProvider value={{ ...context, liff, groupRef, go }} initialData={initialData}>
-      <View />
+    <KitProvider value={{ ...context, liff, groupRef, go, cacheScope }}>
+      {/* Each page fades in; its cards rise one after another (Page). */}
+      <div key={view} className="liff-view">
+        <View />
+      </div>
     </KitProvider>
   );
 }

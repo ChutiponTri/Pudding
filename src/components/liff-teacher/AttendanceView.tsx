@@ -5,7 +5,7 @@ import { QrCode, Users } from "lucide-react";
 import { AttendanceQrScreen } from "@/components/AttendanceQrScreen";
 import { authFetch } from "@/lib/auth/lineSession";
 import { formatDateTime } from "@/lib/utils/datetime";
-import { Button, Card, ErrorBox, Field, Loading, Page, Pill, errorText, inputClass, useKit, useViewData, type AttendanceData } from "./kit";
+import { Button, Card, ErrorBox, Field, Page, Pill, Skeleton, errorText, inputClass, useKit, useViewData, type AttendanceData } from "./kit";
 
 const todayTitle = () => `เช็กชื่อ ${new Date().toLocaleDateString("th-TH", { day: "numeric", month: "short" })}`;
 
@@ -15,7 +15,7 @@ const todayTitle = () => `เช็กชื่อ ${new Date().toLocaleDateStri
  * student's status and closes the period. Nothing goes to the LINE group.
  */
 export function AttendanceView() {
-  const { classroom, toast } = useKit();
+  const { classroom, toast, invalidate } = useKit();
   const data = useViewData<AttendanceData>("attendance");
   const [title, setTitle] = useState(todayTitle);
   /** Optional: minutes after opening when check-ins count as late ('' = 10, the default). */
@@ -42,7 +42,7 @@ export function AttendanceView() {
       setTitle(todayTitle());
       setLateAfter("");
       if (json.session?.id) setScreen(json.session.id);
-      data.reload();
+      invalidate("attendance");
     } catch (err) {
       toast(errorText(err), "error");
     } finally {
@@ -56,14 +56,15 @@ export function AttendanceView() {
   const total = data.data?.students.length ?? 0;
 
   return (
-    <Page title="📋 เช็กชื่อ">
+    <Page title="📋 เช็กชื่อ" refreshing={data.refreshing}>
       {screen && (
         <AttendanceQrScreen
           classroomId={classroom.id}
           sessionId={screen}
           onClose={() => {
             setScreen(null);
-            data.reload();
+            // Check-ins and status changes happened on that screen.
+            invalidate("attendance");
           }}
         />
       )}
@@ -93,9 +94,9 @@ export function AttendanceView() {
       </Card>
 
       {data.error && <ErrorBox text={data.error} />}
-      {!data.data && !data.error && <Loading />}
+      {!data.data && !data.error && <Skeleton rows={2} />}
       {data.data && sessions.length > 0 && (
-        <Card className="p-0! divide-y divide-violet-100 dark:divide-slate-800">
+        <Card className="p-0! divide-y divide-amber-100 dark:divide-slate-800">
           {sessions.slice(0, 10).map((session) => {
             const isOpen = session.status === "open";
             return (
@@ -105,7 +106,7 @@ export function AttendanceView() {
                   <span className="block text-[11px] text-slate-500">{formatDateTime(session.starts_at, "th")}</span>
                 </span>
                 <Pill tone={isOpen ? "green" : "slate"}>{isOpen ? "เปิดอยู่" : "ปิดแล้ว"}</Pill>
-                <span className="text-xs font-bold text-violet-700 dark:text-violet-300 inline-flex items-center gap-1 shrink-0">
+                <span className="text-xs font-bold text-amber-700 dark:text-amber-300 inline-flex items-center gap-1 shrink-0">
                   {isOpen ? <QrCode className="w-4 h-4" /> : <Users className="w-4 h-4" />}
                   {checkedIn(session.id)}/{total}
                 </span>

@@ -222,7 +222,7 @@ export default function TeacherConnectPage() {
             </div>
             <div className="flex flex-col gap-2 max-w-xs mx-auto">
               {blocked.code === "not-teacher" && (
-                <button type="button" onClick={() => window.location.replace("/liff")} className="h-11 rounded-xl bg-line hover:bg-line-dark text-white font-bold text-sm cursor-pointer">
+                <button type="button" onClick={() => window.location.replace("/liff")} className="h-11 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm cursor-pointer">
                   ไปหน้าห้องเรียนของนักเรียน
                 </button>
               )}

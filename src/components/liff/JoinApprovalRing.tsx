@@ -31,7 +31,7 @@ export function JoinApprovalRing({
   const done = state === 'approved' ? 3 : 2;
   const size = compact ? 'w-24 h-24' : 'w-36 h-36';
   const stroke =
-    state === 'rejected' ? 'stroke-rose-500' : state === 'approved' ? 'stroke-emerald-500' : 'stroke-line';
+    state === 'rejected' ? 'stroke-rose-500' : state === 'approved' ? 'stroke-emerald-500' : 'stroke-brand';
 
   return (
     <div className={`flex ${compact ? 'items-center gap-4 text-left' : 'flex-col items-center gap-5 text-center'}`}>

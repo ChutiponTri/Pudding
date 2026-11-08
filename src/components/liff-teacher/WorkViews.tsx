@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { authFetch } from "@/lib/auth/lineSession";
 import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
 import { lineDate } from "@/lib/utils/datetime";
 import type { Assignment } from "@/types/database";
-import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useViewData, type Share, type WorkData } from "./kit";
+import { Button, Card, Empty, ErrorBox, Page, Pill, Skeleton, errorText, useKit, useViewData, type Share, type WorkData } from "./kit";
 
 export type WorkRow = WorkData["works"][number] & { win: ReturnType<typeof getAssignmentWindow> };
 
@@ -51,7 +50,7 @@ const due = (row: WorkRow) => (row.win.deadline != null ? lineDate(row.win.deadl
 
 function WorkLine({ row, children, right }: { row: WorkRow; children?: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="space-y-2 pb-3 border-b last:border-0 last:pb-0 border-violet-100 dark:border-slate-800">
+    <div className="space-y-2 pb-3 border-b last:border-0 last:pb-0 border-amber-100 dark:border-slate-800">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-bold truncate">{kindIcon(row.work)} {row.work.title}</p>
@@ -85,11 +84,11 @@ function useBusy() {
 
 /** "เผยแพร่": release drafts / scheduled work now, or post an open work's card again. */
 export function PublishView() {
-  const { postShare, postKind, go } = useKit();
+  const { postShare, postKind, go, invalidate } = useKit();
   const data = useWork();
   const { busy, run } = useBusy();
   if (data.error) return <Page title="📢 เผยแพร่"><ErrorBox text={data.error} /></Page>;
-  if (!data.data) return <Page title="📢 เผยแพร่"><Loading /></Page>;
+  if (!data.data) return <Page title="📢 เผยแพร่"><Skeleton /></Page>;
   // Straight into the group when opened from it (no group to pick).
   const waiting = data.rows.filter((row) => row.win.isDraft || row.win.isScheduled);
   const open = data.rows.filter((row) => row.win.acceptsSubmissions);
@@ -97,11 +96,12 @@ export function PublishView() {
   const publish = (row: WorkRow) =>
     run(row.work.id, async () => {
       const result = await override(row.work.id, "publish_now");
+      // Published now, whether or not the card goes out: every page shows it.
+      invalidate("work");
       if (result.share?.url) await postShare(result.share);
-      data.reload();
     });
   return (
-    <Page title="📢 เผยแพร่">
+    <Page title="📢 เผยแพร่" refreshing={data.refreshing}>
       <Card className="space-y-3">
         <p className="text-sm font-black">ฉบับร่าง / ตั้งเวลาไว้ ({waiting.length})</p>
         {waiting.length === 0 && <p className="text-xs text-slate-400">ไม่มีงานที่รอเผยแพร่</p>}
@@ -138,23 +138,24 @@ export function PublishView() {
 
 /** "ประกาศผล": close the work (if still open) and post the results card. */
 export function ResultsView() {
-  const { postShare, go } = useKit();
+  const { postShare, go, invalidate } = useKit();
   const data = useWork();
   const { busy, run } = useBusy();
   if (data.error) return <Page title="📈 ประกาศผล"><ErrorBox text={data.error} /></Page>;
-  if (!data.data) return <Page title="📈 ประกาศผล"><Loading /></Page>;
+  if (!data.data) return <Page title="📈 ประกาศผล"><Skeleton /></Page>;
   // Every published work: announcing needs at least one graded hand-in.
   const rows = data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled);
   const announce = (row: WorkRow) => {
     if (!row.graded) return;
     void run(row.work.id, async () => {
       const result = await override(row.work.id, "announce_results");
+      // Closed (if it was open) whether or not the card goes out.
+      invalidate("work");
       if (result.share?.url) await postShare(result.share);
-      data.reload();
     });
   };
   return (
-    <Page title="📈 ประกาศผล">
+    <Page title="📈 ประกาศผล" refreshing={data.refreshing}>
       {rows.length === 0 && <Empty text="ยังไม่มีงานที่เผยแพร่" />}
       {rows.length > 0 && (
         <Card className="space-y-3">
@@ -183,10 +184,10 @@ export function RemindView() {
   const data = useWork();
   const { busy, run } = useBusy();
   if (data.error) return <Page title="🔔 ทวงงาน"><ErrorBox text={data.error} /></Page>;
-  if (!data.data) return <Page title="🔔 ทวงงาน"><Loading /></Page>;
+  if (!data.data) return <Page title="🔔 ทวงงาน"><Skeleton /></Page>;
   const rows = data.rows.filter((row) => row.win.acceptsSubmissions);
   return (
-    <Page title="🔔 ทวงงาน">
+    <Page title="🔔 ทวงงาน" refreshing={data.refreshing}>
       {rows.length === 0 && (
         <Empty text={data.rows.length ? `ไม่มีงานที่เปิดรับอยู่ (งานทั้งหมด ${data.rows.length} งานปิดรับแล้วหรือยังไม่เผยแพร่)` : "ยังไม่มีงานในห้องนี้"} />
       )}

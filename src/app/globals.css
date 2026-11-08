@@ -25,6 +25,9 @@
   --color-slate-850: #172033;
   --color-line: #06c755;
   --color-line-dark: #05b34c;
+  /* Student LIFF brand: the purple of the LINE Flex cards (lib/line/flexKit COLORS.purple). */
+  --color-brand: #7c3aed;
+  --color-brand-dark: #6d28d9;
 }
 
 html {

@@ -35,12 +35,33 @@ type Context = {
   groupName?: string;
 };
 
+/**
+ * A teacher's checked context for a group, per server instance, briefly: a
+ * page opening its next screen skips the three lookups. Short on purpose,
+ * so a teacher taken off the class (or a group unlinked) is refused soon.
+ */
+const contextCache = new Map<string, { value: Context; expiresAt: number }>();
+const CONTEXT_CACHE_MS = 20_000;
+
 async function context(request: NextRequest, ref: string | null): Promise<Context | NextResponse> {
   const actor = await getActor(request, { allowIncompleteProfile: true });
   if (!actor || actor.kind !== 'teacher') {
     return NextResponse.json({ error: 'หน้านี้สำหรับคุณครูเท่านั้น', code: 'not-teacher' }, { status: 403 });
   }
   if (!ref) return NextResponse.json({ error: 'เปิดหน้านี้จากเมนูครูในกลุ่ม LINE', code: 'no-group' }, { status: 400 });
+  const cacheKey = `${actor.userId}:${ref}`;
+  const hit = contextCache.get(cacheKey);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  const result = await checkContext(actor.userId, ref);
+  if (!(result instanceof NextResponse)) {
+    if (contextCache.size > 500) contextCache.clear();
+    contextCache.set(cacheKey, { value: result, expiresAt: Date.now() + CONTEXT_CACHE_MS });
+  }
+  return result;
+}
+
+async function checkContext(teacherId: string, ref: string): Promise<Context | NextResponse> {
+  const actor = { userId: teacherId };
   const supabase = createServiceSupabaseClient();
   // The teacher's row (approval) and the group, side by side; then the group's classroom.
   const [{ data: teacher }, group] = await Promise.all([
@@ -67,14 +88,24 @@ async function context(request: NextRequest, ref: string | null): Promise<Contex
  * waiting to be graded, and not handed in yet.
  */
 async function loadWork(supabase: ServiceClient, classroomId: string) {
-  const [{ data: works }, roster] = await Promise.all([
+  // All three at once: the class's hand-ins are found through their work's classroom.
+  const [{ data: works }, roster, joined] = await Promise.all([
     supabase.from('assignments').select('*').eq('classroom_id', classroomId).order('created_at', { ascending: false }),
     loadRoster(supabase, classroomId),
+    supabase
+      .from('submissions')
+      .select('assignment_id, student_id, status, total_score, assignments!inner(classroom_id)')
+      .eq('assignments.classroom_id', classroomId),
   ]);
   const list = (works || []) as Assignment[];
-  const { data: subs } = list.length
-    ? await supabase.from('submissions').select('assignment_id, student_id, status, total_score').in('assignment_id', list.map((work) => work.id))
-    : { data: [] };
+  let subs: unknown[] | null = joined.data;
+  if (joined.error) {
+    // The join is not available: the hand-ins of each work, one more round trip.
+    console.warn('LIFF teacher: submissions join failed, using two queries:', joined.error.message);
+    subs = list.length
+      ? (await supabase.from('submissions').select('assignment_id, student_id, status, total_score').in('assignment_id', list.map((work) => work.id))).data
+      : [];
+  }
   const rows = (subs || []) as Array<{ assignment_id: string; student_id: string; status: Submission['status']; total_score: number | null }>;
   return {
     students: roster.students.length,

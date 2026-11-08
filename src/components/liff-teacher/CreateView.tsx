@@ -26,7 +26,7 @@ const QUESTION_TYPES: Array<[QuestionType, string]> = [
  * and a time limit. Published work's card goes into the group at once.
  */
 export function CreateView() {
-  const { classroom, postShare, toast, go } = useKit();
+  const { classroom, postShare, toast, go, invalidate } = useKit();
   const [isExam, setIsExam] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -41,7 +41,8 @@ export function CreateView() {
   const [minutes, setMinutes] = useState(30);
   const [questions, setQuestions] = useState<Draft[]>(() => [newQuestion()]);
   const [busy, setBusy] = useState<"publish" | "draft" | null>(null);
-  const [created, setCreated] = useState<{ title: string; draft: boolean } | null>(null);
+  /** sent: whether the work card reached the group (the teacher may cancel the picker). */
+  const [created, setCreated] = useState<{ title: string; draft: boolean; sent: boolean } | null>(null);
 
   const patch = (uid: number, change: Partial<Draft>) => setQuestions((list) => list.map((q) => (q.uid === uid ? { ...q, ...change } : q)));
 
@@ -113,9 +114,17 @@ export function CreateView() {
         },
         rows
       );
+      invalidate("work");
       // The work card goes straight into the group from the teacher's LINE.
-      if (!draft && result.line === "card" && result.share?.url) await postShare(result.share);
-      setCreated({ title: title.trim(), draft });
+      let sent = false;
+      if (!draft && result.line === "card" && result.share?.url) {
+        const posted = await postShare(result.share).catch((err) => {
+          toast(errorText(err, "ส่งการ์ดไม่สำเร็จ"), "error");
+          return "cancelled" as const;
+        });
+        sent = posted === "sent" || posted === "shared";
+      }
+      setCreated({ title: title.trim(), draft, sent });
     } catch (err) {
       toast(errorText(err, "สร้างงานไม่สำเร็จ"), "error");
     } finally {
@@ -127,7 +136,9 @@ export function CreateView() {
     return (
       <Page title="✏️ สร้างงาน">
         <Done title={created.draft ? `บันทึกฉบับร่าง “${created.title}” แล้ว` : `สร้าง “${created.title}” แล้ว`}>
-          <p className="text-xs text-slate-500">{created.draft ? "เผยแพร่ได้จากเมนู “เผยแพร่”" : "การ์ดงานถูกส่งเข้ากลุ่มแล้ว"}</p>
+          <p className="text-xs text-slate-500">
+            {created.draft ? "เผยแพร่ได้จากเมนู “เผยแพร่”" : created.sent ? "การ์ดงานถูกส่งเข้ากลุ่มแล้ว" : "ยังไม่ได้ส่งการ์ด ส่งได้จากเมนู “เผยแพร่” → ส่งการ์ดงานอีกครั้ง"}
+          </p>
           <div className="flex gap-2 justify-center">
             <Button
               tone="soft"
@@ -150,7 +161,7 @@ export function CreateView() {
 
   return (
     <Page title="✏️ สร้างงาน">
-      <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-violet-100 dark:bg-slate-900">
+      <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-amber-100 dark:bg-slate-900">
         {[
           [false, "📋 การบ้าน"],
           [true, "📝 แบบทดสอบ"],
@@ -159,7 +170,7 @@ export function CreateView() {
             key={String(value)}
             type="button"
             onClick={() => setIsExam(value as boolean)}
-            className={`h-10 rounded-lg text-sm font-bold cursor-pointer ${isExam === value ? "bg-white dark:bg-violet-700 text-violet-800 dark:text-white shadow-sm" : "text-violet-600 dark:text-slate-400"}`}
+            className={`h-10 rounded-lg text-sm font-bold cursor-pointer ${isExam === value ? "bg-white dark:bg-amber-600 text-amber-800 dark:text-white shadow-sm" : "text-amber-600 dark:text-slate-400"}`}
           >
             {label as string}
           </button>
@@ -223,7 +234,7 @@ export function CreateView() {
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-black">ข้อ {index + 1}</p>
               <div className="flex items-center gap-1">
-                <select className="h-8 px-2 rounded-lg text-xs bg-violet-50 dark:bg-slate-800" value={q.type} onChange={(e) => patch(q.uid, { type: e.target.value as QuestionType, answer: "" })}>
+                <select className="h-8 px-2 rounded-lg text-xs bg-amber-50 dark:bg-slate-800" value={q.type} onChange={(e) => patch(q.uid, { type: e.target.value as QuestionType, answer: "" })}>
                   {QUESTION_TYPES.map(([type, label]) => (
                     <option key={type} value={type}>{label}</option>
                   ))}
@@ -245,7 +256,7 @@ export function CreateView() {
                       type="radio"
                       name={`answer-${q.uid}`}
                       aria-label={`ตัวเลือก ${i + 1} ถูกต้อง`}
-                      className="w-5 h-5 accent-violet-600"
+                      className="w-5 h-5 accent-amber-500"
                       checked={!!option.trim() && q.answer === option.trim()}
                       onChange={() => patch(q.uid, { answer: option.trim() })}
                     />
@@ -271,7 +282,7 @@ export function CreateView() {
                     key={option}
                     type="button"
                     onClick={() => patch(q.uid, { answer: option })}
-                    className={`h-10 rounded-xl text-sm font-bold cursor-pointer ${q.answer === option ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-800 dark:bg-slate-800 dark:text-slate-200"}`}
+                    className={`h-10 rounded-xl text-sm font-bold cursor-pointer ${q.answer === option ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-800 dark:bg-slate-800 dark:text-slate-200"}`}
                   >
                     {option}
                   </button>
