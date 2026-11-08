@@ -4,6 +4,7 @@ import { after } from 'next/server';
 import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
 import { postLineText, type PostActivityType, type PostLineFailure } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
+import { workTriggerText } from '@/lib/line/workCard';
 import { attendanceShareToken, joinShareToken, postShareToken, teacherInviteShareToken, reannounceShareToken, remindShareToken, resultsShareToken } from '@/lib/server/inviteCodes';
 import type { LabelledClassroom } from '@/lib/utils/classroomLabel';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
@@ -92,9 +93,10 @@ export async function createClassroomPost(
   deduplicated: boolean;
   /**
    * 'sent' | 'failed' | 'quota' (the LINE plan's monthly messages are used up) |
-   * 'no_group' (classroom not linked to LINE) | 'scheduled' (sent at publish time).
+   * 'no_group' (classroom not linked to LINE) | 'scheduled' (sent at publish time) |
+   * 'card' (new work: the teacher posts its trigger link, the bot answers with the card).
    */
-  line?: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled';
+  line?: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' | 'card';
   /** The bot could not send it: the teacher shares it to LINE by hand (see postShare). */
   share?: PostShare;
 }> {
@@ -132,8 +134,18 @@ export async function createClassroomPost(
   const { data: saved, error } = await supabase.from('classroom_posts').insert(newPost).select('*').single();
   if (error) throw new Error(error.message);
 
-  let line: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' = isScheduled ? 'scheduled' : 'no_group';
-  if (!isScheduled) {
+  let line: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' | 'card' = isScheduled ? 'scheduled' : 'no_group';
+  // New work in a linked group is not pushed (a push costs one message per member):
+  // the teacher shares its trigger link and the bot replies with the work card for free.
+  let trigger: string | null = null;
+  if (!isScheduled && classroom.line_group_id && assignmentId && (activityType === 'assignment' || activityType === 'exam')) {
+    const { data: work } = await supabase.from('assignments').select('id, title, is_exam').eq('id', assignmentId).maybeSingle<Pick<Assignment, 'id' | 'title' | 'is_exam'>>();
+    trigger = work ? workTriggerText(work, classroom) : null;
+  }
+  if (trigger) {
+    line = 'card';
+    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+  } else if (!isScheduled) {
     const lineGroupId = classroom.line_group_id;
     if (lineGroupId) {
       try {
@@ -149,10 +161,10 @@ export async function createClassroomPost(
   }
   let share: PostShare | undefined;
   let result = saved as ClassroomPost;
-  if (line === 'failed' || line === 'quota' || line === 'no_group') {
-    share = postShare(saved.id, postLineText(newPost, classroom));
+  if (line === 'failed' || line === 'quota' || line === 'no_group' || line === 'card') {
+    share = postShare(saved.id, trigger || postLineText(newPost, classroom));
     // Remembered on the post: the teacher's timeline keeps offering to share it by hand.
-    const marked = { ...metadata, lineStatus: line satisfies PostLineFailure };
+    const marked = { ...metadata, lineStatus: line satisfies PostLineFailure, ...(trigger ? { lineTrigger: trigger } : {}) };
     const { error: markError } = await supabase.from('classroom_posts').update({ metadata: marked }).eq('id', saved.id);
     if (!markError) result = { ...result, metadata: marked };
   }
@@ -165,8 +177,17 @@ export function withLineShare<T extends ClassroomPost>(
   classroom: LabelledClassroom & { id: string; invite_code?: string | null }
 ): T & { line_share?: PostShare & { reason: PostLineFailure } } {
   const reason = post.metadata?.lineStatus;
-  if (reason !== 'failed' && reason !== 'quota' && reason !== 'no_group') return post;
-  return { ...post, line_share: { reason, ...postShare(post.id, postLineText(post, classroom)) } };
+  if (reason !== 'failed' && reason !== 'quota' && reason !== 'no_group' && reason !== 'card') return post;
+  return { ...post, line_share: { reason, ...postShare(post.id, sharedPostText(post, classroom)) } };
+}
+
+/** What sharing a post sends: a work's card trigger when it waits for one, otherwise the post's LINE text. */
+export function sharedPostText(
+  post: Pick<ClassroomPost, 'id' | 'activity_type' | 'body' | 'metadata'>,
+  classroom: LabelledClassroom & { id: string; invite_code?: string | null }
+): string {
+  const trigger = post.metadata?.lineTrigger;
+  return typeof trigger === 'string' && trigger ? trigger : postLineText(post, classroom);
 }
 
 export interface PostShare {

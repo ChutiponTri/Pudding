@@ -1024,6 +1024,8 @@ function NewAssignmentContent() {
       const createdIds: string[] = [];
       // Classes whose LINE group did not get the announcement (a share popup opens for each).
       let lineUnsent = 0;
+      // Classes where the teacher posts the work card (the bot answers the shared link).
+      let lineCards = 0;
       for (const classId of targetClassIds) {
         const created = await dataService.createAssignment(
           {
@@ -1048,7 +1050,9 @@ function NewAssignmentContent() {
           questionRows
         );
         createdIds.push(created.assignment.id);
-        if (isUnsent(created.line)) lineUnsent += 1;
+        // 'card' is not a failure: the popup asks the teacher to post the work card.
+        if (created.line === 'card') lineCards += 1;
+        else if (isUnsent(created.line)) lineUnsent += 1;
       }
 
       const copiedTo = copySource && !retake
@@ -1064,7 +1068,9 @@ function NewAssignmentContent() {
             ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
             : `Scheduled for ${formatDateTime(publishAt, 'en')}. Students will see it then.`
           : retake
-          ? selectedClassroomsLineReady && !lineUnsent
+          ? selectedClassroomsLineReady && !lineUnsent && lineCards
+            ? tr(`สร้างข้อสอบซ่อมแล้ว · เปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก`, `Retake created · only the ${retake.ids.length} chosen students can open it`)
+            : selectedClassroomsLineReady && !lineUnsent
             ? tr(`สร้างข้อสอบซ่อมแล้ว · ส่งลิงก์เข้ากลุ่ม LINE แล้ว\nเปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก`, `Retake created · link sent to the LINE group\nOnly the ${retake.ids.length} chosen students can open it`)
             : tr(`สร้างข้อสอบซ่อมแล้ว · เปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก\nห้องนี้ยังไม่เชื่อม LINE จึงต้องส่งลิงก์เอง`, `Retake created · only the ${retake.ids.length} chosen students can open it\nThis class has no LINE group, so share the link yourself`)
           : isExam
@@ -1078,6 +1084,12 @@ function NewAssignmentContent() {
           ? tr(
               `\n\n⚠️ ส่งประกาศเข้ากลุ่ม LINE ไม่ได้${lineUnsent > 1 ? ` (${lineUnsent} ห้อง)` : ''} — กด “แชร์ไป LINE” ในหน้าต่างถัดไปเพื่อส่งจาก LINE ของคุณครูเอง`,
               `\n\n⚠️ The LINE announcement could not be sent${lineUnsent > 1 ? ` (${lineUnsent} classes)` : ''}. Use “Share to LINE” in the next window to send it from your own LINE.`
+            )
+          : '') +
+        (lineCards
+          ? tr(
+              `\n\n📌 ขั้นต่อไป: กด “โพสต์เข้ากลุ่ม” ในหน้าต่างถัดไป แล้วเลือกกลุ่ม LINE ของห้อง บอทจะตอบด้วยการ์ดงาน (ไม่ใช้โควตาข้อความ)`,
+              `\n\n📌 Next: tap “Post to group” in the next window and pick the class LINE group. The bot answers with the work card (no message quota).`
             )
           : '')
       );

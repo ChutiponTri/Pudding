@@ -1,6 +1,7 @@
 import 'server-only';
 import { withLiffLink } from '@/lib/line/liffLink';
-import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
+import { isLineQuotaError, pushLineGroupText, pushLineMessages } from '@/lib/line/messaging';
+import { buildWorkCard } from '@/lib/line/workCard';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
@@ -101,7 +102,8 @@ export function joinLineText(classroom: LabelledClassroom & { id: string; invite
   return withLiffLink(lines.join('\n'), 'กดเพื่อเข้าร่วมห้องเรียน', { classroomId: classroom.id, inviteCode: classroom.invite_code });
 }
 
-export type PostLineFailure = 'failed' | 'quota' | 'no_group';
+/** 'card': new work waiting for the teacher to share its trigger (the bot then posts the card). */
+export type PostLineFailure = 'failed' | 'quota' | 'no_group' | 'card';
 
 /**
  * A post's LINE text: its own wording when it was saved with one
@@ -157,16 +159,18 @@ export async function announceScheduledPosts(
     if (claimError || !claimed?.length) continue;
 
     // The assignment may have been deleted while it was scheduled.
+    let work: Assignment | null = null;
     if (typeof metadata.assignmentId === 'string') {
-      const { data: assignment } = await supabase.from('assignments').select('id').eq('id', metadata.assignmentId).maybeSingle();
+      const { data: assignment } = await supabase.from('assignments').select('*').eq('id', metadata.assignmentId).maybeSingle<Assignment>();
       if (!assignment) continue;
+      work = assignment;
     }
     // Open student/teacher pages show the work right away.
     await signalClassroom(post.classroom_id, {
       type: 'published',
       assignmentId: typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined,
     });
-    const { data: classroom } = await supabase.from('classrooms').select('id, name, course_name, subject_code, line_group_id, invite_code').eq('id', post.classroom_id).maybeSingle();
+    const { data: classroom } = await supabase.from('classrooms').select('id, name, course_name, subject_code, line_group_id, invite_code, teacher_id').eq('id', post.classroom_id).maybeSingle();
     const claimedMetadata = { ...metadata, pendingLine: false, announcedAt: now.toISOString() };
     if (!classroom) continue;
     if (!classroom.line_group_id) {
@@ -174,7 +178,10 @@ export async function announceScheduledPosts(
       continue;
     }
     try {
-      await pushLineGroupText(classroom.line_group_id, postLineText(post, classroom));
+      // New work goes out as its card (a push costs the same either way).
+      const card = work ? await buildWorkCard(supabase, work, classroom) : null;
+      if (card) await pushLineMessages(classroom.line_group_id, [card]);
+      else await pushLineGroupText(classroom.line_group_id, postLineText(post, classroom));
       count += 1;
     } catch (pushError) {
       console.error(`Scheduled LINE announcement failed for post ${post.id}:`, pushError);

@@ -1,5 +1,5 @@
 /** How a timeline post's LINE message went (see server/classroomPosts). */
-export type LinePostStatus = 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' | 'limit';
+export type LinePostStatus = 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' | 'limit' | 'card';
 
 /** A post the bot could not send: the teacher shares it from their own LINE (/liff/share). */
 export interface LineShare {
@@ -10,14 +10,16 @@ export interface LineShare {
 /**
  * Why the bot did not send it. 'limit' = this class's re-announcements
  * ("ส่งซ้ำ") are used up for now (rationed, see server/lineTestQuota).
+ * 'card' = new work: not a failure, the teacher shares its link to the group
+ * and the bot answers with the work card (no quota used).
  */
-export type LineUnsentReason = 'failed' | 'quota' | 'no_group' | 'limit';
+export type LineUnsentReason = 'failed' | 'quota' | 'no_group' | 'limit' | 'card';
 
 /** On teachers' timeline posts the bot could not send. */
 export type PostLineShare = LineShare & { reason: Exclude<LineUnsentReason, 'limit'> };
 
 export const isUnsent = (line: unknown): line is LineUnsentReason =>
-  line === 'failed' || line === 'quota' || line === 'no_group' || line === 'limit';
+  line === 'failed' || line === 'quota' || line === 'no_group' || line === 'limit' || line === 'card';
 
 /** Window event the global LineSharePopup listens for. */
 export const LINE_UNSENT_EVENT = 'pudding-line-unsent';

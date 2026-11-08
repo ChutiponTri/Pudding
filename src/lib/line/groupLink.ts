@@ -107,7 +107,13 @@ const newRef = () => randomBytes(12).toString('base64url');
  * The bot's record of a group, created if missing (the bot joined before
  * this table existed). Returns null only when the table is missing.
  */
-export async function ensureBotGroup(supabase: ServiceClient, groupId: string, groupName?: string | null): Promise<BotGroup | null> {
+export async function ensureBotGroup(
+  supabase: ServiceClient,
+  groupId: string,
+  groupName?: string | null,
+  /** The ref the group had before the bot was removed, so old buttons in the group keep working. */
+  previousRef?: string | null
+): Promise<BotGroup | null> {
   const { data: existing } = await supabase.from('line_bot_groups').select('group_id, ref, group_name').eq('group_id', groupId).maybeSingle();
   if (existing) {
     if (groupName && groupName !== existing.group_name) {
@@ -116,8 +122,13 @@ export async function ensureBotGroup(supabase: ServiceClient, groupId: string, g
     return { groupId, ref: existing.ref as string, groupName: groupName || (existing.group_name as string | null) || undefined };
   }
   const name = groupName ?? (await getGroupSummary(groupId).catch(() => null))?.groupName ?? null;
-  const ref = newRef();
-  const { error } = await supabase.from('line_bot_groups').insert({ group_id: groupId, ref, group_name: name });
+  let ref = previousRef || newRef();
+  let { error } = await supabase.from('line_bot_groups').insert({ group_id: groupId, ref, group_name: name });
+  if (error && previousRef) {
+    // The old ref is taken (should not happen): a new one will do.
+    ref = newRef();
+    ({ error } = await supabase.from('line_bot_groups').insert({ group_id: groupId, ref, group_name: name }));
+  }
   if (error) {
     // Lost a race with another webhook: read the winner's row.
     const { data: again } = await supabase.from('line_bot_groups').select('ref, group_name').eq('group_id', groupId).maybeSingle();
@@ -319,6 +330,8 @@ export async function linkGroupByRef(
     await supabase.from('line_bot_groups').update({ group_name: groupName }).eq('group_id', group.groupId);
   }
   signalLineStatus(classroom.id, linked?.id);
+  // Linked by hand now: no classroom should reconnect to this group, or to its old one, by itself.
+  await Promise.all([forgetRemovedGroup(supabase, { groupId: group.groupId }), forgetRemovedGroup(supabase, { classroomId: classroom.id })]);
   return { ok: true, groupName: groupName || undefined, movedFrom: linked || undefined };
 }
 
@@ -333,8 +346,95 @@ export async function unlinkClassroom(supabase: ServiceClient, classroomId: stri
     line_connection_token_expires_at: null,
     line_connected_at: null,
   }).eq('id', classroomId);
-  if (!error) signalLineStatus(classroomId);
+  if (!error) {
+    signalLineStatus(classroomId);
+    // Unlinked on purpose: adding the bot back to that group must not link it again.
+    await forgetRemovedGroup(supabase, { classroomId });
+  }
   return { error };
+}
+
+// ---------------------------------------------------------------------------
+// Bot removed from a group, and added back
+// ---------------------------------------------------------------------------
+
+export type RemovedClassroom = LinkClassroom & { groupName?: string | null };
+
+/**
+ * The bot left (or was removed from) a group: unlink its classroom, but
+ * remember the group (line_last_group_*, see supabase_line_reconnect_update.sql)
+ * so adding the bot back links it again. Returns the classrooms that lost it.
+ */
+export async function unlinkRemovedGroup(supabase: ServiceClient, groupId: string): Promise<RemovedClassroom[]> {
+  const [{ data: rows }, { data: group }] = await Promise.all([
+    supabase.from('classrooms').select(LINK_COLUMNS).eq('line_group_id', groupId),
+    supabase.from('line_bot_groups').select('ref').eq('group_id', groupId).maybeSingle(),
+  ]);
+  const classrooms = (rows || []) as LinkClassroom[];
+  const unlink = {
+    line_group_id: null,
+    line_group_name: null,
+    line_connection_status: 'disconnected',
+    line_connection_token_expires_at: null,
+    line_connected_at: null,
+  };
+  for (const classroom of classrooms) {
+    const remember = {
+      line_last_group_id: groupId,
+      line_last_group_name: classroom.line_group_name || null,
+      line_last_group_ref: (group?.ref as string | undefined) || null,
+    };
+    let { error } = await supabase.from('classrooms').update({ ...unlink, ...remember }).eq('id', classroom.id).eq('line_group_id', groupId);
+    if (error) {
+      // Columns missing (migration not run): unlink without remembering.
+      console.warn('LINE remember removed group failed (run supabase_line_reconnect_update.sql):', error.message);
+      ({ error } = await supabase.from('classrooms').update(unlink).eq('id', classroom.id).eq('line_group_id', groupId));
+      if (error) console.error('LINE classroom auto-unlink failed:', error);
+    }
+  }
+  signalLineStatus(...classrooms.map((row) => row.id));
+  return classrooms.map((row) => ({ ...row, groupName: row.line_group_name }));
+}
+
+/** The classroom that lost this group when the bot was removed, still unlinked (null if none or no migration). */
+export async function findRemovedGroupClassroom(supabase: ServiceClient, groupId: string): Promise<(LinkClassroom & { ref: string | null }) | null> {
+  const { data, error } = await supabase
+    .from('classrooms')
+    .select(`${LINK_COLUMNS}, line_last_group_name, line_last_group_ref`)
+    .eq('line_last_group_id', groupId)
+    .is('line_group_id', null)
+    .limit(1);
+  if (error) return null;
+  const row = (data || [])[0] as (LinkClassroom & { line_last_group_name?: string | null; line_last_group_ref?: string | null }) | undefined;
+  return row ? { ...row, line_group_name: row.line_last_group_name, ref: row.line_last_group_ref || null } : null;
+}
+
+/** Links the classroom back to the group the bot was just added to again. */
+export async function relinkRemovedGroup(supabase: ServiceClient, classroomId: string, groupId: string, groupName?: string | null): Promise<boolean> {
+  const { data, error } = await supabase.from('classrooms').update({
+    line_group_id: groupId,
+    line_group_name: groupName || null,
+    line_connection_status: 'connected',
+    line_connected_at: new Date().toISOString(),
+    line_last_group_id: null,
+    line_last_group_name: null,
+    line_last_group_ref: null,
+  }).eq('id', classroomId).is('line_group_id', null).select('id');
+  if (error) {
+    console.error('LINE classroom auto-reconnect failed:', error);
+    return false;
+  }
+  if (!data?.length) return false;
+  signalLineStatus(classroomId);
+  return true;
+}
+
+/** Stops a classroom (or every classroom that lost this group) from reconnecting by itself. */
+export async function forgetRemovedGroup(supabase: ServiceClient, where: { classroomId: string } | { groupId: string }) {
+  const query = supabase.from('classrooms').update({ line_last_group_id: null, line_last_group_name: null, line_last_group_ref: null });
+  const { error } = 'classroomId' in where ? await query.eq('id', where.classroomId) : await query.eq('line_last_group_id', where.groupId);
+  // Columns missing (migration not run): nothing is remembered anyway.
+  if (error && !/line_last_group/.test(error.message)) console.warn('LINE forget removed group failed:', error.message);
 }
 
 export function linkErrorMessage(reason: string) {

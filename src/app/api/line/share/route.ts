@@ -1,7 +1,9 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { attendanceLineText, joinLineText, postLineText, reannounceLineText, resultsLineText, type PostActivityType } from '@/lib/line/classroomAnnouncement';
+import { attendanceLineText, joinLineText, reannounceLineText, resultsLineText, type PostActivityType } from '@/lib/line/classroomAnnouncement';
+import { sharedPostText } from '@/lib/server/classroomPosts';
+import { workTriggerText } from '@/lib/line/workCard';
 import { lineMessagesForText } from '@/lib/line/messaging';
 import { parseShareToken } from '@/lib/server/inviteCodes';
 import { resolveTeacherInvite } from '@/lib/server/dataActions';
@@ -87,10 +89,13 @@ export async function GET(request: NextRequest) {
     if (!assignment) return NextResponse.json({ error: 'ไม่พบงานนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
     const { data: room } = await supabase
       .from('classrooms')
-      .select('id, name, course_name, subject_code, invite_code')
+      .select('id, name, course_name, subject_code, invite_code, line_group_id')
       .eq('id', assignment.classroom_id)
       .maybeSingle();
     if (!room) return NextResponse.json({ error: 'ไม่พบห้องเรียนของงานนี้' }, { status: 404 });
+    // The bot is in the class group: share the trigger and it posts the work card (free).
+    const trigger = room.line_group_id ? workTriggerText(assignment, room) : null;
+    if (trigger) return NextResponse.json(cardTrigger(classroomTitle(room), trigger));
     const text = reannounceLineText(assignment, room);
     return NextResponse.json({ classroom: classroomTitle(room), text, messages: lineMessagesForText(text) });
   }
@@ -108,8 +113,19 @@ export async function GET(request: NextRequest) {
     .maybeSingle();
   if (!classroom) return NextResponse.json({ error: 'ไม่พบห้องเรียนของโพสต์นี้' }, { status: 404 });
 
-  const text = postLineText({ ...post, activity_type: post.activity_type as PostActivityType }, classroom);
+  const shared = { ...post, activity_type: post.activity_type as PostActivityType, metadata: (post.metadata || {}) as Record<string, unknown> };
+  const text = sharedPostText(shared, classroom);
+  if (shared.metadata.lineTrigger === text) return NextResponse.json(cardTrigger(classroomTitle(classroom), text));
   return NextResponse.json({ classroom: classroomTitle(classroom), text, messages: lineMessagesForText(text) });
+}
+
+/**
+ * New work's trigger: plain text, so its link stays in the message the bot
+ * reads (lineMessagesForText would turn it into a button). The bot answers
+ * it in the class group with the work card.
+ */
+function cardTrigger(classroom: string, text: string) {
+  return { classroom, text, card: true, messages: [{ type: 'text', text }] };
 }
 
 /**

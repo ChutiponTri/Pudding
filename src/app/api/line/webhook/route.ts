@@ -1,26 +1,42 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { getGroupSummary, replyLineButtons, replyLineText, replyLineTextWithLinkButton, replyLineTextWithQuickReplies, type LineAction } from '@/lib/line/messaging';
+import {
+  getGroupMemberName,
+  getGroupSummary,
+  isLineQuotaError,
+  pushLineMessages,
+  replyLineButtons,
+  replyLineMessages,
+  replyLineText,
+  replyLineTextWithLinkButton,
+  replyLineTextWithQuickReplies,
+  type LineAction,
+} from '@/lib/line/messaging';
 import {
   connectGuideImage,
   ensureBotGroup,
   findLinkedClassroom,
+  findRemovedGroupClassroom,
   findTeacherByLineUid,
   forgetBotGroup,
+  relinkRemovedGroup,
+  unlinkRemovedGroup,
   liffConnectUrl,
   listLinkableClassrooms,
-  signalLineStatus,
   webUrl,
   type LinkClassroom,
+  type RemovedClassroom,
   type ServiceClient,
 } from '@/lib/line/groupLink';
+import { firstConnCard, menuCard, MENU_POSTBACK, reconnectedCard, removedCard, welcomeCard, type FlexMessage, type MenuAction } from '@/lib/line/flex';
+import { buildWorkCard, markWorkCardPosted, workIdInText } from '@/lib/line/workCard';
 import { buildLiffUrl, withLiffLink } from '@/lib/line/liffLink';
 import { answerTeacherQuestion, faqMenuButtons, type BotReply } from '@/lib/line/teacherFaq';
 import { parseStudentCommand, studentHelpText, type StudentCommand } from '@/lib/line/studentCommands';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
-import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
+import { classroomTitle, subjectName, type LabelledClassroom } from '@/lib/utils/classroomLabel';
 import type { Assignment } from '@/types/database';
 import { sendLineTestMessage, testSentText } from '@/lib/server/lineTestSend';
 import { teacherAccessMessage } from '@/lib/server/teacherProfileGuard';
@@ -86,6 +102,20 @@ async function replySafely(replyToken: string | undefined, text: string) {
   }
 }
 
+/**
+ * Reply with Flex cards; when LINE refuses them (a 400 names the bad part),
+ * the reply token is still unused, so the plain-text fallback goes out instead.
+ */
+async function replyCards(replyToken: string | undefined, cards: FlexMessage[], fallback: () => Promise<void>) {
+  if (!replyToken) return;
+  try {
+    await replyLineMessages(replyToken, cards);
+  } catch (error) {
+    console.error('LINE card reply failed:', error);
+    await fallback();
+  }
+}
+
 // The invite code (not the guessable classroom id) is what lets a new student join.
 function classroomJoinUrl(classroom: { invite_code?: string | null }, liffUrl: string | null) {
   return liffUrl && classroom.invite_code ? `${liffUrl}?code=${encodeURIComponent(classroom.invite_code)}` : null;
@@ -124,16 +154,38 @@ async function replyClassroomJoinCode(replyToken: string | undefined, classroom:
 const JOIN_QUIET_MS = 8000;
 
 /**
- * Announces the classroom link when students join the LINE group, once per
- * burst (a teacher inviting a whole class): the first join after a quiet period
- * gets a reply, which is free. Later joiners get no pushed message (that would
- * use the LINE quota); the teacher can type "พุดดิ้ง เข้าห้อง" to post it again.
+ * The welcome card for new students (a free reply): their LINE name when one
+ * person joined, the classroom, how many works are open, and the join button.
+ */
+async function replyWelcome(
+  supabase: ServiceClient,
+  groupId: string,
+  classroom: LabelledClassroom & { id: string; invite_code?: string | null },
+  memberIds: string[],
+  replyToken: string | undefined
+) {
+  if (!replyToken) return;
+  const liffUrl = getLiffUrl();
+  const url = classroomJoinUrl(classroom, liffUrl) || buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code });
+  if (!url) return replyClassroomJoinCode(replyToken, classroom, liffUrl);
+  const [name, open] = await Promise.all([
+    memberIds.length === 1 ? getGroupMemberName(groupId, memberIds[0]) : Promise.resolve(null),
+    openWork(supabase, classroom.id).then((list) => list.length, () => 0),
+  ]);
+  const card = welcomeCard({ name, classroomTitle: classroomTitle(classroom), subject: subjectName(classroom), openWork: open, url });
+  await replyCards(replyToken, [card], () => replyClassroomJoinCode(replyToken, classroom, liffUrl));
+}
+
+/**
+ * Welcomes students who join the LINE group with a card, once per burst (a
+ * teacher inviting a whole class): the first join after a quiet period gets a
+ * reply, which is free. Later joiners get no pushed message (that would use the
+ * LINE quota); the teacher can tap "แนะนำนักเรียน" in the menu to post it again.
  * State lives on the classroom row because each join is its own webhook request.
  */
-async function handleMemberJoined(supabase: ServiceClient, groupId: string, replyToken: string | undefined) {
+async function handleMemberJoined(supabase: ServiceClient, groupId: string, memberIds: string[], replyToken: string | undefined) {
   const { data: classroom } = await supabase.from('classrooms').select('id, name, course_name, subject_code, invite_code').eq('line_group_id', groupId).maybeSingle();
   if (!classroom) return;
-  const liffUrl = getLiffUrl();
   const joinedAt = new Date().toISOString();
   const quietSince = new Date(Date.now() - JOIN_QUIET_MS).toISOString();
 
@@ -147,59 +199,125 @@ async function handleMemberJoined(supabase: ServiceClient, groupId: string, repl
   if (error) {
     // Columns missing (migration not run): fall back to replying every time.
     console.error('LINE join burst tracking failed:', error);
-    await replyClassroomJoinCode(replyToken, classroom, liffUrl);
+    await replyWelcome(supabase, groupId, classroom, memberIds, replyToken);
     return;
   }
   if (first?.length) {
-    await replyClassroomJoinCode(replyToken, classroom, liffUrl);
+    await replyWelcome(supabase, groupId, classroom, memberIds, replyToken);
     return;
   }
   // Mid-burst: just keep the burst going.
   await supabase.from('classrooms').update({ line_member_joined_at: joinedAt }).eq('id', classroom.id);
 }
+
 /**
- * The group's "เชื่อมห้องเรียน" button: a link to the teacher's LIFF page with
+ * The group's "สำหรับครู" card: its button opens the teacher's LIFF page with
  * this group preselected. Everyone in the group sees it, but the page only
  * opens for an approved teacher who LINE confirms is in this group; a student
  * who taps it gets a "teachers only" page and nothing is changed.
+ * `withMenu` puts the teacher menu card first (the bot's first reply in a group);
+ * `card: false` (a linked group, where the card's "set up" wording is wrong)
+ * sends the plain button instead.
  */
-async function replyConnectButton(supabase: ServiceClient, groupId: string, replyToken: string | undefined, text: string) {
+async function replyConnectButton(
+  supabase: ServiceClient,
+  groupId: string,
+  replyToken: string | undefined,
+  text: string,
+  options: { withMenu?: boolean; card?: boolean; groupName?: string | null; previousRef?: string | null } = {}
+) {
   if (!replyToken) return;
-  const group = await ensureBotGroup(supabase, groupId);
+  const group = await ensureBotGroup(supabase, groupId, options.groupName, options.previousRef);
   if (!group) {
     // No ref to put in the link (the page only works for one group): ask to try again.
     await replySafely(replyToken, 'ขออภัยค่ะ ระบบขัดข้อง พิมพ์ “พุดดิ้ง เชื่อม” ในกลุ่มนี้อีกครั้ง');
     return;
   }
   const url = liffConnectUrl(group.ref);
-  try {
-    await replyLineButtons(replyToken, {
-      image: connectGuideImage(),
-      text,
-      actions: [{ type: 'uri', label: '🔗 เชื่อมห้องเรียน', uri: url }],
-    });
-  } catch (error) {
-    console.error('LINE connect button reply failed:', error);
-    // A reply token works once; it is still unused when LINE rejected the message.
-    await replySafely(replyToken, `${text}\n${url}`);
-  }
+  const cards = options.card === false ? [] : options.withMenu ? [menuCard(group.ref), firstConnCard(url)] : [firstConnCard(url)];
+  const plain = async () => {
+    try {
+      await replyLineButtons(replyToken, {
+        image: connectGuideImage(),
+        text,
+        actions: [{ type: 'uri', label: '🔗 เชื่อมห้องเรียน', uri: url }],
+      });
+    } catch (error) {
+      console.error('LINE connect button reply failed:', error);
+      await replySafely(replyToken, `${text}\n${url}`);
+    }
+  };
+  if (!cards.length) return plain();
+  await replyCards(replyToken, cards, plain);
 }
 
 const CONNECT_BUTTON_TEXT = 'สวัสดีค่ะ 👋 Pudding Bot พร้อมแล้ว\nคุณครูแตะปุ่มด้านล่างเพื่อเลือกห้องเรียนที่จะเชื่อมกับกลุ่มนี้ (สำหรับคุณครูเท่านั้น)';
 
 /**
- * Bot added to a group. LINE does not say who added it, so nothing is linked
- * here: the group is remembered and gets the "เชื่อมห้องเรียน" link button.
+ * Bot added to a group. LINE does not say who added it, so nothing new is
+ * linked here. A group the bot was removed from links back to its classroom
+ * by itself ("เชื่อมต่อกลับแล้ว!", keeping the group's old ref so pinned menu
+ * buttons still work); any other group gets the teacher menu and the
+ * "สำหรับครู" connect card. All replies, so no message quota.
  */
 async function handleBotJoined(supabase: ServiceClient, groupId: string, replyToken: string | undefined) {
-  const summary = await getGroupSummary(groupId).catch(() => null);
-  await ensureBotGroup(supabase, groupId, summary?.groupName);
-  const linked = await findLinkedClassroom(supabase, groupId);
+  const [summary, linked, removed] = await Promise.all([
+    getGroupSummary(groupId).catch(() => null),
+    findLinkedClassroom(supabase, groupId),
+    findRemovedGroupClassroom(supabase, groupId),
+  ]);
+  const groupName = summary?.groupName || removed?.line_group_name || null;
   if (linked) {
-    await replySafely(replyToken, `Pudding เชื่อมต่อแล้ว: ${classroomTitle(linked)}`);
+    await ensureBotGroup(supabase, groupId, groupName);
+    await replyCards(replyToken, [reconnectedCard(classroomTitle(linked))], () => replySafely(replyToken, `Pudding เชื่อมต่อแล้ว: ${classroomTitle(linked)}`));
     return;
   }
-  await replyConnectButton(supabase, groupId, replyToken, CONNECT_BUTTON_TEXT);
+  if (removed) {
+    const group = await ensureBotGroup(supabase, groupId, groupName, removed.ref);
+    if (group && (await relinkRemovedGroup(supabase, removed.id, groupId, groupName))) {
+      const title = classroomTitle(removed);
+      await replyCards(replyToken, [reconnectedCard(title)], () => replySafely(replyToken, `✅ เชื่อมต่อกลับแล้ว: ${title}`));
+      return;
+    }
+  }
+  await replyConnectButton(supabase, groupId, replyToken, CONNECT_BUTTON_TEXT, { withMenu: true, groupName, previousRef: removed?.ref });
+}
+
+/**
+ * Bot removed from (or left) a group: unlink its classroom (remembering the
+ * group so adding the bot back reconnects it), and tell the classroom's
+ * teachers in their 1:1 chat. LINE gives no reply token here, so that is a
+ * push (one message per teacher): sent once, never retried (a used-up monthly
+ * quota is only logged).
+ */
+async function handleBotRemoved(supabase: ServiceClient, groupId: string) {
+  const classrooms = await unlinkRemovedGroup(supabase, groupId);
+  await forgetBotGroup(supabase, groupId);
+  if (!classrooms.length) return;
+  await Promise.all(classrooms.map((classroom) => notifyRemoved(supabase, classroom)));
+}
+
+async function notifyRemoved(supabase: ServiceClient, classroom: RemovedClassroom) {
+  // The owner and co-teachers (not TAs or researchers), who can link it again.
+  const ids = [classroom.teacher_id, ...(classroom.teachers || []).filter((t) => t.role === 'primary' || !t.role).map((t) => t.teacher_id)]
+    .filter((id): id is string => !!id);
+  if (!ids.length) return;
+  const { data: teachers } = await supabase
+    .from('users')
+    .select('id, teacher_line_uid, line_bot_friend')
+    .in('id', [...new Set(ids)])
+    .eq('role', 'teacher');
+  const card = removedCard(classroomTitle(classroom), classroom.groupName);
+  const recipients = [...new Set((teachers || []).filter((t) => t.teacher_line_uid && t.line_bot_friend !== false).map((t) => t.teacher_line_uid as string))];
+  await Promise.all(
+    recipients.map(async (to) => {
+      try {
+        await pushLineMessages(to, [card]);
+      } catch (error) {
+        console.error(isLineQuotaError(error) ? 'LINE removed notice skipped (monthly quota used up):' : 'LINE removed notice failed:', error);
+      }
+    })
+  );
 }
 
 /** "พุดดิ้ง เชื่อม" from a teacher: the same link button, whether the group is linked or not. */
@@ -217,7 +335,8 @@ async function handleConnectCommand(supabase: ServiceClient, groupId: string, li
     replyToken,
     linked
       ? `กลุ่มนี้เชื่อมกับ “${classroomTitle(linked)}” อยู่\nแตะปุ่มด้านล่างเพื่อยกเลิกการเชื่อม (สำหรับคุณครู)`
-      : 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียน\nแตะปุ่มด้านล่างเพื่อเลือกห้องเรียน (สำหรับคุณครู)'
+      : 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียน\nแตะปุ่มด้านล่างเพื่อเลือกห้องเรียน (สำหรับคุณครู)',
+    { card: !linked }
   );
 }
 
@@ -428,7 +547,14 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
   } else if (command === 'home') {
     await replySafely(replyToken, withLiffLink(`🎓 ${title}`, 'เปิดห้องเรียนใน Pudding', link()));
   } else if (command === 'status') {
-    await replySafely(replyToken, `🎓 ${title}\n✅ เชื่อมกับ Pudding แล้ว`);
+    const [students, open] = await Promise.all([
+      supabase.from('classroom_students').select('id', { count: 'exact', head: true }).eq('classroom_id', classroom.id).eq('status', 'active'),
+      openWork(supabase, classroom.id),
+    ]);
+    const lines = [`🎓 ${title}`, '✅ เชื่อมกับ Pudding แล้ว'];
+    if (students.count != null) lines.push(`👥 นักเรียนในห้อง ${students.count} คน`);
+    lines.push(`📚 งาน/ข้อสอบที่เปิดรับ ${open.length} รายการ`);
+    await replySafely(replyToken, withLiffLink(lines.join('\n'), 'เปิดห้องเรียนใน Pudding', link()));
   } else if (command === 'attendance') {
     const { data: sessions } = await supabase
       .from('attendance_sessions')
@@ -493,6 +619,58 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
   }
 }
 
+/** Menu buttons that post the same answer as a "พุดดิ้ง …" command. */
+const MENU_COMMANDS: Partial<Record<MenuAction, StudentCommand>> = {
+  attendance: 'attendance',
+  invite: 'join',
+  status: 'status',
+  publish: 'submit',
+  remind: 'works',
+  help: 'help',
+};
+
+/**
+ * A tap on the group menu card (a postback without display text, so nothing
+ * shows in the chat). Only the classroom's teachers and TAs get an answer; in
+ * a group not linked yet, a teacher gets the connect card.
+ */
+async function handleMenuTap(supabase: ServiceClient, groupId: string, lineUserId: string | undefined, action: string, replyToken: string | undefined) {
+  const command = MENU_COMMANDS[action as MenuAction];
+  if (command) return handleStudentCommand(supabase, groupId, lineUserId, command, replyToken);
+  if (action !== 'guide') return;
+  const classroom = await findLinkedClassroom(supabase, groupId);
+  if (!classroom) return handleStudentCommand(supabase, groupId, lineUserId, 'help', replyToken);
+  if (!(await isClassroomStaff(supabase, classroom, lineUserId))) return;
+  await replyWelcome(supabase, groupId, classroom, [], replyToken);
+}
+
+/**
+ * A message in a group carrying one of our work links: the teacher shared new
+ * work (from /liff/share, or pasted the link). The bot answers with the work
+ * card, a free reply. Only for the group's own classroom, and only when a
+ * teacher or TA sent it, so nobody else can make the bot post cards.
+ */
+async function handleWorkTrigger(supabase: ServiceClient, groupId: string, lineUserId: string | undefined, assignmentId: string, replyToken: string | undefined) {
+  if (!replyToken) return false;
+  const classroom = await findLinkedClassroom(supabase, groupId);
+  if (!classroom) return false;
+  const [{ data: assignment }, staff] = await Promise.all([
+    supabase.from('assignments').select('*').eq('id', assignmentId).eq('classroom_id', classroom.id).maybeSingle<Assignment>(),
+    isClassroomStaff(supabase, classroom, lineUserId),
+  ]);
+  if (!assignment || !staff) return false;
+  const card = await buildWorkCard(supabase, assignment, classroom);
+  if (!card) return false;
+  try {
+    await replyLineMessages(replyToken, [card]);
+  } catch (error) {
+    console.error('LINE work card reply failed:', error);
+    return true; // the teacher's own message already carries the link
+  }
+  await markWorkCardPosted(supabase, classroom.id, assignment.id);
+  return true;
+}
+
 /**
  * LINE webhook. Teachers are recognised by the LINE id copied from their LINE
  * sign-in (see syncTeacherLineIdentity); groups link and unlink automatically
@@ -504,7 +682,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
-  const payload = JSON.parse(body) as { events?: Array<{ type?: string; replyToken?: string; source?: { type?: string; groupId?: string; userId?: string }; message?: { type?: string; text?: string }; postback?: { data?: string } }> };
+  const payload = JSON.parse(body) as {
+    events?: Array<{
+      type?: string;
+      replyToken?: string;
+      source?: { type?: string; groupId?: string; userId?: string };
+      message?: { type?: string; text?: string };
+      postback?: { data?: string };
+      joined?: { members?: Array<{ type?: string; userId?: string }> };
+    }>;
+  };
   let supabase;
   try {
     supabase = createServiceSupabaseClient();
@@ -524,28 +711,23 @@ export async function POST(request: NextRequest) {
     const groupId = event.source?.type === 'group' ? event.source.groupId : undefined;
     const lineUserId = event.source?.userId;
 
-    // Bot added to a group: offer the waiting teacher a confirm button.
+    // Bot added to a group: reconnect a group it was removed from, otherwise the menu + connect cards.
     if (groupId && event.type === 'join') {
       await handleBotJoined(supabase, groupId, event.replyToken);
       continue;
     }
-    // Taps on buttons from older bot messages (confirm / classroom list): answer with the link button.
     if (groupId && event.type === 'postback') {
-      if (new URLSearchParams(event.postback?.data || '').has('pudding')) await handleConnectCommand(supabase, groupId, lineUserId, event.replyToken);
+      const data = new URLSearchParams(event.postback?.data || '');
+      // The group menu card.
+      const menuAction = data.get(MENU_POSTBACK);
+      if (menuAction) await handleMenuTap(supabase, groupId, lineUserId, menuAction, event.replyToken);
+      // Taps on buttons from older bot messages (confirm / classroom list): answer with the link button.
+      else if (data.has('pudding')) await handleConnectCommand(supabase, groupId, lineUserId, event.replyToken);
       continue;
     }
-    // Bot removed from (or left) a group: unlink that classroom in the UI.
+    // Bot removed from (or left) a group: unlink that classroom (it reconnects if the bot comes back) and tell its teachers.
     if (groupId && event.type === 'leave') {
-      const { data: unlinked, error } = await supabase.from('classrooms').update({
-        line_group_id: null,
-        line_group_name: null,
-        line_connection_status: 'disconnected',
-        line_connection_token_expires_at: null,
-        line_connected_at: null,
-      }).eq('line_group_id', groupId).select('id');
-      if (error) console.error('LINE classroom auto-unlink failed:', error);
-      signalLineStatus(...(unlinked || []).map((row) => row.id));
-      await forgetBotGroup(supabase, groupId);
+      await handleBotRemoved(supabase, groupId);
       continue;
     }
     // Teacher adds / blocks the bot in their 1:1 chat.
@@ -560,7 +742,8 @@ export async function POST(request: NextRequest) {
       continue;
     }
     if (groupId && event.type === 'memberJoined') {
-      await handleMemberJoined(supabase, groupId, event.replyToken);
+      const memberIds = (event.joined?.members || []).map((member) => member.userId).filter((id): id is string => !!id);
+      await handleMemberJoined(supabase, groupId, memberIds, event.replyToken);
       continue;
     }
     const normalizedText = (event.message?.type === 'text'
@@ -570,6 +753,13 @@ export async function POST(request: NextRequest) {
     if (!groupId && !lineUserId) continue;
 
     const studentCommand = groupId && event.type === 'message' ? parseStudentCommand(normalizedText) : null;
+
+    // A teacher shared new work (its LIFF link) in the group: answer with the work card.
+    const sharedWorkId = groupId && event.type === 'message' && !studentCommand ? workIdInText(normalizedText) : null;
+    if (groupId && sharedWorkId) {
+      await handleWorkTrigger(supabase, groupId, lineUserId, sharedWorkId, event.replyToken);
+      continue;
+    }
 
     // "พุดดิ้ง เชื่อม": the link button to the teacher's connect page.
     if (groupId && studentCommand === 'connect') {

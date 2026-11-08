@@ -154,6 +154,16 @@ function textWithLinkButtons(text: string, cardText?: string): Record<string, un
   return split.text || !cards.length ? [{ type: 'text', text: fit(split.text || text, 5000) }, ...cards] : cards;
 }
 
+/** Reply with ready-made messages (e.g. Flex cards); at most 5. Free, unlike a push. */
+export async function replyLineMessages(replyToken: string, messages: Record<string, unknown>[]): Promise<void> {
+  await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages: messages.slice(0, 5) });
+}
+
+/** Push ready-made messages to a user or group (counts toward the monthly quota: once per group member). */
+export async function pushLineMessages(to: string, messages: Record<string, unknown>[]): Promise<void> {
+  await sendLineMessage(LINE_PUSH_ENDPOINT, { to, messages: messages.slice(0, 5) });
+}
+
 export async function pushLineGroupText(to: string, text: string): Promise<void> {
   await sendLineMessage(LINE_PUSH_ENDPOINT, { to, messages: textWithLinkButtons(text) });
 }
@@ -279,6 +289,20 @@ export async function isGroupMember(groupId: string, userId: string): Promise<bo
   if (response.status === 404) return false;
   if (!response.ok) throw new Error(`LINE group member lookup failed with status ${response.status}`);
   return true;
+}
+
+/** A group member's LINE display name, or null when LINE does not say. */
+export async function getGroupMemberName(groupId: string, userId: string): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `${LINE_API_BASE}/group/${encodeURIComponent(groupId)}/member/${encodeURIComponent(userId)}`,
+      { headers: lineAuthHeaders(), cache: 'no-store' }
+    );
+    if (!response.ok) return null;
+    return ((await response.json()) as { displayName?: string }).displayName || null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getGroupSummary(groupId: string): Promise<{ groupName?: string } | null> {

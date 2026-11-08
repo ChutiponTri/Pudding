@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import type { Liff } from "@line/liff";
 import { CheckCircle2, Copy, Loader2, Send, ShieldAlert } from "lucide-react";
 
-type Shared = { classroom: string; text: string; messages: Parameters<Liff["shareTargetPicker"]>[0] };
+/** card: new work's trigger link; the bot answers it in the class group with the work card. */
+type Shared = { classroom: string; text: string; card?: boolean; messages: Parameters<Liff["shareTargetPicker"]>[0] };
 type Status = "loading" | "ready" | "sharing" | "done" | "error";
 
 /**
@@ -92,6 +93,11 @@ export default function LiffSharePage() {
       <header className="pt-2 space-y-0.5">
         <h1 className="text-base font-black text-slate-900 dark:text-white">แชร์เข้ากลุ่ม LINE</h1>
         <p className="text-[11px] text-slate-500 dark:text-slate-400">ส่งจาก LINE ของคุณครู • ไม่ใช้โควตาบอท</p>
+        {shared?.card && (
+          <p className="mt-2 text-[11px] p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-200 dark:ring-violet-900 text-violet-900 dark:text-violet-200">
+            เลือกกลุ่ม LINE ของห้อง “{shared.classroom}” แล้วบอทจะตอบด้วยการ์ดงานให้ทันที
+          </p>
+        )}
       </header>
 
       {status === "loading" && (
@@ -116,7 +122,7 @@ export default function LiffSharePage() {
 
           {status === "done" ? (
             <div role="status" className="flex items-center gap-2 p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 ring-1 ring-emerald-200 dark:ring-emerald-900 text-sm font-bold text-emerald-800 dark:text-emerald-200">
-              <CheckCircle2 className="w-5 h-5" /> แชร์เข้า LINE แล้ว
+              <CheckCircle2 className="w-5 h-5" /> {shared.card ? "แชร์แล้ว บอทกำลังโพสต์การ์ดงานในกลุ่ม" : "แชร์เข้า LINE แล้ว"}
             </div>
           ) : null}
 

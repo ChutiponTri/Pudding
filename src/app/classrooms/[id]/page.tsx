@@ -2198,9 +2198,11 @@ export default function ClassroomWorkspacePage() {
 
                     {/* The bot could not send it to LINE: share it from the teacher's own LINE */}
                     {item.lineShare && (
-                      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60">
-                        <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300">
-                          {item.lineShare.reason === 'quota'
+                      <div className={`flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl border ${item.lineShare.reason === 'card' ? 'bg-violet-50 dark:bg-violet-950/30 border-violet-200 dark:border-violet-900/60' : 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/60'}`}>
+                        <span className={`text-[11px] font-bold ${item.lineShare.reason === 'card' ? 'text-violet-800 dark:text-violet-300' : 'text-amber-800 dark:text-amber-300'}`}>
+                          {item.lineShare.reason === 'card'
+                            ? tr('ยังไม่ได้โพสต์การ์ดงานเข้ากลุ่ม LINE', 'Work card not posted to LINE yet')
+                            : item.lineShare.reason === 'quota'
                             ? tr('ยังไม่ได้ส่งเข้า LINE (โควตาหมด)', 'Not sent to LINE (quota used up)')
                             : item.lineShare.reason === 'no_group'
                             ? tr('ยังไม่ได้ส่งเข้า LINE (ไม่ได้เชื่อมกลุ่ม)', 'Not sent to LINE (no linked group)')
@@ -2212,7 +2214,7 @@ export default function ClassroomWorkspacePage() {
                           className="px-3 py-1.5 rounded-lg bg-[#06c755] hover:bg-[#05b34c] text-white font-black text-[11px] inline-flex items-center gap-1.5 cursor-pointer"
                         >
                           <Share2 className="w-3.5 h-3.5" />
-                          {tr('แชร์ไป LINE เอง', 'Share to LINE yourself')}
+                          {item.lineShare.reason === 'card' ? tr('โพสต์เข้ากลุ่ม', 'Post to group') : tr('แชร์ไป LINE เอง', 'Share to LINE yourself')}
                         </button>
                       </div>
                     )}
@@ -2247,7 +2249,9 @@ export default function ClassroomWorkspacePage() {
                             {item.scheduledAt
                               ? tr('⏰ ส่งเข้า LINE เมื่อถึงเวลาเผยแพร่', '⏰ Sent to LINE when it is published')
                               : item.lineShare
-                              ? tr('⚠️ ยังไม่ได้ส่งเข้า LINE', '⚠️ Not in LINE yet')
+                              ? item.lineShare.reason === 'card'
+                                ? tr('📌 รอโพสต์การ์ดงานเข้ากลุ่ม', '📌 Work card waiting to be posted')
+                                : tr('⚠️ ยังไม่ได้ส่งเข้า LINE', '⚠️ Not in LINE yet')
                               : item.isPost
                               ? tr('📢 ส่งเข้ากลุ่ม LINE แล้ว', '📢 Sent to the LINE group')
                               : ''}
