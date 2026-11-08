@@ -13,8 +13,8 @@ import { buildLiffUrl } from '@/lib/line/liffLink';
  * only for that classroom's work or check-in, so the links need no signature.
  */
 
-export type CardKind = 'work' | 'attendance' | 'invite' | 'guide' | 'remind' | 'results';
-const KINDS: CardKind[] = ['work', 'attendance', 'invite', 'guide', 'remind', 'results'];
+export type CardKind = 'work' | 'attendance' | 'invite' | 'guide' | 'remind' | 'results' | 'open';
+const KINDS: CardKind[] = ['work', 'attendance', 'invite', 'guide', 'remind', 'results', 'open'];
 
 type TriggerClassroom = { id: string; invite_code?: string | null };
 
@@ -45,6 +45,9 @@ export function cardTriggerText(
     url = buildLiffUrl({ ...base, view: 'attendance' });
     if (url) url += `&sid=${encodeURIComponent(session.id)}`;
     label = `⏰ เช็กชื่อ: ${session.title}`;
+  } else if (kind === 'open') {
+    url = buildLiffUrl(base);
+    label = `🏫 เปิดห้องเรียน${item.classroomTitle ? ` ${item.classroomTitle}` : ''}`;
   } else if (kind === 'invite') {
     url = buildLiffUrl(base);
     label = `🎓 เชิญเข้าห้องเรียน${item.classroomTitle ? ` ${item.classroomTitle}` : ''}`;

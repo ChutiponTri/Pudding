@@ -12,20 +12,26 @@
  * (LINE caches images by URL).
  */
 import sharp from 'sharp';
-import { mkdir } from 'node:fs/promises';
+import { access, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 const SRC = 'public/cards';
 const OUT = 'public/cards/line';
 const WIDTH = 1040;
 
-/** Crop boxes (source pixels), just inside each card's outline, and its top corner radius. */
+/**
+ * Crop boxes (source pixels), just inside each card's outline, and its top
+ * corner radius (0 = the mockup is full-bleed). A card whose mockup is not in
+ * public/cards keeps its last built image.
+ */
 const CARDS = [
-  { name: 'new-assignment', box: { left: 24, top: 54, width: 667, height: 272 }, radius: 70 },
-  { name: 'new-quiz', box: { left: 53, top: 65, width: 1080, height: 385 }, radius: 85 },
-  { name: 'new-student', box: { left: 47, top: 45, width: 961, height: 312 }, radius: 80 },
+  { name: 'new-assignment', box: { left: 0, top: 0, width: 1086, height: 452 }, radius: 0 },
+  { name: 'new-quiz', box: { left: 32, top: 24, width: 1192, height: 404 }, radius: 18 },
+  { name: 'new-student', box: { left: 23, top: 24, width: 1110, height: 330 }, radius: 18 },
+  { name: 'menu', box: { left: 26, top: 20, width: 1106, height: 282 }, radius: 18 },
+  { name: 'open-class', box: { left: 30, top: 26, width: 1125, height: 876 }, radius: 18 },
+  { name: 'join-class', box: { left: 27, top: 23, width: 1129, height: 724 }, radius: 18 },
   { name: 'first-conn', box: { left: 56, top: 57, width: 1119, height: 615 }, radius: 95 },
-  { name: 'menu', box: { left: 33, top: 36, width: 959, height: 292 }, radius: 75 },
 ];
 
 function topRoundedMask(width, height, r) {
@@ -38,12 +44,19 @@ function topRoundedMask(width, height, r) {
 await mkdir(OUT, { recursive: true });
 for (const card of CARDS) {
   const { width, height } = card.box;
-  const cropped = await sharp(path.join(SRC, `${card.name}.png`)).extract(card.box).png().toBuffer();
-  const masked = await sharp(cropped)
-    .ensureAlpha()
-    .composite([{ input: topRoundedMask(width, height, card.radius), blend: 'dest-in' }])
-    .png()
-    .toBuffer();
+  const source = path.join(SRC, `${card.name}.png`);
+  if (!(await access(source).then(() => true, () => false))) {
+    console.log(`${card.name}: no mockup in ${SRC}, keeping ${OUT}/${card.name}.jpg`);
+    continue;
+  }
+  const cropped = await sharp(source).extract(card.box).png().toBuffer();
+  const masked = card.radius
+    ? await sharp(cropped)
+        .ensureAlpha()
+        .composite([{ input: topRoundedMask(width, height, card.radius), blend: 'dest-in' }])
+        .png()
+        .toBuffer()
+    : cropped;
   const outHeight = Math.round((height * WIDTH) / width);
   const file = path.join(OUT, `${card.name}.jpg`);
   const info = await sharp(masked)

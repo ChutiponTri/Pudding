@@ -9,7 +9,6 @@ import {
   replyLineButtons,
   replyLineMessages,
   replyLineText,
-  replyLineTextWithLinkButton,
   replyLineTextWithQuickReplies,
   type LineAction,
 } from '@/lib/line/messaging';
@@ -34,6 +33,7 @@ import {
   firstConnCard,
   inviteCard,
   menuCard,
+  openClassCard,
   reconnectedCard,
   remindCard,
   removedCard,
@@ -145,22 +145,25 @@ function classroomJoinText(classroom: LabelledClassroom & { invite_code?: string
   return lines.join('\n');
 }
 
-/** Join code text, plus a "เข้าร่วมห้องเรียน" button under it when there is a join link. */
+/** The "เข้าร่วมห้องเรียน" card (join code + button); plain text when there is no join link. */
 async function replyClassroomJoinCode(replyToken: string | undefined, classroom: LabelledClassroom & { invite_code?: string | null; id: string }, liffUrl: string | null) {
   const text = classroomJoinText(classroom, liffUrl);
   const joinUrl = classroomJoinUrl(classroom, liffUrl);
   if (!replyToken || !joinUrl) return replySafely(replyToken, text);
-  try {
-    await replyLineTextWithLinkButton(replyToken, text, {
-      text: `🎓 ${classroomTitle(classroom)}\nกดปุ่มด้านล่างเพื่อเข้าร่วมห้องเรียน`,
-      label: 'เข้าร่วมห้องเรียน',
-      uri: joinUrl,
-    });
-  } catch (error) {
-    console.error('LINE join button reply failed:', error);
-    // A reply token works once; it is still unused when LINE rejected the message.
-    await replySafely(replyToken, text);
-  }
+  await replyCards(replyToken, [inviteCard({ classroomTitle: classroomTitle(classroom), inviteCode: classroom.invite_code, url: joinUrl })], () => replySafely(replyToken, text));
+}
+
+/** The "เปิดห้องเรียน" card: the classroom in the student LIFF app ("พุดดิ้ง หน้าหลัก", a newly linked group). */
+async function replyOpenClass(supabase: ServiceClient, replyToken: string | undefined, classroom: LinkClassroom, note?: string) {
+  if (!replyToken) return;
+  const url = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code });
+  const fallback = () => replySafely(replyToken, withLiffLink(`🏫 ${classroomTitle(classroom)}`, 'เปิดห้องเรียนใน Pudding', { classroomId: classroom.id, inviteCode: classroom.invite_code }));
+  if (!url) return fallback();
+  const { data: teacher } = classroom.teacher_id
+    ? await supabase.from('users').select('first_name').eq('id', classroom.teacher_id).maybeSingle()
+    : { data: null };
+  const card = openClassCard({ classroomTitle: classroomTitle(classroom), subject: subjectName(classroom), teacherName: teacher?.first_name, url, note });
+  await replyCards(replyToken, [card], fallback);
 }
 
 /** Joins closer together than this count as one burst (a teacher inviting a class). */
@@ -371,12 +374,11 @@ async function handleTestCommand(supabase: ServiceClient, teacherId: string, cla
       await replySafely(replyToken, `⚠️ ยังไม่มีห้องเรียนที่เชื่อมกลุ่ม LINE\nเชื่อมกลุ่มก่อน แล้วค่อยทดสอบส่งข้อความ\nเชิญ Pudding Bot เข้ากลุ่ม LINE ของห้องเรียน แล้วแตะปุ่ม “เชื่อมห้องเรียน” ในกลุ่ม`);
       return;
     }
-    const choices = linked.slice(0, 13);
+    const choices = linked.slice(0, 12);
     try {
       await replyLineButtons(replyToken, {
-        text: `${query ? `⚠️ ไม่พบห้อง “${query}”\n` : ''}เลือกห้องที่จะทดสอบส่งข้อความเข้ากลุ่ม LINE 👇${linked.length > choices.length ? `\n(แสดง ${choices.length} จาก ${linked.length} ห้อง)` : ''}`,
-        actions: [],
-        quickReplies: choices.map((item) => ({ type: 'message', label: classroomTitle(item), text: `#pudding test ${item.id}` })),
+        text: `🧪 ทดสอบส่งข้อความ\n${query ? `⚠️ ไม่พบห้อง “${query}”\n` : ''}เลือกห้องที่จะทดสอบส่งข้อความเข้ากลุ่ม LINE 👇${linked.length > choices.length ? `\n(แสดง ${choices.length} จาก ${linked.length} ห้อง)` : ''}`,
+        actions: choices.map((item) => ({ type: 'message', label: classroomTitle(item), text: `#pudding test ${item.id}` })),
       });
     } catch (error) {
       console.error('LINE test picker reply failed:', error);
@@ -558,7 +560,7 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
   } else if (command === 'join') {
     await replyClassroomJoinCode(replyToken, classroom, liffUrl);
   } else if (command === 'home') {
-    await replySafely(replyToken, withLiffLink(`🎓 ${title}`, 'เปิดห้องเรียนใน Pudding', link()));
+    await replyOpenClass(supabase, replyToken, classroom);
   } else if (command === 'status') {
     const [students, open] = await Promise.all([
       supabase.from('classroom_students').select('id', { count: 'exact', head: true }).eq('classroom_id', classroom.id).eq('status', 'active'),
@@ -682,6 +684,9 @@ async function handleCardTrigger(supabase: ServiceClient, groupId: string, lineU
   } else if (trigger.kind === 'invite') {
     const url = liff({});
     if (url) card = inviteCard({ classroomTitle: title, inviteCode: classroom.invite_code, url });
+  } else if (trigger.kind === 'open') {
+    await replyOpenClass(supabase, replyToken, classroom);
+    return;
   } else if (trigger.kind === 'guide') {
     await replyWelcome(supabase, groupId, classroom, [], replyToken);
     return;

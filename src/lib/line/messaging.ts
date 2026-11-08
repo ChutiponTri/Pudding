@@ -1,4 +1,5 @@
 import 'server-only';
+import { fit, textCard, type BareAction } from '@/lib/line/flexKit';
 
 const LINE_PUSH_ENDPOINT = 'https://api.line.me/v2/bot/message/push';
 const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply';
@@ -58,13 +59,9 @@ function buttonUri(raw: string): string | null {
     return null;
   }
 }
-/** LINE allows 4 buttons per card and 5 messages per request (the text + 4 cards). */
-const BUTTONS_PER_CARD = 4;
-const MAX_CARDS = 4;
-const MAX_BUTTONS = BUTTONS_PER_CARD * MAX_CARDS;
+/** Buttons one reply card holds (see textCard); further links stay in the text. */
+const MAX_BUTTONS = 12;
 const HAS_URL = /https?:\/\//;
-
-const fit = (value: string, max: number) => ([...value].length > max ? `${[...value].slice(0, max - 1).join('')}…` : value);
 
 function cleanLabel(value: string) {
   return value.replace(/👉/g, '').replace(/^\s*\d+[.)]\s*/, '').replace(/[:：]\s*$/, '').trim();
@@ -120,38 +117,20 @@ export function splitLinkButtons(text: string): { text: string; buttons: LinkBut
   return { text: stripped, buttons };
 }
 
-/** Cards of link buttons to show under a text message. */
-function linkCards(buttons: LinkButton[], cardText = 'แตะปุ่มด้านล่างเพื่อเปิด 👇') {
-  const cards: Record<string, unknown>[] = [];
-  for (let i = 0; i < buttons.length && cards.length < MAX_CARDS; i += BUTTONS_PER_CARD) {
-    const group = buttons.slice(i, i + BUTTONS_PER_CARD);
-    cards.push({
-      type: 'template',
-      altText: fit(group.map((button) => `${button.label}: ${button.uri}`).join('\n'), 400),
-      template: {
-        type: 'buttons',
-        text: fit(cardText, 160),
-        actions: group.map((button) => ({ type: 'uri', label: fit(button.label, 20), uri: button.uri })),
-      },
-    });
-  }
-  return cards;
-}
-
 /**
- * The LINE messages the bot sends for this text: the text without its links,
- * then a card of buttons. Also what a teacher shares by hand (shareTargetPicker
- * accepts the same text and uri-button template messages).
+ * The LINE messages the bot sends for this text: one Flex card with the text
+ * (its first line as the title) and a button for each link, or plain text when
+ * there are no links. Also what a teacher shares by hand (shareTargetPicker
+ * accepts Flex messages with link buttons).
  */
 export const lineMessagesForText = (text: string) => textWithLinkButtons(text);
 
-/** A text message, without its links, followed by a button for each of them. */
-function textWithLinkButtons(text: string, cardText?: string): Record<string, unknown>[] {
+/** The text, without its links, as a card with a button for each of them. */
+function textWithLinkButtons(text: string, title?: string): Record<string, unknown>[] {
   const split = splitLinkButtons(text);
-  const cards = linkCards(split.buttons, cardText);
-  // A message that was nothing but a link becomes just its button.
-  // LINE rejects a text message over 5000 characters (and with it the whole push).
-  return split.text || !cards.length ? [{ type: 'text', text: fit(split.text || text, 5000) }, ...cards] : cards;
+  // No links: plain text. LINE rejects a text message over 5000 characters (and with it the whole push).
+  if (!split.buttons.length) return [{ type: 'text', text: fit(text, 5000) }];
+  return [textCard(split.text, split.buttons.map((b) => ({ label: b.label, action: { type: 'uri', uri: b.uri } })), { altText: text, title })];
 }
 
 /** Reply with ready-made messages (e.g. Flex cards); at most 5. Free, unlike a push. */
@@ -187,42 +166,6 @@ export async function replyLineTextWithQuickReplies(replyToken: string, text: st
   await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages });
 }
 
-/** Text reply whose link card has its own wording and button label. */
-export async function replyLineTextWithLinkButton(
-  replyToken: string,
-  text: string,
-  button: { text: string; label: string; uri: string }
-): Promise<void> {
-  await sendLineMessage(LINE_REPLY_ENDPOINT, {
-    replyToken,
-    messages: [{ type: 'text', text: splitLinkButtons(text).text || text }, ...linkCards([{ label: button.label, uri: button.uri }], button.text)],
-  });
-}
-
-export interface LinePostbackChoice {
-  label: string;
-  data: string;
-  displayText?: string;
-}
-
-/** Two-button yes/no prompt; the tap comes back to the webhook as a postback event. */
-export async function replyLineConfirm(
-  replyToken: string,
-  text: string,
-  yes: LinePostbackChoice,
-  no: LinePostbackChoice
-): Promise<void> {
-  const action = (choice: LinePostbackChoice) => ({ type: 'postback', label: choice.label, data: choice.data, displayText: choice.displayText || choice.label });
-  await sendLineMessage(LINE_REPLY_ENDPOINT, {
-    replyToken,
-    messages: [{
-      type: 'template',
-      altText: text.slice(0, 400),
-      // LINE caps confirm-template text at 240 characters.
-      template: { type: 'confirm', text: text.length > 240 ? `${text.slice(0, 239)}…` : text, actions: [action(yes), action(no)] },
-    }],
-  });
-}
 
 export type LineAction =
   | { type: 'postback'; label: string; data: string; displayText?: string }
@@ -238,11 +181,19 @@ function lineAction(action: LineAction) {
   return { type: 'uri', label: fit(action.label, 20), uri: action.uri };
 }
 
+const bare = (action: LineAction): BareAction =>
+  action.type === 'uri'
+    ? { type: 'uri', uri: action.uri }
+    : action.type === 'message'
+    ? { type: 'message', text: fit(action.text, 300) }
+    : { type: 'postback', data: action.data, displayText: fit(action.displayText || action.label, 300) };
+
 /**
- * Reply with an optional leading text, then a card of up to 4 buttons, with
- * optional quick-reply buttons (up to 13) under it. Postback taps come back to
- * the webhook carrying the tapper's LINE id, so a group can show them to
- * everyone while only the right teacher's tap counts.
+ * Reply with an optional picture, then one Flex card: the text (the intro
+ * first, when given) and a button per action, with optional quick-reply
+ * buttons (up to 13) under it. Postback taps come back to the webhook
+ * carrying the tapper's LINE id, so a group can show them to everyone while
+ * only the right teacher's tap counts.
  */
 export async function replyLineButtons(
   replyToken: string,
@@ -257,16 +208,12 @@ export async function replyLineButtons(
 ): Promise<void> {
   const messages: Record<string, unknown>[] = [];
   if (options.image) messages.push({ type: 'image', ...options.image });
-  if (options.intro) messages.push({ type: 'text', text: fit(options.intro, 5000) });
-  if (options.actions.length) {
-    messages.push({
-      type: 'template',
-      altText: fit(options.text, 400),
-      template: { type: 'buttons', text: fit(options.text, 160), actions: options.actions.slice(0, 4).map(lineAction) },
-    });
-  } else {
-    messages.push({ type: 'text', text: fit(options.text, 5000) });
-  }
+  const body = options.intro ? `${options.intro}\n\n${options.text}` : options.text;
+  messages.push(
+    options.actions.length
+      ? textCard(body, options.actions.map((action) => ({ label: action.label, action: bare(action) })))
+      : { type: 'text', text: fit(body, 5000) }
+  );
   const items = (options.quickReplies || []).slice(0, 13).map((action) => ({ type: 'action', action: lineAction(action) }));
   if (items.length) messages[messages.length - 1] = { ...messages[messages.length - 1], quickReply: { items } };
   await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages });

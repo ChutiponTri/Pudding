@@ -1,10 +1,12 @@
 import 'server-only';
 import { webUrl } from '@/lib/line/groupLink';
+import { bubble, button, COLORS, fit, text, type BareAction, type FlexAction, type FlexMessage } from '@/lib/line/flexKit';
 
 /**
  * LINE Flex cards the bot sends: the work card (new homework / new quiz), the
- * group menu, the "for teachers" connect card, the new-student welcome, and the
- * removed / reconnected notices. Header art lives in public/cards/line (built
+ * group menu, the "for teachers" connect card, the new-student welcome, the
+ * classroom opened / join cards, check-in, reminder, results, and the removed /
+ * reconnected notices. Other replies with buttons use textCard (flexKit). Header art lives in public/cards/line (built
  * from the mockups in public/cards by scripts/build-line-cards.mjs); the text
  * and buttons are real Flex parts so they can be tapped and filled in.
  *
@@ -12,38 +14,19 @@ import { webUrl } from '@/lib/line/groupLink';
  */
 
 /** Bump after rebuilding the images: LINE caches them by URL. */
-const CARD_IMAGE_VERSION = '1';
+const CARD_IMAGE_VERSION = '2';
 
-export const COLORS = {
-  purple: '#7C3AED',
-  purpleDark: '#3B1D6E',
-  lavender: '#EFE7FF',
-  lavenderText: '#5B21B6',
-  muted: '#6E6487',
-  amber: '#E0A100',
-  green: '#22B35E',
-  red: '#E5484D',
-  rose: '#E53E62',
-  line: '#E9E1FA',
-};
-
-export type FlexMessage = { type: 'flex'; altText: string; contents: Record<string, unknown> };
-type FlexAction =
-  | { type: 'uri'; label: string; uri: string }
-  | { type: 'postback'; label: string; data: string; displayText?: string }
-  | { type: 'message'; label: string; text: string };
-/** An action before its label is added (Omit on each member of the union). */
-type BareAction = FlexAction extends infer A ? (A extends FlexAction ? Omit<A, 'label'> : never) : never;
-
-const fit = (value: string, max: number) => ([...value].length > max ? `${[...value].slice(0, max - 1).join('')}…` : value);
+export { COLORS, type FlexMessage } from '@/lib/line/flexKit';
 
 /** Header art: the image file's own aspect ratio, so nothing is cropped. */
 const HEROES = {
-  'new-assignment': '1040:424',
-  'new-quiz': '1040:371',
-  'new-student': '1040:338',
+  'new-assignment': '1040:433',
+  'new-quiz': '1040:352',
+  'new-student': '1040:309',
   'first-conn': '1040:572',
-  menu: '1040:317',
+  menu: '1040:265',
+  'open-class': '1040:810',
+  'join-class': '1040:667',
 } as const;
 
 function hero(name: keyof typeof HEROES, action?: FlexAction) {
@@ -55,13 +38,6 @@ function hero(name: keyof typeof HEROES, action?: FlexAction) {
     aspectMode: 'cover',
     ...(action ? { action } : {}),
   };
-}
-
-const text = (value: string, extra: Record<string, unknown> = {}) => ({ type: 'text', text: value || ' ', wrap: true, ...extra });
-
-/** Solid button (LINE draws the label in white). */
-function button(label: string, action: BareAction, color = COLORS.purple) {
-  return { type: 'button', style: 'primary', color, height: 'md', action: { ...action, label: fit(label, 40) } };
 }
 
 /** Rounded tile with its own text colour (the menu's light purple buttons). */
@@ -103,9 +79,6 @@ function sectionLabel(label: string) {
   };
 }
 
-function bubble(contents: Record<string, unknown>, size: 'kilo' | 'mega' = 'mega') {
-  return { type: 'bubble', size, styles: { body: { backgroundColor: '#FFFFFF' } }, ...contents };
-}
 
 // ---------------------------------------------------------------------------
 // Work card (reply to the teacher's shared work link, or a scheduled push)
@@ -442,10 +415,11 @@ export function attendanceCard(input: { classroomTitle: string; sessionTitle: st
   };
 }
 
-/** "เชิญนักเรียน": the classroom's join code and button. */
+/** "เข้าร่วมห้องเรียน": the classroom's join code and button (invite, "พุดดิ้ง เข้าห้อง"). */
 export function inviteCard(input: { classroomTitle: string; inviteCode?: string | null; url: string }): FlexMessage {
   const body: unknown[] = [
-    text('นักเรียนที่ยังไม่ได้เข้าห้อง กดปุ่มด้านล่าง กรอกชื่อ แล้วรอคุณครูอนุมัติ', { size: 'sm', color: COLORS.muted }),
+    text(input.classroomTitle, { size: 'lg', weight: 'bold', color: COLORS.purpleDark, align: 'center' }),
+    text('เข้าร่วมกลุ่มห้องเรียนของเรา เพื่อไม่พลาดทุกกิจกรรมและประกาศสำคัญ!', { size: 'sm', color: COLORS.muted, align: 'center', margin: 'sm' }),
   ];
   if (input.inviteCode) {
     body.push({
@@ -454,20 +428,53 @@ export function inviteCard(input: { classroomTitle: string; inviteCode?: string 
       margin: 'lg',
       backgroundColor: COLORS.lavender,
       cornerRadius: 'md',
-      paddingAll: '12px',
+      paddingAll: '10px',
       contents: [
         text('รหัสเข้าห้อง', { size: 'xs', color: COLORS.muted, align: 'center' }),
         text(input.inviteCode, { size: 'xxl', weight: 'bold', color: COLORS.purple, align: 'center' }),
       ],
     });
   }
+  body.push(text('กดปุ่ม กรอกชื่อ แล้วรอคุณครูอนุมัติ', { size: 'xs', color: COLORS.muted, align: 'center', margin: 'md' }));
   return {
     type: 'flex',
-    altText: fit(`🎓 เชิญเข้าห้องเรียน ${input.classroomTitle}${input.inviteCode ? ` รหัส ${input.inviteCode}` : ''}`, 400),
+    altText: fit(`👥 เข้าร่วมห้องเรียน ${input.classroomTitle}${input.inviteCode ? ` รหัส ${input.inviteCode}` : ''}`, 400),
     contents: bubble({
-      header: band('🎓 เชิญเข้าห้องเรียน', input.classroomTitle, COLORS.lavender, COLORS.purpleDark),
-      body: { type: 'box', layout: 'vertical', paddingAll: '20px', contents: body },
-      footer: footerButton('🙋 เข้าร่วมห้องเรียน', input.url, COLORS.purple),
+      hero: hero('join-class', { type: 'uri', label: 'เข้าร่วม', uri: input.url }),
+      body: { type: 'box', layout: 'vertical', paddingAll: '18px', contents: body },
+      footer: footerButton('👥 เข้าร่วมห้องเรียน', input.url, COLORS.purple),
+    }),
+  };
+}
+
+/**
+ * "เปิดห้องเรียน": the group is now the classroom's (posted when a teacher
+ * links it), and "พุดดิ้ง หน้าหลัก". The button opens the classroom in the
+ * student LIFF app (classmates who have not joined can ask to join there).
+ */
+export function openClassCard(input: { classroomTitle: string; subject?: string | null; teacherName?: string | null; url: string; note?: string }): FlexMessage {
+  const byline = [input.subject, input.teacherName ? `ครู${input.teacherName}` : ''].filter(Boolean).join(' · ');
+  return {
+    type: 'flex',
+    altText: fit(`🏫 เปิดห้องเรียน ${input.classroomTitle}: ${input.url}`, 400),
+    contents: bubble({
+      hero: hero('open-class', { type: 'uri', label: 'เข้าสู่ห้องเรียน', uri: input.url }),
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: '18px',
+        contents: [
+          text(input.classroomTitle, { size: 'lg', weight: 'bold', color: COLORS.purpleDark, align: 'center' }),
+          ...(byline ? [text(byline, { size: 'sm', color: COLORS.muted, align: 'center', margin: 'xs' })] : []),
+          text(input.note || 'ห้องเรียนนี้ใช้ Pudding แล้ว 🎉 กดปุ่มด้านล่างเพื่อเข้าห้องเรียน ดูงาน และเช็กชื่อ', {
+            size: 'sm',
+            color: COLORS.muted,
+            align: 'center',
+            margin: 'md',
+          }),
+        ],
+      },
+      footer: footerButton('🏠 เข้าสู่ห้องเรียน', input.url, COLORS.purple),
     }),
   };
 }

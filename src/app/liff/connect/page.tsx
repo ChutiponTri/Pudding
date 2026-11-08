@@ -131,7 +131,7 @@ export default function TeacherConnectPage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "ทำรายการไม่สำเร็จ");
       apply(json as Overview);
-      return true;
+      return json as Overview & { trigger?: string };
     } catch (err) {
       setMessage({ tone: "error", text: err instanceof Error ? err.message : "ทำรายการไม่สำเร็จ" });
       return false;
@@ -165,8 +165,14 @@ export default function TeacherConnectPage() {
 
   const connect = async () => {
     if (!group || !room || !plan || "blocked" in plan) return;
-    const ok = await post({ action: "link", classroomId: room.id, groupRef: group.ref }, "link");
-    if (ok) setDone({ group: groupLabel(group), classroom: room.title });
+    const linked = await post({ action: "link", classroomId: room.id, groupRef: group.ref }, "link");
+    if (!linked) return;
+    setDone({ group: groupLabel(group), classroom: room.title });
+    // Opened from the group's button: tell the class with the "เปิดห้องเรียน" card (the bot answers this message, no quota).
+    const type = liff?.getContext()?.type;
+    if (linked.trigger && liff && (type === "group" || type === "room")) {
+      liff.sendMessages([{ type: "text", text: linked.trigger }]).catch((error) => console.warn("Posting the open-class card failed:", error));
+    }
   };
 
   const disconnect = async (target: Room) => {
