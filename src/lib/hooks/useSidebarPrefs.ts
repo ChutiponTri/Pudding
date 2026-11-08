@@ -6,13 +6,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 export interface SidebarPrefs {
   /** Term filter (`${semester}_${yearCE}` or 'all'); unset means the current term. */
   term?: string;
-  /** Subject keys in the order the teacher dragged them into. */
-  order: string[];
   /** Subject keys the teacher collapsed. */
   collapsed: string[];
 }
 
-const EMPTY: SidebarPrefs = { order: [], collapsed: [] };
+const EMPTY: SidebarPrefs = { collapsed: [] };
 const storageKey = (teacherId: string) => `pudding:sidebar-prefs:${teacherId}`;
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
@@ -23,7 +21,6 @@ function readPrefs(teacherId: string): SidebarPrefs {
     if (!raw || typeof raw !== 'object') return EMPTY;
     return {
       term: typeof raw.term === 'string' ? raw.term : undefined,
-      order: strings(raw.order),
       collapsed: strings(raw.collapsed),
     };
   } catch {
@@ -40,7 +37,8 @@ function writePrefs(teacherId: string, prefs: SidebarPrefs) {
 }
 
 /**
- * Reads and saves the sidebar's term, subject order and collapsed subjects.
+ * Reads and saves the sidebar's term and collapsed subjects. (The subject and
+ * classroom order is shared with the dashboard: see `readLocalOrder`.)
  * Read lazily (the sidebar renders nothing before mount, so hydration is
  * unaffected), written on every change, and kept in step across tabs.
  */

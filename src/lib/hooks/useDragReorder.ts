@@ -18,8 +18,16 @@ const EDGE = 72;
  * the dragged item follows the pointer both ways and takes the slot it is over,
  * in reading order.
  */
-export function useDragReorder(keys: string[], onCommit: (keys: string[]) => void, options: { grid?: boolean } = {}) {
+export function useDragReorder(
+  keys: string[],
+  onCommit: (keys: string[]) => void,
+  options: { grid?: boolean; scroller?: () => HTMLElement | null } = {}
+) {
   const grid = !!options.grid;
+  const scrollerRef = useRef(options.scroller);
+  useEffect(() => {
+    scrollerRef.current = options.scroller;
+  });
   const listEl = useRef<HTMLElement | null>(null);
   const items = useRef(new Map<string, HTMLElement>());
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
@@ -165,9 +173,17 @@ export function useDragReorder(keys: string[], onCommit: (keys: string[]) => voi
       setDragOrder(latest.current.keys);
       const tick = () => {
         if (drag.current !== s) return;
-        const vh = window.innerHeight;
-        const speed = s.lastY < EDGE ? -Math.ceil((EDGE - s.lastY) / 6) : s.lastY > vh - EDGE ? Math.ceil((s.lastY - (vh - EDGE)) / 6) : 0;
-        if (speed) window.scrollBy(0, speed);
+        // Scroll the given container (a sidebar, say) near its edges, else the page.
+        const scroller = scrollerRef.current?.() ?? null;
+        const box = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+        const edge = scroller ? Math.min(EDGE, 48) : EDGE;
+        const top = box.top + edge;
+        const bottom = box.bottom - edge;
+        const speed = s.lastY < top ? -Math.ceil((top - s.lastY) / 6) : s.lastY > bottom ? Math.ceil((s.lastY - bottom) / 6) : 0;
+        if (speed) {
+          if (scroller) scroller.scrollBy(0, speed);
+          else window.scrollBy(0, speed);
+        }
         follow();
         s.raf = requestAnimationFrame(tick);
       };
@@ -297,18 +313,23 @@ export function DragReorder({
   keys,
   onCommit,
   grid,
+  scroller,
   children,
 }: {
   keys: string[];
   onCommit: (keys: string[]) => void;
   grid?: boolean;
+  scroller?: () => HTMLElement | null;
   children: (drag: ReturnType<typeof useDragReorder>) => ReactNode;
 }) {
-  return children(useDragReorder(keys, onCommit, { grid }));
+  return children(useDragReorder(keys, onCommit, { grid, scroller }));
 }
 
 /** A list order kept in this browser (localStorage), per scope. */
-const storageKey = (scope: string) => `pudding:order:${scope}`;
+const ORDER_PREFIX = 'pudding:order:';
+const storageKey = (scope: string) => `${ORDER_PREFIX}${scope}`;
+/** Fired in this tab after `writeLocalOrder`, with the scope as detail. */
+const ORDER_CHANGED_EVENT = 'pudding:order-changed';
 export function readLocalOrder(scope: string): string[] {
   try {
     const value = JSON.parse(window.localStorage.getItem(storageKey(scope)) || '[]');
@@ -323,6 +344,29 @@ export function writeLocalOrder(scope: string, keys: string[]) {
   } catch {
     // Order lasts for this visit only.
   }
+  window.dispatchEvent(new CustomEvent(ORDER_CHANGED_EVENT, { detail: scope }));
+}
+
+/**
+ * Calls `onChange` whenever an order under `scope` (the scope itself or any
+ * `${scope}:…`) is written, in this tab or another. Lets two views of the same
+ * order (the dashboard and the sidebar) follow each other. Returns the unsubscribe.
+ */
+export function onLocalOrderChange(scope: string, onChange: () => void): () => void {
+  const matches = (s: string) => s === scope || s.startsWith(`${scope}:`);
+  const onLocal = (e: Event) => {
+    const changed = (e as CustomEvent<string>).detail;
+    if (typeof changed === 'string' && matches(changed)) onChange();
+  };
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === null || (e.key.startsWith(ORDER_PREFIX) && matches(e.key.slice(ORDER_PREFIX.length)))) onChange();
+  };
+  window.addEventListener(ORDER_CHANGED_EVENT, onLocal);
+  window.addEventListener('storage', onStorage);
+  return () => {
+    window.removeEventListener(ORDER_CHANGED_EVENT, onLocal);
+    window.removeEventListener('storage', onStorage);
+  };
 }
 
 /** `items` in the saved order; ones not saved yet keep their default place. */

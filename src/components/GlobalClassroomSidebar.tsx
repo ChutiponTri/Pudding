@@ -31,6 +31,13 @@ import { useAcademicCalendar } from '@/lib/hooks/useAcademicCalendar';
 import { TermDatesSettings } from '@/components/TermDatesSettings';
 import { ALL_SEMESTERS, filterClassroomsBySemester, semesterKeyFromParam, semesterKeyOf, semesterOptions } from '@/lib/utils/semesterFilter';
 import { applySavedOrder, mergeVisibleOrder, useSidebarPrefs } from '@/lib/hooks/useSidebarPrefs';
+import {
+  applySavedOrder as applySavedItemOrder,
+  DragReorder,
+  onLocalOrderChange,
+  readLocalOrder,
+  writeLocalOrder,
+} from '@/lib/hooks/useDragReorder';
 import { quietly } from '@/lib/net/fetchActivity';
 
 /** Subject group key for classrooms with neither a course name nor a code. */
@@ -119,7 +126,7 @@ const GuestSidebarContent: React.FC<{ onNavigate: () => void }> = ({ onNavigate 
 };
 
 /** Last list per browser tab, so a reload paints the sidebar at once while it refreshes. */
-const LIST_CACHE_KEY = 'pudding_sidebar_classrooms_v2';
+const LIST_CACHE_KEY = 'pudding_sidebar_classrooms_v3';
 
 function readCachedList(teacherId: string): Classroom[] | null {
   try {
@@ -223,23 +230,67 @@ export const GlobalClassroomSidebar: React.FC = () => {
     [allClassrooms, termKey, currentPeriod.yearCE]
   );
 
-  // Group by subject. Subjects default to newest classroom first, then follow
-  // the order the teacher dragged them into; classrooms inside are by name.
+  // Subject and classroom order: the same saved order the dashboard uses
+  // (TeacherWorkspace), so dragging in either place moves both. Re-read
+  // whenever either side writes it.
+  const orderScope = teacherId ? `dashboard-courses:${teacherId}` : '';
+  const [orderVersion, setOrderVersion] = useState(0);
+  useEffect(() => {
+    if (!orderScope) return;
+    return onLocalOrderChange(orderScope, () => setOrderVersion((v) => v + 1));
+  }, [orderScope]);
+  const savedCourseOrder = useMemo(
+    () => (orderScope && typeof window !== 'undefined' ? readLocalOrder(orderScope) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- orderVersion signals a write to storage
+    [orderScope, orderVersion]
+  );
+  const classOrderOf = useCallback(
+    (courseKey: string) => (orderScope && typeof window !== 'undefined' ? readLocalOrder(`${orderScope}:${courseKey}`) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- orderVersion signals a write to storage
+    [orderScope, orderVersion]
+  );
+
+  // Group by subject, keyed as the dashboard keys it: by course code (by
+  // course id when two courses in this term share a code). Defaults match the
+  // dashboard too: newest course first, newest classroom first inside; then the
+  // order the teacher dragged them into.
   const groupedCourses = useMemo(() => {
-    const collator = new Intl.Collator(language === 'th' ? 'th' : 'en', { numeric: true, sensitivity: 'base' });
-    const byNewest = [...filteredClassrooms].sort(
-      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-    );
-    const map = new Map<string, CourseGroup>();
+    const time = (value?: string) => new Date(value || 0).getTime();
+    const byNewest = [...filteredClassrooms].sort((a, b) => time(b.created_at) - time(a.created_at));
+    const courseIdsByCode = new Map<string, Set<string>>();
+    for (const cls of filteredClassrooms) {
+      if (!cls.course_id || !cls.course_code) continue;
+      if (!courseIdsByCode.has(cls.course_code)) courseIdsByCode.set(cls.course_code, new Set());
+      courseIdsByCode.get(cls.course_code)!.add(cls.course_id);
+    }
+    const keyOf = (cls: Classroom) => {
+      if (cls.course_id && cls.course_code) {
+        const shared = termKey !== ALL_SEMESTERS && (courseIdsByCode.get(cls.course_code)?.size || 0) > 1;
+        return shared ? cls.course_id : cls.course_code;
+      }
+      return cls.course_id || cls.course_name || cls.subject_code || GENERAL_KEY;
+    };
+    const map = new Map<string, CourseGroup & { createdAt: number }>();
     for (const cls of byNewest) {
-      const key = cls.course_name || cls.subject_code || GENERAL_KEY;
-      if (!map.has(key)) map.set(key, { key, label: key === GENERAL_KEY ? tr('รายวิชาทั่วไป', 'General') : key, items: [] });
+      const key = keyOf(cls);
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          label: key === GENERAL_KEY ? tr('รายวิชาทั่วไป', 'General') : cls.course_name || cls.course_code || cls.subject_code || key,
+          items: [],
+          createdAt: time(cls.course_created_at || cls.created_at),
+        });
+      }
       map.get(key)!.items.push(cls);
     }
-    const groups = Array.from(map.values());
-    for (const group of groups) group.items.sort((a, b) => collator.compare(a.name || '', b.name || ''));
-    return applySavedOrder(groups, (g) => g.key, prefs.order);
-  }, [filteredClassrooms, language, tr, prefs.order]);
+    const groups = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+    const ordered: CourseGroup[] = groups.map(({ key, label, items }) => ({
+      key,
+      label,
+      items: applySavedItemOrder(items, (cls) => cls.id, classOrderOf(key)),
+    }));
+    return applySavedOrder(ordered, (g) => g.key, savedCourseOrder);
+  }, [filteredClassrooms, termKey, tr, savedCourseOrder, classOrderOf]);
 
   // While dragging, the subjects show in this live order.
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
@@ -252,19 +303,25 @@ export const GlobalClassroomSidebar: React.FC = () => {
     return dragOrder.map((key) => byKey.get(key)).filter((g): g is CourseGroup => !!g);
   }, [dragOrder, groupedCourses]);
 
-  /** Saves a new order of the visible subjects, dropping keys of subjects that no longer exist. */
+  /** Saves a new order of the visible subjects (shared with the dashboard). */
   const saveOrder = useCallback(
     (nextVisible: string[]) => {
       const before = groupedCourses.map((g) => g.key);
-      if (nextVisible.join('\n') === before.join('\n')) return;
-      const existing = new Set(allClassrooms.map((c) => c.course_name || c.subject_code || GENERAL_KEY));
-      updatePrefs((p) => ({
-        ...p,
-        order: mergeVisibleOrder(p.order, before, nextVisible).filter((key) => !allClassrooms.length || existing.has(key)),
-      }));
+      if (!orderScope || nextVisible.join('\n') === before.join('\n')) return;
+      writeLocalOrder(orderScope, mergeVisibleOrder(savedCourseOrder, before, nextVisible));
     },
-    [groupedCourses, allClassrooms, updatePrefs]
+    [groupedCourses, orderScope, savedCourseOrder]
   );
+
+  /** Saves a new order of one subject's visible classrooms (shared with the dashboard). */
+  const saveClassOrder = useCallback(
+    (courseKey: string, before: string[], next: string[]) => {
+      if (!orderScope) return;
+      writeLocalOrder(`${orderScope}:${courseKey}`, mergeVisibleOrder(classOrderOf(courseKey), before, next));
+    },
+    [orderScope, classOrderOf]
+  );
+  const getScroller = useCallback(() => scrollRef.current, []);
 
   const collapsed = useMemo(() => new Set(prefs.collapsed), [prefs.collapsed]);
   const toggleCollapsed = (key: string) =>
@@ -537,43 +594,98 @@ export const GlobalClassroomSidebar: React.FC = () => {
                   </div>
 
                   {!isCollapsed && (
-                    <div id={listId} className="mt-1 mb-2 space-y-1 pl-2 ml-[2.6rem] border-l border-slate-200 dark:border-slate-800 min-w-0">
-                      {group.items.map((cls) => {
-                        const isActive = pathname.startsWith(`/classrooms/${cls.id}`);
-                        const studentCount = cls.student_count || cls.students?.length || 0;
-                        const period = periodLabel(cls, language === 'th');
-
+                    <DragReorder
+                      keys={group.items.map((cls) => cls.id)}
+                      onCommit={(next) => saveClassOrder(group.key, group.items.map((cls) => cls.id), next)}
+                      scroller={getScroller}
+                    >
+                      {(classDrag) => {
+                        const byId = new Map(group.items.map((cls) => [cls.id, cls]));
+                        const canDrag = group.items.length > 1;
                         return (
-                          <Link
-                            key={cls.id}
-                            href={`/classrooms/${cls.id}`}
-                            onClick={handleItemClick}
-                            title={cls.name}
-                            className={`flex items-center justify-between min-h-11 px-3 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer min-w-0 ${
-                              isActive
-                                ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-300/80 dark:ring-amber-700/70'
-                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                          <div
+                            id={listId}
+                            ref={classDrag.bindList}
+                            className="relative mt-1 mb-2 space-y-1 pl-1 ml-[1.9rem] border-l border-slate-200 dark:border-slate-800 min-w-0"
                           >
-                            <div className="flex items-center gap-2 min-w-0 flex-1">
-                              <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
-                              <span className="min-w-0">
-                                <span className="block truncate">{cls.name}</span>
-                                {period && (
-                                  <span className={`block text-[11px] font-semibold leading-tight ${isActive ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400'}`}>
-                                    {period}
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                            <span className="text-xs text-slate-400 font-semibold shrink-0 ml-2 flex items-center gap-1 tabular-nums">
-                              <Users className="w-3.5 h-3.5" />
-                              <span>{studentCount}</span>
-                            </span>
-                          </Link>
+                            {classDrag.order.map((classId) => {
+                              const cls = byId.get(classId);
+                              if (!cls) return null;
+                              const isActive = pathname.startsWith(`/classrooms/${cls.id}`);
+                              const isDraggingClass = classDrag.dragKey === cls.id;
+                              const studentCount = cls.student_count || cls.students?.length || 0;
+                              const period = periodLabel(cls, language === 'th');
+
+                              return (
+                                <div
+                                  key={cls.id}
+                                  ref={classDrag.bindItem(cls.id)}
+                                  style={classDrag.itemStyle(cls.id)}
+                                  className={`flex items-center gap-0.5 min-w-0 rounded-xl ${
+                                    isDraggingClass ? 'bg-white dark:bg-slate-900 shadow-xl shadow-slate-900/15 ring-2 ring-amber-400/80' : ''
+                                  }`}
+                                >
+                                  {canDrag ? (
+                                    <button
+                                      type="button"
+                                      {...classDrag.handleProps(cls.id)}
+                                      onKeyDown={(e) => {
+                                        classDrag.handleProps(cls.id).onKeyDown(e);
+                                        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                                          const target = e.currentTarget;
+                                          requestAnimationFrame(() => target.focus());
+                                        }
+                                      }}
+                                      aria-label={tr(`ลากเพื่อจัดลำดับ ${cls.name} (หรือกดลูกศรขึ้น/ลง)`, `Drag to reorder ${cls.name} (or press arrow up/down)`)}
+                                      title={tr('ลากเพื่อจัดลำดับ', 'Drag to reorder')}
+                                      className={`w-6 min-h-11 flex items-center justify-center rounded-lg text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-amber-500 shrink-0 touch-none ${
+                                        isDraggingClass ? 'cursor-grabbing text-amber-500' : 'cursor-grab'
+                                      }`}
+                                    >
+                                      <GripVertical className="w-3.5 h-3.5" />
+                                    </button>
+                                  ) : (
+                                    <span className="w-6 shrink-0" aria-hidden="true" />
+                                  )}
+                                  <Link
+                                    href={`/classrooms/${cls.id}`}
+                                    onClick={(e) => {
+                                      if (classDrag.recentlyDropped()) {
+                                        e.preventDefault();
+                                        return;
+                                      }
+                                      handleItemClick();
+                                    }}
+                                    title={cls.name}
+                                    className={`flex-1 flex items-center justify-between min-h-11 px-3 py-2.5 rounded-xl text-sm font-bold transition-colors cursor-pointer min-w-0 ${
+                                      isActive
+                                        ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 ring-1 ring-amber-300/80 dark:ring-amber-700/70'
+                                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                                      <span className="min-w-0">
+                                        <span className="block truncate">{cls.name}</span>
+                                        {period && (
+                                          <span className={`block text-[11px] font-semibold leading-tight ${isActive ? 'text-amber-700 dark:text-amber-400' : 'text-slate-400'}`}>
+                                            {period}
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
+                                    <span className="text-xs text-slate-400 font-semibold shrink-0 ml-2 flex items-center gap-1 tabular-nums">
+                                      <Users className="w-3.5 h-3.5" />
+                                      <span>{studentCount}</span>
+                                    </span>
+                                  </Link>
+                                </div>
+                              );
+                            })}
+                          </div>
                         );
-                      })}
-                    </div>
+                      }}
+                    </DragReorder>
                   )}
                 </div>
               );

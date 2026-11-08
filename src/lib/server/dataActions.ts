@@ -545,9 +545,11 @@ function teacherVisibleAssignments(supabase: Supabase, list: Assignment[]): Assi
  * the parent course's term in the same request.
  */
 const CLASSROOM_LIST_FIELDS =
-  'id, name, course_id, course_name, subject_code, semester, year_ce, academic_year, student_count, created_at, course:courses(semester, year_ce)';
+  'id, name, course_id, course_name, subject_code, semester, year_ce, academic_year, student_count, created_at, course:courses(code, created_at, semester, year_ce)';
 
-type ClassroomListRow = Classroom & { course?: { semester?: number | null; year_ce?: number | null } | null };
+type ClassroomListRow = Classroom & {
+  course?: { code?: string | null; created_at?: string | null; semester?: number | null; year_ce?: number | null } | null;
+};
 
 /**
  * A classroom without its own term takes its course's, as the dashboard's
@@ -558,6 +560,8 @@ function withEffectiveTerm({ course, ...cls }: ClassroomListRow): Classroom {
     ...cls,
     semester: cls.semester ?? course?.semester ?? undefined,
     year_ce: cls.year_ce ?? course?.year_ce ?? undefined,
+    course_code: course?.code ?? undefined,
+    course_created_at: course?.created_at ?? undefined,
   } as Classroom;
 }
 

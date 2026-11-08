@@ -69,7 +69,7 @@ import {
 } from 'lucide-react';
 import { Collapse } from '@/components/Collapse';
 import { ActionMenu } from '@/components/works/ActionMenu';
-import { DragReorder, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
+import { DragReorder, onLocalOrderChange, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
 import { applySavedOrder, mergeVisibleOrder } from '@/lib/hooks/useSidebarPrefs';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { notificationManager } from '@/lib/utils/notificationManager';
@@ -698,6 +698,13 @@ export function TeacherWorkspace({
   if (layoutOrder.scope !== layoutScope) {
     setLayoutOrder({ scope: layoutScope, courses: layoutScope ? readLocalOrder(layoutScope) : [], classes: {} });
   }
+  // The sidebar reorders the same subjects and classrooms: follow its changes.
+  useEffect(() => {
+    if (!layoutScope) return;
+    return onLocalOrderChange(layoutScope, () =>
+      setLayoutOrder({ scope: layoutScope, courses: readLocalOrder(layoutScope), classes: {} })
+    );
+  }, [layoutScope]);
   const classOrderOf = (courseKey: string) =>
     layoutOrder.classes[courseKey] ?? (layoutScope && typeof window !== 'undefined' ? readLocalOrder(`${layoutScope}:${courseKey}`) : []);
   const { isOpen: isCourseOpen, toggle: toggleCourse } = useCollapsedGroups(layoutScope || 'dashboard-courses');

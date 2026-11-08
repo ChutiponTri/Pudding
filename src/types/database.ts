@@ -81,6 +81,9 @@ export interface Classroom {
   year_ce?: number;
   student_count?: number;
   subject_code?: string;
+  /** Sidebar list only: the course's code and creation time (the dashboard groups and orders by them). */
+  course_code?: string;
+  course_created_at?: string;
   invite_code?: string;
   line_group_id?: string;
   line_connection_status?: 'disconnected' | 'waiting' | 'connected';
