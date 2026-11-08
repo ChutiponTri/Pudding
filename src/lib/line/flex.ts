@@ -14,7 +14,7 @@ import { bubble, button, COLORS, fit, text, type BareAction, type FlexAction, ty
  */
 
 /** Bump after rebuilding the images: LINE caches them by URL. */
-const CARD_IMAGE_VERSION = '3';
+const CARD_IMAGE_VERSION = '4';
 
 export { COLORS, type FlexMessage } from '@/lib/line/flexKit';
 
@@ -29,6 +29,8 @@ const HEROES = {
   'join-class': '1040:667',
   remind: '1040:400',
   'score-announce': '1040:364',
+  'open-for-submission': '1040:410',
+  'submit-work': '1040:390',
 } as const;
 
 function hero(name: keyof typeof HEROES, action?: FlexAction) {
@@ -517,7 +519,7 @@ const workTag = (isExam: boolean, number?: number) => `#${isExam ? 'ข้อส
  * reminder picture: the work, its deadline, and who has not handed it in.
  * The @mentions follow in a separate text message (see the webhook).
  */
-export function remindCard(input: {
+export type WorkStatusInput = {
   isExam: boolean;
   number?: number;
   subject?: string;
@@ -530,51 +532,147 @@ export function remindCard(input: {
   total: number;
   url: string;
   statusUrl?: string | null;
-}): FlexMessage {
-  const MAX_NAMES = 25;
-  const shown = input.names.slice(0, MAX_NAMES).join('\n') + (input.names.length > MAX_NAMES ? `\n…และอีก ${input.names.length - MAX_NAMES} คน` : '');
+};
+
+/**
+ * One work with who has not handed it in: the reminder card ("ส่งให้ครู
+ * หน่อยน้า~", answer to the teacher's ทวงงาน picture) and each page of the
+ * "ส่งงาน" carousel ("พุดดิ้ง ส่งงาน") share this layout, with their own art.
+ */
+function workStatusBubble(art: 'remind' | 'submit-work', input: WorkStatusInput, maxNames: number) {
+  const shown = input.names.slice(0, maxNames).join('\n') + (input.names.length > maxNames ? `\n…และอีก ${input.names.length - maxNames} คน` : '');
   const footer: unknown[] = [button(input.isExam ? '📝 ทำข้อสอบ' : '📤 ส่งงาน', { type: 'uri', uri: input.url })];
   if (input.statusUrl) footer.push(statusLink(input.statusUrl));
+  return bubble({
+    hero: hero(art, { type: 'uri', label: 'ส่งงาน', uri: input.url }),
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      paddingAll: '20px',
+      contents: [
+        badge([workTag(input.isExam, input.number), input.subject].filter(Boolean).join('  ')),
+        text(input.title, { size: 'xl', weight: 'bold', color: COLORS.purpleDark, margin: 'md' }),
+        ...[
+          { label: input.isExam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง', value: input.due },
+          ...(input.closes ? [{ label: 'ปิดรับส่งงาน', value: input.closes }] : []),
+        ].map((row) => ({
+          type: 'box',
+          layout: 'baseline',
+          spacing: 'sm',
+          margin: 'sm',
+          contents: [
+            text(row.label, { size: 'sm', color: COLORS.muted, flex: 0, wrap: false }),
+            text(row.value, { size: 'sm', weight: 'bold', color: '#E8780C' }),
+          ],
+        })),
+        { type: 'separator', margin: 'lg', color: '#E4D9FB' },
+        {
+          type: 'box',
+          layout: 'baseline',
+          spacing: 'sm',
+          margin: 'lg',
+          contents: [
+            text('ยังไม่ส่ง:', { size: 'sm', weight: 'bold', color: COLORS.purpleDark, flex: 0, wrap: false }),
+            text(input.names.length ? `${input.names.length} จาก ${input.total} คน` : 'ส่งครบแล้ว 🎉', { size: 'sm', weight: 'bold', color: '#E8780C' }),
+          ],
+        },
+        ...(input.names.length ? [text(shown, { size: 'sm', color: COLORS.purpleDark, margin: 'sm' })] : []),
+      ],
+    },
+    footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', paddingTop: '0px', contents: footer },
+  });
+}
+
+/** "ทวงงาน": the bot's answer to the teacher's reminder picture (the @mentions follow in a text message). */
+export function remindCard(input: WorkStatusInput): FlexMessage {
   return {
     type: 'flex',
     altText: fit(`🔔 ส่งให้ครูหน่อยน้า~ ${input.title}: ยังไม่ส่ง ${input.names.length} จาก ${input.total} คน`, 400),
+    contents: workStatusBubble('remind', input, 25),
+  };
+}
+
+/** "พุดดิ้ง ส่งงาน": one page per open work (most urgent first), each with its ส่งงาน button. */
+export function submitCarousel(works: WorkStatusInput[]): FlexMessage {
+  const pages = works.slice(0, 10);
+  return {
+    type: 'flex',
+    altText: fit(`📤 ส่งงาน: ${pages.map((work) => work.title).join(', ')}`, 400),
+    contents: pages.length === 1
+      ? workStatusBubble('submit-work', pages[0], 15)
+      : { type: 'carousel', contents: pages.map((work) => workStatusBubble('submit-work', work, 10)) },
+  };
+}
+
+export type OpenWorkRow = {
+  isExam: boolean;
+  title: string;
+  /** "เหลือ 2 วัน" / "เลยกำหนดแล้ว (ส่งช้าได้)". */
+  left: string;
+  /** "กำหนดส่ง 15 พ.ย. 2569" / "ปิดรับคำตอบ …". */
+  due: string;
+  /** 🔴 under a day, 🟡 under three days, 🟢 later. */
+  urgency: string;
+  url: string;
+};
+
+/**
+ * "พุดดิ้ง งาน" ("งานที่เปิดรับ"): every work still taking hand-ins, quizzes
+ * then homework, most urgent first; each row opens that work.
+ */
+export function openWorkCard(input: { classroomTitle: string; rows: OpenWorkRow[]; total: number; url: string }): FlexMessage {
+  const MAX_ROWS = 8;
+  const row = (item: OpenWorkRow) => ({
+    type: 'box',
+    layout: 'vertical',
+    margin: 'md',
+    paddingAll: '10px',
+    backgroundColor: '#FAF7FF',
+    cornerRadius: 'md',
+    action: { type: 'uri', label: 'เปิดงาน', uri: item.url },
+    contents: [
+      {
+        type: 'box',
+        layout: 'baseline',
+        spacing: 'sm',
+        contents: [
+          text(item.urgency, { size: 'sm', flex: 0, wrap: false }),
+          text(item.title, { size: 'sm', weight: 'bold', color: COLORS.purpleDark }),
+        ],
+      },
+      text(`${item.left} • ${item.due}`, { size: 'xs', color: '#E8780C', margin: 'xs' }),
+    ],
+  });
+  const section = (label: string, items: OpenWorkRow[]) =>
+    items.length ? [text(`${label} (${items.length})`, { size: 'sm', weight: 'bold', color: COLORS.lavenderText, margin: 'lg' }), ...items.map(row)] : [];
+  const shown = input.rows.slice(0, MAX_ROWS);
+  const exams = shown.filter((item) => item.isExam);
+  const homework = shown.filter((item) => !item.isExam);
+  return {
+    type: 'flex',
+    altText: fit(`📚 งานที่เปิดรับ ${input.classroomTitle}: ${input.rows.map((item) => item.title).join(', ')}`, 400),
     contents: bubble({
-      hero: hero('remind', { type: 'uri', label: 'ส่งงาน', uri: input.url }),
+      hero: hero('open-for-submission', { type: 'uri', label: 'ดูงานทั้งหมด', uri: input.url }),
       body: {
         type: 'box',
         layout: 'vertical',
-        paddingAll: '20px',
+        paddingAll: '18px',
         contents: [
-          badge([workTag(input.isExam, input.number), input.subject].filter(Boolean).join('  ')),
-          text(input.title, { size: 'xl', weight: 'bold', color: COLORS.purpleDark, margin: 'md' }),
-          ...[
-            { label: input.isExam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง', value: input.due },
-            ...(input.closes ? [{ label: 'ปิดรับส่งงาน', value: input.closes }] : []),
-          ].map((row) => ({
-            type: 'box',
-            layout: 'baseline',
-            spacing: 'sm',
-            margin: 'sm',
-            contents: [
-              text(row.label, { size: 'sm', color: COLORS.muted, flex: 0, wrap: false }),
-              text(row.value, { size: 'sm', weight: 'bold', color: '#E8780C' }),
-            ],
-          })),
-          { type: 'separator', margin: 'lg', color: '#E4D9FB' },
-          {
-            type: 'box',
-            layout: 'baseline',
-            spacing: 'sm',
-            margin: 'lg',
-            contents: [
-              text('ยังไม่ส่ง:', { size: 'sm', weight: 'bold', color: COLORS.purpleDark, flex: 0, wrap: false }),
-              text(`${input.names.length} จาก ${input.total} คน`, { size: 'sm', weight: 'bold', color: '#E8780C' }),
-            ],
-          },
-          text(shown || '-', { size: 'sm', color: COLORS.purpleDark, margin: 'sm' }),
+          badge(input.classroomTitle),
+          text(`ทั้งหมด ${input.total} รายการ`, { size: 'md', weight: 'bold', color: COLORS.purpleDark, margin: 'md' }),
+          ...section('📝 ข้อสอบ', exams),
+          ...section('📋 การบ้าน', homework),
+          ...(input.total > shown.length ? [text(`…และอีก ${input.total - shown.length} รายการ ดูได้ในแอป`, { size: 'xs', color: COLORS.muted, margin: 'md' })] : []),
+          text('🔴 ไม่ถึง 1 วัน  🟡 ไม่ถึง 3 วัน  🟢 มากกว่านั้น • แตะงานเพื่อเปิด', { size: 'xxs', color: COLORS.muted, margin: 'lg' }),
         ],
       },
-      footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', paddingTop: '0px', contents: footer },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: '16px',
+        paddingTop: '0px',
+        contents: [button('📚 ดูงานทั้งหมด', { type: 'uri', uri: input.url })],
+      },
     }),
   };
 }

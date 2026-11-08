@@ -34,6 +34,8 @@ const CARDS = [
   { name: 'first-conn', box: { left: 0, top: 0, width: 1691, height: 930 }, radius: 0 },
   { name: 'remind', box: { left: 0, top: 0, width: 1086, height: 418 }, radius: 0 },
   { name: 'score-announce', box: { left: 0, top: 0, width: 1086, height: 380 }, radius: 0 },
+  { name: 'open-for-submission', box: { left: 0, top: 0, width: 1086, height: 428 }, radius: 0 },
+  { name: 'submit-work', box: { left: 0, top: 0, width: 1087, height: 408 }, radius: 0 },
 ];
 
 /**

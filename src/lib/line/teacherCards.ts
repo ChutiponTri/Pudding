@@ -1,7 +1,7 @@
 import 'server-only';
 import { lineDate } from '@/lib/utils/datetime';
 import { buildLiffUrl } from '@/lib/line/liffLink';
-import { attendanceCard, inviteCard, openClassCard, remindCard, resultsCard, welcomeCard } from '@/lib/line/flex';
+import { attendanceCard, inviteCard, openClassCard, openWorkCard, remindCard, resultsCard, submitCarousel, welcomeCard, type WorkStatusInput } from '@/lib/line/flex';
 import type { FlexMessage } from '@/lib/line/flexKit';
 import { webUrl, type ServiceClient } from '@/lib/line/groupLink';
 import { isGroupMember } from '@/lib/line/messaging';
@@ -106,6 +106,70 @@ export function remindPicture(classroom: CardClassroom, assignment: Pick<Assignm
   };
 }
 
+/** A work's card data with who has not handed it in (reminder card, "ส่งงาน" pages). */
+async function workStatus(supabase: ServiceClient, assignment: Assignment, classroom: CardClassroom & { students?: User[] | null }) {
+  const url = liff(classroom, { assignmentId: assignment.id });
+  if (!url) return null;
+  const [{ roster, missing }, meta] = await Promise.all([missingStudents(supabase, assignment, classroom), workMeta(supabase, assignment, classroom)]);
+  const win = getAssignmentWindow(assignment);
+  const card: WorkStatusInput = {
+    isExam: !!assignment.is_exam,
+    number: meta.number,
+    subject: meta.subject,
+    title: assignment.title,
+    due: win.deadline != null ? lineDate(win.deadline) : 'ไม่ระบุ',
+    closes: !assignment.is_exam && win.lateUntil != null && win.lateUntil !== win.deadline ? lineDate(win.lateUntil) : undefined,
+    names: missing.map(studentLabel),
+    total: roster.length,
+    url,
+    statusUrl: liff(classroom, { view: 'work' }),
+  };
+  return { card, missing };
+}
+
+type OpenWork = Array<{ assignment: Assignment; window: ReturnType<typeof getAssignmentWindow> }>;
+
+/** "เหลือ 3 ชม." style countdown to a deadline. */
+function timeLeft(deadline: number, now: number) {
+  const minutes = Math.floor((deadline - now) / 60000);
+  if (minutes < 0) return 'เลยกำหนดแล้ว (ส่งช้าได้)';
+  if (minutes < 60) return `เหลือ ${minutes} นาที`;
+  if (minutes < 24 * 60) return `เหลือ ${Math.floor(minutes / 60)} ชม.`;
+  return `เหลือ ${Math.floor(minutes / (24 * 60))} วัน`;
+}
+
+/** "พุดดิ้ง งาน": the "งานที่เปิดรับ" card (open work, most urgent first). */
+export function openWorkMessages(classroom: CardClassroom, open: OpenWork): LineMessage[] | null {
+  const url = liff(classroom, { view: 'work' });
+  if (!url) return null;
+  const now = Date.now();
+  const rows = open.map(({ assignment, window }) => {
+    const deadline = window.deadline;
+    const hours = deadline == null ? Infinity : (deadline - now) / 3600000;
+    const due = deadline == null ? 'ไม่มีกำหนดส่ง' : `${assignment.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'} ${lineDate(deadline)}`;
+    return {
+      isExam: !!assignment.is_exam,
+      title: assignment.title,
+      left: deadline == null ? 'เปิดรับอยู่' : timeLeft(deadline, now),
+      due: window.isPastDeadline && window.lateUntil ? `ปิดรับส่งงาน ${lineDate(window.lateUntil)}` : due,
+      urgency: hours < 24 ? '🔴' : hours < 72 ? '🟡' : '🟢',
+      url: liff(classroom, { assignmentId: assignment.id }) || url,
+    };
+  });
+  return [openWorkCard({ classroomTitle: classroomTitle(classroom), rows, total: rows.length, url })];
+}
+
+/** "พุดดิ้ง ส่งงาน": one "ส่งงาน" page per open work, each with who has not handed it in. */
+export async function submitMessages(
+  supabase: ServiceClient,
+  classroom: CardClassroom & { students?: User[] | null },
+  open: OpenWork
+): Promise<LineMessage[] | null> {
+  const statuses = await Promise.all(open.slice(0, 10).map(({ assignment }) => workStatus(supabase, assignment, classroom)));
+  const pages = statuses.filter((status): status is NonNullable<typeof status> => !!status).map((status) => status.card);
+  return pages.length ? [submitCarousel(pages)] : null;
+}
+
 /** LINE's textV2 needs literal braces doubled. */
 const escapeBraces = (value: string) => value.replace(/[{}]/g, (brace) => brace + brace);
 const MAX_MENTIONS = 50;
@@ -122,25 +186,10 @@ export async function remindReply(
   classroom: CardClassroom & { students?: User[] | null },
   groupId: string
 ): Promise<LineMessage[] | null> {
-  const url = liff(classroom, { assignmentId: assignment.id });
-  if (!url) return null;
-  const [{ roster, missing }, meta] = await Promise.all([missingStudents(supabase, assignment, classroom), workMeta(supabase, assignment, classroom)]);
-  if (!missing.length) return null;
-  const win = getAssignmentWindow(assignment);
-  const due = win.deadline != null ? lineDate(win.deadline) : 'ไม่ระบุ';
-  const closes = !assignment.is_exam && win.lateUntil != null && win.lateUntil !== win.deadline ? lineDate(win.lateUntil) : undefined;
-  const card = remindCard({
-    isExam: !!assignment.is_exam,
-    number: meta.number,
-    subject: meta.subject,
-    title: assignment.title,
-    due,
-    closes,
-    names: missing.map(studentLabel),
-    total: roster.length,
-    url,
-    statusUrl: liff(classroom, { view: 'work' }),
-  });
+  const status = await workStatus(supabase, assignment, classroom);
+  if (!status || !status.missing.length) return null;
+  const { missing } = status;
+  const card = remindCard(status.card);
 
   // Mention only students LINE says are in this group (a mention of anyone else would not work).
   const candidates = missing.filter((s) => s.line_uid).slice(0, MAX_MENTIONS);

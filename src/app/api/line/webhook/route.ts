@@ -38,7 +38,7 @@ import {
   type FlexMessage,
 } from '@/lib/line/flex';
 import { markWorkCardPosted } from '@/lib/line/workCard';
-import { attendanceMessages, guideMessages, inviteMessages, openClassMessages, remindReply, resultsMessages, workMessages } from '@/lib/line/teacherCards';
+import { attendanceMessages, guideMessages, inviteMessages, openClassMessages, openWorkMessages, remindReply, resultsMessages, submitMessages, workMessages } from '@/lib/line/teacherCards';
 import { parseCardTrigger, type CardTrigger } from '@/lib/line/cardTrigger';
 import { buildLiffUrl, withLiffLink } from '@/lib/line/liffLink';
 import { answerTeacherQuestion, faqMenuButtons, type BotReply } from '@/lib/line/teacherFaq';
@@ -588,7 +588,10 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
     }
     const now = Date.now();
     if (command === 'submit') {
-      // ส่งงาน: one tappable link per item, most urgent first.
+      // ส่งงาน: one "ส่งงาน" card page per work (who has not handed in, and its button);
+      // the plain list below stands in if LINE refuses the cards.
+      const { data: room } = await supabase.from('classrooms').select('id, name, course_name, subject_code, invite_code, teacher_id, students').eq('id', classroom.id).maybeSingle();
+      const cards = room ? await submitMessages(supabase, room, open) : null;
       const shown = open.slice(0, 6);
       const items = shown.map(({ assignment, window }, index) => {
         const action = assignment.is_exam ? '📝 ทำข้อสอบ' : '📤 ส่งงาน';
@@ -602,7 +605,9 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
         return `【${index + 1}】${assignment.title}\n${due}${late}${url ? `\n${action}【${index + 1}】 👉 ${url}` : ''}`;
       });
       const more = open.length > shown.length ? `\n\n…และอีก ${open.length - shown.length} รายการ ดูได้ในแอป` : '';
-      await replySafely(replyToken, `📤 ส่งงาน\n📘 ${title}\nแตะปุ่มด้านล่างตามหมายเลขงาน เพื่อเปิดหน้าส่งงานได้ทันที\n━━━━━━━━━━\n\n${items.join('\n\n')}${more}`);
+      const plain = () => replySafely(replyToken, `📤 ส่งงาน\n📘 ${title}\nแตะปุ่มด้านล่างตามหมายเลขงาน เพื่อเปิดหน้าส่งงานได้ทันที\n━━━━━━━━━━\n\n${items.join('\n\n')}${more}`);
+      if (cards) await replyCards(replyToken, cards as FlexMessage[], plain);
+      else await plain();
       return;
     }
     // งาน: a compact overview split into exams and homework, one link at the end.
@@ -618,11 +623,15 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
       exams.length ? `📝 ข้อสอบ (${exams.length})\n${exams.slice(0, 8).map(line).join('\n')}` : '',
       homework.length ? `📋 การบ้าน (${homework.length})\n${homework.slice(0, 8).map(line).join('\n')}` : '',
     ].filter(Boolean);
-    await replySafely(replyToken, withLiffLink(
+    // งาน: the "งานที่เปิดรับ" card; the plain overview stands in if LINE refuses it.
+    const plain = () => replySafely(replyToken, withLiffLink(
       `📚 งานที่เปิดรับ\n📘 ${title}\nทั้งหมด ${open.length} รายการ\n\n${sections.join('\n\n')}\n\n🔴 ไม่ถึง 1 วัน  🟡 ไม่ถึง 3 วัน  🟢 มากกว่านั้น\n💡 พิมพ์ "พุดดิ้ง ส่งงาน" เพื่อรับปุ่มส่งของแต่ละงาน`,
       'ดูงานทั้งหมด',
       link({ view: 'work' })
     ));
+    const cards = openWorkMessages(classroom, open);
+    if (cards) await replyCards(replyToken, cards as FlexMessage[], plain);
+    else await plain();
   }
 }
 
