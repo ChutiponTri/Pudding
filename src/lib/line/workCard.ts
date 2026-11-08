@@ -1,6 +1,7 @@
 import 'server-only';
 import { after } from 'next/server';
 import { buildLiffUrl } from '@/lib/line/liffLink';
+import { cardTriggerText } from '@/lib/line/cardTrigger';
 import { workCard, type FlexMessage } from '@/lib/line/flex';
 import type { ServiceClient } from '@/lib/line/groupLink';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
@@ -22,37 +23,12 @@ type CardClassroom = LabelledClassroom & { id: string; invite_code?: string | nu
 
 const when = (ms: number) => formatDateTime(new Date(ms).toISOString(), 'th', SCHOOL_TIME_ZONE);
 
-/**
- * Marks the link as a card request. Other messages the teacher shares (a
- * reminder, a score announcement) also link to a work but must not get a card.
- */
-const CARD_PARAM = 'card';
-
-/** The trigger the teacher shares: one line naming the work, then its LIFF link. */
+/** New work's trigger (see cardTrigger): the teacher posts it, the bot answers with the work card. */
 export function workTriggerText(
   assignment: Pick<Assignment, 'id' | 'title' | 'is_exam'>,
   classroom: { id: string; invite_code?: string | null }
 ): string | null {
-  const url = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, assignmentId: assignment.id });
-  if (!url) return null;
-  return `${assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'}: ${assignment.title} 👇\n${url}&${CARD_PARAM}=1`;
-}
-
-/** The work id in a message carrying one of our work-card trigger links, if any. */
-export function workIdInText(text: string): string | null {
-  if (!text.includes('assignmentId=') || !text.includes(`${CARD_PARAM}=1`)) return null;
-  const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
-    try {
-      const url = new URL(match[0]);
-      const ours = url.hostname === 'liff.line.me' ? !liffId || url.pathname.startsWith(`/${liffId}`) : url.pathname.startsWith('/liff');
-      const id = ours && url.searchParams.get(CARD_PARAM) === '1' ? url.searchParams.get('assignmentId') : null;
-      if (id && /^[\w-]{1,80}$/.test(id)) return id;
-    } catch {
-      // not a URL after all
-    }
-  }
-  return null;
+  return cardTriggerText('work', classroom, { assignment });
 }
 
 /** The work card for an assignment (null without a LIFF id, since its buttons open the LIFF app). */

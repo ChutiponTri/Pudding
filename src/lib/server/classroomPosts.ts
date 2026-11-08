@@ -87,6 +87,11 @@ export async function createClassroomPost(
     publishAt?: string;
     /** The LINE message's own wording; otherwise it is built from the post (buildPostLineMessage). */
     lineText?: string;
+    /**
+     * Post by card trigger instead of pushing (the teacher LIFF pages send it
+     * into the group, the bot answers with the card). New work always does.
+     */
+    cardTrigger?: string | null;
   }
 ): Promise<{
   post: ClassroomPost;
@@ -137,8 +142,8 @@ export async function createClassroomPost(
   let line: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' | 'card' = isScheduled ? 'scheduled' : 'no_group';
   // New work in a linked group is not pushed (a push costs one message per member):
   // the teacher shares its trigger link and the bot replies with the work card for free.
-  let trigger: string | null = null;
-  if (!isScheduled && classroom.line_group_id && assignmentId && (activityType === 'assignment' || activityType === 'exam')) {
+  let trigger: string | null = !isScheduled && classroom.line_group_id ? input.cardTrigger || null : null;
+  if (!trigger && !isScheduled && classroom.line_group_id && assignmentId && (activityType === 'assignment' || activityType === 'exam')) {
     const { data: work } = await supabase.from('assignments').select('id, title, is_exam').eq('id', assignmentId).maybeSingle<Pick<Assignment, 'id' | 'title' | 'is_exam'>>();
     trigger = work ? workTriggerText(work, classroom) : null;
   }

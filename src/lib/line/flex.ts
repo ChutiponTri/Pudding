@@ -187,44 +187,59 @@ export function workCard(input: WorkCardInput): FlexMessage {
 // Group menu + "for teachers" connect card (the bot's first reply in a group)
 // ---------------------------------------------------------------------------
 
-/** Postback data of the menu's in-group buttons (see the webhook). */
-export const MENU_POSTBACK = 'pudding-menu';
-export type MenuAction = 'attendance' | 'invite' | 'status' | 'publish' | 'remind' | 'help' | 'guide';
-export const menuPostback = (action: MenuAction) => ({ type: 'postback' as const, data: `${MENU_POSTBACK}=${action}` });
+/** The teacher LIFF page each menu button opens (/liff/teacher?view=…). */
+export type TeacherView =
+  | 'home'
+  | 'attendance'
+  | 'invite'
+  | 'classroom'
+  | 'status'
+  | 'create'
+  | 'publish'
+  | 'grade'
+  | 'results'
+  | 'remind'
+  | 'help'
+  | 'guide';
 
-/** Teacher pages (web) the menu opens; /api/line/menu finds the group's classroom. */
-export type MenuPage = 'classroom' | 'create' | 'grade' | 'results';
-export const menuPageUrl = (ref: string, to: MenuPage) =>
-  webUrl(`/api/line/menu?g=${encodeURIComponent(ref)}&to=${to}&openExternalBrowser=1`);
+/** The teacher LIFF page for this group; opened from the group, so it can post cards back into it. */
+export function liffTeacherUrl(ref: string, view: TeacherView) {
+  const liffId = process.env.LINE_LIFF_ID || process.env.NEXT_PUBLIC_LINE_LIFF_ID;
+  const query = `?g=${encodeURIComponent(ref)}&view=${view}`;
+  return liffId ? `https://liff.line.me/${liffId}/teacher${query}` : webUrl(`/liff/teacher${query}`);
+}
 
 /**
- * The teacher's menu for the group. In-group buttons are postbacks without
- * display text: tapping posts nothing, and only the classroom's teachers and
- * TAs get the bot's (free) reply. Page buttons open the teacher website.
+ * The teacher's menu for the group. Every button opens the teacher LIFF page
+ * (teachers and TAs of the linked classroom only; a student who taps one sees
+ * "teachers only"). What a page posts back into the group (a work card, a
+ * check-in, a reminder) goes in as a card trigger the bot answers for free.
  */
 export function menuCard(ref: string): FlexMessage {
-  const primary = (label: string, action: BareAction) => tile(label, action, { bg: COLORS.purple, color: '#FFFFFF' });
+  const open = (view: TeacherView) => ({ type: 'uri' as const, uri: liffTeacherUrl(ref, view) });
+  const primary = (label: string, view: TeacherView) => tile(label, open(view), { bg: COLORS.purple, color: '#FFFFFF' });
+  const light = (label: string, view: TeacherView) => tile(label, open(view));
   return {
     type: 'flex',
     altText: 'เมนูครูประจำไลน์กลุ่ม: เช็กชื่อ เชิญนักเรียน จัดการห้องเรียน งาน และคำสั่งอื่น ๆ',
     contents: bubble({
-      hero: hero('menu'),
+      hero: hero('menu', { ...open('home'), label: 'เมนูครู' }),
       body: {
         type: 'box',
         layout: 'vertical',
         spacing: 'sm',
         paddingAll: '16px',
         contents: [
-          row(primary('📋 เช็กชื่อ', menuPostback('attendance')), primary('👥 เชิญนักเรียน', menuPostback('invite'))),
-          primary('🏫 จัดการห้องเรียน', { type: 'uri', uri: menuPageUrl(ref, 'classroom') }),
-          primary('📊 เช็กสถานะ', menuPostback('status')),
+          row(primary('📋 เช็กชื่อ', 'attendance'), primary('👥 เชิญนักเรียน', 'invite')),
+          primary('🏫 จัดการห้องเรียน', 'classroom'),
+          primary('📊 เช็กสถานะ', 'status'),
           sectionLabel('⭐ งาน'),
-          row(tile('✏️ สร้าง', { type: 'uri', uri: menuPageUrl(ref, 'create') }), tile('📢 เผยแพร่', menuPostback('publish'))),
-          row(tile('✅ ตรวจงาน', { type: 'uri', uri: menuPageUrl(ref, 'grade') }), tile('📈 ประกาศผล', { type: 'uri', uri: menuPageUrl(ref, 'results') })),
-          tile('🔔 ทวงงาน', menuPostback('remind')),
+          row(light('✏️ สร้าง', 'create'), light('📢 เผยแพร่', 'publish')),
+          row(light('✅ ตรวจงาน', 'grade'), light('📈 ประกาศผล', 'results')),
+          light('🔔 ทวงงาน', 'remind'),
           sectionLabel('⭐ อื่น ๆ'),
-          tile('📖 คำสั่งพิเศษ', menuPostback('help')),
-          tile('📣 แนะนำนักเรียน / วิธีส่งงาน', menuPostback('guide')),
+          light('📖 คำสั่งพิเศษ', 'help'),
+          light('📣 แนะนำนักเรียน / วิธีส่งงาน', 'guide'),
           text('💡 กดค้างที่การ์ดนี้ แล้วเลือก “ประกาศ” เพื่อปักหมุดเมนูไว้บนสุดของกลุ่ม', { size: 'xxs', color: COLORS.muted, margin: 'lg', align: 'center' }),
         ],
       },
@@ -356,4 +371,150 @@ export function removedCard(classroomTitle: string, groupName?: string | null): 
 export function reconnectedCard(classroomTitle: string): FlexMessage {
   const line = `ห้องเรียน “${classroomTitle}” กลับมาเชื่อมต่อแล้ว ใช้งานได้ตามปกติค่ะ`;
   return noticeCard('เชื่อมต่อกลับแล้ว!', COLORS.green, [line], `เชื่อมต่อกลับแล้ว: ${line}`);
+}
+
+// ---------------------------------------------------------------------------
+// Cards without header art yet: a coloured title band instead
+// (attendance, invite, remind, results). Swap in hero() once the art exists.
+// ---------------------------------------------------------------------------
+
+function band(title: string, subtitle: string, bg: string, color: string) {
+  return {
+    type: 'box',
+    layout: 'vertical',
+    backgroundColor: bg,
+    paddingAll: '18px',
+    paddingBottom: '14px',
+    contents: [
+      text(title, { size: 'xl', weight: 'bold', color }),
+      text(subtitle, { size: 'sm', color, margin: 'xs' }),
+    ],
+  };
+}
+
+function infoRows(rows: Array<{ label: string; value: string }>) {
+  return {
+    type: 'box',
+    layout: 'vertical',
+    spacing: 'xs',
+    margin: 'md',
+    contents: rows.map((item) => ({
+      type: 'box',
+      layout: 'baseline',
+      spacing: 'sm',
+      contents: [
+        text(`${item.label}:`, { size: 'sm', color: COLORS.muted, flex: 0, wrap: false }),
+        text(item.value, { size: 'sm', weight: 'bold', color: COLORS.lavenderText }),
+      ],
+    })),
+  };
+}
+
+const footerButton = (label: string, uri: string, color: string) => ({
+  type: 'box',
+  layout: 'vertical',
+  paddingAll: '16px',
+  paddingTop: '0px',
+  contents: [button(label, { type: 'uri', uri }, color)],
+});
+
+/** "เช็กชื่อ": a check-in period is open. */
+export function attendanceCard(input: { classroomTitle: string; sessionTitle: string; onTimeUntil: string; lateUntil: string; url: string }): FlexMessage {
+  return {
+    type: 'flex',
+    altText: fit(`⏰ เช็กชื่อ ${input.sessionTitle} (${input.classroomTitle}) ตรงเวลาถึง ${input.onTimeUntil} น.`, 400),
+    contents: bubble({
+      header: band('⏰ เช็กชื่อกัน!', input.classroomTitle, COLORS.lavender, COLORS.purpleDark),
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: '20px',
+        contents: [
+          text(input.sessionTitle, { size: 'lg', weight: 'bold', color: COLORS.purpleDark }),
+          infoRows([
+            { label: 'ตรงเวลาถึง', value: `${input.onTimeUntil} น.` },
+            { label: 'เช็กชื่อได้ (สาย) ถึง', value: `${input.lateUntil} น.` },
+          ]),
+        ],
+      },
+      footer: footerButton('✋ เช็กชื่อ', input.url, COLORS.green),
+    }),
+  };
+}
+
+/** "เชิญนักเรียน": the classroom's join code and button. */
+export function inviteCard(input: { classroomTitle: string; inviteCode?: string | null; url: string }): FlexMessage {
+  const body: unknown[] = [
+    text('นักเรียนที่ยังไม่ได้เข้าห้อง กดปุ่มด้านล่าง กรอกชื่อ แล้วรอคุณครูอนุมัติ', { size: 'sm', color: COLORS.muted }),
+  ];
+  if (input.inviteCode) {
+    body.push({
+      type: 'box',
+      layout: 'vertical',
+      margin: 'lg',
+      backgroundColor: COLORS.lavender,
+      cornerRadius: 'md',
+      paddingAll: '12px',
+      contents: [
+        text('รหัสเข้าห้อง', { size: 'xs', color: COLORS.muted, align: 'center' }),
+        text(input.inviteCode, { size: 'xxl', weight: 'bold', color: COLORS.purple, align: 'center' }),
+      ],
+    });
+  }
+  return {
+    type: 'flex',
+    altText: fit(`🎓 เชิญเข้าห้องเรียน ${input.classroomTitle}${input.inviteCode ? ` รหัส ${input.inviteCode}` : ''}`, 400),
+    contents: bubble({
+      header: band('🎓 เชิญเข้าห้องเรียน', input.classroomTitle, COLORS.lavender, COLORS.purpleDark),
+      body: { type: 'box', layout: 'vertical', paddingAll: '20px', contents: body },
+      footer: footerButton('🙋 เข้าร่วมห้องเรียน', input.url, COLORS.purple),
+    }),
+  };
+}
+
+/** "ทวงงาน": who has not handed the work in yet. */
+export function remindCard(input: { isExam: boolean; title: string; classroomTitle: string; due?: string; names: string[]; url: string }): FlexMessage {
+  const MAX_NAMES = 20;
+  const shown = input.names.slice(0, MAX_NAMES);
+  const list = shown.map((name, index) => `${index + 1}. ${name}`).join('\n') + (input.names.length > MAX_NAMES ? `\n…และอีก ${input.names.length - MAX_NAMES} คน` : '');
+  return {
+    type: 'flex',
+    altText: fit(`🔔 ${input.isExam ? 'ทำข้อสอบ' : 'ส่งงาน'}: ${input.title} ยังไม่ส่ง ${input.names.length} คน`, 400),
+    contents: bubble({
+      header: band(input.isExam ? '🔔 อย่าลืมทำข้อสอบ!' : '🔔 อย่าลืมส่งงาน!', input.classroomTitle, '#FFF4D6', '#8A5A00'),
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: '20px',
+        contents: [
+          text(input.title, { size: 'lg', weight: 'bold', color: COLORS.purpleDark }),
+          ...(input.due ? [text(input.due, { size: 'sm', color: COLORS.muted, margin: 'xs' })] : []),
+          text(`ยังไม่ส่ง (${input.names.length} คน)`, { size: 'sm', weight: 'bold', color: COLORS.rose, margin: 'lg' }),
+          text(list || '-', { size: 'sm', color: COLORS.purpleDark, margin: 'sm' }),
+        ],
+      },
+      footer: footerButton(input.isExam ? '📝 ทำข้อสอบ' : '📤 ส่งงาน', input.url, COLORS.purple),
+    }),
+  };
+}
+
+/** "ประกาศคะแนน": the work's results are out. */
+export function resultsCard(input: { isExam: boolean; title: string; classroomTitle: string; url: string }): FlexMessage {
+  return {
+    type: 'flex',
+    altText: fit(`📣 ประกาศคะแนน: ${input.title} (${input.classroomTitle})`, 400),
+    contents: bubble({
+      header: band('📣 ประกาศคะแนน', input.classroomTitle, '#E3F7EA', '#17663A'),
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: '20px',
+        contents: [
+          text(input.title, { size: 'lg', weight: 'bold', color: COLORS.purpleDark }),
+          text(`คุณครูประกาศคะแนน${input.isExam ? 'ข้อสอบ' : 'งาน'}นี้แล้ว ดูคะแนนและความเห็นของคุณครูได้เลย`, { size: 'sm', color: COLORS.muted, margin: 'md' }),
+        ],
+      },
+      footer: footerButton('🏆 ดูคะแนนของฉัน', input.url, COLORS.green),
+    }),
+  };
 }

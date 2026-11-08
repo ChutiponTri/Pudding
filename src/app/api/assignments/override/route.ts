@@ -1,4 +1,5 @@
-import { auth } from '@clerk/nextjs/server';
+import { getTeacherUserId } from '@/lib/auth/actor';
+import { cardTriggerText } from '@/lib/line/cardTrigger';
 import { getTeacherAccess, teacherBlockedResponse } from '@/lib/server/teacherProfileGuard';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
@@ -30,7 +31,8 @@ const STATUSES: SubmissionOverrideStatus[] = ['auto', 'force_closed', 'extended'
  * is published the same way and gets its timeline post and LINE message now.
  */
 export async function POST(request: NextRequest) {
-  const { userId } = await auth();
+  // A Clerk session, or the teacher LIFF pages inside LINE.
+  const userId = await getTeacherUserId(request);
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const access = await getTeacherAccess(userId);
   if (access !== 'ok') return teacherBlockedResponse(access);
@@ -43,6 +45,8 @@ export async function POST(request: NextRequest) {
   const reannounce = body.action === 'reannounce';
   const remind = body.action === 'remind';
   const announceResults = body.action === 'announce_results';
+  /** From the teacher LIFF pages: nothing is pushed; the reply carries a card trigger to post into the group. */
+  const viaCard = body.line === 'card';
   if (!assignmentId || (!publishNow && !reannounce && !remind && !announceResults && !STATUSES.includes(status))) {
     return NextResponse.json({ error: 'assignmentId and a valid status_override are required' }, { status: 400 });
   }
@@ -118,6 +122,8 @@ export async function POST(request: NextRequest) {
     // A running "ให้แก้ไขงาน" / "ให้ส่งงาน" would keep every result hidden.
     const clearedReopens = await clearReopens(supabase, assignmentId);
     if (closed || clearedReopens) after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+    const trigger = viaCard ? cardTriggerText('results', classroom, { assignment }) : null;
+    if (trigger) return NextResponse.json({ assignment, closed, clearedReopens, line: 'card', share: { text: trigger, url: null } });
     const text = resultsLineText(assignment, classroom);
     const result = await botSendOrShare(supabase, {
       groupId: classroom.line_group_id,
@@ -177,6 +183,9 @@ export async function POST(request: NextRequest) {
       after(() => signalClassroom(classroom.id, { type: 'published', assignmentId }));
       return NextResponse.json({ assignment: published, line, share });
     }
+    // From the teacher LIFF pages: the post is released now and the work card
+    // comes from the bot when the trigger reaches the group (nothing pushed).
+    const trigger = viaCard && classroom.line_group_id ? cardTriggerText('work', classroom, { assignment: published }) : null;
     // Move the held-back timeline post to now; announceScheduledPosts then
     // sends its LINE message once and refreshes open student pages.
     const { data: posts } = await supabase
@@ -191,7 +200,12 @@ export async function POST(request: NextRequest) {
           supabase
             .from('classroom_posts')
             .update({
-              metadata: { ...post.metadata, publishAt: nowIso, ...(durationMs ? { dueDate: published.due_date } : {}) },
+              metadata: {
+                ...post.metadata,
+                publishAt: nowIso,
+                ...(durationMs ? { dueDate: published.due_date } : {}),
+                ...(trigger ? { pendingLine: false, announcedAt: nowIso, lineStatus: 'card', lineTrigger: trigger } : {}),
+              },
               created_at: nowIso,
               // The post spells out the deadline, which moved with the early start.
               ...(durationMs ? { body: assignmentPostBody(published) } : {}),
@@ -199,6 +213,10 @@ export async function POST(request: NextRequest) {
             .eq('id', post.id)
         )
     );
+    if (trigger) {
+      after(() => signalClassroom(classroom.id, { type: 'published', assignmentId }));
+      return NextResponse.json({ assignment: published, line: 'card', share: { text: trigger, url: null } });
+    }
     // Announced before replying, so the teacher learns at once when LINE could not take it.
     await announceScheduledPosts(supabase, new Date(), classroom.id);
     after(() => signalClassroom(classroom.id, { type: 'published', assignmentId }));
