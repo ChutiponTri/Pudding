@@ -36,12 +36,29 @@ export const studentLabel = (s: Partial<User> & { name?: string }) => {
 };
 
 /** The "ทวงงาน" LINE text: the work, its deadline (or late window), and who has not handed in. */
+/**
+ * ทวงงาน's words (the teacher's templates, homework and quiz): the opening with
+ * how many are left, then the numbered names, then the closing line.
+ */
+export function remindHeader(missing: number, isExam: boolean): string {
+  return isExam
+    ? `🚨 ปุกาศ ๆ ~ จากน้องพุดดิ้ง 🍮💗\n\nตอนนี้ยังเหลือเพื่อน ๆ ที่ยัง “ไม่ได้สอบ” อีก ${missing} คน น้าาา\n\n📋 รายชื่อคนเก่งที่พุดดิ้งรอ\n`
+    : `🚨ปุกาศ ๆ ~ จาก น้องพุดดิ้ง 🍮💗\n\n📝 ตอนนี้เหลืออีก ${missing} คน เท่านั้นเอง`;
+}
+
+export function remindFooter(isExam: boolean): string {
+  return isExam ? '✅ อย่าลืมมา “สอบ” กันน้าาา\nพุดดิ้งรออยู่นะค้าบบบ 🥺✨' : 'พุดดิ้งรอรับงานอยู่น้า ส่งมาให้พุดดิ้งชื่นใจหน่อยเร็ววว 🥺✨';
+}
+
 export function reminderLineText(assignment: Assignment, classroom: ReminderClassroom, names: string[]): string {
   const due = dueText(assignment);
+  // Same words as the group message (remindHeader / remindFooter), with the work it is about after the first line.
+  const isExam = !!assignment.is_exam;
+  const [opening, ...rest] = remindHeader(names.length, isExam).split('\n');
+  const work = `📘 ${classroomTitle(classroom)}\n📋 ${assignment.title}${due ? `\n${due}` : ''}`;
   const text =
-    `🔔 ${assignment.is_exam ? 'แจ้งเตือนทำข้อสอบ' : 'แจ้งเตือนส่งงาน'}\n📘 ${classroomTitle(classroom)}\n📋 ${assignment.title}` +
-    (due ? `\n${due}` : '') +
-    `\n\nยังไม่ส่ง (${names.length} คน):\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}`;
+    `${opening}\n${work}\n${rest.join('\n')}\n${names.map((name, index) => `${index + 1}. ${name}`).join('\n')}` +
+    `\n\n${remindFooter(isExam)}`;
   return withLiffLink(text, assignment.is_exam ? 'กดเพื่อทำข้อสอบ' : 'กดเพื่อส่งงาน', {
     classroomId: classroom.id,
     inviteCode: classroom.invite_code,

@@ -6,7 +6,7 @@ import type { FlexMessage } from '@/lib/line/flexKit';
 import { webUrl, type ServiceClient } from '@/lib/line/groupLink';
 import { isGroupMember } from '@/lib/line/messaging';
 import { buildWorkCard, workMeta, type CardClassroom } from '@/lib/line/workCard';
-import { missingStudents, studentLabel } from '@/lib/server/workReminder';
+import { missingStudents, remindFooter, remindHeader, studentLabel } from '@/lib/server/workReminder';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { classroomTitle, subjectName } from '@/lib/utils/classroomLabel';
 import { SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
@@ -218,8 +218,8 @@ export async function remindReply(
   // Mention only students LINE says are in this group (a mention of anyone else would not work).
   const inGroup = await mapLimit(listed, 10, (s) => (s.line_uid ? isGroupMember(groupId, s.line_uid).catch(() => false) : Promise.resolve(false)));
 
-  const what = assignment.is_exam ? 'มาทำข้อสอบ' : 'มาส่งงานให้ครู';
-  const header = `☝️ พุดดิ้งขออนุญาตทวง นักเรียนต่อไปนี้${what}หน่อยน้า ทวง ทวง (ยังไม่ส่ง ${missing.length} คน)`;
+  const header = remindHeader(missing.length, !!assignment.is_exam);
+  const footer = remindFooter(!!assignment.is_exam);
   const chunks: Array<{ lines: string[]; substitution: Record<string, unknown>; length: number }> = [];
   listed.forEach((student, index) => {
     const mention = inGroup[index] && student.line_uid;
@@ -227,7 +227,7 @@ export async function remindReply(
     let chunk = chunks[chunks.length - 1];
     // A new message every PER_MESSAGE names, or before the text would get too long: never cut inside a line.
     if (!chunk || chunk.lines.length >= PER_MESSAGE || chunk.length + line.length + 1 > MAX_TEXT) {
-      chunk = { lines: [], substitution: {}, length: header.length + 20 };
+      chunk = { lines: [], substitution: {}, length: header.length + footer.length + 40 };
       chunks.push(chunk);
     }
     chunk.lines.push(line);
@@ -237,7 +237,8 @@ export async function remindReply(
   const rest = missing.length - listed.length;
   const lists = chunks.slice(0, MAX_LIST_MESSAGES).map((chunk, index, all) => {
     const head = index === 0 ? header : `(ต่อ ${index + 1}/${all.length})`;
-    const tail = index === all.length - 1 && rest > 0 ? `\n…และอีก ${rest} คน ดูรายชื่อครบได้ในเมนูครู` : '';
+    const last = index === all.length - 1;
+    const tail = (last && rest > 0 ? `\n…และอีก ${rest} คน ดูรายชื่อครบได้ในเมนูครู` : '') + (last ? `\n\n${footer}` : '');
     return {
       type: 'textV2',
       text: `${head}\n${chunk.lines.join('\n')}${tail}`,
