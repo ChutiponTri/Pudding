@@ -1,9 +1,11 @@
 -- ==========================================
--- LINE assignment reminder scheduler
+-- Pudding scheduler (path kept as /api/line/reminders)
 -- ==========================================
--- /api/line/reminders only sends reminders when something calls it. This job
--- calls it every five minutes from Supabase (pg_cron + pg_net, both available
--- on the free plan), so it does not depend on Vercel Cron limits.
+-- Every five minutes: sends the LINE card of scheduled work when its publish
+-- time comes, and deletes drafts never published. (Automatic deadline
+-- reminders were removed; teachers use "ทวงงาน".) Runs from Supabase
+-- (pg_cron + pg_net, both available on the free plan), so it does not depend
+-- on Vercel Cron limits.
 --
 -- Before running, replace:
 --   (the URL below is the production site; change it if the domain changes)

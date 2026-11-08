@@ -174,10 +174,6 @@
       "due_date_label": "Due Date",
       "description_label": "Instructions & Guidelines",
       "description_placeholder": "Provide clear student instructions here...",
-      "line_reminder_label": "Schedule LINE Reminder Bot",
-      "reminder_preset_1d": "1 Day Before Due Date (18:00)",
-      "reminder_preset_6h": "6 Hours Before Due Date",
-      "reminder_preset_custom": "Custom Cron",
       "cron_hint": "Cron format e.g. 0 18 * * * (daily at 6 PM)"
     },
     "questions_builder": {

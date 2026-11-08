@@ -6,7 +6,7 @@ import { lineMessagesForText } from '@/lib/line/messaging';
 import { attendanceMessages, inviteMessages, remindPicture, resultsMessages, workMessages, type LineMessage } from '@/lib/line/teacherCards';
 import { parseShareToken } from '@/lib/server/inviteCodes';
 import { resolveTeacherInvite } from '@/lib/server/dataActions';
-import { clearUnsentReminder, missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
+import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import type { Assignment } from '@/types/database';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 
@@ -120,12 +120,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const target = parseShareToken(body.t);
   if (!target) return NextResponse.json({ error: 'ลิงก์แชร์ไม่ถูกต้อง' }, { status: 404 });
-  if (target.kind === 'remind') {
-    // A deadline reminder the cron could not send stops waiting on the teacher's pages.
-    await clearUnsentReminder(createServiceSupabaseClient(), target.id);
-    return NextResponse.json({ success: true });
-  }
-  // A re-announcement has no timeline post to update.
+  // Only a timeline post remembers that it waits to be sent.
   if (target.kind !== 'post') return NextResponse.json({ success: true });
   const postId = target.id;
   const supabase = createServiceSupabaseClient();

@@ -37,7 +37,6 @@ import {
   HelpCircle,
   Layers,
   Check,
-  ChevronDown,
   Paperclip,
   Link2,
   UploadCloud,
@@ -274,9 +273,6 @@ function NewAssignmentContent() {
   const [publishAt, setPublishAt] = useState(() => daysFromNowAt(1, 8, 0));
   const [trackReleaseToggle, releaseIndicator] = useSlidingIndicator(releaseMode);
   const reminderCron = 'relative_due_date';
-  // One reminder per assignment (each one is a LINE message from the quota).
-  // undefined = not chosen yet (the teacher must pick), null = no reminder.
-  const [reminderOffset, setReminderOffset] = useState<number | null | undefined>(undefined);
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setClock(Date.now()), 60000);
@@ -534,10 +530,6 @@ function NewAssignmentContent() {
             setReleaseMode(!Number.isNaN(publishMs) && publishMs > Date.now() ? 'schedule' : 'now');
             if (assignment.publish_at && (editId || publishMs > Date.now())) setPublishAt(assignment.publish_at);
           }
-          // Work saved with several reminders keeps the earliest one.
-          setReminderOffset(assignment.reminder_offsets_minutes?.length
-            ? Math.max(...assignment.reminder_offsets_minutes)
-            : assignment.reminder_offset_minutes || null);
           setAttachments(assignmentAttachments(assignment).map((a) => ({ ...a, uid: newQuestionUid() })));
           // Older homework kept a separate note about its reference; it now lives in the instructions.
           const legacyNote = assignment.sample_work_description?.trim();
@@ -614,7 +606,6 @@ function NewAssignmentContent() {
             setTitle(source.title);
             setGroupName(source.group_name || '');
             setReleaseMode('now');
-            setReminderOffset(null);
           }
         }
       } catch (err) {
@@ -673,26 +664,6 @@ function NewAssignmentContent() {
       return [...prev, classId];
     });
   };
-
-  const allReminderOptions = [
-    { value: 24 * 60, label: language === 'th' ? '24 ชั่วโมงก่อนกำหนดส่ง' : '24 hours before due' },
-    { value: 12 * 60, label: language === 'th' ? '12 ชั่วโมงก่อนกำหนดส่ง' : '12 hours before due' },
-    { value: 6 * 60, label: language === 'th' ? '6 ชั่วโมงก่อนกำหนดส่ง' : '6 hours before due' },
-    { value: 3 * 60, label: language === 'th' ? '3 ชั่วโมงก่อนกำหนดส่ง' : '3 hours before due' },
-    { value: 60, label: language === 'th' ? '1 ชั่วโมงก่อนกำหนดส่ง' : '1 hour before due' },
-    { value: 30, label: language === 'th' ? '30 นาทีก่อนกำหนดส่ง' : '30 minutes before due' },
-  ];
-  // A reminder can't be earlier than "now": only offer offsets that fit before the due date.
-  // `clock` ticks each minute so the list shrinks while the form stays open.
-  // Reminders also can't fire before a scheduled assignment is published.
-  const reminderFloor = schedulePublish && publishAt ? Math.max(clock, new Date(publishAt).getTime()) : clock;
-  const minutesUntilDue = dueDate ? Math.floor((new Date(dueDate).getTime() - reminderFloor) / 60000) : Infinity;
-  const reminderOptions = allReminderOptions.filter((option) => option.value < minutesUntilDue);
-  // The chosen reminder, if it still fits before the deadline (saved as a one-item list).
-  const effectiveReminderOffsets =
-    typeof reminderOffset === 'number' && reminderOptions.some((option) => option.value === reminderOffset) ? [reminderOffset] : [];
-  // Dropdown value: a fitting time, "none", or '' (please select; also when the chosen time no longer fits).
-  const reminderSelectValue = effectiveReminderOffsets.length ? String(effectiveReminderOffsets[0]) : reminderOffset === null ? 'none' : '';
 
   /**
    * Quizzes take no photos or files. When a quiz needs one, offer homework mode
@@ -822,16 +793,11 @@ function NewAssignmentContent() {
         return;
       }
     }
-    if (!isExam && selectedClassroomsLineReady && reminderOptions.length > 0 && !reminderSelectValue) {
-      alert(language === 'th' ? 'กรุณาเลือกเวลาแจ้งเตือนทาง LINE (หรือเลือก "ไม่ต้องแจ้งเตือน")' : 'Please choose a LINE reminder (or "No reminder")');
-      document.getElementById('line-reminder')?.focus();
-      return;
-    }
     const fileInQuiz = isExam ? questions.findIndex((q) => q.type === 'file_upload') : -1;
     if (fileInQuiz !== -1) {
-      // Switching changes deadline, reminder and reference-file settings, so the teacher checks them before saving.
+      // Switching changes deadline and reference-file settings, so the teacher checks them before saving.
       if (offerHomeworkMode(language === 'th' ? `ข้อที่ ${fileInQuiz + 1} เป็นคำถามแบบแนบไฟล์ / ถ่ายรูป` : `Question ${fileInQuiz + 1} asks for a file / photo`)) {
-        alert(language === 'th' ? 'เปลี่ยนเป็นโหมดการบ้านแล้ว ตรวจสอบกำหนดส่งและการแจ้งเตือน แล้วกดบันทึกอีกครั้ง' : 'Switched to homework mode. Check the deadline and reminder, then save again.');
+        alert(language === 'th' ? 'เปลี่ยนเป็นโหมดการบ้านแล้ว ตรวจสอบกำหนดส่ง แล้วกดบันทึกอีกครั้ง' : 'Switched to homework mode. Check the deadline, then save again.');
       } else {
         alert(language === 'th' ? `กรุณาเปลี่ยนประเภทคำถามข้อที่ ${fileInQuiz + 1} ก่อนบันทึกแบบทดสอบ` : `Change the type of question ${fileInQuiz + 1} before saving the quiz.`);
       }
@@ -971,8 +937,8 @@ function NewAssignmentContent() {
           ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
           ...(!editIsPublished && schedulePublish ? { publish_at: new Date(publishAt).toISOString() } : {}),
           ...(!editIsPublished && saveAsDraft ? { publish_at: DRAFT_PUBLISH_AT } : {}),
-          reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
-          reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
+          reminder_offset_minutes: 0,
+          reminder_offsets_minutes: [],
           total_points: totalPoints,
           attachments: savedAttachments,
           ...(retake ? { retake_student_ids: retake.ids } : {}),
@@ -1040,8 +1006,8 @@ function NewAssignmentContent() {
             ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
             publish_at: saveAsDraft ? DRAFT_PUBLISH_AT : schedulePublish ? new Date(publishAt).toISOString() : undefined,
             reminder_cron: reminderCron,
-            reminder_offset_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets[0] || 0 : 0,
-            reminder_offsets_minutes: !isExam && selectedClassroomsLineReady ? effectiveReminderOffsets : [],
+            reminder_offset_minutes: 0,
+            reminder_offsets_minutes: [],
             total_points: totalPoints,
             status_override: 'auto',
             attachments: savedAttachments,
@@ -1075,11 +1041,7 @@ function NewAssignmentContent() {
             : tr(`สร้างข้อสอบซ่อมแล้ว · เปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก\nห้องนี้ยังไม่เชื่อม LINE จึงต้องส่งลิงก์เอง`, `Retake created · only the ${retake.ids.length} chosen students can open it\nThis class has no LINE group, so share the link yourself`)
           : isExam
           ? (language === 'th' ? 'สร้างแบบทดสอบสำเร็จ!' : 'Quiz created successfully!')
-          : !selectedClassroomsLineReady || !effectiveReminderOffsets.length
-          ? (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')
-          : language === 'th'
-          ? 'สร้างการบ้านสำเร็จ! ตั้งเวลาเตือนส่งงานผ่าน LINE เรียบร้อย'
-          : 'Assignment created successfully! LINE reminder scheduled.') +
+          : (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')) +
         (lineUnsent
           ? tr(
               `\n\n⚠️ ส่งประกาศเข้ากลุ่ม LINE ไม่ได้${lineUnsent > 1 ? ` (${lineUnsent} ห้อง)` : ''} — กด “แชร์ไป LINE” ในหน้าต่างถัดไปเพื่อส่งจาก LINE ของคุณครูเอง`,
@@ -1822,60 +1784,6 @@ function NewAssignmentContent() {
             </div>
             )}
 
-            {/* LINE Reminder Setting (homework only — quizzes close at the deadline) */}
-            {!isExam && (
-            <div className="space-y-2 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-emerald-500" />
-                <span><MobileText short={language === 'th' ? 'แจ้งเตือนทาง LINE' : 'LINE reminder'} full={t('assignment_creator.fields.line_reminder_label')} /></span>
-              </label>
-              {selectedClassroomsLineReady && reminderOptions.length === 0 ? (
-                <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300">
-                  <MobileText
-                    short={language === 'th' ? 'ใกล้กำหนดส่งเกินไป ตั้งเตือนไม่ได้' : 'Too close to the due date for a reminder.'}
-                    full={language === 'th'
-                      ? 'เหลือเวลาก่อนกำหนดส่งไม่ถึง 30 นาที จึงไม่สามารถตั้งเวลาเตือนได้'
-                      : 'Less than 30 minutes until the due date, so no reminder can be scheduled.'}
-                  />
-                </div>
-              ) : selectedClassroomsLineReady ? (
-                <div className="relative max-w-md">
-                  <select
-                    id="line-reminder"
-                    value={reminderSelectValue}
-                    onChange={(e) => setReminderOffset(e.target.value === 'none' ? null : e.target.value ? Number(e.target.value) : undefined)}
-                    aria-label={t('assignment_creator.fields.line_reminder_label')}
-                    className={`w-full appearance-none pl-3.5 pr-9 py-2.5 rounded-xl border text-xs font-bold cursor-pointer focus:outline-hidden focus:border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 ${
-                      reminderSelectValue ? 'text-slate-900 dark:text-white' : 'text-slate-400'
-                    }`}
-                  >
-                    <option value="" disabled>{language === 'th' ? '— กรุณาเลือก —' : '— Please select —'}</option>
-                    {reminderOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                    <option value="none">{language === 'th' ? 'ไม่ต้องแจ้งเตือน' : 'No reminder'}</option>
-                  </select>
-                  <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-600" />
-                </div>
-              ) : (
-                <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-2">
-                  <p><MobileText short={tr('ห้องนี้ยังไม่ได้เชื่อม LINE Bot', 'This class has no LINE bot')} full={tr('ห้องเรียนที่เลือกยังไม่ได้เชื่อมต่อ LINE Bot จึงยังตั้งเวลาทวงงานไม่ได้', 'The selected classroom is not connected to the LINE bot, so reminders cannot be scheduled yet')} /></p>
-                  <button type="button" onClick={() => router.push('/dashboard')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold">
-                    {tr('ไปเชื่อมต่อ LINE Bot', 'Connect the LINE bot')} <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-              <p className="hidden sm:block text-[11px] text-slate-500 dark:text-slate-400">
-                {selectedClassroomsLineReady
-                  ? effectiveReminderOffsets.length
-                    ? tr('ส่งรายชื่อคนที่ยังไม่ส่งเข้า LINE group 1 ครั้ง', 'Posts who has not handed in to the LINE group once')
-                    : reminderSelectValue === 'none'
-                    ? tr('ไม่ส่งแจ้งเตือนเข้า LINE group สำหรับงานนี้', 'No LINE group reminder for this assignment')
-                    : tr('แสดงเฉพาะเวลาที่ยังทันก่อนกำหนดส่ง — ถ้าเปลี่ยนกำหนดส่งแล้วเวลาที่เลือกไม่ทัน ต้องเลือกใหม่', 'Only times before the due date are shown — if a new due date makes the chosen time too late, pick again')
-                  : tr('เมื่อเชื่อมต่อ LINE Bot แล้ว จึงจะสามารถตั้งเวลาและส่งสรุปเข้า LINE group ได้', 'Connect the LINE bot to schedule reminders to the LINE group')}
-              </p>
-            </div>
-            )}
           </div>
         </div>
 

@@ -174,10 +174,6 @@
       "due_date_label": "กำหนดส่ง",
       "description_label": "คำชี้แจง",
       "description_placeholder": "อธิบายสิ่งที่นักเรียนต้องทำ...",
-      "line_reminder_label": "แจ้งเตือนผ่าน LINE",
-      "reminder_preset_1d": "แจ้งเตือน 1 วันก่อนกำหนดส่ง (18:00 น.)",
-      "reminder_preset_6h": "แจ้งเตือน 6 ชั่วโมงก่อนกำหนดส่ง",
-      "reminder_preset_custom": "กำหนดรูปแบบ Cron เอง",
       "cron_hint": "รูปแบบ Cron เช่น 0 18 * * * (ส่งเตือนทุกวันเวลา 18:00 น.)"
     },
     "questions_builder": {

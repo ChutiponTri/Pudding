@@ -52,36 +52,3 @@ export function reminderLineText(assignment: Assignment, classroom: ReminderClas
     assignmentId: assignment.id,
   });
 }
-
-/**
- * A deadline reminder the cron could not send (assignments.line_reminder_unsent):
- * 'quota' / 'failed' / 'no_group' wait for the teacher to share it by hand
- * (UnsentReminderNotice on teacher pages); 'retry' = a LINE error the next
- * runs try again (up to REMINDER_TRIES), not shown to the teacher yet.
- */
-export type UnsentReminder = { reason: 'quota' | 'failed' | 'no_group' | 'retry'; at: string; attempts?: number };
-export const REMINDER_TRIES = 3;
-
-/** Whether this database has assignments.line_reminder_unsent (supabase_reminder_unsent_update.sql). */
-const missingColumn = (error: { message?: string } | null) => !!error?.message?.includes('line_reminder_unsent');
-
-/**
- * Saves how a deadline reminder went. `done` moves line_last_reminded_at on
- * (this reminder is not sent again); without the column only that is saved.
- */
-export async function saveReminderOutcome(supabase: Supabase, assignmentId: string, unsent: UnsentReminder | null, done: boolean, now: Date) {
-  const patch: Record<string, unknown> = { line_reminder_unsent: unsent, ...(done ? { line_last_reminded_at: now.toISOString() } : {}) };
-  const { error } = await supabase.from('assignments').update(patch).eq('id', assignmentId);
-  if (!missingColumn(error)) {
-    if (error) console.error(`Saving reminder outcome failed for ${assignmentId}:`, error);
-    return;
-  }
-  // Older database: no record of the failure; a finished reminder still must not repeat every run.
-  if (done) await supabase.from('assignments').update({ line_last_reminded_at: now.toISOString() }).eq('id', assignmentId);
-}
-
-/** The teacher shared (or dismissed) a reminder the bot could not send. */
-export async function clearUnsentReminder(supabase: Supabase, assignmentId: string) {
-  const { error } = await supabase.from('assignments').update({ line_reminder_unsent: null }).eq('id', assignmentId).not('line_reminder_unsent', 'is', null);
-  if (error && !missingColumn(error)) console.error(`Clearing unsent reminder failed for ${assignmentId}:`, error);
-}

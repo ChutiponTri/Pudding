@@ -88,8 +88,8 @@ export const TeacherLoggedOutView: React.FC = () => {
     {
       icon: <MessageCircle className="w-5 h-5" />,
       tint: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300",
-      title: th ? "แจ้งเตือนเข้ากลุ่ม LINE" : "LINE group reminders",
-      body: th ? "ประกาศ งานใหม่ และเตือนกำหนดส่ง ส่งเข้ากลุ่ม LINE ของห้องเรียนอัตโนมัติ" : "Announcements, new work and due-date reminders go to the class group.",
+      title: th ? "การ์ดเข้ากลุ่ม LINE" : "Cards in the LINE group",
+      body: th ? "งานใหม่ ประกาศผล และทวงงาน ส่งเข้ากลุ่ม LINE ของห้องเรียนเป็นการ์ดสวย ๆ พร้อมแท็กคนที่ยังไม่ส่ง" : "New work, results and reminders reach the class group as cards, tagging who has not handed in.",
     },
   ];
 
