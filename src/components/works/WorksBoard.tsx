@@ -1,5 +1,6 @@
 'use client';
 
+import { announceNote } from '@/lib/utils/announceNote';
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -357,6 +358,8 @@ export function WorksBoard() {
     let sent = 0;
     let manual = 0;
     let closed = 0;
+    let zeroed = 0;
+    let ungraded = 0;
     let firstError = '';
     for (const c of list) {
       try {
@@ -365,6 +368,8 @@ export function WorksBoard() {
           closed++;
           patch(c.assignment.id, { status_override: result.assignment?.status_override || 'force_closed' });
         }
+        zeroed += result.zeroed;
+        ungraded += result.ungraded;
         if (result.line === 'sent') sent++;
         else manual++;
       } catch (err) {
@@ -377,6 +382,7 @@ export function WorksBoard() {
           closed && tr(`ปิดรับแล้ว${list.length > 1 ? ` ${closed} ห้อง` : ''}`, `Closed${list.length > 1 ? ` ${closed} classes` : ''}`),
           sent && tr(`ประกาศคะแนนแล้ว${list.length > 1 ? ` ${sent} ห้อง` : ''}`, `Scores announced${list.length > 1 ? ` in ${sent} classes` : ''}`),
           manual && tr(`ส่งการ์ดประกาศผลเข้ากลุ่มจากหน้าต่างที่เปิดขึ้น${manual > 1 ? ` (${manual} ห้อง)` : ''}`, `Send the results card from the window that opened${manual > 1 ? ` (${manual} classes)` : ''}`),
+          announceNote({ zeroed, ungraded }, language === 'th'),
         ].filter(Boolean).join(' • ')
     );
   };

@@ -9,8 +9,9 @@ import { botSendOrShare } from '@/lib/server/lineSend';
 import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { questionsMissingKey } from '@/lib/utils/autoGrade';
-import type { Assignment, Classroom, Question, SubmissionOverrideStatus } from '@/types/database';
-import { hydratedStudents } from '@/lib/server/dataActions';
+import type { Assignment, Classroom, Question, SubmissionOverrideStatus, TeacherRole } from '@/types/database';
+import { hydratedStudents, recordNoSubmissionZeros } from '@/lib/server/dataActions';
+import { rosterFor } from '@/lib/utils/retake';
 import { isRetake } from '@/lib/utils/retake';
 
 export const runtime = 'nodejs';
@@ -95,7 +96,8 @@ export async function POST(request: NextRequest) {
   }
 
   // "ประกาศคะแนน": results only show once the work is closed (and no per-student
-  // permission still runs), so close it first, then tell the class group.
+  // permission still runs), so close it first, record 0 for everyone who
+  // handed in nothing (so every student has a score to see), then tell the class group.
   if (announceResults) {
     const win = getAssignmentWindow(previous);
     if (win.isDraft || win.isScheduled) return NextResponse.json({ error: 'งานนี้ยังไม่เผยแพร่' }, { status: 409 });
@@ -122,7 +124,40 @@ export async function POST(request: NextRequest) {
     }
     // A running "ให้แก้ไขงาน" / "ให้ส่งงาน" would keep every result hidden.
     const clearedReopens = await clearReopens(supabase, assignmentId);
-    if (closed || clearedReopens) after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+    // Nothing handed in: an official 0, or the student would have no result to see.
+    // Researchers may not give real scores, so their announcement records none.
+    const role: TeacherRole =
+      classroom.teacher_id === userId
+        ? 'primary'
+        : (classroom.teachers || []).find((t: { teacher_id?: string; role?: TeacherRole }) => t.teacher_id === userId)?.role || 'assistant';
+    let zeroed = 0;
+    if (role !== 'researcher') {
+      try {
+        const [roster, { data: me }] = await Promise.all([
+          hydratedStudents(supabase, classroom as Classroom),
+          supabase.from('users').select('first_name, last_name').eq('id', userId).maybeSingle<{ first_name?: string | null; last_name?: string | null }>(),
+        ]);
+        const rows = await recordNoSubmissionZeros(
+          supabase,
+          assignment,
+          rosterFor(assignment, roster),
+          { id: userId, name: [me?.first_name, me?.last_name].filter(Boolean).join(' ') || 'คุณครู', role },
+          { onlyUnscored: true }
+        );
+        zeroed = rows.length;
+      } catch (zeroError) {
+        console.error('Recording 0 for missing work before announcing failed:', zeroError);
+        return NextResponse.json({ error: 'บันทึก 0 คะแนนให้นักเรียนที่ไม่ส่งงานไม่สำเร็จ จึงยังไม่ได้ประกาศคะแนน' }, { status: 500 });
+      }
+    }
+    // Handed in but not fully graded yet: those scores stay hidden until grading is done.
+    const { count: ungraded } = await supabase
+      .from('submissions')
+      .select('id', { count: 'exact', head: true })
+      .eq('assignment_id', assignmentId)
+      .in('status', ['submitted', 'late'])
+      .is('total_score', null);
+    if (closed || clearedReopens || zeroed) after(() => signalClassroom(classroom.id, { type: 'timeline' }));
     const text = resultsLineText(assignment, classroom);
     const result = await botSendOrShare(supabase, {
       groupId: classroom.line_group_id,
@@ -131,7 +166,7 @@ export async function POST(request: NextRequest) {
       teacherId: userId,
       classroomId: classroom.id,
     });
-    return NextResponse.json({ assignment, closed, clearedReopens, ...result });
+    return NextResponse.json({ assignment, closed, clearedReopens, zeroed, ungraded: ungraded || 0, ...result });
   }
 
   if (publishNow) {

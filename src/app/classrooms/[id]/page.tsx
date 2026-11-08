@@ -1,5 +1,6 @@
 'use client';
 
+import { announceNote } from '@/lib/utils/announceNote';
 import { usePageTitle } from '@/lib/hooks/usePageTitle';
 import { isRetake, rosterSizeFor } from '@/lib/utils/retake';
 import { useUser } from '@clerk/nextjs';
@@ -988,7 +989,7 @@ export default function ClassroomWorkspacePage() {
       const result = await dataService.announceResults(assignment.id, assignment.title);
       if (result.assignment) setAssignments((prev) => prev.map((a) => (a.id === assignment.id ? { ...a, ...result.assignment } : a)));
       const sent = botNotice(result.line, tr('ประกาศคะแนนในกลุ่ม LINE แล้ว', 'Scores announced in the LINE group'));
-      setNotice(result.closed ? `${tr('ปิดรับงานแล้ว', 'Closed')} • ${sent}` : sent);
+      setNotice([result.closed && tr('ปิดรับงานแล้ว', 'Closed'), sent, announceNote(result, language === 'th')].filter(Boolean).join(' • '));
     } catch (err) {
       setNotice(err instanceof Error && err.message ? err.message : tr('ประกาศคะแนนไม่สำเร็จ', 'Could not announce the scores'));
     }

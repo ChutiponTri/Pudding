@@ -694,7 +694,10 @@ export const dataService = {
    * once it is closed), then the bot tells the class group; whenever it cannot,
    * the share popup opens instead (same fallback as remindAssignment).
    */
-  async announceResults(assignmentId: string, title?: string): Promise<{ line: LinePostStatus; closed: boolean; assignment: Assignment | null }> {
+  async announceResults(
+    assignmentId: string,
+    title?: string
+  ): Promise<{ line: LinePostStatus; closed: boolean; assignment: Assignment | null; zeroed: number; ungraded: number }> {
     // The popup opens at the tap; the server's answer fills it in.
     const popup = pendingLineShare(title ? `ประกาศคะแนน: ${title}` : undefined);
     try {
@@ -706,7 +709,13 @@ export const dataService = {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
       popup.settle(json.line, json.share, title ? `ประกาศคะแนน: ${title}` : undefined, json.message);
-      return { line: (json.line as LinePostStatus) || 'sent', closed: !!json.closed, assignment: (json.assignment as Assignment) || null };
+      return {
+        line: (json.line as LinePostStatus) || 'sent',
+        closed: !!json.closed,
+        assignment: (json.assignment as Assignment) || null,
+        zeroed: Number(json.zeroed) || 0,
+        ungraded: Number(json.ungraded) || 0,
+      };
     } catch (error) {
       popup.cancel();
       throw error;

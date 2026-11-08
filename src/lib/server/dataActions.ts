@@ -392,6 +392,130 @@ export async function hydratedStudents(supabase: Supabase, classroom: Classroom)
   return hydrated?.students || classroom.students || [];
 }
 
+/**
+ * Records "handed in nothing" for roster students: a 'pending' row (not handed
+ * in) with an official 0 on every question, so the student sees a result.
+ * Students who handed in are left alone; rows already recorded as not handed
+ * in are set to 0 again, or with `onlyUnscored` (announcing scores) only
+ * those without a score yet, keeping any text a student typed. Callers check
+ * canRecordNoSubmission first. Roster entries may carry users.id or the LINE
+ * id. Returns the rows recorded.
+ */
+export async function recordNoSubmissionZeros(
+  supabase: Supabase,
+  assignment: Assignment,
+  roster: User[],
+  teacher: { id: string; name: string; role: TeacherRole },
+  options: { onlyUnscored?: boolean } = {}
+): Promise<Array<{ id: string }>> {
+  const assignmentId = assignment.id;
+  const keys = [...new Set(roster.flatMap((s) => [s.id, s.line_uid]).filter((k): k is string => !!k))];
+  if (!keys.length) return [];
+  const users: Array<{ id: string; line_uid?: string | null }> = [];
+  for (const part of chunk(keys)) {
+    const quoted = part.map(pgValue).join(',');
+    const { data, error } = await supabase.from('users').select('id, line_uid').or(`id.in.(${quoted}),line_uid.in.(${quoted})`);
+    if (error) throw toDatabaseError(error, 'users');
+    users.push(...((data || []) as typeof users));
+  }
+  // submissions.student_id is users.id: find each roster entry's account.
+  const userIds = [
+    ...new Set(
+      roster.flatMap((s) => {
+        const user = users.find((u) => u.id === s.id) || users.find((u) => !!s.line_uid && (u.id === s.line_uid || u.line_uid === s.line_uid));
+        return user ? [user.id] : [];
+      })
+    ),
+  ];
+  if (!userIds.length) return [];
+
+  // Handed-in work is never touched; rows already recorded as not handed in are
+  // re-zeroed (onlyUnscored: only those without a score yet).
+  const handedIn = new Set<string>();
+  const recorded: Array<{ id: string; student_id: string }> = [];
+  const alreadyScored = new Set<string>();
+  for (const part of chunk(userIds)) {
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('id, student_id, status, total_score')
+      .eq('assignment_id', assignmentId)
+      .in('student_id', part);
+    if (error) throw toDatabaseError(error, 'submissions');
+    for (const row of (data || []) as Array<{ id: string; student_id: string; status: Submission['status']; total_score: number | null }>) {
+      if (isHandedIn(row)) handedIn.add(row.student_id);
+      else if (options.onlyUnscored && row.total_score != null) alreadyScored.add(row.student_id);
+      else recorded.push(row);
+    }
+  }
+  const recordedIds = new Set(recorded.map((r) => r.student_id));
+  const missing = userIds.filter((id) => !handedIn.has(id) && !recordedIds.has(id) && !alreadyScored.has(id));
+
+  const { data: questions, error: qError } = await supabase.from('questions').select('id, max_score').eq('assignment_id', assignmentId);
+  if (qError) throw toDatabaseError(qError, 'questions');
+  const qs = (questions || []) as Pick<Question, 'id' | 'max_score'>[];
+  const maxTotal = qs.reduce((sum, q) => sum + Number(q.max_score || 0), 0) || assignment.total_points || 20;
+  const now = new Date().toISOString();
+  let createdRows: Array<{ id: string }> = [];
+  if (missing.length) {
+    const rows = missing.map((studentId) => ({
+      id: `sub-${assignmentId}-${studentId}`,
+      assignment_id: assignmentId,
+      student_id: studentId,
+      status: 'pending',
+      started_at: now,
+      submitted_at: null,
+      time_spent_seconds: 0,
+      tab_switch_count: 0,
+      total_time_away_seconds: 0,
+      is_flagged_suspicious: false,
+      total_score: 0,
+      max_total_score: maxTotal,
+    }));
+    // A student handing in at this very moment wins; their row is not replaced.
+    const { data: created, error: insertError } = await supabase
+      .from('submissions')
+      .upsert(rows, { onConflict: 'assignment_id,student_id', ignoreDuplicates: true })
+      .select('*');
+    if (insertError) throw toDatabaseError(insertError, 'submissions');
+    createdRows = (created || []) as Array<{ id: string }>;
+  }
+  if (recorded.length) {
+    for (const part of chunk(recorded.map((r) => r.id))) {
+      // Still guarded by status: work handed in meanwhile keeps its own score.
+      const { error } = await supabase
+        .from('submissions')
+        .update({ total_score: 0, max_total_score: maxTotal })
+        .in('id', part)
+        .eq('status', 'pending');
+      if (error) throw toDatabaseError(error, 'submissions');
+    }
+  }
+
+  const zeroed = [...createdRows.map((r) => r.id), ...recorded.map((r) => r.id)];
+  if (qs.length && zeroed.length) {
+    const record: TeacherGradeRecord = { teacher_id: teacher.id, teacher_name: teacher.name, teacher_role: teacher.role, score: 0, comment: '', graded_at: now };
+    const answers = zeroed.flatMap((subId) =>
+      qs.map((q) => ({
+        id: `ans-${subId}-${q.id}`,
+        submission_id: subId,
+        question_id: q.id,
+        // Kept when announcing: a quiz opened but never handed in keeps what was typed.
+        ...(options.onlyUnscored ? {} : { text_answer: '' }),
+        teacher_score: 0,
+        teacher_comment: '',
+        co_grades: { [teacher.id]: record },
+        graded_at: now,
+        updated_at: now,
+      }))
+    );
+    for (const part of chunk(answers, 500)) {
+      const { error } = await supabase.from('submission_answers').upsert(part, { onConflict: 'submission_id,question_id' });
+      if (error) throw toDatabaseError(error, 'submission_answers');
+    }
+  }
+  return [...createdRows, ...recorded];
+}
+
 /** The roster a retake's student list is matched against: hydrated for a retake, the snapshot otherwise. */
 async function studentsFor(supabase: Supabase, assignment: Pick<Assignment, 'retake_student_ids'>, classroom: Classroom): Promise<User[]> {
   return isRetake(assignment) ? hydratedStudents(supabase, classroom) : classroom.students || [];
@@ -2446,104 +2570,9 @@ export const dataActions = {
     const wanted = new Set((Array.isArray(rosterIds) ? rosterIds : []).filter((id): id is string => typeof id === 'string' && !!id));
     // A retake records only its own students.
     const roster = rosterFor(assignment, await studentsFor(supabase, assignment, classroom)).filter((s) => s && wanted.has(s.id));
-    const keys = [...new Set(roster.flatMap((s) => [s.id, s.line_uid]).filter((k): k is string => !!k))];
-    if (!keys.length) return [];
-    const users: Array<{ id: string; line_uid?: string | null }> = [];
-    for (const part of chunk(keys)) {
-      const quoted = part.map(pgValue).join(',');
-      const { data, error } = await supabase.from('users').select('id, line_uid').or(`id.in.(${quoted}),line_uid.in.(${quoted})`);
-      if (error) throw toDatabaseError(error, 'users');
-      users.push(...((data || []) as typeof users));
-    }
-    // submissions.student_id is users.id: find each roster entry's account.
-    const userIds = [
-      ...new Set(
-        roster.flatMap((s) => {
-          const user = users.find((u) => u.id === s.id) || users.find((u) => !!s.line_uid && (u.id === s.line_uid || u.line_uid === s.line_uid));
-          return user ? [user.id] : [];
-        })
-      ),
-    ];
-    if (!userIds.length) return [];
-
-    // Handed-in work is never touched; rows already recorded as not handed in are re-zeroed.
-    const handedIn = new Set<string>();
-    const recorded: Array<{ id: string; student_id: string }> = [];
-    for (const part of chunk(userIds)) {
-      const { data, error } = await supabase.from('submissions').select('id, student_id, status').eq('assignment_id', assignmentId).in('student_id', part);
-      if (error) throw toDatabaseError(error, 'submissions');
-      for (const row of (data || []) as Array<{ id: string; student_id: string; status: Submission['status'] }>) {
-        if (isHandedIn(row)) handedIn.add(row.student_id);
-        else recorded.push(row);
-      }
-    }
-    const recordedIds = new Set(recorded.map((r) => r.student_id));
-    const missing = userIds.filter((id) => !handedIn.has(id) && !recordedIds.has(id));
-
-    const { data: questions, error: qError } = await supabase.from('questions').select('id, max_score').eq('assignment_id', assignmentId);
-    if (qError) throw toDatabaseError(qError, 'questions');
-    const qs = (questions || []) as Pick<Question, 'id' | 'max_score'>[];
-    const maxTotal = qs.reduce((sum, q) => sum + Number(q.max_score || 0), 0) || assignment.total_points || 20;
-    const now = new Date().toISOString();
-    let createdRows: Array<{ id: string }> = [];
-    if (missing.length) {
-      const rows = missing.map((studentId) => ({
-        id: `sub-${assignmentId}-${studentId}`,
-        assignment_id: assignmentId,
-        student_id: studentId,
-        status: 'pending',
-        started_at: now,
-        submitted_at: null,
-        time_spent_seconds: 0,
-        tab_switch_count: 0,
-        total_time_away_seconds: 0,
-        is_flagged_suspicious: false,
-        total_score: 0,
-        max_total_score: maxTotal,
-      }));
-      // A student handing in at this very moment wins; their row is not replaced.
-      const { data: created, error: insertError } = await supabase
-        .from('submissions')
-        .upsert(rows, { onConflict: 'assignment_id,student_id', ignoreDuplicates: true })
-        .select('*');
-      if (insertError) throw toDatabaseError(insertError, 'submissions');
-      createdRows = (created || []) as Array<{ id: string }>;
-    }
-    if (recorded.length) {
-      for (const part of chunk(recorded.map((r) => r.id))) {
-        // Still guarded by status: work handed in meanwhile keeps its own score.
-        const { error } = await supabase
-          .from('submissions')
-          .update({ total_score: 0, max_total_score: maxTotal })
-          .in('id', part)
-          .eq('status', 'pending');
-        if (error) throw toDatabaseError(error, 'submissions');
-      }
-    }
-
-    const zeroed = [...createdRows.map((r) => r.id), ...recorded.map((r) => r.id)];
-    if (qs.length && zeroed.length) {
-      const record: TeacherGradeRecord = { teacher_id: me.userId, teacher_name: teacherName, teacher_role: teacherRole, score: 0, comment: '', graded_at: now };
-      const answers = zeroed.flatMap((subId) =>
-        qs.map((q) => ({
-          id: `ans-${subId}-${q.id}`,
-          submission_id: subId,
-          question_id: q.id,
-          text_answer: '',
-          teacher_score: 0,
-          teacher_comment: '',
-          co_grades: { [me.userId]: record },
-          graded_at: now,
-          updated_at: now,
-        }))
-      );
-      for (const part of chunk(answers, 500)) {
-        const { error } = await supabase.from('submission_answers').upsert(part, { onConflict: 'submission_id,question_id' });
-        if (error) throw toDatabaseError(error, 'submission_answers');
-      }
-    }
-    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
-    return [...createdRows, ...recorded];
+    const rows = await recordNoSubmissionZeros(supabase, assignment, roster, { id: me.userId, name: teacherName, role: teacherRole });
+    if (rows.length) after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
+    return rows;
   },
 
   /**

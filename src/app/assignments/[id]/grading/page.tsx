@@ -1,5 +1,6 @@
 'use client';
 
+import { announceNote } from '@/lib/utils/announceNote';
 import { usePageTitle } from '@/lib/hooks/usePageTitle';
 import React, { useState, useEffect, useRef, useMemo, use, Suspense } from 'react';
 import Link from 'next/link';
@@ -788,7 +789,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           : result.line === 'quota'
           ? th ? 'โควตา LINE เดือนนี้ไม่พอ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น' : 'Not enough LINE quota — share it from the window that opened'
           : th ? 'บอทส่งไม่ได้ตอนนี้ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น' : 'The bot could not send it — share it from the window that opened';
-      showToast(result.closed ? `${th ? 'ปิดรับงานแล้ว' : 'Closed'} • ${line}` : line);
+      showToast([result.closed && (th ? 'ปิดรับงานแล้ว' : 'Closed'), line, announceNote(result, th)].filter(Boolean).join(' • '));
     } catch (err) {
       showToast(err instanceof Error && err.message ? err.message : th ? 'ประกาศคะแนนไม่สำเร็จ' : 'Could not announce the scores');
     } finally {

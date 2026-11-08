@@ -1,5 +1,6 @@
 "use client";
 
+import { announceNote } from '@/lib/utils/announceNote';
 import { useMemo, useState } from "react";
 import { authFetch } from "@/lib/auth/lineSession";
 import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
@@ -32,7 +33,7 @@ async function override(assignmentId: string, action: "publish_now" | "announce_
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || "ทำรายการไม่สำเร็จ");
-  return json as { line?: string; share?: Share };
+  return json as { line?: string; share?: Share; zeroed?: number; ungraded?: number };
 }
 
 const kindIcon = (work: Assignment) => (work.is_exam ? "📝" : "📋");
@@ -134,7 +135,7 @@ export function PublishView() {
 
 /** "ประกาศผล": close the work (if still open) and post the results card. */
 export function ResultsView() {
-  const { postShare, go, invalidate } = useKit();
+  const { postShare, go, invalidate, toast } = useKit();
   const data = useWork();
   const { busy, run } = useBusy();
   if (data.error) return <Page title="📈 ประกาศผล"><ErrorBox text={data.error} /></Page>;
@@ -147,6 +148,8 @@ export function ResultsView() {
       const result = await override(row.work.id, "announce_results");
       // Closed (if it was open) whether or not the card goes out.
       invalidate("work");
+      const note = announceNote(result);
+      if (note) toast(note);
       if (result.share?.url) await postShare(result.share);
     });
   };
@@ -169,7 +172,7 @@ export function ResultsView() {
           ))}
         </Card>
       )}
-      <p className="text-[11px] text-slate-400">ประกาศได้เมื่อตรวจเสร็จอย่างน้อย 1 คน • งานที่ยังเปิดรับจะถูกปิดรับก่อนประกาศ (นักเรียนเห็นคะแนนเมื่อปิดรับแล้ว)</p>
+      <p className="text-[11px] text-slate-400">ประกาศได้เมื่อตรวจเสร็จอย่างน้อย 1 คน • งานที่ยังเปิดรับจะถูกปิดรับก่อนประกาศ • นักเรียนที่ไม่ส่งจะได้ 0 คะแนนอัตโนมัติ เพื่อให้ทุกคนเห็นคะแนน</p>
     </Page>
   );
 }
