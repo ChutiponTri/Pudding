@@ -790,8 +790,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       const result = await dataService.announceResults(assignment.id, assignment.title);
       if (result.assignment) setAssignment((prev) => (prev ? { ...prev, ...result.assignment } : prev));
       const line =
-        result.line === 'sent'
-          ? th ? 'ประกาศคะแนนในกลุ่ม LINE แล้ว' : 'Scores announced in the LINE group'
+        result.line === 'card'
+          ? th ? 'กด “ส่งเข้ากลุ่ม” ในหน้าต่างที่เปิดขึ้น แล้วเลือกกลุ่ม LINE ของห้อง' : 'Tap “Send to group” in the window that opened and pick the class LINE group'
           : result.line === 'quota'
           ? th ? 'โควตา LINE เดือนนี้ไม่พอ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น' : 'Not enough LINE quota — share it from the window that opened'
           : th ? 'บอทส่งไม่ได้ตอนนี้ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น' : 'The bot could not send it — share it from the window that opened';

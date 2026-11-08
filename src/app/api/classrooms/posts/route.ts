@@ -98,13 +98,7 @@ async function resendPost(request: NextRequest, id: string) {
     teacherId: actor!.kind === 'teacher' ? actor!.userId : '',
     classroomId: classroom.id,
   });
-  if (result.line === 'sent' && metadata.lineStatus) {
-    // It reached the group now: the timeline stops offering to share it by hand.
-    const rest = { ...metadata };
-    delete rest.lineStatus;
-    await supabase.from('classroom_posts').update({ metadata: rest }).eq('id', id);
-    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
-  }
+  // The teacher's LINE sends it (the share page clears the post's "not sent" state once shared).
   return NextResponse.json(result);
 }
 

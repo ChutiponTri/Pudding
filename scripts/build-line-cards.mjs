@@ -31,8 +31,16 @@ const CARDS = [
   { name: 'menu', box: { left: 26, top: 20, width: 1106, height: 282 }, radius: 18 },
   { name: 'open-class', box: { left: 30, top: 26, width: 1125, height: 876 }, radius: 18 },
   { name: 'join-class', box: { left: 27, top: 23, width: 1129, height: 724 }, radius: 18 },
-  { name: 'first-conn', box: { left: 56, top: 57, width: 1119, height: 615 }, radius: 95 },
+  { name: 'first-conn', box: { left: 0, top: 0, width: 1691, height: 930 }, radius: 0 },
+  { name: 'remind', box: { left: 0, top: 0, width: 1086, height: 418 }, radius: 0 },
+  { name: 'score-announce', box: { left: 0, top: 0, width: 1086, height: 380 }, radius: 0 },
 ];
+
+/**
+ * Whole pictures sent as LINE image messages (not card headers): a full-size
+ * JPEG and the small preview LINE shows in the chat.
+ */
+const PICTURES = [{ name: 'remind-teacher-send', width: 1280, preview: 480 }];
 
 function topRoundedMask(width, height, r) {
   return Buffer.from(
@@ -65,4 +73,17 @@ for (const card of CARDS) {
     .jpeg({ quality: 84, mozjpeg: true })
     .toFile(file);
   console.log(`${file}  ${info.width}x${info.height}  ${(info.size / 1024).toFixed(0)} KB  aspectRatio "${info.width}:${info.height}"`);
+}
+
+for (const picture of PICTURES) {
+  const source = path.join(SRC, `${picture.name}.png`);
+  if (!(await access(source).then(() => true, () => false))) {
+    console.log(`${picture.name}: no picture in ${SRC}, keeping the built files`);
+    continue;
+  }
+  for (const [suffix, width] of [['', picture.width], ['-preview', picture.preview]]) {
+    const file = path.join(OUT, `${picture.name}${suffix}.jpg`);
+    const info = await sharp(source).resize({ width }).jpeg({ quality: 84, mozjpeg: true }).toFile(file);
+    console.log(`${file}  ${info.width}x${info.height}  ${(info.size / 1024).toFixed(0)} KB`);
+  }
 }

@@ -1,7 +1,6 @@
 import 'server-only';
 import { after } from 'next/server';
 import { buildLiffUrl } from '@/lib/line/liffLink';
-import { cardTriggerText } from '@/lib/line/cardTrigger';
 import { workCard, type FlexMessage } from '@/lib/line/flex';
 import type { ServiceClient } from '@/lib/line/groupLink';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
@@ -11,33 +10,17 @@ import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import type { Assignment } from '@/types/database';
 
 /**
- * New work reaches the class LINE group as a card without using the monthly
- * message quota: the teacher shares a short "trigger" (the work's title and
- * its LIFF link) to the group from their own LINE (/liff/share), the bot sees
- * that message and answers it with the work card. Replies are free. The link
- * alone still opens the work, so the trigger is useful even where the bot is
- * not in the group.
+ * The work card: a new homework or quiz, sent into the class group by the
+ * teacher's LINE (teacher LIFF pages, or /liff/share from the website), or
+ * pushed by the cron for scheduled work.
  */
 
-type CardClassroom = LabelledClassroom & { id: string; invite_code?: string | null; teacher_id?: string | null };
+export type CardClassroom = LabelledClassroom & { id: string; invite_code?: string | null; teacher_id?: string | null };
 
 const when = (ms: number) => formatDateTime(new Date(ms).toISOString(), 'th', SCHOOL_TIME_ZONE);
 
-/** New work's trigger (see cardTrigger): the teacher posts it, the bot answers with the work card. */
-export function workTriggerText(
-  assignment: Pick<Assignment, 'id' | 'title' | 'is_exam'>,
-  classroom: { id: string; invite_code?: string | null }
-): string | null {
-  return cardTriggerText('work', classroom, { assignment });
-}
-
-/** The work card for an assignment (null without a LIFF id, since its buttons open the LIFF app). */
-export async function buildWorkCard(supabase: ServiceClient, assignment: Assignment, classroom: CardClassroom): Promise<FlexMessage | null> {
-  const openUrl = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, assignmentId: assignment.id });
-  if (!openUrl) return null;
-  const statusUrl = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'work' });
-
-  // Its place among the classroom's homework (or quizzes), and the teacher's name, side by side.
+/** "#งานที่ 3" and "ภาษาไทย · ครูต้น": the work's place among the classroom's homework (or quizzes), and who teaches it. */
+export async function workMeta(supabase: ServiceClient, assignment: Assignment, classroom: CardClassroom) {
   const [count, teacher] = await Promise.all([
     assignment.created_at
       ? supabase
@@ -52,9 +35,21 @@ export async function buildWorkCard(supabase: ServiceClient, assignment: Assignm
       : Promise.resolve({ data: null }),
   ]);
   const subject = subjectName(classroom);
-  const teacherName = (teacher.data as { first_name?: string | null } | null)?.first_name;
-  const byline = [subject, teacherName ? `ครู${teacherName}` : ''].filter(Boolean).join(' · ');
+  const teacherName = (teacher.data as { first_name?: string | null } | null)?.first_name || null;
+  return {
+    number: count.count || undefined,
+    subject,
+    teacherName,
+    byline: [subject, teacherName ? `ครู${teacherName}` : ''].filter(Boolean).join(' · '),
+  };
+}
 
+/** The work card for an assignment (null without a LIFF id, since its buttons open the LIFF app). */
+export async function buildWorkCard(supabase: ServiceClient, assignment: Assignment, classroom: CardClassroom): Promise<FlexMessage | null> {
+  const openUrl = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, assignmentId: assignment.id });
+  if (!openUrl) return null;
+  const statusUrl = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'work' });
+  const { number, byline } = await workMeta(supabase, assignment, classroom);
   const win = getAssignmentWindow(assignment);
   const rows: Array<{ label: string; value: string }> = [];
   const retake = Array.isArray(assignment.retake_student_ids);
@@ -71,7 +66,7 @@ export async function buildWorkCard(supabase: ServiceClient, assignment: Assignm
   return workCard({
     isExam: !!assignment.is_exam,
     retake,
-    number: count.count || undefined,
+    number,
     byline,
     title: assignment.title,
     rows,

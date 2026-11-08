@@ -18,7 +18,7 @@ import {
 } from '@/lib/line/groupLink';
 import { teacherAccessMessage } from '@/lib/server/teacherProfileGuard';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
-import { cardTriggerText } from '@/lib/line/cardTrigger';
+import { openClassMessages } from '@/lib/line/teacherCards';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -99,9 +99,9 @@ export async function POST(request: NextRequest) {
     if (ref !== focusRef) return NextResponse.json({ error: 'เชื่อมได้เฉพาะกลุ่มที่เปิดหน้านี้มา' }, { status: 400 });
     const result = await linkGroupByRef(supabase, teacher, classroom, ref);
     if (!result.ok) return NextResponse.json({ error: linkErrorMessage(result.reason), reason: result.reason }, { status: 409 });
-    // The page posts this into the group it was opened from; the bot answers with the "เปิดห้องเรียน" card.
-    const trigger = cardTriggerText('open', classroom, { classroomTitle: classroomTitle(classroom) });
-    return NextResponse.json({ ...(await overview(supabase, teacher, focusRef)), trigger });
+    // The page sends the "เปิดห้องเรียน" card into the group it was opened from.
+    const [data, messages] = await Promise.all([overview(supabase, teacher, focusRef), openClassMessages(supabase, classroom)]);
+    return NextResponse.json({ ...data, messages });
   } else if (action === 'disconnect') {
     if (!canUnlinkLine(classroom, teacher.id)) return NextResponse.json({ error: 'การยกเลิกการเชื่อมทำได้โดยคุณครูเจ้าของห้อง' }, { status: 403 });
     const groupId = classroom.line_group_id;

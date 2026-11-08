@@ -962,7 +962,9 @@ export default function ClassroomWorkspacePage() {
   // The class reached the topic before the scheduled time: release it now.
   /** What the bot did, for the notice; when it could not, the share popup is already open. */
   const botNotice = (line: string, sent: string) =>
-    line === 'sent'
+    line === 'card'
+      ? tr('กด “ส่งเข้ากลุ่ม” ในหน้าต่างที่เปิดขึ้น แล้วเลือกกลุ่ม LINE ของห้อง', 'Tap “Send to group” in the window that opened and pick the class LINE group')
+      : line === 'sent'
       ? sent
       : line === 'no_group'
       ? tr('ห้องนี้ยังไม่เชื่อมกลุ่ม LINE — แชร์เองได้จากหน้าต่างที่เปิดขึ้น', 'No linked LINE group — share it from the window that opened')

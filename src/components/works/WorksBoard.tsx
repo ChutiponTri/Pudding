@@ -305,8 +305,8 @@ export function WorksBoard() {
     try {
       const line = await dataService.reannounceAssignment(c.assignment.id, c.assignment.title);
       showToast(
-        line === 'sent'
-          ? tr('ส่งเข้า LINE แล้ว', 'Posted to LINE')
+        line === 'card'
+          ? tr('กด “ส่งเข้ากลุ่ม” ในหน้าต่างที่เปิดขึ้น แล้วเลือกกลุ่ม LINE ของห้อง', 'Tap “Send to group” in the window that opened and pick the class LINE group')
           : line === 'no_group'
           ? tr('ห้องนี้ยังไม่เชื่อมกลุ่ม LINE — แชร์เองได้จากหน้าต่างที่เปิดขึ้น', 'No linked LINE group — share it from the window that opened')
           : tr('บอทส่งเข้า LINE ไม่ได้ — แชร์เองได้จากหน้าต่างที่เปิดขึ้น', 'The bot could not post it — share it yourself from the window that opened')
@@ -346,7 +346,7 @@ export function WorksBoard() {
       firstError ||
         [
           sent && tr(`ทวงงานแล้ว ${list.length > 1 ? `${sent} ห้อง` : ''}`.trim(), `Reminded${list.length > 1 ? ` ${sent} classes` : ''}`),
-          manual && tr(`บอทส่งไม่ได้ ${manual} ห้อง — แชร์เองจากหน้าต่าง`, `${manual} need sharing yourself`),
+          manual && tr(`ส่งภาพทวงงานเข้ากลุ่มจากหน้าต่างที่เปิดขึ้น${manual > 1 ? ` (${manual} ห้อง)` : ''} บอทจะตอบรายชื่อและแท็กคนที่ยังไม่ส่ง`, `Send the reminder picture from the window that opened${manual > 1 ? ` (${manual} classes)` : ''}; the bot answers with who has not handed in`),
           done && tr(`ส่งครบแล้ว ${done} ห้อง`, `${done} all handed in`),
         ].filter(Boolean).join(' • ')
     );
@@ -387,7 +387,7 @@ export function WorksBoard() {
         [
           closed && tr(`ปิดรับแล้ว${list.length > 1 ? ` ${closed} ห้อง` : ''}`, `Closed${list.length > 1 ? ` ${closed} classes` : ''}`),
           sent && tr(`ประกาศคะแนนแล้ว${list.length > 1 ? ` ${sent} ห้อง` : ''}`, `Scores announced${list.length > 1 ? ` in ${sent} classes` : ''}`),
-          manual && tr(`บอทส่งไม่ได้ ${manual} ห้อง — แชร์เองจากหน้าต่าง`, `${manual} need sharing yourself`),
+          manual && tr(`ส่งการ์ดประกาศผลเข้ากลุ่มจากหน้าต่างที่เปิดขึ้น${manual > 1 ? ` (${manual} ห้อง)` : ''}`, `Send the results card from the window that opened${manual > 1 ? ` (${manual} classes)` : ''}`),
         ].filter(Boolean).join(' • ')
     );
   };

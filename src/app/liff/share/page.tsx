@@ -4,16 +4,35 @@ import { useEffect, useState } from "react";
 import type { Liff } from "@line/liff";
 import { CheckCircle2, Copy, Loader2, Send, ShieldAlert } from "lucide-react";
 
-/** card: new work's trigger link; the bot answers it in the class group with the work card. */
-type Shared = { classroom: string; text: string; card?: boolean; messages: Parameters<Liff["shareTargetPicker"]>[0] };
+type Shared = { classroom: string; text: string; messages: Parameters<Liff["shareTargetPicker"]>[0] };
 type Status = "loading" | "ready" | "sharing" | "done" | "error";
 
+const param = (name: string) => new URLSearchParams(window.location.search).get(name) || "";
+
 /**
- * /liff/share?t=<token>: a teacher sends a timeline post to a LINE group from
- * their own LINE account when the bot could not (monthly quota used up, LINE
- * error, or no linked group). Same text and button card as the bot's message,
- * via shareTargetPicker; costs the bot's quota nothing. Opened from the
- * teacher website: inside LINE on a phone, or in the browser after LINE login.
+ * LINE's group picker with the card. On success the share is marked sent and,
+ * when the website opened this page just for it (?auto=1), the page closes.
+ */
+async function pick(sdk: Liff, data: Shared): Promise<"done" | "ready"> {
+  const result = await sdk.shareTargetPicker(data.messages, { isMultiple: true });
+  // undefined = the teacher closed the picker without sending.
+  if (result?.status !== "success") return "ready";
+  // The class timeline stops offering this post as unsent.
+  await fetch("/api/line/share", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ t: param("t") }) }).catch(() => {});
+  if (param("auto") === "1") {
+    if (sdk.isInClient()) sdk.closeWindow();
+    else if (window.opener) window.close();
+  }
+  return "done";
+}
+
+/**
+ * /liff/share?t=<token>: a teacher sends a card into a LINE group from their
+ * own LINE account (shareTargetPicker): new work, a check-in, the reminder
+ * picture, scores, an invitation, or a post. Costs the bot's quota nothing.
+ * Opened from the teacher website's "ส่งเข้ากลุ่ม" (?auto=1: the picker opens
+ * by itself, where the browser allows it without a tap, and the page closes
+ * when done): inside LINE on a phone, or in the browser after LINE login.
  */
 export default function LiffSharePage() {
   const [liff, setLiff] = useState<Liff | null>(null);
@@ -34,7 +53,7 @@ export default function LiffSharePage() {
         const sdk = (await liffModule).default;
         await sdk.init({ liffId: id });
         // The token is read after init: LIFF restores the path and query from liff.state first.
-        const token = new URLSearchParams(window.location.search).get("t") || "";
+        const token = param("t");
         if (!sdk.isLoggedIn()) {
           sdk.login({ redirectUri: window.location.href });
           return;
@@ -43,9 +62,19 @@ export default function LiffSharePage() {
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error || "โหลดข้อความไม่สำเร็จ");
         if (!alive) return;
+        const data = json as Shared;
+        const canPick = sdk.isApiAvailable("shareTargetPicker");
         setLiff(sdk);
-        setShared(json as Shared);
-        setPickerAvailable(sdk.isApiAvailable("shareTargetPicker"));
+        setShared(data);
+        setPickerAvailable(canPick);
+        // Sent here by the website's button: open the picker right away (a browser
+        // may block it without a tap; the button below is still there then).
+        if (canPick && param("auto") === "1") {
+          setStatus("sharing");
+          const next = await pick(sdk, data).catch(() => "ready" as const);
+          if (alive) setStatus(next);
+          return;
+        }
         setStatus("ready");
       } catch (err) {
         if (!alive) return;
@@ -63,16 +92,7 @@ export default function LiffSharePage() {
     setStatus("sharing");
     setError("");
     try {
-      const result = await liff.shareTargetPicker(shared.messages, { isMultiple: true });
-      // undefined = the teacher closed the picker without sending.
-      if (result?.status === "success") {
-        setStatus("done");
-        // The class timeline stops offering this post as unsent.
-        const token = new URLSearchParams(window.location.search).get("t") || "";
-        fetch("/api/line/share", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ t: token }) }).catch(() => {});
-      } else {
-        setStatus("ready");
-      }
+      setStatus(await pick(liff, shared));
     } catch (err) {
       setError(err instanceof Error ? `แชร์ไม่สำเร็จ: ${err.message}` : "แชร์ไม่สำเร็จ");
       setStatus("ready");
@@ -93,9 +113,9 @@ export default function LiffSharePage() {
       <header className="pt-2 space-y-0.5">
         <h1 className="text-base font-black text-slate-900 dark:text-white">แชร์เข้ากลุ่ม LINE</h1>
         <p className="text-[11px] text-slate-500 dark:text-slate-400">ส่งจาก LINE ของคุณครู • ไม่ใช้โควตาบอท</p>
-        {shared?.card && (
+        {shared && (
           <p className="mt-2 text-[11px] p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-200 dark:ring-violet-900 text-violet-900 dark:text-violet-200">
-            เลือกกลุ่ม LINE ของห้อง “{shared.classroom}” แล้วบอทจะตอบด้วยการ์ดงานให้ทันที
+            เลือกกลุ่ม LINE ของห้อง “{shared.classroom}”
           </p>
         )}
       </header>
@@ -122,7 +142,7 @@ export default function LiffSharePage() {
 
           {status === "done" ? (
             <div role="status" className="flex items-center gap-2 p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 ring-1 ring-emerald-200 dark:ring-emerald-900 text-sm font-bold text-emerald-800 dark:text-emerald-200">
-              <CheckCircle2 className="w-5 h-5" /> {shared.card ? "แชร์แล้ว บอทกำลังโพสต์การ์ดงานในกลุ่ม" : "แชร์เข้า LINE แล้ว"}
+              <CheckCircle2 className="w-5 h-5" /> แชร์เข้า LINE แล้ว
             </div>
           ) : null}
 

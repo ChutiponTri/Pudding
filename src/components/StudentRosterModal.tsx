@@ -59,8 +59,8 @@ export function StudentRosterModal({
     try {
       const line = await dataService.inviteStudentsInLine(classroom.id, classroom.name);
       setInviteNote(
-        line === 'sent'
-          ? { ok: true, text: tr('บอทส่งคำเชิญเข้ากลุ่ม LINE ของห้องแล้ว', 'The bot posted the invitation to the class LINE group') }
+        line === 'card'
+          ? { ok: true, text: tr('กด “ส่งเข้ากลุ่ม” ในหน้าต่างที่เปิดขึ้น แล้วเลือกกลุ่ม LINE ของห้อง', 'Tap “Send to group” in the window that opened and pick the class LINE group') }
           : { ok: false, text: tr('บอทส่งไม่ได้ จึงเปิดให้แชร์จาก LINE ของคุณครูแทน', 'The bot could not send it, so you can share it from your own LINE') }
       );
     } catch (error) {

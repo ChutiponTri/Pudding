@@ -29,21 +29,17 @@ import {
   type ServiceClient,
 } from '@/lib/line/groupLink';
 import {
-  attendanceCard,
   firstConnCard,
   inviteCard,
   menuCard,
-  openClassCard,
   reconnectedCard,
-  remindCard,
   removedCard,
-  resultsCard,
   welcomeCard,
   type FlexMessage,
 } from '@/lib/line/flex';
-import { buildWorkCard, markWorkCardPosted } from '@/lib/line/workCard';
+import { markWorkCardPosted } from '@/lib/line/workCard';
+import { attendanceMessages, guideMessages, inviteMessages, openClassMessages, remindReply, resultsMessages, workMessages } from '@/lib/line/teacherCards';
 import { parseCardTrigger, type CardTrigger } from '@/lib/line/cardTrigger';
-import { missingStudentNames } from '@/lib/server/workReminder';
 import { buildLiffUrl, withLiffLink } from '@/lib/line/liffLink';
 import { answerTeacherQuestion, faqMenuButtons, type BotReply } from '@/lib/line/teacherFaq';
 import { parseStudentCommand, studentHelpText, type StudentCommand } from '@/lib/line/studentCommands';
@@ -153,17 +149,13 @@ async function replyClassroomJoinCode(replyToken: string | undefined, classroom:
   await replyCards(replyToken, [inviteCard({ classroomTitle: classroomTitle(classroom), inviteCode: classroom.invite_code, url: joinUrl })], () => replySafely(replyToken, text));
 }
 
-/** The "เปิดห้องเรียน" card: the classroom in the student LIFF app ("พุดดิ้ง หน้าหลัก", a newly linked group). */
-async function replyOpenClass(supabase: ServiceClient, replyToken: string | undefined, classroom: LinkClassroom, note?: string) {
+/** The "เปิดห้องเรียน" card: the classroom in the student LIFF app ("พุดดิ้ง หน้าหลัก"). */
+async function replyOpenClass(supabase: ServiceClient, replyToken: string | undefined, classroom: LinkClassroom) {
   if (!replyToken) return;
-  const url = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code });
   const fallback = () => replySafely(replyToken, withLiffLink(`🏫 ${classroomTitle(classroom)}`, 'เปิดห้องเรียนใน Pudding', { classroomId: classroom.id, inviteCode: classroom.invite_code }));
-  if (!url) return fallback();
-  const { data: teacher } = classroom.teacher_id
-    ? await supabase.from('users').select('first_name').eq('id', classroom.teacher_id).maybeSingle()
-    : { data: null };
-  const card = openClassCard({ classroomTitle: classroomTitle(classroom), subject: subjectName(classroom), teacherName: teacher?.first_name, url, note });
-  await replyCards(replyToken, [card], fallback);
+  const cards = await openClassMessages(supabase, classroom);
+  if (!cards) return fallback();
+  await replyCards(replyToken, cards, fallback);
 }
 
 /** Joins closer together than this count as one burst (a teacher inviting a class). */
@@ -634,16 +626,12 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
   }
 }
 
-/** Clock time ("14:30") a check-in period's minute mark falls on. */
-const clockAt = (startsAt: string, minutes: number) =>
-  new Date(new Date(startsAt).getTime() + minutes * 60_000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: SCHOOL_TIME_ZONE });
-
 /**
- * A message in a group carrying a card trigger (see cardTrigger): the teacher
- * posted it from the teacher LIFF pages (liff.sendMessages) or shared it. The
- * bot answers with that card, a free reply. Only for the group's own
- * classroom, and only when a teacher or TA sent it, so nobody else can make
- * the bot post cards.
+ * A card request in the class group: the teacher's reminder picture (its
+ * address names the work), or a trigger link from an earlier version. The bot
+ * answers with the card, a free reply. Only for the group's own classroom,
+ * and only when a teacher or TA sent it, so nobody else can make the bot post
+ * cards.
  */
 async function handleCardTrigger(supabase: ServiceClient, groupId: string, lineUserId: string | undefined, trigger: CardTrigger, replyToken: string | undefined) {
   if (!replyToken) return;
@@ -667,52 +655,25 @@ async function handleCardTrigger(supabase: ServiceClient, groupId: string, lineU
   ]);
   if (!staff || (needsWork && !work) || (trigger.kind === 'attendance' && !session)) return;
 
-  const title = classroomTitle(classroom);
-  const liff = (options: Parameters<typeof buildLiffUrl>[0]) => buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, ...options });
-  let card: FlexMessage | null = null;
-  if (trigger.kind === 'work' && work) {
-    card = await buildWorkCard(supabase, work, classroom);
-  } else if (trigger.kind === 'attendance' && session) {
-    const url = liff({ view: 'attendance' });
-    if (url) card = attendanceCard({
-      classroomTitle: title,
-      sessionTitle: session.title,
-      onTimeUntil: clockAt(session.starts_at, session.on_time_until_minutes),
-      lateUntil: clockAt(session.starts_at, session.late_until_minutes),
-      url,
-    });
-  } else if (trigger.kind === 'invite') {
-    const url = liff({});
-    if (url) card = inviteCard({ classroomTitle: title, inviteCode: classroom.invite_code, url });
-  } else if (trigger.kind === 'open') {
-    await replyOpenClass(supabase, replyToken, classroom);
-    return;
-  } else if (trigger.kind === 'guide') {
-    await replyWelcome(supabase, groupId, classroom, [], replyToken);
-    return;
-  } else if (trigger.kind === 'remind' && work) {
-    const { data: room } = await supabase.from('classrooms').select('id, name, course_name, subject_code, invite_code, students').eq('id', classroom.id).maybeSingle();
-    const names = room ? await missingStudentNames(supabase, work, room) : [];
-    if (!names.length) {
+  let messages: Array<Record<string, unknown>> | null = null;
+  if (trigger.kind === 'remind' && work) {
+    // students: the card and the @mentions name who has not handed in.
+    const { data: room } = await supabase.from('classrooms').select('id, name, course_name, subject_code, invite_code, teacher_id, students').eq('id', classroom.id).maybeSingle();
+    messages = room ? await remindReply(supabase, work, room, groupId) : null;
+    if (!messages) {
       await replySafely(replyToken, `🎉 ${work.title}\nนักเรียนส่งครบทุกคนแล้วค่ะ`);
       return;
     }
-    const win = getAssignmentWindow(work);
-    const at = (ms: number) => formatDateTime(new Date(ms).toISOString(), 'th', SCHOOL_TIME_ZONE);
-    const due = win.isPastDeadline && win.lateUntil
-      ? `เลยกำหนดแล้ว • ส่งช้าได้ถึง ${at(win.lateUntil)}`
-      : win.deadline != null ? `${work.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${at(win.deadline)}` : undefined;
-    const url = liff({ assignmentId: work.id });
-    if (url) card = remindCard({ isExam: !!work.is_exam, title: work.title, classroomTitle: title, due, names, url });
-  } else if (trigger.kind === 'results' && work) {
-    const url = liff({ assignmentId: work.id });
-    if (url) card = resultsCard({ isExam: !!work.is_exam, title: work.title, classroomTitle: title, url });
-  }
-  if (!card) return;
+  } else if (trigger.kind === 'work' && work) messages = await workMessages(supabase, work, classroom);
+  else if (trigger.kind === 'results' && work) messages = await resultsMessages(supabase, work, classroom);
+  else if (trigger.kind === 'attendance' && session) messages = attendanceMessages(session, classroom);
+  else if (trigger.kind === 'invite') messages = inviteMessages(classroom);
+  else if (trigger.kind === 'open') messages = await openClassMessages(supabase, classroom);
+  else if (trigger.kind === 'guide') messages = await guideMessages(supabase, classroom);
+  if (!messages) return;
   try {
-    await replyLineMessages(replyToken, [card]);
+    await replyLineMessages(replyToken, messages);
   } catch (error) {
-    // The teacher's own message already carries the link.
     console.error(`LINE ${trigger.kind} card reply failed:`, error);
     return;
   }
@@ -735,7 +696,7 @@ export async function POST(request: NextRequest) {
       type?: string;
       replyToken?: string;
       source?: { type?: string; groupId?: string; userId?: string };
-      message?: { type?: string; text?: string };
+      message?: { type?: string; text?: string; contentProvider?: { type?: string; originalContentUrl?: string } };
       postback?: { data?: string };
       joined?: { members?: Array<{ type?: string; userId?: string }> };
     }>;
@@ -798,8 +759,9 @@ export async function POST(request: NextRequest) {
 
     const studentCommand = groupId && event.type === 'message' ? parseStudentCommand(normalizedText) : null;
 
-    // A teacher posted a card trigger (teacher LIFF pages, or a shared link): answer with that card.
-    const trigger = groupId && event.type === 'message' && !studentCommand ? parseCardTrigger(normalizedText) : null;
+    // The teacher's reminder picture (sent through LIFF, so LINE gives its address), or an older trigger link.
+    const sentPicture = event.message?.type === 'image' && event.message.contentProvider?.type === 'external' ? event.message.contentProvider.originalContentUrl || '' : '';
+    const trigger = groupId && event.type === 'message' && !studentCommand ? parseCardTrigger(sentPicture || normalizedText) : null;
     if (groupId && trigger) {
       await handleCardTrigger(supabase, groupId, lineUserId, trigger, event.replyToken);
       continue;

@@ -32,7 +32,7 @@ const clock = (startsAt: string, minutes: number) =>
 
 /** "เช็กชื่อ": open a check-in period (its card goes into the group), resend or close open ones. */
 export function AttendanceView() {
-  const { classroom, postCard, postKind, toast } = useKit();
+  const { classroom, postShare, postKind, toast } = useKit();
   const data = useLoad(async () => {
     const res = await authFetch(`/api/attendance?classroomId=${encodeURIComponent(classroom.id)}&allRecords=1`, { cache: "no-store" });
     const json = await res.json().catch(() => ({}));
@@ -53,9 +53,8 @@ export function AttendanceView() {
         title: title.trim() || todayTitle(),
         onTimeUntilMinutes: onTime,
         lateUntilMinutes: Math.max(onTime, late),
-        line: "card",
       });
-      if (json.line === "card" && json.share?.text) await postCard(json.share.text);
+      if (json.line === "card" && json.share?.url) await postShare(json.share);
       else toast("เปิดคาบเช็กชื่อแล้ว");
       setTitle(todayTitle());
       data.reload();

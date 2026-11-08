@@ -26,7 +26,7 @@ const QUESTION_TYPES: Array<[QuestionType, string]> = [
  * and a time limit. Published work's card goes into the group at once.
  */
 export function CreateView() {
-  const { classroom, postCard, toast, go } = useKit();
+  const { classroom, postShare, toast, go } = useKit();
   const [isExam, setIsExam] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -109,7 +109,8 @@ export function CreateView() {
         },
         rows
       );
-      if (!draft && result.line === "card" && result.share?.text) await postCard(result.share.text);
+      // The work card goes straight into the group from the teacher's LINE.
+      if (!draft && result.line === "card" && result.share?.url) await postShare(result.share);
       setCreated({ title: title.trim(), draft });
     } catch (err) {
       toast(errorText(err, "สร้างงานไม่สำเร็จ"), "error");

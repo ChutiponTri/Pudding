@@ -25,10 +25,15 @@ export type TeacherContext = {
   classroom: { id: string; name: string; title: string; subject: string; inviteCode: string | null; courseId: string | null; groupName: string | null };
 };
 
-export type CardKind = "work" | "attendance" | "invite" | "guide" | "remind";
+export type CardKind = "work" | "attendance" | "invite" | "guide" | "remind" | "open" | "results";
 
-/** How a card trigger reached the group. */
+/** What the server gives for a share: the share page URL carries its token. */
+export type Share = { text: string; url: string | null };
+
+/** How a card reached the group. */
 export type PostResult = "sent" | "shared" | "copied" | "cancelled";
+
+type LineMessages = Parameters<Liff["sendMessages"]>[0];
 
 type Kit = TeacherContext & {
   liff: Liff;
@@ -36,12 +41,15 @@ type Kit = TeacherContext & {
   groupRef: string;
   go: (view: TeacherView) => void;
   /**
-   * Posts a card trigger into the group this page was opened from
-   * (liff.sendMessages, as the teacher); the bot answers it with the card.
-   * Falls back to the share picker, then to copying.
+   * Sends messages (a finished card, or the reminder picture the bot answers)
+   * straight into the group this page was opened from, as the teacher
+   * (liff.sendMessages): no group to pick, no message quota. Falls back to
+   * the share picker, then to copying `text`.
    */
-  postCard: (trigger: string) => Promise<PostResult>;
-  /** A trigger for an existing item (resend a work card, invite, …), then posted. */
+  postMessages: (messages: LineMessages, text?: string) => Promise<PostResult>;
+  /** What an action's share (new work, check-in, results…) sends, sent the same way. */
+  postShare: (share: Share | null | undefined) => Promise<PostResult>;
+  /** The card for an existing item (work card again, invite, reminder picture…), sent the same way. */
   postKind: (kind: CardKind, item?: { assignmentId?: string; sessionId?: string }) => Promise<PostResult>;
   toast: (text: string, tone?: "ok" | "error") => void;
 };
@@ -54,7 +62,13 @@ export function useKit(): Kit {
   return kit;
 }
 
-export function KitProvider({ value, children }: { value: Omit<Kit, "postCard" | "postKind" | "toast">; children: ReactNode }) {
+async function readJson(res: Response, fallback: string) {
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || fallback);
+  return json;
+}
+
+export function KitProvider({ value, children }: { value: Omit<Kit, "postMessages" | "postShare" | "postKind" | "toast">; children: ReactNode }) {
   const [message, setMessage] = useState<{ text: string; tone: "ok" | "error" } | null>(null);
   const toast = useCallback((text: string, tone: "ok" | "error" = "ok") => setMessage({ text, tone }), []);
   useEffect(() => {
@@ -64,15 +78,14 @@ export function KitProvider({ value, children }: { value: Omit<Kit, "postCard" |
   }, [message]);
 
   const { liff, groupRef } = value;
-  const postCard = useCallback(
-    async (trigger: string): Promise<PostResult> => {
-      const messages = [{ type: "text" as const, text: trigger }];
+  const postMessages = useCallback(
+    async (messages: LineMessages, text = ""): Promise<PostResult> => {
       const type = liff.getContext()?.type;
-      // Opened from the class group: the trigger goes straight into it.
+      // Opened from the class group: straight into it.
       if (type === "group" || type === "room" || type === "utou") {
         try {
           await liff.sendMessages(messages);
-          toast("ส่งเข้ากลุ่มแล้ว บอทกำลังโพสต์การ์ด");
+          toast("ส่งเข้ากลุ่มแล้ว");
           return "sent";
         } catch (error) {
           console.warn("liff.sendMessages failed, falling back to the share picker:", error);
@@ -81,34 +94,50 @@ export function KitProvider({ value, children }: { value: Omit<Kit, "postCard" |
       if (liff.isApiAvailable("shareTargetPicker")) {
         const result = await liff.shareTargetPicker(messages, { isMultiple: false }).catch(() => null);
         if (result?.status === "success") {
-          toast("แชร์แล้ว บอทกำลังโพสต์การ์ดในกลุ่ม");
+          toast("แชร์เข้ากลุ่มแล้ว");
           return "shared";
         }
         return "cancelled";
       }
-      await navigator.clipboard?.writeText(trigger).catch(() => {});
-      toast("คัดลอกข้อความแล้ว วางในกลุ่ม LINE ของห้อง บอทจะตอบด้วยการ์ด");
+      if (text) await navigator.clipboard?.writeText(text).catch(() => {});
+      toast(text ? "คัดลอกข้อความแล้ว วางในกลุ่ม LINE ของห้องได้เลย" : "ส่งเข้ากลุ่มไม่ได้บนอุปกรณ์นี้", text ? "ok" : "error");
       return "copied";
     },
     [liff, toast]
   );
 
+  const postShare = useCallback(
+    async (share: Share | null | undefined): Promise<PostResult> => {
+      const token = share?.url ? new URL(share.url).searchParams.get("t") : null;
+      if (!token) throw new Error("ไม่มีข้อความให้ส่ง");
+      const json = await readJson(await authFetch(`/api/line/share?t=${encodeURIComponent(token)}`, { cache: "no-store" }), "โหลดการ์ดไม่สำเร็จ");
+      const result = await postMessages(json.messages as LineMessages, json.text as string);
+      // Like /liff/share: the timeline stops offering it as unsent.
+      if (result === "sent" || result === "shared") {
+        authFetch("/api/line/share", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ t: token }) }).catch(() => {});
+      }
+      return result;
+    },
+    [postMessages]
+  );
+
   const postKind = useCallback(
     async (kind: CardKind, item: { assignmentId?: string; sessionId?: string } = {}) => {
-      const res = await authFetch("/api/line/liff-teacher", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ g: groupRef, kind, ...item }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || "สร้างการ์ดไม่สำเร็จ");
-      return postCard(json.trigger as string);
+      const json = await readJson(
+        await authFetch("/api/line/liff-teacher", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ g: groupRef, kind, ...item }),
+        }),
+        "สร้างการ์ดไม่สำเร็จ"
+      );
+      return postMessages(json.messages as LineMessages);
     },
-    [groupRef, postCard]
+    [groupRef, postMessages]
   );
 
   return (
-    <KitContext.Provider value={{ ...value, postCard, postKind, toast }}>
+    <KitContext.Provider value={{ ...value, postMessages, postShare, postKind, toast }}>
       {children}
       {message && (
         <div className="fixed inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 pointer-events-none">

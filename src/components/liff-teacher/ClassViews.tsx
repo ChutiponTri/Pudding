@@ -109,10 +109,10 @@ export function GuideView() {
   return (
     <Page title="📣 แนะนำนักเรียน">
       <Card className="space-y-2 text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
-        <p className="font-bold text-violet-900 dark:text-violet-200">บอทจะโพสต์การ์ดต้อนรับในกลุ่ม พร้อมวิธีใช้:</p>
+        <p className="font-bold text-violet-900 dark:text-violet-200">ส่งการ์ดต้อนรับเข้ากลุ่ม พร้อมวิธีใช้:</p>
         <ol className="list-decimal pl-5 space-y-1">
           <li>กดปุ่มในการ์ด กรอกชื่อเพื่อขอเข้าห้องเรียน แล้วรอคุณครูอนุมัติ</li>
-          <li>เมื่อมีงาน บอทจะโพสต์การ์ดงานในกลุ่ม กด “ส่งงาน” หรือ “ทำแบบทดสอบ”</li>
+          <li>เมื่อมีงาน คุณครูจะส่งการ์ดงานในกลุ่ม กด “ส่งงาน” หรือ “ทำแบบทดสอบ”</li>
           <li>ดูงานที่ค้างและคะแนนได้จากปุ่ม “ดูงานของคุณ”</li>
         </ol>
       </Card>

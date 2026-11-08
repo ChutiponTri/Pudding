@@ -14,7 +14,7 @@ import { bubble, button, COLORS, fit, text, type BareAction, type FlexAction, ty
  */
 
 /** Bump after rebuilding the images: LINE caches them by URL. */
-const CARD_IMAGE_VERSION = '2';
+const CARD_IMAGE_VERSION = '3';
 
 export { COLORS, type FlexMessage } from '@/lib/line/flexKit';
 
@@ -27,6 +27,8 @@ const HEROES = {
   menu: '1040:265',
   'open-class': '1040:810',
   'join-class': '1040:667',
+  remind: '1040:400',
+  'score-announce': '1040:364',
 } as const;
 
 function hero(name: keyof typeof HEROES, action?: FlexAction) {
@@ -135,13 +137,7 @@ export function workCard(input: WorkCardInput): FlexMessage {
 
   const footer: unknown[] = [button(input.isExam ? '📝 ทำแบบทดสอบ' : '📤 ส่งงาน', { type: 'uri', uri: input.openUrl })];
   if (input.statusUrl) {
-    footer.push({
-      type: 'box',
-      layout: 'vertical',
-      paddingTop: '6px',
-      action: { type: 'uri', label: 'ดูสถานะการส่งงาน', uri: input.statusUrl },
-      contents: [text('ดูสถานะการส่งงาน', { size: 'sm', color: COLORS.amber, align: 'center', decoration: 'underline', weight: 'bold' })],
-    });
+    footer.push(statusLink(input.statusUrl));
   }
 
   const due = input.rows.map((item) => `${item.label}: ${item.value}`).join('\n');
@@ -479,49 +475,134 @@ export function openClassCard(input: { classroomTitle: string; subject?: string 
   };
 }
 
-/** "ทวงงาน": who has not handed the work in yet. */
-export function remindCard(input: { isExam: boolean; title: string; classroomTitle: string; due?: string; names: string[]; url: string }): FlexMessage {
-  const MAX_NAMES = 20;
-  const shown = input.names.slice(0, MAX_NAMES);
-  const list = shown.map((name, index) => `${index + 1}. ${name}`).join('\n') + (input.names.length > MAX_NAMES ? `\n…และอีก ${input.names.length - MAX_NAMES} คน` : '');
+/** Small rounded label above a card's title ("#งานที่ 1  คณิต"). */
+function badge(label: string, align: 'start' | 'center' = 'start') {
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    justifyContent: align === 'center' ? 'center' : 'flex-start',
+    contents: [
+      {
+        type: 'box',
+        layout: 'vertical',
+        flex: 0,
+        backgroundColor: COLORS.lavender,
+        cornerRadius: 'xxl',
+        paddingStart: '12px',
+        paddingEnd: '12px',
+        paddingTop: '4px',
+        paddingBottom: '4px',
+        contents: [text(label, { size: 'xs', weight: 'bold', color: COLORS.lavenderText, wrap: false })],
+      },
+    ],
+  };
+}
+
+/** The underlined "ดูสถานะการส่งงาน" link under a card's button. */
+function statusLink(uri: string, color = COLORS.amber) {
+  return {
+    type: 'box',
+    layout: 'vertical',
+    paddingTop: '6px',
+    action: { type: 'uri', label: 'ดูสถานะการส่งงาน', uri },
+    contents: [text('ดูสถานะการส่งงาน', { size: 'sm', color, align: 'center', decoration: 'underline', weight: 'bold' })],
+  };
+}
+
+const workTag = (isExam: boolean, number?: number) => `#${isExam ? 'ข้อสอบ' : 'งาน'}${number ? `ที่ ${number}` : ''}`;
+
+/**
+ * "ทวงงาน" ("ส่งให้ครูหน่อยน้า~"): the bot's answer to the teacher's
+ * reminder picture: the work, its deadline, and who has not handed it in.
+ * The @mentions follow in a separate text message (see the webhook).
+ */
+export function remindCard(input: {
+  isExam: boolean;
+  number?: number;
+  subject?: string;
+  title: string;
+  due: string;
+  /** "[เลขที่] ชื่อ" of each student who has not handed in. */
+  names: string[];
+  total: number;
+  url: string;
+  statusUrl?: string | null;
+}): FlexMessage {
+  const MAX_NAMES = 25;
+  const shown = input.names.slice(0, MAX_NAMES).join('\n') + (input.names.length > MAX_NAMES ? `\n…และอีก ${input.names.length - MAX_NAMES} คน` : '');
+  const footer: unknown[] = [button(input.isExam ? '📝 ทำข้อสอบ' : '📤 ส่งงาน', { type: 'uri', uri: input.url })];
+  if (input.statusUrl) footer.push(statusLink(input.statusUrl));
   return {
     type: 'flex',
-    altText: fit(`🔔 ${input.isExam ? 'ทำข้อสอบ' : 'ส่งงาน'}: ${input.title} ยังไม่ส่ง ${input.names.length} คน`, 400),
+    altText: fit(`🔔 ส่งให้ครูหน่อยน้า~ ${input.title}: ยังไม่ส่ง ${input.names.length} จาก ${input.total} คน`, 400),
     contents: bubble({
-      header: band(input.isExam ? '🔔 อย่าลืมทำข้อสอบ!' : '🔔 อย่าลืมส่งงาน!', input.classroomTitle, '#FFF4D6', '#8A5A00'),
+      hero: hero('remind', { type: 'uri', label: 'ส่งงาน', uri: input.url }),
       body: {
         type: 'box',
         layout: 'vertical',
         paddingAll: '20px',
         contents: [
-          text(input.title, { size: 'lg', weight: 'bold', color: COLORS.purpleDark }),
-          ...(input.due ? [text(input.due, { size: 'sm', color: COLORS.muted, margin: 'xs' })] : []),
-          text(`ยังไม่ส่ง (${input.names.length} คน)`, { size: 'sm', weight: 'bold', color: COLORS.rose, margin: 'lg' }),
-          text(list || '-', { size: 'sm', color: COLORS.purpleDark, margin: 'sm' }),
+          badge([workTag(input.isExam, input.number), input.subject].filter(Boolean).join('  ')),
+          text(input.title, { size: 'xl', weight: 'bold', color: COLORS.purpleDark, margin: 'md' }),
+          {
+            type: 'box',
+            layout: 'baseline',
+            spacing: 'sm',
+            margin: 'sm',
+            contents: [
+              text(`${input.isExam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}:`, { size: 'sm', color: COLORS.muted, flex: 0, wrap: false }),
+              text(input.due, { size: 'sm', weight: 'bold', color: '#E8780C' }),
+            ],
+          },
+          { type: 'separator', margin: 'lg', color: '#E4D9FB' },
+          {
+            type: 'box',
+            layout: 'baseline',
+            spacing: 'sm',
+            margin: 'lg',
+            contents: [
+              text('ยังไม่ส่ง:', { size: 'sm', weight: 'bold', color: COLORS.purpleDark, flex: 0, wrap: false }),
+              text(`${input.names.length} จาก ${input.total} คน`, { size: 'sm', weight: 'bold', color: '#E8780C' }),
+            ],
+          },
+          text(shown || '-', { size: 'sm', color: COLORS.purpleDark, margin: 'sm' }),
         ],
       },
-      footer: footerButton(input.isExam ? '📝 ทำข้อสอบ' : '📤 ส่งงาน', input.url, COLORS.purple),
+      footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', paddingTop: '0px', contents: footer },
     }),
   };
 }
 
-/** "ประกาศคะแนน": the work's results are out. */
-export function resultsCard(input: { isExam: boolean; title: string; classroomTitle: string; url: string }): FlexMessage {
+/** "ประกาศผลแล้วน้า~": the work is graded; each student opens their own result. */
+export function resultsCard(input: {
+  isExam: boolean;
+  number?: number;
+  byline?: string;
+  title: string;
+  url: string;
+  statusUrl?: string | null;
+}): FlexMessage {
+  const footer: unknown[] = [button('🏆 ดูผลลัพธ์ของฉัน', { type: 'uri', uri: input.url }, '#5B5BD6')];
+  if (input.statusUrl) footer.push(statusLink(input.statusUrl, COLORS.purple));
   return {
     type: 'flex',
-    altText: fit(`📣 ประกาศคะแนน: ${input.title} (${input.classroomTitle})`, 400),
+    altText: fit(`📣 ประกาศผลแล้วน้า~ ${input.title}: ตรวจเรียบร้อยแล้ว กดดูผลของตัวเองได้เลย`, 400),
     contents: bubble({
-      header: band('📣 ประกาศคะแนน', input.classroomTitle, '#E3F7EA', '#17663A'),
+      hero: hero('score-announce', { type: 'uri', label: 'ดูผลลัพธ์', uri: input.url }),
       body: {
         type: 'box',
         layout: 'vertical',
         paddingAll: '20px',
         contents: [
-          text(input.title, { size: 'lg', weight: 'bold', color: COLORS.purpleDark }),
-          text(`คุณครูประกาศคะแนน${input.isExam ? 'ข้อสอบ' : 'งาน'}นี้แล้ว ดูคะแนนและความเห็นของคุณครูได้เลย`, { size: 'sm', color: COLORS.muted, margin: 'md' }),
+          badge([workTag(input.isExam, input.number), input.byline].filter(Boolean).join('  '), 'center'),
+          text(input.title, { size: 'xxl', weight: 'bold', color: COLORS.purpleDark, align: 'center', margin: 'md' }),
+          text('✅ ตรวจเรียบร้อยแล้ว', { size: 'lg', weight: 'bold', color: COLORS.purpleDark, align: 'center', margin: 'md' }),
+          text(`สำหรับทุกคนที่ส่ง${input.isExam ? 'ข้อสอบ' : 'งาน'} 💗`, { size: 'sm', weight: 'bold', color: COLORS.purpleDark, align: 'center' }),
+          { type: 'separator', margin: 'lg', color: '#E4D9FB' },
+          text('กดปุ่มด้านล่าง มาดูผลของตัวเองกันเลย!', { size: 'sm', color: COLORS.rose, align: 'center', margin: 'lg', weight: 'bold' }),
         ],
       },
-      footer: footerButton('🏆 ดูคะแนนของฉัน', input.url, COLORS.green),
+      footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', paddingTop: '0px', contents: footer },
     }),
   };
 }

@@ -2,7 +2,10 @@ import { buildLiffUrl } from '@/lib/line/liffLink';
 
 /**
  * Card triggers: what the teacher's LINE posts into the class group so the
- * bot answers with a card (a reply, which uses no message quota). The teacher
+ * bot answers with a card (a reply, which uses no message quota). Today that
+ * is the reminder picture ("ทวงงาน", see teacherCards.remindPicture), whose
+ * address carries `card=remind`; other cards are sent finished by the
+ * teacher. Text trigger links from earlier versions are still answered. The teacher
  * LIFF pages send it with liff.sendMessages straight into the group they were
  * opened from; on the web it is shared with /liff/share. Each trigger is one
  * line saying what it is, then a student LIFF link that still works on its own
@@ -70,7 +73,10 @@ export function parseCardTrigger(text: string): CardTrigger | null {
     } catch {
       continue;
     }
-    const ours = url.hostname === 'liff.line.me' ? !liffId || url.pathname.startsWith(`/${liffId}`) : url.pathname.startsWith('/liff');
+    // A LIFF link, or our reminder picture's address (/cards/line/…, see remindPicture).
+    const ours = url.hostname === 'liff.line.me'
+      ? !liffId || url.pathname.startsWith(`/${liffId}`)
+      : url.pathname.startsWith('/liff') || url.pathname.startsWith('/cards/line/');
     if (!ours) continue;
     const raw = url.searchParams.get('card');
     // "card=1": the first version of the work trigger.

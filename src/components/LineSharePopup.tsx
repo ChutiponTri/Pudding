@@ -1,23 +1,30 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, Copy, Send, Share2, X } from 'lucide-react';
+import type { Liff } from '@line/liff';
+import { Check, Copy, Loader2, Send, Share2, X } from 'lucide-react';
 import { ModalSheet, ModalSheetBody, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LINE_UNSENT_EVENT, type LineUnsentDetail } from '@/lib/utils/lineShare';
+import { loadShareCard, openSharePage, shareCardNow, webLiff, type ShareCard } from '@/lib/line/webShare';
 
 /**
- * Teacher pages: the bot could not send a post to the class LINE group
- * (monthly quota used up, LINE error, or no linked group). Offers to send the
- * same message from the teacher's own LINE account (/liff/share), which costs
- * the bot's quota nothing, or to copy its text. Opened by reportLineUnsent;
- * several at once (work copied to many classes) wait in line.
+ * Teacher pages: something to send into the class LINE group from the
+ * teacher's own LINE (new work, a check-in, a reminder, scores, or a post the
+ * bot could not send), which uses no message quota. The card is loaded as soon
+ * as this opens, so one tap opens LINE's group picker on this page; until the
+ * browser has signed in to LINE once, the tap opens the share page instead.
+ * Opened by reportLineUnsent; several at once (work copied to many classes)
+ * wait in line.
  */
 export function LineSharePopup() {
   const { language } = useLanguage();
   const tr = (th: string, en: string) => (language === 'th' ? th : en);
   const [queue, setQueue] = useState<LineUnsentDetail[]>([]);
   const [copied, setCopied] = useState(false);
+  const [liff, setLiff] = useState<Liff | null>(null);
+  const [card, setCard] = useState<{ url: string | null; card: ShareCard } | null>(null);
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     const onUnsent = (event: Event) => {
@@ -30,16 +37,45 @@ export function LineSharePopup() {
   }, []);
 
   const current = queue[0];
+  const currentUrl = current?.url || null;
+  // Ready before the tap: LINE's picker must open straight from it.
+  useEffect(() => {
+    if (!currentUrl) return;
+    let alive = true;
+    webLiff().then((sdk) => alive && setLiff(sdk));
+    loadShareCard(currentUrl)
+      .then((loaded) => alive && loaded && setCard({ url: currentUrl, card: loaded }))
+      .catch((error) => console.warn('Loading the LINE card failed:', error));
+    return () => {
+      alive = false;
+    };
+  }, [currentUrl]);
+
   if (!current) return null;
   const next = () => {
     setCopied(false);
     setQueue((prev) => prev.slice(1));
   };
 
-  const card = current.reason === 'card';
+  const toGroup = current.reason === 'card';
+  const ready = liff && card?.url === current.url ? card.card : null;
+  const send = async () => {
+    if (!current.url) return;
+    if (!ready || !liff) return openSharePage(current.url);
+    setSharing(true);
+    try {
+      if ((await shareCardNow(liff, current.url, ready)) === 'shared') next();
+    } catch (error) {
+      console.warn('LINE picker could not open here, using the share page:', error);
+      openSharePage(current.url);
+    } finally {
+      setSharing(false);
+    }
+  };
+
   const heading =
-    card
-      ? tr('โพสต์การ์ดงานเข้ากลุ่ม LINE', 'Post the work card to LINE')
+    toGroup
+      ? tr('ส่งเข้ากลุ่ม LINE', 'Send to the LINE group')
       : current.reason === 'quota'
       ? tr('โควตา LINE เดือนนี้ไม่พอ', 'Not enough LINE quota')
       : current.reason === 'limit'
@@ -52,7 +88,7 @@ export function LineSharePopup() {
     <ModalSheet onClose={next} size="sm:max-w-md">
       <ModalSheetHeader>
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${card ? 'bg-violet-500/10 text-violet-600' : 'bg-amber-500/10 text-amber-600'}`}>
+          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${toGroup ? 'bg-violet-500/10 text-violet-600' : 'bg-amber-500/10 text-amber-600'}`}>
             <Share2 className="w-4 h-4" />
           </div>
           <div className="min-w-0">
@@ -69,11 +105,11 @@ export function LineSharePopup() {
       </ModalSheetHeader>
       <ModalSheetBody className="space-y-2.5">
         {current.note && <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-relaxed">{current.note}</p>}
-        {card && (
+        {toGroup && (
           <p className="text-[11px] text-violet-800 dark:text-violet-200 leading-relaxed p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-200 dark:ring-violet-900">
             {tr(
-              'แตะ “โพสต์เข้ากลุ่ม” แล้วเลือกกลุ่ม LINE ของห้องนี้ บอทจะตอบด้วยการ์ดงานให้ทันที — ไม่ใช้โควตาข้อความ',
-              'Tap “Post to group” and pick this class’s LINE group: the bot answers with the work card right away, using no message quota'
+              'แตะ “ส่งเข้ากลุ่ม” แล้วเลือกกลุ่ม LINE ของห้องนี้ การ์ดจะถูกส่งจาก LINE ของคุณครู — ไม่ใช้โควตาข้อความ',
+              'Tap “Send to group” and pick this class’s LINE group: the card goes from your own LINE, using no message quota'
             )}
           </p>
         )}
@@ -82,16 +118,16 @@ export function LineSharePopup() {
         </div>
         <div className="flex gap-2">
           {current.url && (
-            <a
-              href={current.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={tr('ส่งข้อความเดียวกัน (มีปุ่ม) จากบัญชี LINE ของคุณครู — ไม่ใช้โควตาบอท', 'Send the same message (with its button) from your own LINE — uses none of the bot’s quota')}
-              className="flex-1 h-10 rounded-xl bg-[#06c755] hover:bg-[#05b34c] text-white font-black text-sm inline-flex items-center justify-center gap-1.5 shadow-sm"
+            <button
+              type="button"
+              onClick={send}
+              disabled={sharing}
+              title={tr('ส่งการ์ดจากบัญชี LINE ของคุณครู — ไม่ใช้โควตาบอท', 'Send the card from your own LINE — uses none of the bot’s quota')}
+              className="flex-1 h-10 rounded-xl bg-[#06c755] hover:bg-[#05b34c] text-white font-black text-sm inline-flex items-center justify-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-60"
             >
-              <Send className="w-4 h-4" />
-              {card ? tr('โพสต์เข้ากลุ่ม', 'Post to group') : tr('แชร์ไป LINE', 'Share to LINE')}
-            </a>
+              {sharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {toGroup ? tr('ส่งเข้ากลุ่ม', 'Send to group') : tr('แชร์ไป LINE', 'Share to LINE')}
+            </button>
           )}
           <button
             type="button"

@@ -7,7 +7,7 @@ import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
 import { formatDateTime } from "@/lib/utils/datetime";
 import { isGraded, isHandedIn } from "@/lib/utils/gradingStatus";
 import type { Assignment, Submission } from "@/types/database";
-import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useLoad } from "./kit";
+import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useLoad, type Share } from "./kit";
 
 type WorkRow = {
   work: Assignment;
@@ -36,16 +36,16 @@ export function useWork() {
   }, [classroom.id]);
 }
 
-/** POST /api/assignments/override from LIFF: nothing is pushed, the reply carries the card trigger. */
+/** POST /api/assignments/override: nothing is pushed; the answer's share is the card the page sends into the group. */
 async function override(assignmentId: string, action: "publish_now" | "announce_results") {
   const res = await authFetch("/api/assignments/override", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ assignmentId, action, line: "card" }),
+    body: JSON.stringify({ assignmentId, action }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || "ทำรายการไม่สำเร็จ");
-  return json as { line?: string; share?: { text: string } };
+  return json as { line?: string; share?: Share };
 }
 
 const kindIcon = (work: Assignment) => (work.is_exam ? "📝" : "📋");
@@ -84,7 +84,7 @@ function useBusy() {
 
 /** "เผยแพร่": release drafts / scheduled work now, or post an open work's card again. */
 export function PublishView() {
-  const { postCard, postKind, go } = useKit();
+  const { postShare, postKind, go } = useKit();
   const data = useWork();
   const { busy, run } = useBusy();
   if (data.error) return <Page title="📢 เผยแพร่"><ErrorBox text={data.error} /></Page>;
@@ -94,7 +94,7 @@ export function PublishView() {
   const publish = (row: WorkRow) =>
     run(row.work.id, async () => {
       const result = await override(row.work.id, "publish_now");
-      if (result.share?.text) await postCard(result.share.text);
+      if (result.share?.url) await postShare(result.share);
       data.reload();
     });
   return (
@@ -126,7 +126,7 @@ export function PublishView() {
 
 /** "ประกาศผล": close the work (if still open) and post the results card. */
 export function ResultsView() {
-  const { postCard, go } = useKit();
+  const { postShare, go } = useKit();
   const data = useWork();
   const { busy, run } = useBusy();
   if (data.error) return <Page title="📈 ประกาศผล"><ErrorBox text={data.error} /></Page>;
@@ -137,7 +137,7 @@ export function ResultsView() {
     if (row.win.acceptsSubmissions && !confirm(`ประกาศคะแนน “${row.work.title}”?\nงานนี้จะถูกปิดรับก่อนประกาศ`)) return;
     void run(row.work.id, async () => {
       const result = await override(row.work.id, "announce_results");
-      if (result.share?.text) await postCard(result.share.text);
+      if (result.share?.url) await postShare(result.share);
       data.reload();
     });
   };
@@ -187,7 +187,7 @@ export function RemindView() {
           })}
         </Card>
       )}
-      <p className="text-[11px] text-slate-400">บอทจะโพสต์การ์ดรายชื่อคนที่ยังไม่ส่งในกลุ่ม (ไม่ใช้โควตาข้อความ)</p>
+      <p className="text-[11px] text-slate-400">ส่งภาพ “พุดดิ้งมาทวงแล้ว!” เข้ากลุ่ม แล้วบอทจะตอบด้วยการ์ดรายชื่อและแท็กคนที่ยังไม่ส่ง (ไม่ใช้โควตาข้อความ)</p>
     </Page>
   );
 }

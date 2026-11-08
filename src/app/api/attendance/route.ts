@@ -4,7 +4,6 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { attendanceShare, createClassroomPost } from '@/lib/server/classroomPosts';
 import { attendanceLineText } from '@/lib/line/classroomAnnouncement';
 import { botSendOrShare } from '@/lib/server/lineSend';
-import { cardTriggerText } from '@/lib/line/cardTrigger';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 import { getActor, type Actor } from '@/lib/auth/actor';
@@ -295,8 +294,6 @@ export async function POST(request: NextRequest) {
         body: `เปิดคาบเช็กชื่อ: ${sessionTitle} (ตรงเวลาใน ${onTimeUntilMinutes} นาที, สายได้ถึง ${lateUntilMinutes} นาที)`,
         activityType: 'attendance',
         metadata: { sessionId: session.id },
-        // From the teacher LIFF pages: the check-in card comes from the bot (no push).
-        cardTrigger: body.line === 'card' ? cardTriggerText('attendance', classroom, { session }) : null,
         lineText: withLiffLink(
           `⏰ เปิดคาบเช็กชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${sessionTitle}\n\n⏱️ เช็กชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)`,
           'กดเพื่อเช็กชื่อ',
