@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
-import { DRAFT_PUBLISH_AT } from "@/lib/utils/assignmentWindow";
+import { DRAFT_PUBLISH_AT, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindow";
 import { daysFromNowAt, localPartsToIso, toLocalDateValue, toLocalTimeValue } from "@/lib/utils/datetime";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import type { Question, QuestionType } from "@/types/database";
@@ -33,6 +33,9 @@ export function CreateView() {
   const defaultDue = daysFromNowAt(7, 23, 59);
   const [dueDate, setDueDate] = useState(toLocalDateValue(defaultDue));
   const [dueTime, setDueTime] = useState(toLocalTimeValue(defaultDue));
+  /** "ปิดรับส่งงาน" (optional): empty = LATE_WINDOW_HOURS after the due date. */
+  const [closeDate, setCloseDate] = useState("");
+  const [closeTime, setCloseTime] = useState("23:59");
   const [answerType, setAnswerType] = useState<"file_upload" | "short_answer">("file_upload");
   const [points, setPoints] = useState(10);
   const [minutes, setMinutes] = useState(30);
@@ -47,6 +50,9 @@ export function CreateView() {
     if (!isExam) {
       if (!localPartsToIso(dueDate, dueTime)) return "กรุณาเลือกกำหนดส่ง";
       if (new Date(localPartsToIso(dueDate, dueTime)).getTime() <= Date.now()) return "กำหนดส่งต้องอยู่ในอนาคต";
+      if (closeDate && new Date(localPartsToIso(closeDate, closeTime)).getTime() < new Date(localPartsToIso(dueDate, dueTime)).getTime()) {
+        return "เวลาปิดรับส่งงานต้องไม่ก่อนกำหนดส่ง";
+      }
       return null;
     }
     if (!(minutes > 0)) return "กรุณาใส่เวลาทำข้อสอบ";
@@ -99,6 +105,7 @@ export function CreateView() {
           is_exam: isExam,
           // A quiz runs for its minutes from publishing; the server moves it again when a draft is published.
           due_date: isExam ? new Date(Date.now() + minutes * 60_000).toISOString() : localPartsToIso(dueDate, dueTime),
+          ...(!isExam && closeDate ? { close_at: localPartsToIso(closeDate, closeTime) } : {}),
           ...(isExam ? { quiz_duration_minutes: minutes } : {}),
           ...(draft ? { publish_at: DRAFT_PUBLISH_AT } : {}),
           total_points: total,
@@ -180,6 +187,21 @@ export function CreateView() {
                 <input className={inputClass} type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
               </Field>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="ปิดรับส่งงาน (ไม่บังคับ)">
+                <input className={inputClass} type="date" value={closeDate} min={dueDate} onChange={(e) => setCloseDate(e.target.value)} />
+              </Field>
+              <Field label="เวลา">
+                <input className={inputClass} type="time" value={closeTime} disabled={!closeDate} onChange={(e) => setCloseTime(e.target.value)} />
+              </Field>
+            </div>
+            <p className="-mt-1 text-[11px] text-slate-400">
+              {closeDate ? (
+                <button type="button" className="underline cursor-pointer" onClick={() => setCloseDate("")}>ใช้ค่าเริ่มต้น ({LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง)</button>
+              ) : (
+                `ไม่ระบุ = ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง แล้วปิดรับเอง`
+              )}
+            </p>
             <div className="grid grid-cols-2 gap-2">
               <Field label="ส่งเป็น">
                 <select className={inputClass} value={answerType} onChange={(e) => setAnswerType(e.target.value as "file_upload" | "short_answer")}>

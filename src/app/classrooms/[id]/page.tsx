@@ -32,7 +32,8 @@ import { CategoryDetailSheet, categoryLook, RenameCategoryDialog } from '@/compo
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { BulkStatusDialog } from '@/components/works/StatusBits';
 import { WORK_COLORS, WORK_COLOR_CLASSES, type WorkColor } from '@/lib/hooks/useWorkPrefs';
-import { Check as CheckMark, Clock as ClockIcon, Eye as EyeIcon, Palette, PencilLine as PencilIcon, X as XIcon } from 'lucide-react';
+import { Check as CheckMark, Clock as ClockIcon, Eye as EyeIcon, Palette, PencilLine as PencilIcon, QrCode, X as XIcon } from 'lucide-react';
+import { AttendanceQrScreen } from '@/components/AttendanceQrScreen';
 import type { WorkClass } from '@/lib/utils/workGroups';
 
 /** Category card colours, kept per classroom in this browser. */
@@ -3352,6 +3353,8 @@ function AttendancePanel({
   onReannounceSession?: (id: string, title: string) => void;
   isUpdatingSession?: boolean;
 }) {
+  /** The open period whose check-in QR fills the screen. */
+  const [qrSessionId, setQrSessionId] = useState<string | null>(null);
   const { tr } = useLanguage();
   // Collapsible session state: which session is expanded
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(
@@ -3546,6 +3549,8 @@ function AttendancePanel({
         ))}
       </div>
 
+      {qrSessionId && <AttendanceQrScreen classroomId={classroom.id} sessionId={qrSessionId} onClose={() => setQrSessionId(null)} />}
+
       {/* 5. Sessions Accordion List */}
       <div className="space-y-3">
         <div className="flex items-center justify-between px-1">
@@ -3639,6 +3644,15 @@ function AttendancePanel({
                 <div className="flex items-center gap-2 w-full sm:w-auto" onClick={(e) => e.stopPropagation()}>
                   {isOpen && (
                     <>
+                      <button
+                        type="button"
+                        onClick={() => setQrSessionId(item.id)}
+                        title={tr('แสดง QR ให้นักเรียนสแกนเช็กชื่อ (เปลี่ยนทุกไม่กี่วินาที)', 'Show the check-in QR for students to scan (changes every few seconds)')}
+                        className="flex-1 sm:flex-none whitespace-nowrap px-3 py-2 sm:py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-black inline-flex items-center justify-center gap-1 cursor-pointer shadow-xs"
+                      >
+                        <QrCode className="w-3.5 h-3.5" />
+                        {tr('แสดง QR เช็กชื่อ', 'Show check-in QR')}
+                      </button>
                       <button
                         type="button"
                         onClick={() => action(item.id, 'extend')}

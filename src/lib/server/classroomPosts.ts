@@ -1,4 +1,6 @@
 import 'server-only';
+import { dueText } from '@/lib/utils/lineDates';
+import { lineDate } from '@/lib/utils/datetime';
 import { randomUUID } from 'node:crypto';
 import { after } from 'next/server';
 import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
@@ -6,7 +8,6 @@ import { postLineText, type PostActivityType, type PostLineFailure } from '@/lib
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { attendanceShareToken, joinShareToken, postShareToken, teacherInviteShareToken, reannounceShareToken, remindShareToken, resultsShareToken } from '@/lib/server/inviteCodes';
 import type { LabelledClassroom } from '@/lib/utils/classroomLabel';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { rosterFor } from '@/lib/utils/retake';
 import type { Assignment, User } from '@/types/database';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
@@ -52,17 +53,16 @@ export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอ�
 export const retakeTitle = (title: string) => title.replace(/^\s*สอบซ่อม(\s*[:：-]\s*|\s+)/, '') || title;
 
 /** Timeline card text for new work: one line, title and deadline. */
-export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'>) {
-  const due = formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE);
-  if (Array.isArray(a.retake_student_ids)) return `ข้อสอบซ่อม: ${retakeTitle(a.title)} (ปิดรับคำตอบ: ${due})`;
-  return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${a.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due})`;
+export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'> & Partial<Pick<Assignment, 'close_at' | 'status_override' | 'extended_until'>>) {
+  const due = dueText({ ...a, status_override: a.status_override || 'auto', extended_until: a.extended_until }, ' · ');
+  if (Array.isArray(a.retake_student_ids)) return `ข้อสอบซ่อม: ${retakeTitle(a.title)} (${due})`;
+  return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${due})`;
 }
 
 /** A retake's LINE message body: title, deadline, and who takes it (only they can open it). */
 function retakeLineBody(a: Pick<Assignment, 'title' | 'due_date' | 'retake_student_ids'>, students?: RosterStudent[] | null) {
-  const due = formatDateTime(a.due_date, 'th', SCHOOL_TIME_ZONE);
   const names = rosterFor(a, (students || []).filter((s) => !!s?.id)).map(studentName);
-  const head = `สอบซ่อม: ${retakeTitle(a.title)}\nกำหนดส่ง: ${due}`;
+  const head = `สอบซ่อม: ${retakeTitle(a.title)}\nปิดรับคำตอบ ${lineDate(a.due_date)}`;
   if (!names.length) return `${head}\n\nเฉพาะนักเรียนที่คุณครูแจ้ง ${(a.retake_student_ids || []).length} คน`;
   return `${head}\n\nเฉพาะนักเรียนต่อไปนี้ (${names.length} คน):\n${names.map((name, i) => `${i + 1}. ${name}`).join('\n')}`;
 }

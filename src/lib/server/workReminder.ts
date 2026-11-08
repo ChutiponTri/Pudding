@@ -1,9 +1,8 @@
 import 'server-only';
+import { dueText } from '@/lib/utils/lineDates';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { withLiffLink } from '@/lib/line/liffLink';
-import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { isRetake, rosterFor } from '@/lib/utils/retake';
 import { hydratedStudents } from '@/lib/server/dataActions';
@@ -30,18 +29,15 @@ export async function missingStudentNames(supabase: Supabase, assignment: Assign
   return (await missingStudents(supabase, assignment, classroom)).missing.map(nameOf);
 }
 
-/** "[เลขที่] ชื่อ นามสกุล" for lists in LINE. */
-export const studentLabel = (s: Partial<User> & { name?: string }) => `${s.student_id ? `[${s.student_id}] ` : ''}${nameOf(s)}`;
+/** "[123] ชื่อ นามสกุล" for lists in LINE: the last 3 digits of the student number are enough. */
+export const studentLabel = (s: Partial<User> & { name?: string }) => {
+  const number = (s.student_id || '').trim();
+  return `${number ? `[${number.slice(-3)}] ` : ''}${nameOf(s)}`;
+};
 
 /** The "ทวงงาน" LINE text: the work, its deadline (or late window), and who has not handed in. */
 export function reminderLineText(assignment: Assignment, classroom: ReminderClassroom, names: string[]): string {
-  const win = getAssignmentWindow(assignment);
-  const at = (ms: number | null | undefined) => (ms != null ? formatDateTime(new Date(ms).toISOString(), 'th', SCHOOL_TIME_ZONE) : '');
-  const due = win.isPastDeadline && win.lateUntil
-    ? `เลยกำหนดส่งแล้ว • ส่งช้าได้ถึง ${at(win.lateUntil)}`
-    : win.deadline != null
-    ? `${assignment.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${at(win.deadline)}`
-    : '';
+  const due = dueText(assignment);
   const text =
     `🔔 ${assignment.is_exam ? 'แจ้งเตือนทำข้อสอบ' : 'แจ้งเตือนส่งงาน'}\n📘 ${classroomTitle(classroom)}\n📋 ${assignment.title}` +
     (due ? `\n${due}` : '') +

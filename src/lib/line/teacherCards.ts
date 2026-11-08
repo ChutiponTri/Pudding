@@ -1,4 +1,5 @@
 import 'server-only';
+import { lineDate } from '@/lib/utils/datetime';
 import { buildLiffUrl } from '@/lib/line/liffLink';
 import { attendanceCard, inviteCard, openClassCard, remindCard, resultsCard, welcomeCard } from '@/lib/line/flex';
 import type { FlexMessage } from '@/lib/line/flexKit';
@@ -8,7 +9,7 @@ import { buildWorkCard, workMeta, type CardClassroom } from '@/lib/line/workCard
 import { missingStudents, studentLabel } from '@/lib/server/workReminder';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { classroomTitle, subjectName } from '@/lib/utils/classroomLabel';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import { SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import type { Assignment, User } from '@/types/database';
 
 /**
@@ -27,7 +28,6 @@ type Session = { id: string; title: string; starts_at: string; on_time_until_min
 const liff = (classroom: CardClassroom, options: Parameters<typeof buildLiffUrl>[0] = {}) =>
   buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, ...options });
 
-const at = (ms: number) => formatDateTime(new Date(ms).toISOString(), 'th', SCHOOL_TIME_ZONE);
 
 export async function workMessages(supabase: ServiceClient, assignment: Assignment, classroom: CardClassroom): Promise<LineMessage[] | null> {
   const card = await buildWorkCard(supabase, assignment, classroom);
@@ -127,13 +127,15 @@ export async function remindReply(
   const [{ roster, missing }, meta] = await Promise.all([missingStudents(supabase, assignment, classroom), workMeta(supabase, assignment, classroom)]);
   if (!missing.length) return null;
   const win = getAssignmentWindow(assignment);
-  const due = win.isPastDeadline && win.lateUntil ? `เลยกำหนดแล้ว • ส่งช้าได้ถึง ${at(win.lateUntil)}` : win.deadline != null ? at(win.deadline) : 'ไม่ระบุ';
+  const due = win.deadline != null ? lineDate(win.deadline) : 'ไม่ระบุ';
+  const closes = !assignment.is_exam && win.lateUntil != null && win.lateUntil !== win.deadline ? lineDate(win.lateUntil) : undefined;
   const card = remindCard({
     isExam: !!assignment.is_exam,
     number: meta.number,
     subject: meta.subject,
     title: assignment.title,
     due,
+    closes,
     names: missing.map(studentLabel),
     total: roster.length,
     url,

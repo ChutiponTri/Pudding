@@ -188,6 +188,7 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   total_points NUMERIC DEFAULT 20,
   status_override TEXT DEFAULT 'auto' CHECK (status_override IN ('auto', 'force_closed', 'extended')),
   extended_until TIMESTAMPTZ,
+  close_at TIMESTAMPTZ,                       -- Homework "ปิดรับส่งงาน"; NULL = 24 hours after the deadline
   sample_work_url TEXT,                       -- Reference material (active in assignment, disabled in exam)
   sample_work_title TEXT,
   sample_work_description TEXT,

@@ -44,7 +44,7 @@ import { buildLiffUrl, withLiffLink } from '@/lib/line/liffLink';
 import { answerTeacherQuestion, faqMenuButtons, type BotReply } from '@/lib/line/teacherFaq';
 import { parseStudentCommand, studentHelpText, type StudentCommand } from '@/lib/line/studentCommands';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import { lineDate, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { classroomTitle, subjectName, type LabelledClassroom } from '@/lib/utils/classroomLabel';
 import type { Assignment } from '@/types/database';
 import { sendLineTestMessage, testSentText } from '@/lib/server/lineTestSend';
@@ -576,10 +576,10 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
       return;
     }
     const lines = sessions.map((session) => {
-      const closesAt = new Date(new Date(session.starts_at).getTime() + (session.late_until_minutes || 30) * 60000).toISOString();
-      return `• ${session.title} (เช็กได้ถึง ${formatDateTime(closesAt, 'th', SCHOOL_TIME_ZONE)})`;
+      const closesAt = new Date(new Date(session.starts_at).getTime() + (session.late_until_minutes || 30) * 60000);
+      return `• ${session.title} (เช็กได้ถึง ${closesAt.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: SCHOOL_TIME_ZONE })} น.)`;
     });
-    await replySafely(replyToken, withLiffLink(`⏰ เช็กชื่อ\n📘 ${title}\n\n${lines.join('\n')}`, 'กดเพื่อเช็กชื่อ', link({ view: 'attendance' })));
+    await replySafely(replyToken, withLiffLink(`⏰ เช็กชื่อ\n📘 ${title}\n\n${lines.join('\n')}\n\n📷 สแกน QR บนหน้าจอของคุณครูเพื่อเช็กชื่อ`, 'เปิดหน้าเช็กชื่อ', link({ view: 'attendance' })));
   } else {
     const open = await openWork(supabase, classroom.id);
     if (!open.length) {
@@ -593,10 +593,10 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
       const items = shown.map(({ assignment, window }, index) => {
         const action = assignment.is_exam ? '📝 ทำข้อสอบ' : '📤 ส่งงาน';
         const due = window.deadline
-          ? `⏳ ${timeLeft(window.deadline, now)} (${formatDateTime(new Date(window.deadline).toISOString(), 'th', SCHOOL_TIME_ZONE)})`
+          ? `⏳ ${timeLeft(window.deadline, now)} (กำหนดส่ง ${lineDate(window.deadline)})`
           : '⏳ ไม่มีกำหนดส่ง';
         const late = window.isPastDeadline
-          ? `\n⚠️ ส่งตอนนี้จะนับว่าส่งช้า${window.lateUntil ? ` • ปิดรับ ${formatDateTime(new Date(window.lateUntil).toISOString(), 'th', SCHOOL_TIME_ZONE)}` : ''}`
+          ? `\n⚠️ ส่งตอนนี้จะนับว่าส่งช้า${window.lateUntil ? ` • ปิดรับส่งงาน ${lineDate(window.lateUntil)}` : ''}`
           : '';
         const url = buildLiffUrl(link({ assignmentId: assignment.id }));
         return `【${index + 1}】${assignment.title}\n${due}${late}${url ? `\n${action}【${index + 1}】 👉 ${url}` : ''}`;

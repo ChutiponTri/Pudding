@@ -26,6 +26,7 @@ import {
   PlusCircle,
   Trash2,
   Calendar,
+  Lock,
   Clock,
   FilePen,
   Sparkles,
@@ -261,6 +262,8 @@ function NewAssignmentContent() {
   const [existingGroups, setExistingGroups] = useState<string[]>([]);
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState(() => daysFromNowAt(7, 23, 59));
+  /** Homework "ปิดรับส่งงาน" (optional): '' = LATE_WINDOW_HOURS after the due date. */
+  const [closeAt, setCloseAt] = useState('');
   // Quiz: minutes students get once it is published (the deadline follows the publish time).
   const [quizMinutes, setQuizMinutes] = useState(String(DEFAULT_QUIZ_MINUTES));
   // The edited quiz's minutes as loaded: unchanged, its saved deadline is kept as is.
@@ -516,6 +519,8 @@ function NewAssignmentContent() {
           // A copy can't start with a deadline that has already passed.
           const dueMs = assignment.due_date ? new Date(assignment.due_date).getTime() : NaN;
           setDueDate(assignment.due_date && (editId || dueMs > Date.now()) ? assignment.due_date : daysFromNowAt(7, 23, 59));
+          // A copy follows its new due date (the default 24 hours after); an edit keeps its own.
+          setCloseAt(editId && assignment.close_at ? assignment.close_at : '');
           if (assignment.is_exam) {
             const minutes = String(quizMinutesOf(assignment));
             setQuizMinutes(minutes);
@@ -781,6 +786,10 @@ function NewAssignmentContent() {
       );
       return;
     }
+    if (!isExam && closeAt && dueDate && new Date(closeAt).getTime() < new Date(dueDate).getTime()) {
+      alert(language === 'th' ? 'เวลาปิดรับส่งงานต้องไม่ก่อนกำหนดส่ง' : 'Closing time cannot be before the due date');
+      return;
+    }
     if (schedulePublish && !editIsPublished) {
       const publishMs = new Date(publishAt).getTime();
       if (!publishAt || Number.isNaN(publishMs) || publishMs <= clockNow()) {
@@ -933,6 +942,7 @@ function NewAssignmentContent() {
           description,
           is_exam: isExam,
           due_date: dueDate || editingAssignment.due_date,
+          close_at: isExam ? null : closeAt || null,
           ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
           ...(!editIsPublished && schedulePublish ? { publish_at: new Date(publishAt).toISOString() } : {}),
           ...(!editIsPublished && saveAsDraft ? { publish_at: DRAFT_PUBLISH_AT } : {}),
@@ -952,6 +962,7 @@ function NewAssignmentContent() {
           if (groupName.trim() !== (before.group_name || '')) changed.group_name = groupName.trim();
           if (description !== (before.description || '')) changed.description = description;
           if (dueDate && new Date(dueDate).getTime() !== new Date(before.due_date).getTime()) changed.due_date = dueDate;
+          if ((isExam ? null : closeAt || null) !== (before.close_at || null)) changed.close_at = isExam ? null : closeAt || null;
           if (isExam !== !!before.is_exam) changed.is_exam = isExam;
           if (isExam && quizMinutesValue !== Number(before.quiz_duration_minutes)) changed.quiz_duration_minutes = quizMinutesValue;
           const sameQuestion = (a: Pick<Question, 'type' | 'question_text'>, b: Pick<Question, 'type' | 'question_text'>) =>
@@ -1000,6 +1011,7 @@ function NewAssignmentContent() {
             description,
             is_exam: isExam,
             due_date: dueDate || daysFromNowAt(7, 23, 59),
+            ...(!isExam && closeAt ? { close_at: closeAt } : {}),
             ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
             publish_at: saveAsDraft ? DRAFT_PUBLISH_AT : schedulePublish ? new Date(publishAt).toISOString() : undefined,
             total_points: totalPoints,
@@ -1767,13 +1779,29 @@ function NewAssignmentContent() {
                 <span><MobileText short={language === 'th' ? 'กำหนดส่ง' : 'Due'} full={t('assignment_creator.fields.due_date_label')} /></span>
               </label>
               <DateTimeField value={dueDate} onChange={setDueDate} presets="deadline" />
+              <label className="pt-2 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-rose-500" />
+                <span>
+                  {tr('ปิดรับส่งงาน', 'Stop accepting work')}{' '}
+                  <span className="font-normal text-slate-400">{tr('(ไม่บังคับ)', '(optional)')}</span>
+                </span>
+              </label>
+              <DateTimeField
+                value={closeAt}
+                onChange={setCloseAt}
+                presets="deadline"
+                allowEmpty
+                emptyHint={
+                  dueDate
+                    ? tr(
+                        `ค่าเริ่มต้น: ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง (${formatDateTime(new Date(new Date(dueDate).getTime() + LATE_WINDOW_HOURS * 3600_000).toISOString(), 'th')})`,
+                        `Default: ${LATE_WINDOW_HOURS}h after the due date (${formatDateTime(new Date(new Date(dueDate).getTime() + LATE_WINDOW_HOURS * 3600_000).toISOString(), 'en')})`
+                      )
+                    : tr(`ค่าเริ่มต้น: ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง`, `Default: ${LATE_WINDOW_HOURS}h after the due date`)
+                }
+              />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                <MobileText
-                  short={language === 'th' ? `ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดรับเอง` : `Late work accepted for ${LATE_WINDOW_HOURS}h.`}
-                  full={language === 'th'
-                    ? `หลังเวลานี้ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. แล้วปิดเอง`
-                    : `Late work for ${LATE_WINDOW_HOURS}h after, then closes`}
-                />
+                {tr('หลังกำหนดส่งยังส่งได้ (นับเป็นส่งช้า) จนถึงเวลาปิดรับ แล้วปิดรับเอง', 'After the due date work still comes in (marked late) until this time, then it closes')}
               </p>
             </div>
             )}

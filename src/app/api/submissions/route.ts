@@ -1,7 +1,8 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MS } from '@/lib/utils/assignmentWindow';
+import { getAssignmentWindow, QUIZ_LATE_GRACE_MS } from '@/lib/utils/assignmentWindow';
+import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { getActor } from '@/lib/auth/actor';
@@ -207,7 +208,7 @@ export async function POST(request: NextRequest) {
     const closedError = assignmentWindow.isQuizClosed
       ? `หมดเวลาทำข้อสอบ “${assignment.title}” แล้ว ไม่สามารถส่งคำตอบได้`
       : assignmentWindow.isLateClosed
-      ? `หมดเวลาส่งงาน “${assignment.title}” แล้ว (รับงานส่งช้าได้ถึง ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง) — ติดต่อคุณครูหากต้องการขอขยายเวลา`
+      ? `หมดเวลาส่งงาน “${assignment.title}” แล้ว (ปิดรับส่งงาน ${assignmentWindow.lateUntil ? formatDateTime(new Date(assignmentWindow.lateUntil).toISOString(), 'th', SCHOOL_TIME_ZONE) : ''}) — ติดต่อคุณครูหากต้องการขอขยายเวลา`
       : !assignmentWindow.acceptsSubmissions
       ? `คุณครูปิดรับ${assignment.is_exam ? 'ข้อสอบ' : 'งาน'} “${assignment.title}” แล้ว ไม่สามารถส่งได้`
       : null;

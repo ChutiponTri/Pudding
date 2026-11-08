@@ -16,6 +16,18 @@ export function normalizeInviteCode(code: string | null | undefined): string {
   return (code || '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
+/** A short HMAC of `text` with the site's signing secret (rotating attendance QR codes). */
+export function signShort(text: string, length = 16): string {
+  return createHmac('sha256', inviteSecret()).update(text).digest('base64url').slice(0, length);
+}
+
+/** Constant-time comparison of two signatures. */
+export function sameSignature(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
 function inviteSecret(): string {
   const secret = process.env.INVITE_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
   if (!secret) throw new Error('INVITE_SECRET is not configured');

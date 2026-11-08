@@ -28,6 +28,7 @@ import {
   Megaphone,
   CalendarDays,
   CalendarCheck,
+  ScanLine,
   Layers,
   Menu,
   X,
@@ -113,6 +114,25 @@ const classAndTerm = (classroom: Classroom) =>
     .filter(Boolean)
     .join(" • ");
 type AttendanceStatus = "on_time" | "late" | "absent" | "excused" | "idle";
+/**
+ * The check-in QR's link (from the teacher's screen): its session, classroom
+ * and short-lived code. null for any other link.
+ */
+function qrFromLink(link: string): { sessionId: string; classroomId?: string; qr: string } | null {
+  try {
+    const url = new URL(link);
+    // LIFF links carry the original query in liff.state until the SDK restores it.
+    const state = url.searchParams.get("liff.state");
+    const params = state ? new URLSearchParams(state.includes("?") ? state.slice(state.indexOf("?")) : state) : url.searchParams;
+    const qr = params.get("qr") || url.searchParams.get("qr");
+    const sessionId = params.get("sid") || url.searchParams.get("sid");
+    if (!qr || !sessionId) return null;
+    return { sessionId, qr, classroomId: params.get("classId") || url.searchParams.get("classId") || undefined };
+  } catch {
+    return null;
+  }
+}
+
 const statusLabels: Record<string, string> = {
   on_time: "มาตรงเวลา 🟢",
   late: "มาสาย 🟡",
@@ -607,21 +627,22 @@ export default function LiffStudentPage() {
     }
   };
 
-  const handleStudentCheckIn = async (sessionId?: string, customClassroomId?: string, forFriend?: ProxyFriend) => {
-    const targetClassroomId = forFriend?.classroomId || customClassroomId || selectedClassroom?.id;
+  /**
+   * Check-in needs the QR code on the teacher's screen (it changes every few
+   * seconds), and each LINE account checks in only itself; a student without
+   * a phone is marked by the teacher. `qr` comes from scanning (scanAndCheckIn)
+   * or from the QR link itself when the phone camera opened this page.
+   */
+  const handleStudentCheckIn = async (sessionId: string | undefined, customClassroomId: string | undefined, qr: string) => {
+    const targetClassroomId = customClassroomId || selectedClassroom?.id;
     if (!targetClassroomId || !currentStudent) return;
     setIsCheckingIn(true);
     try {
-      // The server identifies the student from the LINE token (and re-checks the classmate, if any).
+      // The server identifies the student from the LINE token, and checks the QR code is fresh.
       const res = await authFetch("/api/attendance", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          action: "check_in",
-          classroomId: targetClassroomId,
-          sessionId: sessionId || undefined,
-          proxyStudentNumber: forFriend?.studentNumber,
-        }),
+        body: JSON.stringify({ action: "check_in", classroomId: targetClassroomId, sessionId: sessionId || undefined, qr }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -629,16 +650,6 @@ export default function LiffStudentPage() {
         return;
       }
       const statusText = statusLabels[json.status] || json.status;
-      if (forFriend) {
-        // The classmate's attendance, not this phone owner's: only the lending sheet changes.
-        const friendName = `${forFriend.first_name} ${forFriend.last_name}`;
-        alert(json.alreadyCheckedIn ? `${friendName} เช็กชื่อคาบนี้ไปแล้ว สถานะ: ${statusText}` : `เช็กชื่อให้ ${friendName} สำเร็จ! สถานะ: ${statusText}`);
-        const checkedSessionId = json.session?.id || sessionId;
-        if (checkedSessionId) {
-          setProxyFriend((prev) => (prev ? { ...prev, checkedSessionIds: [...prev.checkedSessionIds, checkedSessionId] } : prev));
-        }
-        return;
-      }
       alert(json.alreadyCheckedIn ? `คุณเช็กชื่อคาบนี้ไปแล้ว สถานะ: ${statusText}` : `เช็กชื่อสำเร็จ! สถานะของคุณ: ${statusText}`);
 
       // Update the UI from the response right away instead of re-fetching
@@ -719,6 +730,37 @@ export default function LiffStudentPage() {
   }, [activeAssignment?.id]);
 
   // Borrowed phone: a classmate whose own phone has a problem submits through this one.
+  /** Opens LINE's QR scanner and checks in with the code on the teacher's screen. */
+  const scanAndCheckIn = async (expectedClassroomId?: string) => {
+    if (!liffInstance?.isApiAvailable("scanCodeV2")) {
+      alert("เปิดกล้องมือถือ (หรือแอป LINE) แล้วสแกน QR บนหน้าจอของคุณครูเพื่อเช็กชื่อ");
+      return;
+    }
+    try {
+      const result = await liffInstance.scanCodeV2();
+      const scanned = qrFromLink(result?.value || "");
+      if (!scanned) {
+        alert("QR นี้ไม่ใช่ QR เช็กชื่อ ลองสแกน QR บนหน้าจอของคุณครูอีกครั้ง");
+        return;
+      }
+      await handleStudentCheckIn(scanned.sessionId, scanned.classroomId || expectedClassroomId, scanned.qr);
+    } catch {
+      // The student closed the scanner.
+    }
+  };
+
+  // Opened by scanning the teacher's QR with the phone camera: check in once everything has loaded.
+  const pendingQrRef = useRef<{ sessionId: string; classroomId?: string; qr: string } | null>(
+    typeof window !== "undefined" ? qrFromLink(window.location.href) : null
+  );
+  useEffect(() => {
+    const pending = pendingQrRef.current;
+    if (!pending || !currentStudent || isLoadingData) return;
+    pendingQrRef.current = null;
+    void handleStudentCheckIn(pending.sessionId, pending.classroomId, pending.qr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, when the student is known
+  }, [currentStudent, isLoadingData]);
+
   const [proxyNumberInput, setProxyNumberInput] = useState("");
   const [proxyLookupError, setProxyLookupError] = useState<string | null>(null);
   const [isProxyLookingUp, setIsProxyLookingUp] = useState(false);
@@ -3212,11 +3254,11 @@ export default function LiffStudentPage() {
                     <button
                       type="button"
                       disabled={isCheckingIn}
-                      onClick={() => handleStudentCheckIn(item.session.id, item.classroom.id)}
+                      onClick={() => scanAndCheckIn(item.classroom.id)}
                       className="h-12 px-5 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md shadow-emerald-500/25 transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 active:scale-[0.98] disabled:opacity-60"
                     >
-                      {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
-                      <span>{isCheckingIn ? 'กำลังเช็กชื่อ...' : 'เช็กชื่อเลย'}</span>
+                      {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
+                      <span>{isCheckingIn ? 'กำลังเช็กชื่อ...' : 'สแกน QR เช็กชื่อ'}</span>
                     </button>
                   </div>
                 ))}
@@ -3621,13 +3663,14 @@ export default function LiffStudentPage() {
                                 </div>
                                 <div className="p-3 bg-white dark:bg-slate-900">
                                   <button
-                                    onClick={() => handleStudentCheckIn(openSession.id)}
+                                    onClick={() => scanAndCheckIn(selectedClassroom?.id)}
                                     disabled={isCheckingIn}
                                     className="w-full h-12 rounded-2xl bg-line hover:bg-line-dark text-white font-bold text-sm shadow-md shadow-emerald-500/25 transition-all active:scale-[0.98] cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
                                   >
-                                    {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
-                                    {isCheckingIn ? 'กำลังเช็กชื่อ...' : 'กดเช็กชื่อตอนนี้'}
+                                    {isCheckingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanLine className="w-4 h-4" />}
+                                    {isCheckingIn ? 'กำลังเช็กชื่อ...' : 'สแกน QR บนหน้าจอคุณครู'}
                                   </button>
+                                  <p className="mt-2 text-[11px] text-center text-slate-500">ไม่มีโทรศัพท์หรือสแกนไม่ได้? แจ้งคุณครูให้เช็กชื่อให้ (เช็กชื่อแทนเพื่อนไม่ได้)</p>
                                 </div>
                               </div>
                             ))}
@@ -3741,41 +3784,13 @@ export default function LiffStudentPage() {
                     </div>
 
                     {(() => {
-                      const openSessions = courseAttendance.filter((session) => session.status === "open");
+                      // Check-in is not offered for a classmate: each student scans the teacher's QR themself.
                       const openWork = assignments.filter((a) => a.classroom_id === proxyFriend.classroomId && getAssignmentWindow(a).acceptsSubmissions);
-                      if (!openSessions.length && !openWork.length) {
-                        return <EmptyState icon="🎉" text="ตอนนี้ไม่มีงานหรือคาบเช็กชื่อที่เปิดอยู่" />;
+                      if (!openWork.length) {
+                        return <EmptyState icon="🎉" text="ตอนนี้ไม่มีงานที่เปิดรับอยู่" />;
                       }
                       return (
                         <>
-                          {openSessions.length > 0 && (
-                            <div className="space-y-2">
-                              <p className="text-xs font-bold text-slate-500">เช็กชื่อ</p>
-                              {openSessions.map((session) => {
-                                const done = proxyFriend.checkedSessionIds.includes(session.id);
-                                return (
-                                  <div key={session.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700">
-                                    <p className="min-w-0 text-sm font-semibold text-slate-900 dark:text-white truncate">{session.title}</p>
-                                    {done ? (
-                                      <Pill tone="emerald">เช็กชื่อแล้ว</Pill>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        disabled={isCheckingIn}
-                                        onClick={() => {
-                                          if (!confirm(`ยืนยันเช็กชื่อ “${session.title}” ให้ ${proxyFriend.first_name} ${proxyFriend.last_name} (รหัส ${proxyFriend.studentNumber})?\nคุณครูจะเห็นว่าเช็กชื่อจากเครื่องของคุณ`)) return;
-                                          handleStudentCheckIn(session.id, undefined, proxyFriend);
-                                        }}
-                                        className="shrink-0 h-9 px-3.5 rounded-xl bg-line hover:bg-line-dark text-white text-xs font-bold disabled:opacity-60 cursor-pointer"
-                                      >
-                                        เช็กชื่อให้เพื่อน
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
                           {openWork.length > 0 && (
                             <div className="space-y-2">
                               <p className="text-xs font-bold text-slate-500">งานและข้อสอบที่เปิดรับ</p>
@@ -3837,7 +3852,7 @@ export default function LiffStudentPage() {
                     <button
                       key={key}
                       onClick={() => setCourseTab(key)}
-                      title={key === 'proxy' ? 'เพื่อนโทรศัพท์มีปัญหา? ให้เพื่อนยืมเครื่องนี้ส่งงาน/เช็กชื่อ' : undefined}
+                      title={key === 'proxy' ? 'เพื่อนโทรศัพท์มีปัญหา? ให้เพื่อนยืมเครื่องนี้ส่งงาน (เช็กชื่อแทนกันไม่ได้)' : undefined}
                       aria-current={isActive ? 'page' : undefined}
                       className={`flex flex-col items-center gap-1 py-1.5 rounded-2xl text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                         isActive ? 'text-line' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'

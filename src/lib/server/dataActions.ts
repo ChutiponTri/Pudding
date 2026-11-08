@@ -116,7 +116,7 @@ async function withTeacherAvatars<T extends { teachers?: ClassroomTeacher[] | nu
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
 const IN_CHUNK = 150;
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
-const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes'] as const;
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes', 'close_at'] as const;
 const ATTACHMENTS_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการแนบหลายไฟล์ (ยังไม่มีคอลัมน์ attachments) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือแนบเพียง 1 รายการ';
 

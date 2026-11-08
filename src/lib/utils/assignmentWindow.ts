@@ -2,7 +2,7 @@ import type { Assignment } from '@/types/database';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 
 type AssignmentDeadlineFields = Pick<Assignment, 'due_date' | 'status_override' | 'extended_until'> &
-  Partial<Pick<Assignment, 'is_exam' | 'publish_at'>>;
+  Partial<Pick<Assignment, 'is_exam' | 'publish_at' | 'close_at'>>;
 
 /**
  * A draft is stored with this publish time, so every check that hides
@@ -40,7 +40,10 @@ export function isAssignmentPublished(assignment: Partial<Pick<Assignment, 'publ
 export const QUIZ_LATE_GRACE_MS = 10 * 60 * 1000;
 export const QUIZ_LATE_GRACE_MINUTES = QUIZ_LATE_GRACE_MS / (60 * 1000);
 
-/** Homework past its deadline is still accepted (marked late) for this long, then closes by itself. */
+/**
+ * Homework past its deadline is still accepted (marked late) for this long, then
+ * closes by itself, unless the teacher set its own "ปิดรับส่งงาน" (close_at).
+ */
 export const LATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const LATE_WINDOW_HOURS = LATE_WINDOW_MS / (60 * 60 * 1000);
 
@@ -71,7 +74,12 @@ export function getAssignmentWindow(
   const hasDeadline = !Number.isNaN(deadline);
   const isPastDeadline = hasDeadline && now > deadline;
   const isQuizClosed = !!assignment.is_exam && hasDeadline && now > deadline + graceMs;
-  const lateUntil = hasDeadline && !assignment.is_exam ? deadline + LATE_WINDOW_MS : null;
+  // The teacher's "ปิดรับส่งงาน", unless an extension has moved the deadline past it
+  // (then late work follows the new deadline as usual).
+  const closeAt = assignment.close_at ? new Date(assignment.close_at).getTime() : NaN;
+  const lateUntil = hasDeadline && !assignment.is_exam
+    ? (!Number.isNaN(closeAt) && closeAt >= deadline ? closeAt : deadline + LATE_WINDOW_MS)
+    : null;
   const isLateClosed = lateUntil !== null && now > lateUntil + graceMs;
   const isDraft = isAssignmentDraft(assignment);
   const isScheduled = !isDraft && !isAssignmentPublished(assignment, now);

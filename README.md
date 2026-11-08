@@ -231,6 +231,7 @@ Set these in `.env` locally and in **Vercel → Settings → Environment Variabl
    | 16 | `supabase_line_connect_flow_update.sql` | Pick the LINE group and classroom to link (LIFF page / web) |
    | 17 | `supabase_line_reconnect_update.sql` | Re-link a classroom when the bot is added back to its group |
    | 18 | `supabase_remove_reminders_update.sql` | Drops the old automatic-reminder columns (run after deploying) |
+   | 19 | `supabase_close_at_update.sql` | Homework "ปิดรับส่งงาน" (close time for late work) |
 
 3. Schedule the background job: edit the URL and `<CRON_SECRET>` in **`supabase_reminder_cron.sql`**, then run it. It calls `/api/line/reminders` every 5 minutes to send scheduled work's LINE card at publish time and delete expired drafts (there are no automatic deadline reminders).
 4. Verify with `npm run db:verify`. `npm run db:setup` can apply the schema with a `DATABASE_URL` (Supabase pooler connection string).

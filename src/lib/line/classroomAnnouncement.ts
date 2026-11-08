@@ -1,12 +1,12 @@
 import 'server-only';
+import { dueText } from '@/lib/utils/lineDates';
 import { withLiffLink } from '@/lib/line/liffLink';
 import { isLineQuotaError, pushLineGroupText, pushLineMessages } from '@/lib/line/messaging';
 import { buildWorkCard } from '@/lib/line/workCard';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
-import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
+import { SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import type { Assignment } from '@/types/database';
 
 export type PostActivityType = 'announcement' | 'assignment' | 'exam' | 'attendance';
@@ -39,7 +39,7 @@ export function buildPostLineMessage(
   const text = typeof metadata.lineBody === 'string' && metadata.lineBody ? metadata.lineBody : body;
   const message = `${icon} ${title}\n📘 ${classroomTitle(classroom)}\n\n${text}`;
   const assignmentId = typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined;
-  if (activityType === 'attendance') return withLiffLink(message, 'กดเพื่อเช็กชื่อ', { classroomId, inviteCode, view: 'attendance' });
+  if (activityType === 'attendance') return withLiffLink(`${message}\n\n📷 สแกน QR บนหน้าจอของคุณครูเพื่อเช็กชื่อ`, 'เปิดหน้าเช็กชื่อ', { classroomId, inviteCode, view: 'attendance' });
   if ((activityType === 'assignment' || activityType === 'exam') && assignmentId) {
     return withLiffLink(message, activityType === 'exam' ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', { classroomId, inviteCode, assignmentId });
   }
@@ -53,11 +53,10 @@ export function reannounceLineText(
   assignment: Assignment,
   classroom: LabelledClassroom & { id: string; invite_code?: string | null }
 ): string {
-  const win = getAssignmentWindow(assignment);
-  const due = win.deadline != null ? formatDateTime(new Date(win.deadline).toISOString(), 'th', SCHOOL_TIME_ZONE) : '';
+  const due = dueText(assignment);
   const text =
     `🔔 ${assignment.is_exam ? 'อย่าลืมทำข้อสอบ' : 'อย่าลืมส่งงาน'}\n📘 ${classroomTitle(classroom)}\n\n${assignment.title}` +
-    (due ? `\n${assignment.is_exam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}: ${due}` : '');
+    (due ? `\n${due}` : '');
   return withLiffLink(text, assignment.is_exam ? 'กดเพื่อเริ่มทำข้อสอบ' : 'กดเพื่อเปิดงานและส่งงาน', {
     classroomId: classroom.id,
     inviteCode: classroom.invite_code,
@@ -79,7 +78,7 @@ export function attendanceLineText(
   const text =
     `⏰ อย่าลืมเช็กชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${session.title}\n\n` +
     `⏱️ ตรงเวลาถึง ${at(session.on_time_until_minutes)} น.\nเช็กชื่อได้ (สาย) ถึง ${at(session.late_until_minutes)} น.`;
-  return withLiffLink(text, 'กดเพื่อเช็กชื่อ', { classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'attendance' });
+  return withLiffLink(`${text}\n\n📷 สแกน QR บนหน้าจอของคุณครูเพื่อเช็กชื่อ`, 'เปิดหน้าเช็กชื่อ', { classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'attendance' });
 }
 
 /** LINE text announcing a work's scores ("ประกาศคะแนน"); the link opens the student's own result. */

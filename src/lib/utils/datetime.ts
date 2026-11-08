@@ -84,3 +84,17 @@ export function formatRelative(iso: string | null | undefined, language: 'th' | 
   if (diffMin > 0) return th ? `อีก ${span}` : `in ${span}`;
   return th ? `เลยมาแล้ว ${span}` : `${span} ago`;
 }
+
+/**
+ * Dates in LINE messages: "15 พ.ย. 2569", without the weekday. The time is
+ * added only when it is not the usual end of day (23:59), e.g. a quiz that
+ * closes at "10:30 น.".
+ */
+export function lineDate(value: string | number | Date | null | undefined): string {
+  if (value == null || value === '') return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '-';
+  const date = d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: SCHOOL_TIME_ZONE });
+  const time = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: SCHOOL_TIME_ZONE });
+  return time === '23:59' ? date : `${date} ${time} น.`;
+}

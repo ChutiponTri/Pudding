@@ -1,8 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { QrCode } from "lucide-react";
+import { AttendanceQrScreen } from "@/components/AttendanceQrScreen";
 import { authFetch } from "@/lib/auth/lineSession";
+import { dataService } from "@/lib/supabase/dataService";
 import { formatDateTime } from "@/lib/utils/datetime";
+import type { User } from "@/types/database";
 import { Button, Card, ErrorBox, Field, Loading, Page, Pill, errorText, inputClass, useKit, useLoad } from "./kit";
 
 type AttendanceSession = {
@@ -13,7 +17,16 @@ type AttendanceSession = {
   late_until_minutes: number;
   status: "open" | "closed";
 };
-type AttendanceData = { sessions: AttendanceSession[]; records: Array<{ session_id: string; status: string }> };
+type AttendanceData = { sessions: AttendanceSession[]; records: Array<{ session_id: string; student_id: string; status: string }> };
+
+/** What the teacher can set for a student by hand (no phone, broken phone). */
+const MARKS: Array<{ status: string; label: string; tone: string }> = [
+  { status: "on_time", label: "มา", tone: "bg-emerald-500 text-white" },
+  { status: "late", label: "สาย", tone: "bg-amber-400 text-slate-900" },
+  { status: "excused", label: "ลา", tone: "bg-sky-500 text-white" },
+  { status: "absent", label: "ขาด", tone: "bg-rose-500 text-white" },
+];
+const studentName = (s: Partial<User>) => `${s.first_name || ""} ${s.last_name || ""}`.trim() || "นักเรียน";
 
 async function attendanceRequest(body: Record<string, unknown>) {
   const res = await authFetch("/api/attendance", {
@@ -30,7 +43,11 @@ const todayTitle = () => `เช็กชื่อ ${new Date().toLocaleDateStri
 const clock = (startsAt: string, minutes: number) =>
   new Date(new Date(startsAt).getTime() + minutes * 60_000).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
 
-/** "เช็กชื่อ": open a check-in period (its card goes into the group), resend or close open ones. */
+/**
+ * "เช็กชื่อ": open a check-in period (its card goes into the group), show its
+ * QR for students to scan (each checks in only themself), mark students
+ * without a phone by hand, resend the card or close the period.
+ */
 export function AttendanceView() {
   const { classroom, postShare, postKind, toast } = useKit();
   const data = useLoad(async () => {
@@ -43,6 +60,21 @@ export function AttendanceView() {
   const [onTime, setOnTime] = useState(10);
   const [late, setLate] = useState(30);
   const [busy, setBusy] = useState<string | null>(null);
+  const [qrSession, setQrSession] = useState<string | null>(null);
+  const [marking, setMarking] = useState<string | null>(null);
+  const roster = useLoad(() => dataService.getClassroomRoster(classroom.id), [classroom.id]);
+
+  const mark = async (session: AttendanceSession, student: User, status: string) => {
+    setBusy(`mark-${student.id}`);
+    try {
+      await attendanceRequest({ classroomId: classroom.id, action: "record", sessionId: session.id, studentId: student.id, status });
+      data.reload();
+    } catch (err) {
+      toast(errorText(err), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const open = async () => {
     setBusy("create");
@@ -100,6 +132,7 @@ export function AttendanceView() {
 
   return (
     <Page title="📋 เช็กชื่อ">
+      {qrSession && <AttendanceQrScreen classroomId={classroom.id} sessionId={qrSession} onClose={() => { setQrSession(null); data.reload(); }} />}
       <Card className="space-y-3">
         <p className="text-sm font-black">เปิดคาบเช็กชื่อใหม่</p>
         <Field label="ชื่อคาบ">
@@ -134,10 +167,43 @@ export function AttendanceView() {
                   ตรงเวลาถึง {clock(session.starts_at, session.on_time_until_minutes)} น. · สายถึง {clock(session.starts_at, session.late_until_minutes)} น.
                   {c.late ? ` · มาสาย ${c.late}` : ""}
                 </p>
-                <div className="flex gap-2">
+                <Button className="w-full" onClick={() => setQrSession(session.id)}>
+                  <QrCode className="w-4 h-4" /> แสดง QR ให้นักเรียนสแกน
+                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button small tone="soft" onClick={() => setMarking(marking === session.id ? null : session.id)}>
+                    {marking === session.id ? "ซ่อนรายชื่อ" : "เช็กให้นักเรียน (ไม่มีโทรศัพท์)"}
+                  </Button>
                   <Button small tone="soft" busy={busy === `send-${session.id}`} onClick={() => resend(session)}>ส่งการ์ดอีกครั้ง</Button>
                   <Button small tone="ghost" busy={busy === `close-${session.id}`} onClick={() => close(session)}>ปิดคาบ</Button>
                 </div>
+                {marking === session.id && (
+                  <div className="space-y-1.5 pt-1">
+                    {!roster.data && <p className="text-xs text-slate-400">กำลังโหลดรายชื่อ...</p>}
+                    {roster.data?.students.map((student) => {
+                      const current = (data.data?.records || []).find((r) => r.session_id === session.id && (r.student_id === student.id || r.student_id === student.line_uid))?.status;
+                      return (
+                        <div key={student.id} className="flex items-center gap-2">
+                          <span className="flex-1 min-w-0 text-xs truncate">
+                            {student.student_id ? `[${student.student_id.slice(-3)}] ` : ""}
+                            {studentName(student)}
+                          </span>
+                          {MARKS.map((option) => (
+                            <button
+                              key={option.status}
+                              type="button"
+                              disabled={busy === `mark-${student.id}`}
+                              onClick={() => mark(session, student, option.status)}
+                              className={`h-7 px-2 rounded-lg text-[11px] font-bold cursor-pointer disabled:opacity-50 ${current === option.status ? option.tone : "bg-slate-100 text-slate-500 dark:bg-slate-800"}`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

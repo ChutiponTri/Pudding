@@ -1,12 +1,11 @@
 import 'server-only';
+import { dueRows } from '@/lib/utils/lineDates';
 import { after } from 'next/server';
 import { buildLiffUrl } from '@/lib/line/liffLink';
 import { workCard, type FlexMessage } from '@/lib/line/flex';
 import type { ServiceClient } from '@/lib/line/groupLink';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { subjectName, type LabelledClassroom } from '@/lib/utils/classroomLabel';
-import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import type { Assignment } from '@/types/database';
 
 /**
@@ -17,7 +16,6 @@ import type { Assignment } from '@/types/database';
 
 export type CardClassroom = LabelledClassroom & { id: string; invite_code?: string | null; teacher_id?: string | null };
 
-const when = (ms: number) => formatDateTime(new Date(ms).toISOString(), 'th', SCHOOL_TIME_ZONE);
 
 /** "#งานที่ 3" and "ภาษาไทย · ครูต้น": the work's place among the classroom's homework (or quizzes), and who teaches it. */
 export async function workMeta(supabase: ServiceClient, assignment: Assignment, classroom: CardClassroom) {
@@ -50,16 +48,14 @@ export async function buildWorkCard(supabase: ServiceClient, assignment: Assignm
   if (!openUrl) return null;
   const statusUrl = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'work' });
   const { number, byline } = await workMeta(supabase, assignment, classroom);
-  const win = getAssignmentWindow(assignment);
   const rows: Array<{ label: string; value: string }> = [];
   const retake = Array.isArray(assignment.retake_student_ids);
   if (assignment.is_exam) {
     if (assignment.total_points) rows.push({ label: 'คะแนน', value: `${assignment.total_points} คะแนน` });
     if (assignment.quiz_duration_minutes) rows.push({ label: 'เวลาทำ', value: `${assignment.quiz_duration_minutes} นาที` });
-    if (win.deadline != null) rows.push({ label: 'ปิดรับคำตอบ', value: when(win.deadline) });
+    rows.push(...dueRows(assignment));
   } else {
-    if (win.deadline != null) rows.push({ label: 'กำหนดส่ง', value: when(win.deadline) });
-    if (win.lateUntil != null && win.lateUntil !== win.deadline) rows.push({ label: 'ปิดรับส่งงาน', value: when(win.lateUntil) });
+    rows.push(...dueRows(assignment));
     if (assignment.total_points) rows.push({ label: 'คะแนน', value: `${assignment.total_points} คะแนน` });
   }
 

@@ -404,9 +404,10 @@ export function attendanceCard(input: { classroomTitle: string; sessionTitle: st
             { label: 'ตรงเวลาถึง', value: `${input.onTimeUntil} น.` },
             { label: 'เช็กชื่อได้ (สาย) ถึง', value: `${input.lateUntil} น.` },
           ]),
+          text('📷 สแกน QR บนหน้าจอของคุณครูเพื่อเช็กชื่อ (เช็กชื่อแทนเพื่อนไม่ได้)', { size: 'xs', color: COLORS.muted, margin: 'lg' }),
         ],
       },
-      footer: footerButton('✋ เช็กชื่อ', input.url, COLORS.green),
+      footer: footerButton('📷 สแกน QR เช็กชื่อ', input.url, COLORS.green),
     }),
   };
 }
@@ -522,7 +523,9 @@ export function remindCard(input: {
   subject?: string;
   title: string;
   due: string;
-  /** "[เลขที่] ชื่อ" of each student who has not handed in. */
+  /** Homework: "ปิดรับส่งงาน" (late work accepted until then). */
+  closes?: string;
+  /** "[123] ชื่อ" of each student who has not handed in (last 3 digits of the student number). */
   names: string[];
   total: number;
   url: string;
@@ -544,16 +547,19 @@ export function remindCard(input: {
         contents: [
           badge([workTag(input.isExam, input.number), input.subject].filter(Boolean).join('  ')),
           text(input.title, { size: 'xl', weight: 'bold', color: COLORS.purpleDark, margin: 'md' }),
-          {
+          ...[
+            { label: input.isExam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง', value: input.due },
+            ...(input.closes ? [{ label: 'ปิดรับส่งงาน', value: input.closes }] : []),
+          ].map((row) => ({
             type: 'box',
             layout: 'baseline',
             spacing: 'sm',
             margin: 'sm',
             contents: [
-              text(`${input.isExam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง'}:`, { size: 'sm', color: COLORS.muted, flex: 0, wrap: false }),
-              text(input.due, { size: 'sm', weight: 'bold', color: '#E8780C' }),
+              text(row.label, { size: 'sm', color: COLORS.muted, flex: 0, wrap: false }),
+              text(row.value, { size: 'sm', weight: 'bold', color: '#E8780C' }),
             ],
-          },
+          })),
           { type: 'separator', margin: 'lg', color: '#E4D9FB' },
           {
             type: 'box',

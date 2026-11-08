@@ -127,6 +127,11 @@ export interface Assignment {
   total_points?: number;
   status_override?: SubmissionOverrideStatus;
   extended_until?: string;
+  /**
+   * Homework only: "ปิดรับส่งงาน", when late work stops being accepted.
+   * Missing = LATE_WINDOW_MS after the deadline (24 hours).
+   */
+  close_at?: string | null;
   sample_work_url?: string;
   sample_work_title?: string;
   sample_work_description?: string;
