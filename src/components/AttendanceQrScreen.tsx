@@ -9,7 +9,7 @@ type Student = { id: string; name: string; number: string; status: string | null
 
 type QrState = {
   open: boolean;
-  session: { title: string };
+  session: { title: string; starts_at?: string; on_time_until_minutes?: number };
   counts: { onTime: number; late: number; students: number };
   students: Student[];
   url?: string;
@@ -154,6 +154,13 @@ export function AttendanceQrScreen({
             <ScanLine className="w-3.5 h-3.5" /> เช็กชื่อ
           </p>
           <h2 className="text-base sm:text-xl font-black text-violet-950 dark:text-white truncate">{state?.session.title || "เช็กชื่อ"}</h2>
+          {state?.open && state.session.starts_at && state.session.on_time_until_minutes != null && (
+            <p className="text-[11px] text-slate-500">
+              ตรงเวลาถึง{" "}
+              {new Date(new Date(state.session.starts_at).getTime() + state.session.on_time_until_minutes * 60_000).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}{" "}
+              น. • หลังจากนั้นนับว่าสาย
+            </p>
+          )}
         </div>
         <p className="text-right shrink-0">
           <span className="text-2xl sm:text-3xl font-black text-emerald-600">{present}</span>

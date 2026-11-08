@@ -80,6 +80,11 @@ type Kit = TeacherContext & {
   fetchData: (kind: DataKind) => Promise<unknown>;
   /** Whether "send to group" goes straight into this group (opened from it, and LINE allows sending). */
   autoSend: boolean;
+  /** Opened from the class group's menu (not the 1:1 chat or a browser). */
+  fromGroup: boolean;
+  /** LINE's permission to send into the chat: "prompt" needs the teacher's OK once (askPermission). */
+  permission: "granted" | "prompt" | "unavailable" | "unknown";
+  askPermission: () => Promise<void>;
 };
 
 const KitContext = createContext<Kit | null>(null);
@@ -101,7 +106,7 @@ export function KitProvider({
   initialData,
   children,
 }: {
-  value: Omit<Kit, "postMessages" | "postShare" | "postKind" | "toast" | "fetchData" | "autoSend">;
+  value: Omit<Kit, "postMessages" | "postShare" | "postKind" | "toast" | "fetchData" | "autoSend" | "fromGroup" | "permission" | "askPermission">;
   /** Data that came with the first load, used once by its page. */
   initialData?: { kind: DataKind; data: unknown } | null;
   children: ReactNode;
@@ -128,33 +133,48 @@ export function KitProvider({
     },
     [groupRef]
   );
-  // Opened from a chat, and the LIFF app may send messages there: cards go straight in.
-  const [autoSend, setAutoSend] = useState(() => {
-    const type = liff.getContext()?.type;
-    return type === "group" || type === "room" || type === "utou";
-  });
+  /**
+   * Opened from the class group (the menu card's buttons): cards go straight
+   * into it with liff.sendMessages, no group to pick. Opened anywhere else (the
+   * 1:1 chat with the bot, a browser), the teacher picks the group as before:
+   * sending "straight in" there would land in the wrong chat.
+   */
+  const [fromGroup] = useState(() => ["group", "room"].includes(liff.getContext()?.type || ""));
+  /** Whether LINE lets this LIFF app send into the chat (its chat_message.write permission). */
+  const [permission, setPermission] = useState<"granted" | "prompt" | "unavailable" | "unknown">("unknown");
   useEffect(() => {
-    if (!autoSend) return;
+    if (!fromGroup) return;
     liff.permission
       ?.query("chat_message.write")
-      .then((status) => {
-        if (status.state === "unavailable") setAutoSend(false);
-      })
-      .catch(() => {});
-  }, [liff, autoSend]);
+      .then((status) => setPermission(status.state))
+      .catch(() => setPermission("unknown"));
+  }, [liff, fromGroup]);
+  const autoSend = fromGroup && permission !== "unavailable";
+  /** Shows LINE's consent screen for sending messages (needed once when it is "prompt"). */
+  const askPermission = useCallback(async () => {
+    try {
+      await liff.permission.requestAll();
+      const status = await liff.permission.query("chat_message.write");
+      setPermission(status.state);
+    } catch (error) {
+      console.warn("LINE permission request failed:", error);
+    }
+  }, [liff]);
+
   const postMessages = useCallback(
     async (messages: LineMessages, text = ""): Promise<PostResult> => {
-      const type = liff.getContext()?.type;
-      // Opened from the class group: straight into it.
-      if (type === "group" || type === "room" || type === "utou") {
+      if (fromGroup && permission !== "unavailable") {
         try {
+          if (permission === "prompt") await askPermission();
           await liff.sendMessages(messages);
           toast("ส่งเข้ากลุ่มแล้ว");
           return "sent";
         } catch (error) {
           console.warn("liff.sendMessages failed, falling back to the share picker:", error);
+          toast("ส่งเข้ากลุ่มอัตโนมัติไม่สำเร็จ เลือกกลุ่มเองได้เลย", "error");
         }
       }
+      // Anywhere else (or LINE refused): the teacher picks the group.
       if (liff.isApiAvailable("shareTargetPicker")) {
         const result = await liff.shareTargetPicker(messages, { isMultiple: true }).catch(() => null);
         if (result?.status === "success") {
@@ -167,7 +187,7 @@ export function KitProvider({
       toast(text ? "คัดลอกข้อความแล้ว วางในกลุ่ม LINE ของห้องได้เลย" : "ส่งเข้ากลุ่มไม่ได้บนอุปกรณ์นี้", text ? "ok" : "error");
       return "copied";
     },
-    [liff, toast]
+    [liff, toast, fromGroup, permission, askPermission]
   );
 
   const postShare = useCallback(
@@ -201,7 +221,7 @@ export function KitProvider({
   );
 
   return (
-    <KitContext.Provider value={{ ...value, postMessages, postShare, postKind, toast, fetchData, autoSend }}>
+    <KitContext.Provider value={{ ...value, postMessages, postShare, postKind, toast, fetchData, autoSend, fromGroup, permission, askPermission }}>
       {children}
       {message && (
         <div className="fixed inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 pointer-events-none">

@@ -18,6 +18,8 @@ export function AttendanceView() {
   const { classroom, toast } = useKit();
   const data = useViewData<AttendanceData>("attendance");
   const [title, setTitle] = useState(todayTitle);
+  /** Optional: minutes after opening when check-ins count as late ('' = 10, the default). */
+  const [lateAfter, setLateAfter] = useState("");
   const [busy, setBusy] = useState(false);
   const [screen, setScreen] = useState<string | null>(null);
 
@@ -28,11 +30,17 @@ export function AttendanceView() {
       const res = await authFetch("/api/attendance", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ classroomId: classroom.id, action: "create", title: title.trim() }),
+        body: JSON.stringify({
+          classroomId: classroom.id,
+          action: "create",
+          title: title.trim(),
+          ...(Number(lateAfter) >= 1 ? { lateAfterMinutes: Number(lateAfter) } : {}),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "เปิดคาบไม่สำเร็จ");
       setTitle(todayTitle());
+      setLateAfter("");
       if (json.session?.id) setScreen(json.session.id);
       data.reload();
     } catch (err) {
@@ -64,10 +72,24 @@ export function AttendanceView() {
         <Field label="ชื่อคาบ *">
           <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && open()} />
         </Field>
+        <Field label="นับว่าสายหลังเปิดคาบ (นาที) — ไม่บังคับ">
+          <input
+            className={inputClass}
+            type="number"
+            min={1}
+            max={180}
+            inputMode="numeric"
+            placeholder="10 (ค่าเริ่มต้น)"
+            value={lateAfter}
+            onChange={(e) => setLateAfter(e.target.value.replace(/[^0-9]/g, ""))}
+          />
+        </Field>
         <Button className="w-full" busy={busy} onClick={open}>
           <QrCode className="w-4 h-4" /> เปิดคาบและแสดง QR
         </Button>
-        <p className="text-[11px] text-slate-400">สแกนภายใน 15 นาทีนับว่าตรงเวลา หลังจากนั้นนับว่าสายจนปิดคาบ • แก้สถานะได้ในรายชื่อ • ไม่ส่งข้อความเข้ากลุ่ม</p>
+        <p className="text-[11px] text-slate-400">
+          สแกนภายใน {Number(lateAfter) >= 1 ? lateAfter : 10} นาทีนับว่าตรงเวลา หลังจากนั้นนับว่าสายจนปิดคาบ • แก้สถานะได้ในรายชื่อ • ไม่ส่งข้อความเข้ากลุ่ม
+        </p>
       </Card>
 
       {data.error && <ErrorBox text={data.error} />}

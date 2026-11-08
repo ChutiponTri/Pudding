@@ -13,8 +13,9 @@ export const dynamic = 'force-dynamic';
 
 type AttendanceStatus = 'on_time' | 'late' | 'absent' | 'excused';
 
-/** A check-in within this long after the period opens is on time. */
-const ON_TIME_MINUTES = 15;
+/** A check-in within this long after the period opens is on time, unless the teacher sets their own. */
+const ON_TIME_MINUTES = 10;
+const MAX_ON_TIME_MINUTES = 180;
 /** After that it is late until the teacher closes the period (a day: closing ends it sooner). */
 const LATE_UNTIL_CLOSED_MINUTES = 24 * 60;
 
@@ -258,10 +259,11 @@ export async function POST(request: NextRequest) {
   const { supabase, userId, classroom } = context;
 
   if (action === 'create') {
-    // Only the name is the teacher's to set: a check-in is on time for
-    // ON_TIME_MINUTES, then late until the teacher closes the period (the
-    // teacher can change anyone's status).
-    const onTimeUntilMinutes = ON_TIME_MINUTES;
+    // The name, and optionally after how many minutes a check-in counts as late
+    // (ON_TIME_MINUTES when not set); then late until the teacher closes the
+    // period. The teacher can change anyone's status.
+    const asked = Number(body.lateAfterMinutes);
+    const onTimeUntilMinutes = Number.isFinite(asked) && asked >= 1 ? Math.min(MAX_ON_TIME_MINUTES, Math.round(asked)) : ON_TIME_MINUTES;
     const lateUntilMinutes = LATE_UNTIL_CLOSED_MINUTES;
     const startsAtDate = new Date();
     const sessionTitle = typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 120) : '';

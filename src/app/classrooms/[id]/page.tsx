@@ -1447,13 +1447,13 @@ export default function ClassroomWorkspacePage() {
   };
 
   /** Opens a check-in period; returns its id so the panel can show its QR. */
-  const createAttendance = async (): Promise<string | null> => {
+  const createAttendance = async (lateAfterMinutes?: number): Promise<string | null> => {
     try {
       const response = await fetch('/api/attendance', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        // Only the name: the server sets the timing (on time for 15 minutes, then late until closed).
-        body: JSON.stringify({ classroomId, title: attendanceTitle }),
+        // The name, and optionally when check-ins start counting as late (the server's default otherwise).
+        body: JSON.stringify({ classroomId, title: attendanceTitle, ...(lateAfterMinutes ? { lateAfterMinutes } : {}) }),
       });
       if (!response.ok) {
         setNotice(tr('สร้างคาบเช็กชื่อไม่สำเร็จ', 'Could not create the period'));
@@ -3283,8 +3283,8 @@ function AttendancePanel({
   counts: Record<string, number>;
   title: string;
   setTitle: (v: string) => void;
-  /** Opens a period; resolves to its id (null when it failed). */
-  create: () => Promise<string | null>;
+  /** Opens a period (optionally: minutes until check-ins count as late); resolves to its id (null when it failed). */
+  create: (lateAfterMinutes?: number) => Promise<string | null>;
   update: (sessionId: string, studentId: string, status: AttendanceStatus) => void;
   action: (sessionId: string, a: 'close' | 'extend') => void;
   exportAllCsv: () => void;
@@ -3303,6 +3303,8 @@ function AttendancePanel({
 }) {
   /** The open period whose check-in QR fills the screen. */
   const [qrSessionId, setQrSessionId] = useState<string | null>(null);
+  /** Optional: minutes after opening when check-ins count as late ('' = the default). */
+  const [lateAfter, setLateAfter] = useState('');
   const { tr } = useLanguage();
   // Collapsible session state: which session is expanded
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(
@@ -3419,8 +3421,26 @@ function AttendancePanel({
                 placeholder={tr('เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร', 'e.g. Period 1, Thai for Communication')}
               />
             </div>
+            <div className="pt-2">
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">
+                {tr('นับว่าสายหลังเปิดคาบ (นาที)', 'Late after (minutes)')} <span className="font-normal">{tr('— ไม่บังคับ', '— optional')}</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={180}
+                inputMode="numeric"
+                value={lateAfter}
+                onChange={(e) => setLateAfter(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder={tr('10 (ค่าเริ่มต้น)', '10 (default)')}
+                className="w-40 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
             <p className="text-[11px] text-slate-400">
-              {tr('สแกนภายใน 15 นาทีนับว่าตรงเวลา หลังจากนั้นนับว่าสาย จนกว่าจะปิดคาบ • คุณครูแก้สถานะได้ทุกเมื่อ', 'Scans within 15 minutes are on time, later ones late, until you close it • you can change any status')}
+              {tr(
+                `สแกนภายใน ${Number(lateAfter) >= 1 ? lateAfter : 10} นาทีนับว่าตรงเวลา หลังจากนั้นนับว่าสายจนกว่าจะปิดคาบ • คุณครูแก้สถานะได้ทุกเมื่อ`,
+                `Scans within ${Number(lateAfter) >= 1 ? lateAfter : 10} minutes are on time, later ones late until you close it • you can change any status`
+              )}
             </p>
           </div>
 
@@ -3437,7 +3457,8 @@ function AttendancePanel({
               onClick={async () => {
                 setShowCreateForm(false);
                 // Straight to the check-in QR for the class.
-                const id = await create();
+                const id = await create(Number(lateAfter) >= 1 ? Number(lateAfter) : undefined);
+                setLateAfter('');
                 if (id) setQrSessionId(id);
               }}
               className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20"
@@ -3681,6 +3702,7 @@ function SessionSettingsSheet({
   const { tr } = useLanguage();
   const [title, setTitle] = useState(session.title);
   const [accepting, setAccepting] = useState(session.status === 'open');
+  const [lateAfter, setLateAfter] = useState(String(session.on_time_until_minutes || 10));
 
   const wasOpen = session.status === 'open';
   const statusChanged = accepting !== wasOpen;
@@ -3696,9 +3718,9 @@ function SessionSettingsSheet({
     onSave({
       title: title.trim(),
       status: statusChanged ? (accepting ? 'open' : 'closed') : undefined,
-      // Only the name and open / closed are set by hand; the timing is the system's.
+      // The name, open / closed, and when check-ins start counting as late.
       startsAt: undefined,
-      onTime: session.on_time_until_minutes,
+      onTime: Number(lateAfter) >= 1 ? Math.min(180, Number(lateAfter)) : session.on_time_until_minutes,
       late: session.late_until_minutes,
     });
   };
@@ -3729,6 +3751,20 @@ function SessionSettingsSheet({
               placeholder={tr('เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร', 'e.g. Period 1, Thai for Communication')}
               className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
             />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('นับว่าสายหลังเปิดคาบ (นาที)', 'Late after (minutes)')}</label>
+            <input
+              type="number"
+              min={1}
+              max={180}
+              inputMode="numeric"
+              value={lateAfter}
+              onChange={(e) => setLateAfter(e.target.value.replace(/[^0-9]/g, ''))}
+              className="w-32 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
+            />
+            <p className="text-[11px] text-slate-400">{tr('ใช้กับการเช็กชื่อหลังจากนี้ สถานะที่บันทึกแล้วไม่เปลี่ยน', 'Applies to check-ins from now on; saved statuses stay')}</p>
           </div>
 
           <div className="space-y-1.5">
