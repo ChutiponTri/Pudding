@@ -2,9 +2,11 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Liff } from "@line/liff";
-import { CheckCircle2, ChevronLeft, Loader2, ShieldAlert } from "lucide-react";
-import { authFetch } from "@/lib/auth/lineSession";
-import { fetchOnce, isFresh, isLoading, readCache, staleCache, subscribeCache, writeCache } from "./cache";
+import { CheckCircle2, ChevronLeft, ExternalLink, Loader2, LogOut, Moon, ShieldAlert, Sun } from "lucide-react";
+import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
+import { useTheme } from "@/lib/theme/ThemeContext";
+import { Avatar } from "@/components/Avatar";
+import { clearCache, fetchOnce, isFresh, isLoading, readCache, staleCache, subscribeCache, writeCache } from "./cache";
 
 /** Pages of the teacher LIFF app (/liff/teacher?view=…), one per group menu button. */
 export type TeacherView =
@@ -267,6 +269,130 @@ export function KitProvider({
 // UI pieces (amber theme, as on the teacher website)
 // ---------------------------------------------------------------------------
 
+/** The page header's right side, as in the student LIFF: light / dark mode, and the teacher's profile menu. */
+function HeaderActions() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={theme === "dark" ? "เปลี่ยนเป็นโหมดสว่าง" : "เปลี่ยนเป็นโหมดมืด"}
+        title={theme === "dark" ? "โหมดสว่าง" : "โหมดมืด"}
+        className="w-10 h-10 flex items-center justify-center rounded-full bg-amber-100 hover:bg-amber-200 text-amber-800 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 dark:text-amber-200 transition-colors cursor-pointer"
+      >
+        {theme === "dark" ? <Sun className="w-4.5 h-4.5" /> : <Moon className="w-4.5 h-4.5" />}
+      </button>
+      <ProfileMenu />
+    </div>
+  );
+}
+
+/** The LINE photo of whoever signed in (from the ID token: no request). */
+function linePicture(liff: Liff): string | undefined {
+  try {
+    return liff.getDecodedIDToken()?.picture || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Avatar button and its menu: who is signed in, the class, the teacher website, sign out. */
+function ProfileMenu() {
+  const { liff, teacher, classroom, cacheScope } = useKit();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const [picture] = useState(() => linePicture(liff));
+
+  // Close on an outside tap or Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: MouseEvent | TouchEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("touchstart", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("touchstart", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const name = teacher.name || teacher.firstName || "คุณครู";
+  const openWebsite = () => {
+    setOpen(false);
+    // The full teacher website (profile, grading, reports) in the phone's browser.
+    liff.openWindow({ url: `${window.location.origin}/dashboard`, external: true });
+  };
+  const signOut = () => {
+    setOpen(false);
+    if (!confirm("ออกจากระบบ?")) return;
+    // The next person on this phone must not see this class's data.
+    clearCache(cacheScope);
+    if (liff.isLoggedIn()) liff.logout();
+    setLineAccessToken(null);
+    if (liff.isInClient()) liff.closeWindow();
+    else window.location.reload();
+  };
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="โปรไฟล์ของฉัน"
+        title={name}
+        className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors cursor-pointer"
+      >
+        <Avatar src={picture} name={name} className="w-8 h-8 text-[11px] ring-2 ring-amber-300 dark:ring-amber-700" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-2 z-40 w-72 max-w-[calc(100vw-2rem)] rounded-2xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xl shadow-slate-900/15 ring-1 ring-slate-200 dark:ring-slate-800 overflow-hidden animate-in fade-in slide-in-from-top-1"
+        >
+          <div className="p-4 flex items-center gap-3 bg-amber-50/80 dark:bg-amber-950/30 border-b border-slate-100 dark:border-slate-800">
+            <Avatar src={picture} name={name} className="w-11 h-11 text-sm shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold truncate">{name}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{teacher.isOwner ? "ครูประจำวิชา" : "ผู้สอนร่วม"}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">🏫 {classroom.title}</p>
+              {classroom.groupName && <p className="text-xs text-slate-500 dark:text-slate-400 truncate">💬 {classroom.groupName}</p>}
+            </div>
+          </div>
+          <div className="p-1.5">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={openWebsite}
+              className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <ExternalLink className="w-4.5 h-4.5 text-amber-600" />
+              <span>แก้ไขโปรไฟล์บนเว็บไซต์คุณครู</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={signOut}
+              className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+            >
+              <LogOut className="w-4.5 h-4.5" />
+              <span>ออกจากระบบ</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Page({
   title,
   subtitle,
@@ -294,10 +420,11 @@ export function Page({
             <ChevronLeft className="w-5 h-5" />
           </button>
         )}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="text-lg font-black text-slate-900 dark:text-white truncate">{title}</h1>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{subtitle || classroom.title}</p>
         </div>
+        <HeaderActions />
       </header>
       {children}
       </div>
