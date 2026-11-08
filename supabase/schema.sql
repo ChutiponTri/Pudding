@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS public.classrooms (
   student_count INTEGER DEFAULT 0,
   subject_code TEXT,
   invite_code TEXT UNIQUE,                    -- Invite code for LINE LIFF join (e.g. THAI-401)
-  line_group_id TEXT,                         -- LINE group where reminders are posted
+  line_group_id TEXT,                         -- The class LINE group the bot is linked to
   line_connection_status TEXT DEFAULT 'disconnected',
   line_connection_token_hash TEXT,
   line_connection_token TEXT,
@@ -183,12 +183,8 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   description TEXT,
   is_exam BOOLEAN NOT NULL DEFAULT FALSE,
   due_date TIMESTAMPTZ NOT NULL,
-  reminder_cron TEXT DEFAULT '0 18 * * *',    -- Cron schedule for LINE reminders
-  reminder_offset_minutes INTEGER DEFAULT 1440,
-  reminder_offsets_minutes INTEGER[],          -- All selected reminders (minutes before due)
   publish_at TIMESTAMPTZ,                      -- Scheduled release; NULL = published on creation
   sort_order INTEGER,                          -- Position inside its group (teacher drag order); NULL = newest first
-  line_last_reminded_at TIMESTAMPTZ,
   total_points NUMERIC DEFAULT 20,
   status_override TEXT DEFAULT 'auto' CHECK (status_override IN ('auto', 'force_closed', 'extended')),
   extended_until TIMESTAMPTZ,

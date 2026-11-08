@@ -40,7 +40,7 @@
 | **Per-student reopening** | "Allow edit" or "Allow hand-in" for one student, with a time limit, even after the deadline. |
 | **Integrity tracking** | Each submission is marked **Normal / Watch / Suspicious**, with a timeline of events: leaving the quiz, time away, split screen, copy and paste, closing and reopening the quiz. |
 | **Attendance** | Check-in sessions that students answer from LINE, with present, late and absent records. |
-| **LINE groups** | The bot links to a classroom's LINE group automatically. Announcements, new work, results and deadline reminders are posted there with deep links. |
+| **LINE groups** | The bot links to a classroom's LINE group automatically. New work, check-ins, results and reminders (ทวงงาน, with @mentions) are posted there as cards with deep links. |
 | **Exports** | Excel reports: gradebook, attendance, submissions, question scores, roster and missing work. |
 | **Admin console** | `/admin`: browse and edit tables, build datasets, manage storage, approve teachers. |
 | **Languages** | Thai (default) and English. |
@@ -85,7 +85,7 @@ Anything else replies with help. See [docs/LINE_SETUP_GUIDE.md](docs/LINE_SETUP_
 | Messaging | **LINE Messaging API** (webhook, push, reply) |
 | Email | Resend (teacher approval notices) |
 | Hosting | **Vercel** (region `sin1`) |
-| Scheduled jobs | Supabase `pg_cron` + `pg_net` (deadline reminders every 5 minutes) |
+| Scheduled jobs | Supabase `pg_cron` + `pg_net` (scheduled work's LINE card and draft cleanup every 5 minutes) |
 
 ---
 
@@ -103,7 +103,7 @@ Anything else replies with help. See [docs/LINE_SETUP_GUIDE.md](docs/LINE_SETUP_
                            ▼
          Supabase (service role, server only) ── Realtime signals ──► open pages refresh
                            │
-            Cloudflare R2 (files)      LINE Messaging API (groups, reminders)
+            Cloudflare R2 (files)      LINE Messaging API (groups, cards)
 ```
 
 Key points:
@@ -133,7 +133,7 @@ src/
 │       ├── data/                       The data door (dataActions)
 │       ├── submissions/, quiz-attempts/, upload/, attendance/
 │       ├── line/webhook/               Bot: group linking, commands
-│       ├── line/reminders/             Deadline reminders (called by pg_cron)
+│       ├── line/reminders/             Scheduled-work cards + draft cleanup (called by pg_cron)
 │       └── admin/…                     Admin-only endpoints
 ├── components/                         UI (teacher, works/, liff/)
 ├── lib/
@@ -227,11 +227,12 @@ Set these in `.env` locally and in **Vercel → Settings → Environment Variabl
    | 12 | `supabase_submission_reopen_until_update.sql` | Per-student reopen time limit |
    | 13 | `supabase_retake_update.sql` | Retake quizzes |
    | 14 | `supabase_quiz_exit_update.sql` | Quiz exit counting |
-   | 15 | `supabase_reminder_unsent_update.sql` | Reminders the bot could not send |
-   | 16 | `supabase_quiz_away_update.sql` | Live away-from-quiz tracking |
-   | 17 | `supabase_line_connect_flow_update.sql` | Pick the LINE group and classroom to link (LIFF page / web) |
+   | 15 | `supabase_quiz_away_update.sql` | Live away-from-quiz tracking |
+   | 16 | `supabase_line_connect_flow_update.sql` | Pick the LINE group and classroom to link (LIFF page / web) |
+   | 17 | `supabase_line_reconnect_update.sql` | Re-link a classroom when the bot is added back to its group |
+   | 18 | `supabase_remove_reminders_update.sql` | Drops the old automatic-reminder columns (run after deploying) |
 
-3. Schedule the deadline reminders: edit the URL and `<CRON_SECRET>` in **`supabase_reminder_cron.sql`**, then run it. It calls `/api/line/reminders` every 5 minutes.
+3. Schedule the background job: edit the URL and `<CRON_SECRET>` in **`supabase_reminder_cron.sql`**, then run it. It calls `/api/line/reminders` every 5 minutes to send scheduled work's LINE card at publish time and delete expired drafts (there are no automatic deadline reminders).
 4. Verify with `npm run db:verify`. `npm run db:setup` can apply the schema with a `DATABASE_URL` (Supabase pooler connection string).
 
 ---
@@ -273,7 +274,7 @@ npm run line:verify
 2. Add every [environment variable](#environment-variables) for Production (and Preview if used).
 3. Point the domain (`www.pudding-p.com`) at Vercel, and `files.pudding-p.com` at the R2 bucket.
 4. In the LINE Developers console, set the LIFF endpoint to `https://<domain>/liff` and the webhook to `https://<domain>/api/line/webhook`.
-5. Run the [database setup](#database-setup), including the reminder cron job.
+5. Run the [database setup](#database-setup), including the 5-minute cron job.
 
 ---
 

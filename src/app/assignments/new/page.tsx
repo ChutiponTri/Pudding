@@ -272,7 +272,6 @@ function NewAssignmentContent() {
   const saveAsDraft = releaseMode === 'draft';
   const [publishAt, setPublishAt] = useState(() => daysFromNowAt(1, 8, 0));
   const [trackReleaseToggle, releaseIndicator] = useSlidingIndicator(releaseMode);
-  const reminderCron = 'relative_due_date';
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setClock(Date.now()), 60000);
@@ -937,8 +936,6 @@ function NewAssignmentContent() {
           ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
           ...(!editIsPublished && schedulePublish ? { publish_at: new Date(publishAt).toISOString() } : {}),
           ...(!editIsPublished && saveAsDraft ? { publish_at: DRAFT_PUBLISH_AT } : {}),
-          reminder_offset_minutes: 0,
-          reminder_offsets_minutes: [],
           total_points: totalPoints,
           attachments: savedAttachments,
           ...(retake ? { retake_student_ids: retake.ids } : {}),
@@ -1005,9 +1002,6 @@ function NewAssignmentContent() {
             due_date: dueDate || daysFromNowAt(7, 23, 59),
             ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
             publish_at: saveAsDraft ? DRAFT_PUBLISH_AT : schedulePublish ? new Date(publishAt).toISOString() : undefined,
-            reminder_cron: reminderCron,
-            reminder_offset_minutes: 0,
-            reminder_offsets_minutes: [],
             total_points: totalPoints,
             status_override: 'auto',
             attachments: savedAttachments,

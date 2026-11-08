@@ -116,7 +116,7 @@ async function withTeacherAvatars<T extends { teachers?: ClassroomTeacher[] | nu
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
 const IN_CHUNK = 150;
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
-const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'reminder_offsets_minutes', 'publish_at', 'attachments', 'quiz_duration_minutes'] as const;
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes'] as const;
 const ATTACHMENTS_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการแนบหลายไฟล์ (ยังไม่มีคอลัมน์ attachments) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือแนบเพียง 1 รายการ';
 
@@ -622,7 +622,7 @@ async function checkedRetake<T extends Partial<Assignment>>(supabase: Supabase, 
   }
   const ids = [...new Set((Array.isArray(data.retake_student_ids) ? data.retake_student_ids : []).map((id) => roster.get(String(id))).filter((id): id is string => !!id))];
   if (!ids.length) throw new HttpError(400, 'กรุณาเลือกนักเรียนที่ต้องสอบซ่อมอย่างน้อย 1 คน');
-  return { ...data, is_exam: true, retake_student_ids: ids, reminder_offset_minutes: 0, reminder_offsets_minutes: [] };
+  return { ...data, is_exam: true, retake_student_ids: ids };
 }
 
 // ==============================================================================
@@ -2013,7 +2013,6 @@ export const dataActions = {
       description: source.description,
       is_exam: !!source.is_exam,
       due_date: source.due_date,
-      reminder_cron: source.reminder_cron,
       total_points: source.total_points,
       attachments: source.attachments,
       sample_work_url: source.sample_work_url,

@@ -30,7 +30,7 @@ ADD COLUMN IF NOT EXISTS year_ce INTEGER DEFAULT 2026,
 ADD COLUMN IF NOT EXISTS subject_code TEXT,
 ADD COLUMN IF NOT EXISTS invite_code TEXT;
 
--- LINE group reminder configuration
+-- LINE group link
 ALTER TABLE IF EXISTS public.classrooms
 ADD COLUMN IF NOT EXISTS line_group_id TEXT,
 ADD COLUMN IF NOT EXISTS line_connection_status TEXT DEFAULT 'disconnected',
@@ -46,10 +46,6 @@ ADD COLUMN IF NOT EXISTS semester INTEGER DEFAULT 1,
 ADD COLUMN IF NOT EXISTS year_ce INTEGER DEFAULT 2026,
 ADD COLUMN IF NOT EXISTS indicators JSONB DEFAULT '[]'::jsonb,
 ADD COLUMN IF NOT EXISTS classroom_ids JSONB DEFAULT '[]'::jsonb;
-
-ALTER TABLE IF EXISTS public.assignments
-ADD COLUMN IF NOT EXISTS reminder_offset_minutes INTEGER DEFAULT 1440,
-ADD COLUMN IF NOT EXISTS line_last_reminded_at TIMESTAMPTZ;
 
 -- 4. Ensure `classroom_students` table exists with status & joined_via
 CREATE TABLE IF NOT EXISTS public.classroom_students (
@@ -261,14 +257,6 @@ CREATE INDEX IF NOT EXISTS idx_attendance_records_classroom_student ON public.at
 
 -- Make PostgREST pick up the new columns immediately.
 NOTIFY pgrst, 'reload schema';
-
--- ==========================================
--- Multiple LINE reminders per assignment
--- ==========================================
--- Every selected reminder offset (minutes before the deadline).
--- reminder_offset_minutes keeps the earliest one for older code.
-ALTER TABLE public.assignments
-ADD COLUMN IF NOT EXISTS reminder_offsets_minutes INTEGER[];
 
 -- ==========================================
 -- Required / optional homework questions
