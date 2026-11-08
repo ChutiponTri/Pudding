@@ -5,6 +5,7 @@ import { canLinkLine, findBotGroupByRef, LINK_COLUMNS, liffConnectUrl, type Link
 import { guideMessages, inviteMessages, openClassMessages, remindPicture, resultsMessages, workMessages, type LineMessage } from '@/lib/line/teacherCards';
 import { missingStudents } from '@/lib/server/workReminder';
 import { teacherAccessMessage } from '@/lib/server/teacherProfileGuard';
+import { loadRoster } from '@/lib/server/roster';
 import { teacherAccessOf } from '@/lib/utils/teacherProfile';
 import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { rosterFor } from '@/lib/utils/retake';
@@ -58,34 +59,6 @@ async function context(request: NextRequest, ref: string | null): Promise<Contex
     return NextResponse.json({ error: 'คุณครูไม่ได้เป็นผู้สอนของห้องเรียนที่เชื่อมกับกลุ่มนี้', code: 'not-staff' }, { status: 403 });
   }
   return { teacherId: actor.userId, teacher: teacher || {}, classroom, groupName: classroom.line_group_name || group.groupName };
-}
-
-type RosterStudent = { id: string; first_name: string; last_name: string; student_id?: string; line_uid?: string };
-
-/** The classroom's students (admitted, and waiting for approval) in one query, sorted by student number. */
-async function loadRoster(supabase: ServiceClient, classroomId: string) {
-  const USER_COLUMNS = 'id, first_name, last_name, student_id, line_uid';
-  const { data, error } = await supabase
-    .from('classroom_students')
-    .select(`status, users(${USER_COLUMNS})`)
-    .eq('classroom_id', classroomId);
-  let rows = (data || []) as unknown as Array<{ status: string; users: RosterStudent | RosterStudent[] | null }>;
-  if (error) {
-    // No foreign key PostgREST can follow: the enrolments, then their users.
-    const { data: links } = await supabase.from('classroom_students').select('status, student_id').eq('classroom_id', classroomId);
-    const ids = (links || []).map((link) => link.student_id as string);
-    const { data: users } = ids.length ? await supabase.from('users').select(USER_COLUMNS).in('id', ids) : { data: [] };
-    const byId = new Map(((users || []) as RosterStudent[]).map((user) => [user.id, user]));
-    rows = (links || []).map((link) => ({ status: link.status as string, users: byId.get(link.student_id as string) || null }));
-  }
-  const byNumber = (a: RosterStudent, b: RosterStudent) => (a.student_id || '').localeCompare(b.student_id || '', undefined, { numeric: true }) || a.first_name.localeCompare(b.first_name, 'th');
-  const pick = (status: string) =>
-    rows
-      .filter((row) => row.status === status)
-      .map((row) => (Array.isArray(row.users) ? row.users[0] : row.users))
-      .filter((user): user is RosterStudent => !!user)
-      .sort(byNumber);
-  return { students: pick('active'), pending: pick('pending_approval') };
 }
 
 /**

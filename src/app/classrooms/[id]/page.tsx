@@ -16,7 +16,6 @@ import { lineMessagesLeftNote, testQuotaNote, type LineTestQuotaInfo } from '@/l
 import { ActionToast, networkErrorMessage, readActionResult, useActionToast } from '@/components/ActionToast';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dropLineGroup, prefetchLineGroups, useLineGroupChoices } from '@/lib/line/lineGroupChoices';
-import { DateTimeField } from '@/components/DateTimeField';
 import { EditStudentModal } from '@/components/EditStudentModal';
 import { StudentRosterModal, type StudentRosterTab } from '@/components/StudentRosterModal';
 import { Avatar } from '@/components/Avatar';
@@ -303,9 +302,6 @@ export default function ClassroomWorkspacePage() {
 
   // Attendance form & edit session state
   const [attendanceTitle, setAttendanceTitle] = useState(tr('เช็กชื่อประจำคาบ', 'Period attendance'));
-  const [attendanceStartsAt, setAttendanceStartsAt] = useState('');
-  const [onTimeMinutes, setOnTimeMinutes] = useState(10);
-  const [lateMinutes, setLateMinutes] = useState(30);
   const [editingSession, setEditingSession] = useState<AttendanceSession | null>(null);
   const [editSessionTitle, setEditSessionTitle] = useState('');
   const [isUpdatingSession, setIsUpdatingSession] = useState(false);
@@ -1452,18 +1448,12 @@ export default function ClassroomWorkspacePage() {
 
   /** Opens a check-in period; returns its id so the panel can show its QR. */
   const createAttendance = async (): Promise<string | null> => {
-    const startsAt = attendanceStartsAt || new Date().toISOString();
     try {
       const response = await fetch('/api/attendance', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          classroomId,
-          title: attendanceTitle,
-          startsAt,
-          onTimeUntilMinutes: onTimeMinutes,
-          lateUntilMinutes: lateMinutes,
-        }),
+        // Only the name: the server sets the timing (on time for 15 minutes, then late until closed).
+        body: JSON.stringify({ classroomId, title: attendanceTitle }),
       });
       if (!response.ok) {
         setNotice(tr('สร้างคาบเช็กชื่อไม่สำเร็จ', 'Could not create the period'));
@@ -2532,12 +2522,6 @@ export default function ClassroomWorkspacePage() {
               counts={attendanceCounts}
               title={attendanceTitle}
               setTitle={setAttendanceTitle}
-              startsAt={attendanceStartsAt}
-              setStartsAt={setAttendanceStartsAt}
-              onTime={onTimeMinutes}
-              setOnTime={setOnTimeMinutes}
-              late={lateMinutes}
-              setLate={setLateMinutes}
               create={createAttendance}
               update={updateAttendanceRecord}
               action={sessionAction}
@@ -3282,12 +3266,6 @@ function AttendancePanel({
   counts,
   title,
   setTitle,
-  startsAt,
-  setStartsAt,
-  onTime,
-  setOnTime,
-  late,
-  setLate,
   create,
   update,
   action,
@@ -3305,12 +3283,6 @@ function AttendancePanel({
   counts: Record<string, number>;
   title: string;
   setTitle: (v: string) => void;
-  startsAt: string;
-  setStartsAt: (v: string) => void;
-  onTime: number;
-  setOnTime: (v: number) => void;
-  late: number;
-  setLate: (v: number) => void;
   /** Opens a period; resolves to its id (null when it failed). */
   create: () => Promise<string | null>;
   update: (sessionId: string, studentId: string, status: AttendanceStatus) => void;
@@ -3354,8 +3326,6 @@ function AttendancePanel({
     for (const record of records) groups.set(record.session_id, [...(groups.get(record.session_id) || []), record]);
     return new Map([...groups].map(([id, list]) => [id, indexRecords(list)]));
   }, [records]);
-
-  const clockOf = (iso: string) => new Date(iso).toLocaleTimeString(tr('th-TH', 'en-US'), { hour: '2-digit', minute: '2-digit' });
 
 
   // Open sessions sit right under the controls/overview; finished ones follow
@@ -3439,8 +3409,8 @@ function AttendancePanel({
             </button>
           </div>
 
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="sm:col-span-2">
+          <div className="space-y-1">
+            <div>
               <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('ชื่อคาบเรียน *', 'Period name *')}</label>
               <input
                 value={title}
@@ -3449,38 +3419,9 @@ function AttendancePanel({
                 placeholder={tr('เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร', 'e.g. Period 1, Thai for Communication')}
               />
             </div>
-            <div className="sm:col-span-2">
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('เวลาเริ่ม (เว้นว่าง = ทันที)', 'Start time (blank = now)')}</label>
-              <DateTimeField
-                value={startsAt}
-                onChange={setStartsAt}
-                presets="start"
-                allowEmpty
-                emptyHint={tr('เริ่มทันทีเมื่อกดสร้างคาบ', 'Starts as soon as you create the period')}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('ตรงเวลา (น.)', 'On time (min)')}</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={onTime}
-                  onChange={(e) => setOnTime(Math.max(1, Number(e.target.value)))}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs outline-none text-center font-bold"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] font-bold text-slate-400 block mb-1">{tr('สายถึง (น.)', 'Late until (min)')}</label>
-                <input
-                  type="number"
-                  min={onTime}
-                  value={late}
-                  onChange={(e) => setLate(Math.max(onTime, Number(e.target.value)))}
-                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs outline-none text-center font-bold"
-                />
-              </div>
-            </div>
+            <p className="text-[11px] text-slate-400">
+              {tr('สแกนภายใน 15 นาทีนับว่าตรงเวลา หลังจากนั้นนับว่าสาย จนกว่าจะปิดคาบ • คุณครูแก้สถานะได้ทุกเมื่อ', 'Scans within 15 minutes are on time, later ones late, until you close it • you can change any status')}
+            </p>
           </div>
 
           <div className="flex justify-end gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
@@ -3609,8 +3550,8 @@ function AttendancePanel({
                       <span className="block sm:inline">
                         {isOpen
                           ? tr(
-                              `ตรงเวลาภายใน ${item.on_time_until_minutes} นาที • สายได้ถึง ${item.late_until_minutes} นาที`,
-                              `on time within ${item.on_time_until_minutes} min • late up to ${item.late_until_minutes} min`
+                              `ตรงเวลาภายใน ${item.on_time_until_minutes} นาที • หลังจากนั้นนับว่าสายจนปิดคาบ`,
+                              `on time within ${item.on_time_until_minutes} min • late after that until closed`
                             )
                           : `${tr('ตรงเวลา', 'on time')} ${item.on_time_until_minutes}m / ${tr('สาย', 'late')} ${item.late_until_minutes}m`}
                       </span>
@@ -3630,13 +3571,6 @@ function AttendancePanel({
                       >
                         <QrCode className="w-3.5 h-3.5" />
                         {tr('แสดง QR เช็กชื่อ', 'Show check-in QR')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => action(item.id, 'extend')}
-                        className="flex-1 sm:flex-none whitespace-nowrap px-3 py-2 sm:py-1.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 text-amber-800 dark:text-amber-300 text-xs font-bold hover:bg-amber-50 dark:hover:bg-amber-950/40 cursor-pointer shadow-xs"
-                      >
-                        {tr('+10 นาที', '+10 min')}
                       </button>
                       <button
                         type="button"
@@ -3712,7 +3646,6 @@ function AttendancePanel({
             key={editing.id}
             session={editing}
             busy={!!isUpdatingSession}
-            clockOf={clockOf}
             onClose={() => setEditing(null)}
             onSave={(fields) => {
               onUpdateSession(editing.id, fields.title, fields.status, fields.startsAt, fields.onTime, fields.late);
@@ -3727,34 +3660,6 @@ function AttendancePanel({
 
 const EMPTY_RECORD_INDEX = new Map<string, AttendanceRecord>();
 
-/** Minutes field with − / + buttons, big enough to tap on phones. */
-function MinuteStepper({ value, min, onChange, label, hint }: { value: number; min: number; onChange: (v: number) => void; label: string; hint: string }) {
-  const { tr } = useLanguage();
-  const set = (v: number) => onChange(Math.max(min, Number.isFinite(v) ? Math.round(v) : min));
-  return (
-    <div className="space-y-1">
-      <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{label}</label>
-      <div className="flex items-stretch rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 overflow-hidden">
-        <button type="button" onClick={() => set(value - 5)} disabled={value <= min} aria-label={tr('ลด 5 นาที', 'Minus 5 minutes')} className="px-3 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 cursor-pointer">
-          −
-        </button>
-        <input
-          type="number"
-          inputMode="numeric"
-          min={min}
-          value={value}
-          onChange={(e) => set(Number(e.target.value))}
-          className="w-full min-w-0 py-2.5 bg-transparent text-center text-sm font-black text-slate-900 dark:text-white outline-none"
-        />
-        <button type="button" onClick={() => set(value + 5)} aria-label={tr('เพิ่ม 5 นาที', 'Plus 5 minutes')} className="px-3 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer">
-          +
-        </button>
-      </div>
-      <p className="text-[10px] text-slate-400">{hint}</p>
-    </div>
-  );
-}
-
 type SessionSettings = { title: string; status?: 'open' | 'closed'; startsAt?: string; onTime: number; late: number };
 
 /**
@@ -3765,24 +3670,18 @@ type SessionSettings = { title: string; status?: 'open' | 'closed'; startsAt?: s
 function SessionSettingsSheet({
   session,
   busy,
-  clockOf,
   onClose,
   onSave,
 }: {
   session: AttendanceSession;
   busy: boolean;
-  clockOf: (iso: string) => string;
   onClose: () => void;
   onSave: (fields: SessionSettings) => void;
 }) {
   const { tr } = useLanguage();
   const [title, setTitle] = useState(session.title);
-  const [startsAt, setStartsAt] = useState(session.starts_at);
-  const [onTime, setOnTime] = useState(session.on_time_until_minutes);
-  const [late, setLate] = useState(session.late_until_minutes);
   const [accepting, setAccepting] = useState(session.status === 'open');
 
-  const at = (minutes: number) => clockOf(new Date(new Date(startsAt).getTime() + minutes * 60_000).toISOString());
   const wasOpen = session.status === 'open';
   const statusChanged = accepting !== wasOpen;
 
@@ -3797,9 +3696,10 @@ function SessionSettingsSheet({
     onSave({
       title: title.trim(),
       status: statusChanged ? (accepting ? 'open' : 'closed') : undefined,
-      startsAt: startsAt !== session.starts_at ? startsAt : undefined,
-      onTime,
-      late: Math.max(onTime, late),
+      // Only the name and open / closed are set by hand; the timing is the system's.
+      startsAt: undefined,
+      onTime: session.on_time_until_minutes,
+      late: session.late_until_minutes,
     });
   };
 
@@ -3829,45 +3729,6 @@ function SessionSettingsSheet({
               placeholder={tr('เช่น คาบที่ 1 ภาษาไทยเพื่อการสื่อสาร', 'e.g. Period 1, Thai for Communication')}
               className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-400"
             />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">{tr('เวลาเริ่ม', 'Start time')}</label>
-            <DateTimeField value={startsAt} onChange={setStartsAt} presets="start" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <MinuteStepper
-              label={tr('ตรงเวลาภายใน (นาที)', 'On time within (min)')}
-              value={onTime}
-              min={1}
-              onChange={(v) => {
-                setOnTime(v);
-                if (late < v) setLate(v);
-              }}
-              hint={tr(`ถึง ${at(onTime)}`, `until ${at(onTime)}`)}
-            />
-            <MinuteStepper
-              label={tr('สายได้ถึง (นาที)', 'Late until (min)')}
-              value={late}
-              min={onTime}
-              onChange={setLate}
-              hint={tr(`หลัง ${at(late)} ถือว่าขาด`, `absent after ${at(late)}`)}
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mr-1">{tr('ขยายเวลา', 'Extend')}</span>
-            {[5, 10, 15, 30].map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setLate((v) => Math.max(onTime, v) + m)}
-                className="px-3 py-1.5 rounded-full border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-[11px] font-bold hover:bg-amber-50 dark:hover:bg-amber-950/40 cursor-pointer"
-              >
-                +{m} {tr('นาที', 'min')}
-              </button>
-            ))}
           </div>
 
           <div className="space-y-1.5">

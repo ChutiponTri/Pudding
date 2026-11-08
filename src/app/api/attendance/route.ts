@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { createClassroomPost } from '@/lib/server/classroomPosts';
-import { withLiffLink } from '@/lib/line/liffLink';
-import { classroomTitle } from '@/lib/utils/classroomLabel';
 import { getActor, type Actor } from '@/lib/auth/actor';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { classroomRole, isTeacherOf } from '@/lib/server/access';
@@ -14,6 +12,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type AttendanceStatus = 'on_time' | 'late' | 'absent' | 'excused';
+
+/** A check-in within this long after the period opens is on time. */
+const ON_TIME_MINUTES = 15;
+/** After that it is late until the teacher closes the period (a day: closing ends it sooner). */
+const LATE_UNTIL_CLOSED_MINUTES = 24 * 60;
 
 type AttendanceSession = {
   id: string;
@@ -255,10 +258,14 @@ export async function POST(request: NextRequest) {
   const { supabase, userId, classroom } = context;
 
   if (action === 'create') {
-    const onTimeUntilMinutes = Math.max(0, Number(body.onTimeUntilMinutes ?? 10));
-    const lateUntilMinutes = Math.max(onTimeUntilMinutes, Number(body.lateUntilMinutes ?? 30));
-    const startsAtDate = new Date(typeof body.startsAt === 'string' ? body.startsAt : Date.now());
-    const sessionTitle = typeof body.title === 'string' && body.title.trim() ? body.title.trim() : 'เช็กชื่อ';
+    // Only the name is the teacher's to set: a check-in is on time for
+    // ON_TIME_MINUTES, then late until the teacher closes the period (the
+    // teacher can change anyone's status).
+    const onTimeUntilMinutes = ON_TIME_MINUTES;
+    const lateUntilMinutes = LATE_UNTIL_CLOSED_MINUTES;
+    const startsAtDate = new Date();
+    const sessionTitle = typeof body.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 120) : '';
+    if (!sessionTitle) return NextResponse.json({ error: 'กรุณาใส่ชื่อคาบ' }, { status: 400 });
     const createdAt = new Date().toISOString();
 
     const session: AttendanceSession = {
@@ -283,14 +290,9 @@ export async function POST(request: NextRequest) {
       ({ line, share } = await createClassroomPost(supabase, {
         classroom,
         authorId: userId,
-        body: `เปิดคาบเช็กชื่อ: ${sessionTitle} (ตรงเวลาใน ${onTimeUntilMinutes} นาที, สายได้ถึง ${lateUntilMinutes} นาที)`,
+        body: `เปิดคาบเช็กชื่อ: ${sessionTitle} (สแกน QR บนหน้าจอของคุณครู)`,
         activityType: 'attendance',
         metadata: { sessionId: session.id },
-        lineText: withLiffLink(
-          `⏰ เปิดคาบเช็กชื่อ\n📘 ${classroomTitle(classroom)}\nคาบ: ${sessionTitle}\n\n⏱️ เช็กชื่อตรงเวลาได้ภายใน ${onTimeUntilMinutes} นาที\n(หลังจากนั้นถือว่ามาสายถึง ${lateUntilMinutes} นาที)\n\n📷 สแกน QR บนหน้าจอของคุณครูเพื่อเช็กชื่อ`,
-          'เปิดหน้าเช็กชื่อ',
-          { classroomId, inviteCode: classroom.invite_code, view: 'attendance' }
-        ),
       }));
     } catch (postError) {
       console.warn('Attendance timeline post failed:', postError);

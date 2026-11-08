@@ -3657,7 +3657,7 @@ export default function LiffStudentPage() {
                                     <p className="text-xs text-emerald-800/80 dark:text-emerald-300/80 mt-1">
                                       เริ่มเวลา {new Date(openSession.starts_at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
                                       {openSession.on_time_until_minutes != null && ` • ตรงเวลาภายใน ${openSession.on_time_until_minutes} นาที`}
-                                      {openSession.late_until_minutes != null && ` • สายได้ถึง ${openSession.late_until_minutes} นาที`}
+                                      {' • หลังจากนั้นนับว่าสาย'}
                                     </p>
                                   </div>
                                 </div>
