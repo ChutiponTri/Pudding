@@ -3,12 +3,10 @@
 import { useState } from "react";
 import { Check, ExternalLink, UserCheck, Users, X } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
-import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
-import { isHandedIn, needsGrading } from "@/lib/utils/gradingStatus";
-import type { User } from "@/types/database";
-import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useLoad, type TeacherView } from "./kit";
+import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useViewData, type RosterData, type RosterStudent, type TeacherView } from "./kit";
+import { useWork } from "./WorkViews";
 
-const studentName = (s: Partial<User> & { name?: string }) => `${s.first_name || ""} ${s.last_name || ""}`.trim() || s.name || "ไม่ระบุชื่อ";
+const studentName = (s: Partial<RosterStudent>) => `${s.first_name || ""} ${s.last_name || ""}`.trim() || "ไม่ระบุชื่อ";
 
 /** The same buttons as the group menu card. */
 const MENU: Array<{ section?: string; items: Array<{ view: TeacherView; label: string; primary?: boolean; wide?: boolean }> }> = [
@@ -39,15 +37,65 @@ const MENU: Array<{ section?: string; items: Array<{ view: TeacherView; label: s
   },
 ];
 
+/**
+ * One-tap sends for the work still taking hand-ins: its card again, or the
+ * reminder picture (the bot answers with who has not handed in). Straight
+ * into the group when the menu was opened from it.
+ */
+function QuickSend() {
+  const { postKind, toast } = useKit();
+  const work = useWork();
+  const [busy, setBusy] = useState<string | null>(null);
+  const open = work.rows.filter((row) => row.win.acceptsSubmissions).slice(0, 5);
+  if (!work.data || !open.length) return null;
+  const send = async (key: string, task: () => Promise<unknown>) => {
+    setBusy(key);
+    try {
+      await task();
+    } catch (err) {
+      toast(errorText(err), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <Card className="space-y-2.5">
+      <p className="text-sm font-black">⚡ ส่งเข้ากลุ่มด่วน</p>
+      {open.map((row) => (
+        <div key={row.work.id} className="flex items-center gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold truncate">{row.work.is_exam ? "📝" : "📋"} {row.work.title}</p>
+            <p className="text-[11px] text-slate-500">ส่ง {row.handed}/{row.total}{row.missing ? ` · ยังไม่ส่ง ${row.missing}` : " · ครบแล้ว"}</p>
+          </div>
+          <Button small tone="soft" busy={busy === `card-${row.work.id}`} onClick={() => send(`card-${row.work.id}`, () => postKind("work", { assignmentId: row.work.id }))}>
+            การ์ดงาน
+          </Button>
+          {row.missing > 0 && (
+            <Button small busy={busy === `remind-${row.work.id}`} onClick={() => send(`remind-${row.work.id}`, () => postKind("remind", { assignmentId: row.work.id }))}>
+              🔔 ทวง
+            </Button>
+          )}
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 export function HomeView() {
-  const { go, teacher, classroom } = useKit();
+  const { go, teacher, classroom, autoSend } = useKit();
   return (
     <Page title={`สวัสดีค่ะ คุณครู${teacher.firstName}`} back={false}>
       <Card className="bg-violet-50! dark:bg-violet-950/40! space-y-0.5">
         <p className="text-[11px] font-bold text-violet-500">ห้องเรียนของกลุ่มนี้</p>
         <p className="font-black text-violet-950 dark:text-white">{classroom.title}</p>
         {classroom.groupName && <p className="text-[11px] text-slate-500">กลุ่ม LINE: {classroom.groupName}</p>}
+        <p className={`text-[11px] font-bold pt-1 ${autoSend ? "text-emerald-600" : "text-amber-700"}`}>
+          {autoSend
+            ? "✅ การ์ดส่งเข้ากลุ่มนี้ทันที ไม่ต้องเลือกกลุ่ม"
+            : "ℹ️ เปิดเมนูนี้จากการ์ดเมนูในกลุ่ม LINE เพื่อส่งเข้ากลุ่มทันที (ตอนนี้ต้องเลือกกลุ่มเอง)"}
+        </p>
       </Card>
+      <QuickSend />
       {MENU.map((block, index) => (
         <div key={index} className="space-y-2">
           {block.section && <p className="inline-block px-3 py-0.5 rounded-full bg-violet-600 text-white text-xs font-bold">{block.section}</p>}
@@ -74,7 +122,7 @@ export function HomeView() {
 export function InviteView() {
   const { classroom, postKind, go, toast } = useKit();
   const [busy, setBusy] = useState(false);
-  const roster = useLoad(() => dataService.getClassroomRoster(classroom.id), [classroom.id]);
+  const roster = useViewData<RosterData>("roster");
   const send = async () => {
     setBusy(true);
     try {
@@ -93,9 +141,9 @@ export function InviteView() {
         <p className="text-xs text-slate-500">นักเรียนกดปุ่มในการ์ด กรอกชื่อ แล้วรอคุณครูอนุมัติ</p>
       </Card>
       <Button onClick={send} busy={busy} className="w-full">📨 ส่งการ์ดเชิญเข้ากลุ่ม</Button>
-      {(roster.data?.pending_students.length || 0) > 0 && (
+      {(roster.data?.pending.length || 0) > 0 && (
         <Card className="flex items-center justify-between gap-2">
-          <span className="text-sm font-bold text-amber-700">รออนุมัติ {roster.data!.pending_students.length} คน</span>
+          <span className="text-sm font-bold text-amber-700">รออนุมัติ {roster.data!.pending.length} คน</span>
           <Button small tone="soft" onClick={() => go("classroom")}>ไปอนุมัติ</Button>
         </Card>
       )}
@@ -166,9 +214,9 @@ export function HelpView() {
 /** "จัดการห้องเรียน": approve join requests and see the roster. */
 export function ClassroomView() {
   const { classroom, liff, toast } = useKit();
-  const roster = useLoad(() => dataService.getClassroomRoster(classroom.id), [classroom.id]);
+  const roster = useViewData<RosterData>("roster");
   const [busy, setBusy] = useState<string | null>(null);
-  const act = async (student: User, admit: boolean) => {
+  const act = async (student: RosterStudent, admit: boolean) => {
     setBusy(student.id);
     try {
       if (admit) await dataService.admitStudentToClassroom(classroom.id, student.id);
@@ -191,14 +239,14 @@ export function ClassroomView() {
           <Card className="space-y-3">
             <div className="flex items-center gap-2">
               <UserCheck className="w-4 h-4 text-amber-600" />
-              <p className="text-sm font-black text-slate-800 dark:text-white">รออนุมัติ ({roster.data.pending_students.length})</p>
+              <p className="text-sm font-black text-slate-800 dark:text-white">รออนุมัติ ({roster.data.pending.length})</p>
             </div>
-            {roster.data.pending_students.length === 0 && <p className="text-xs text-slate-400">ไม่มีคำขอเข้าห้อง</p>}
-            {roster.data.pending_students.map((student) => (
+            {roster.data.pending.length === 0 && <p className="text-xs text-slate-400">ไม่มีคำขอเข้าห้อง</p>}
+            {roster.data.pending.map((student) => (
               <div key={student.id} className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-bold truncate">{studentName(student)}</p>
-                  {student.student_id && <p className="text-[11px] text-slate-400">เลขที่/รหัส {student.student_id}</p>}
+                  {student.student_id && <p className="text-[11px] text-slate-400">รหัส {student.student_id}</p>}
                 </div>
                 <div className="flex gap-1.5 shrink-0">
                   <Button small tone="green" busy={busy === student.id} onClick={() => act(student, true)}>
@@ -221,7 +269,10 @@ export function ClassroomView() {
               {roster.data.students.map((student, index) => (
                 <li key={student.id} className="py-1.5 flex gap-2">
                   <span className="w-6 text-right text-slate-400 text-xs pt-0.5">{index + 1}.</span>
-                  <span className="truncate">{studentName(student)}</span>
+                  <span className="truncate">
+                    {student.student_id ? <span className="text-slate-400">[{student.student_id.slice(-3)}] </span> : null}
+                    {studentName(student)}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -235,32 +286,20 @@ export function ClassroomView() {
   );
 }
 
-/** "เช็กสถานะ": the class at a glance. */
+/** "เช็กสถานะ": the class at a glance (one request; numbers from the server against the real roster). */
 export function StatusView() {
-  const { classroom } = useKit();
-  const status = useLoad(async () => {
-    const [roster, works] = await Promise.all([dataService.getClassroomRoster(classroom.id), dataService.getAssignmentsByClassroomId(classroom.id)]);
-    const published = works.filter((work) => {
-      const win = getAssignmentWindow(work);
-      return !win.isDraft && !win.isScheduled;
-    });
-    const submissions = await dataService.getSubmissionsByAssignmentIds(published.map((work) => work.id), { includeStudents: false });
-    return { roster, works, published, submissions };
-  }, [classroom.id]);
-
-  if (status.error) return <Page title="📊 เช็กสถานะ"><ErrorBox text={status.error} /></Page>;
-  if (!status.data) return <Page title="📊 เช็กสถานะ"><Loading /></Page>;
-  const { roster, works, published, submissions } = status.data;
-  const students = roster.students.length;
-  const open = published.filter((work) => getAssignmentWindow(work).acceptsSubmissions);
-  const drafts = works.length - published.length;
-  const toGrade = submissions.filter(needsGrading).length;
+  const work = useWork();
+  if (work.error) return <Page title="📊 เช็กสถานะ"><ErrorBox text={work.error} /></Page>;
+  if (!work.data) return <Page title="📊 เช็กสถานะ"><Loading /></Page>;
+  const open = work.rows.filter((row) => row.win.acceptsSubmissions);
+  const waiting = work.rows.filter((row) => row.win.isDraft || row.win.isScheduled).length;
+  const toGrade = work.rows.reduce((sum, row) => sum + row.toGrade, 0);
   return (
     <Page title="📊 เช็กสถานะ">
       <div className="grid grid-cols-2 gap-2">
         {[
-          ["นักเรียน", students],
-          ["รออนุมัติ", roster.pending_students.length],
+          ["นักเรียน", work.data.students],
+          ["รออนุมัติ", work.data.pending],
           ["งานที่เปิดรับ", open.length],
           ["รอตรวจ", toGrade],
         ].map(([label, value]) => (
@@ -270,19 +309,17 @@ export function StatusView() {
           </Card>
         ))}
       </div>
-      {drafts > 0 && <p className="text-xs text-slate-500">ฉบับร่าง / ตั้งเวลาไว้ {drafts} งาน</p>}
+      {waiting > 0 && <p className="text-xs text-slate-500">ฉบับร่าง / ตั้งเวลาไว้ {waiting} งาน</p>}
       <Card className="space-y-3">
         <p className="text-sm font-black">งานที่เปิดรับ</p>
         {open.length === 0 && <p className="text-xs text-slate-400">ไม่มีงานที่เปิดรับอยู่</p>}
-        {open.map((work) => {
-          const rows = submissions.filter((sub) => sub.assignment_id === work.id);
-          const handed = rows.filter(isHandedIn).length;
-          const percent = students ? Math.round((handed / students) * 100) : 0;
+        {open.map((row) => {
+          const percent = row.total ? Math.round((row.handed / row.total) * 100) : 0;
           return (
-            <div key={work.id} className="space-y-1">
+            <div key={row.work.id} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-bold truncate">{work.is_exam ? "📝" : "📋"} {work.title}</p>
-                <Pill tone={handed >= students ? "green" : "amber"}>ส่ง {handed}/{students}</Pill>
+                <p className="text-sm font-bold truncate">{row.work.is_exam ? "📝" : "📋"} {row.work.title}</p>
+                <Pill tone={row.missing ? "amber" : "green"}>ส่ง {row.handed}/{row.total}</Pill>
               </div>
               <div className="h-1.5 rounded-full bg-violet-100 dark:bg-slate-800 overflow-hidden">
                 <div className="h-full bg-violet-500" style={{ width: `${Math.min(100, percent)}%` }} />

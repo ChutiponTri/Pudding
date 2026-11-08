@@ -133,11 +133,18 @@ export async function createClassroomPost(
   const { data: saved, error } = await supabase.from('classroom_posts').insert(newPost).select('*').single();
   if (error) throw new Error(error.message);
 
+  // Check-ins never go to LINE: students check in by scanning the QR on the
+  // teacher's screen. The timeline post is enough.
+  if (activityType === 'attendance') {
+    after(() => signalClassroom(classroom.id, { type: 'timeline' }));
+    return { post: saved as ClassroomPost, deduplicated: false };
+  }
+
   let line: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' | 'card' = isScheduled ? 'scheduled' : 'no_group';
-  // New work and check-ins in a linked group are not pushed (a push costs one
+  // New work in a linked group is not pushed (a push costs one
   // message per member): the teacher's LINE sends the card into the group
   // (teacher LIFF pages: straight in; website: /liff/share).
-  const asCard = !isScheduled && !!classroom.line_group_id && (activityType === 'assignment' || activityType === 'exam' || activityType === 'attendance');
+  const asCard = !isScheduled && !!classroom.line_group_id && (activityType === 'assignment' || activityType === 'exam');
   if (asCard) {
     line = 'card';
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));

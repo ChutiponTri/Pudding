@@ -25,7 +25,6 @@ import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeach
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ClassworkRow } from '@/components/works/ClassworkRow';
 import { shiftFor, useCrossListDrag } from '@/lib/hooks/useCrossListDrag';
-import { announceConfirmText } from '@/components/works/WorkBits';
 import { applySavedOrder, readLocalOrder, useDragReorder, writeLocalOrder } from '@/lib/hooks/useDragReorder';
 
 import { CategoryDetailSheet, categoryLook, RenameCategoryDialog } from '@/components/works/CategoryTools';
@@ -64,7 +63,7 @@ import { Assignment, Classroom, ClassroomTeacher, Course, Submission, User } fro
 import { MobileText } from '@/components/MobileText';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { reportLineUnsent, type LinePostStatus, type LineShare, type PostLineShare } from '@/lib/utils/lineShare';
+import { reportLineUnsent, type PostLineShare } from '@/lib/utils/lineShare';
 import { institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
 import {
   ArrowLeft,
@@ -975,7 +974,6 @@ export default function ClassroomWorkspacePage() {
 
   /** "ทวงงาน": the bot names who has not handed in; the share popup opens whenever it cannot send. */
   const handleRemindAssignment = async (assignment: Assignment) => {
-    if (!confirm(tr(`ทวงงาน "${assignment.title}" ในกลุ่ม LINE ของห้องนี้?`, `Remind about "${assignment.title}" in this class's LINE group?`))) return;
     try {
       const line = await dataService.remindAssignment(assignment.id, assignment.title);
       setNotice(line === 'none' ? tr('นักเรียนส่งงานนี้ครบแล้ว', 'Everyone has handed this in') : botNotice(line, tr('ทวงงานในกลุ่ม LINE แล้ว', 'Reminder sent to the LINE group')));
@@ -989,9 +987,7 @@ export default function ClassroomWorkspacePage() {
    * once it is closed), after the teacher confirms; then the bot posts to the
    * group, or the share popup opens whenever it cannot.
    */
-  const handleAnnounceResults = async (assignment: Assignment, counts: GradingCounts) => {
-    const accepting = getAssignmentWindow(assignment).acceptsSubmissions;
-    if (!confirm(announceConfirmText([{ title: assignment.title, acceptsSubmissions: accepting, counts }], tr))) return;
+  const handleAnnounceResults = async (assignment: Assignment) => {
     try {
       const result = await dataService.announceResults(assignment.id, assignment.title);
       if (result.assignment) setAssignments((prev) => prev.map((a) => (a.id === assignment.id ? { ...a, ...result.assignment } : a)));
@@ -1003,7 +999,6 @@ export default function ClassroomWorkspacePage() {
   };
 
   const handleReannounceAssignment = async (assignment: Assignment) => {
-    if (!confirm(tr(`ส่งลิงก์ "${assignment.title}" เข้ากลุ่ม LINE อีกครั้ง?`, `Post "${assignment.title}" to the LINE group again?`))) return;
     try {
       const line = await dataService.reannounceAssignment(assignment.id, assignment.title);
       setNotice(botNotice(line, tr('ส่งเข้า LINE แล้ว', 'Posted to LINE')));
@@ -1012,27 +1007,9 @@ export default function ClassroomWorkspacePage() {
     }
   };
 
-  /** An open attendance period called again in the LINE group (share popup when the bot cannot). */
-  const handleReannounceSession = async (sessionId: string, title: string) => {
-    if (!confirm(tr(`ส่งข้อความเช็กชื่อ "${title}" เข้ากลุ่ม LINE อีกครั้ง?`, `Send the check-in for "${title}" to the LINE group again?`))) return;
-    try {
-      const res = await fetch('/api/attendance', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'reannounce', classroomId, sessionId }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || tr('ส่งไม่สำเร็จ', 'Could not send'));
-      reportLineUnsent(json.line, json.share, title, json.message);
-      setNotice(botNotice(json.line || 'sent', tr('ส่งเข้า LINE อีกครั้งแล้ว', 'Sent to LINE again')));
-    } catch (err) {
-      setNotice(err instanceof Error && err.message ? err.message : tr('ส่งไม่สำเร็จ', 'Could not send'));
-    }
-  };
 
   /** A timeline post sent to the LINE group again by the bot (share popup when it cannot). */
   const handleResendPost = async (postId: string, title?: string) => {
-    if (!confirm(tr('ส่งโพสต์นี้เข้ากลุ่ม LINE อีกครั้ง?', 'Send this post to the LINE group again?'))) return;
     try {
       const line = await dataService.resendPost(postId, title);
       setNotice(botNotice(line, tr('ส่งเข้า LINE อีกครั้งแล้ว', 'Sent to LINE again')));
@@ -1044,7 +1021,6 @@ export default function ClassroomWorkspacePage() {
 
   const handlePublishAssignmentNow = async (assignment: Assignment) => {
     const kind = assignment.is_exam ? tr('ข้อสอบ', 'exam') : tr('งาน', 'assignment');
-    if (!confirm(tr(`เผยแพร่${kind} "${assignment.title}" ตอนนี้เลยหรือไม่?\nนักเรียนจะเห็นและเริ่มทำได้ทันที และจะได้รับแจ้งเตือนใน LINE`, `Publish the ${kind} "${assignment.title}" now?\nStudents will see it, can start right away, and get a LINE notification.`))) return;
     try {
       const updated = await dataService.publishAssignmentNow(assignment.id);
       const nowIso = updated?.publish_at || new Date().toISOString();
@@ -1474,7 +1450,8 @@ export default function ClassroomWorkspacePage() {
     }
   };
 
-  const createAttendance = async () => {
+  /** Opens a check-in period; returns its id so the panel can show its QR. */
+  const createAttendance = async (): Promise<string | null> => {
     const startsAt = attendanceStartsAt || new Date().toISOString();
     try {
       const response = await fetch('/api/attendance', {
@@ -1490,12 +1467,11 @@ export default function ClassroomWorkspacePage() {
       });
       if (!response.ok) {
         setNotice(tr('สร้างคาบเช็กชื่อไม่สำเร็จ', 'Could not create the period'));
-        return;
+        return null;
       }
-      const { session: created, line, share } = (await response.json()) as { session: AttendanceSession; line?: LinePostStatus; share?: LineShare };
-      setNotice(lineNotice(line, tr('เปิดคาบเช็กชื่อแล้ว', 'Attendance opened')));
-      // The bot could not send it: offer to share it from the teacher's own LINE.
-      reportLineUnsent(line, share);
+      const { session: created } = (await response.json()) as { session: AttendanceSession };
+      // Check-in is by the QR on this screen only (nothing goes to LINE): the panel shows it next.
+      setNotice(tr('เปิดคาบเช็กชื่อแล้ว — ให้นักเรียนสแกน QR บนหน้าจอ', 'Attendance opened — students scan the QR on screen'));
       // The response is the full session row, so show and select it without a refetch.
       attendanceVersionRef.current++;
       setSessions((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
@@ -1504,8 +1480,10 @@ export default function ClassroomWorkspacePage() {
         .then((res) => (res.ok ? res.json() : null))
         .then((json) => json && setPosts(json.posts || []))
         .catch(() => {});
+      return created.id;
     } catch {
       setNotice(tr('เกิดข้อผิดพลาดในการเปิดคาบเช็กชื่อ', 'Something went wrong while opening attendance'));
+      return null;
     }
   };
 
@@ -2518,7 +2496,7 @@ export default function ClassroomWorkspacePage() {
                               onDelete={() => handleDeleteAssignment(item.id)}
                               onPublishNow={itemWindow.isScheduled || itemWindow.isDraft ? () => handlePublishAssignmentNow(item) : undefined}
                               onRemind={() => handleRemindAssignment(item)}
-                              onAnnounceResults={() => handleAnnounceResults(item, classworkCounts.get(item.id) || gradingCounts([], rosterSizeFor(item, classroom.students?.length || 0), item.is_exam))}
+                              onAnnounceResults={() => handleAnnounceResults(item)}
                               onReannounce={() => handleReannounceAssignment(item)}
                               onMoveGroup={() => {
                                 setEditingAssignmentGroup(item);
@@ -2567,7 +2545,6 @@ export default function ClassroomWorkspacePage() {
               selectSession={setSelectedSessionId}
               onUpdateSession={handleUpdateSession}
               onDeleteSession={handleDeleteSession}
-              onReannounceSession={handleReannounceSession}
               isUpdatingSession={isUpdatingSession}
             />
           )}
@@ -3318,7 +3295,6 @@ function AttendancePanel({
   selectSession,
   onUpdateSession,
   onDeleteSession,
-  onReannounceSession,
   isUpdatingSession,
 }: {
   classroom: Classroom;
@@ -3335,7 +3311,8 @@ function AttendancePanel({
   setOnTime: (v: number) => void;
   late: number;
   setLate: (v: number) => void;
-  create: () => void;
+  /** Opens a period; resolves to its id (null when it failed). */
+  create: () => Promise<string | null>;
   update: (sessionId: string, studentId: string, status: AttendanceStatus) => void;
   action: (sessionId: string, a: 'close' | 'extend') => void;
   exportAllCsv: () => void;
@@ -3350,7 +3327,6 @@ function AttendancePanel({
   ) => void;
   onDeleteSession?: (id: string) => void;
   /** "ส่งซ้ำใน LINE" for an open period: the bot, or the share popup when it cannot. */
-  onReannounceSession?: (id: string, title: string) => void;
   isUpdatingSession?: boolean;
 }) {
   /** The open period whose check-in QR fills the screen. */
@@ -3517,14 +3493,16 @@ function AttendancePanel({
             </button>
             <button
               type="button"
-              onClick={() => {
-                create();
+              onClick={async () => {
                 setShowCreateForm(false);
+                // Straight to the check-in QR for the class.
+                const id = await create();
+                if (id) setQrSessionId(id);
               }}
               className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20"
             >
               <Plus className="w-4 h-4" />
-              <span>{tr('เปิดเช็กชื่อและแจ้งเตือน LINE', 'Open attendance & notify LINE')}</span>
+              <span>{tr('เปิดเช็กชื่อและแสดง QR', 'Open attendance & show QR')}</span>
             </button>
           </div>
         </div>
@@ -3670,22 +3648,6 @@ function AttendancePanel({
                     </>
                   )}
 
-                  {onReannounceSession && (
-                    <button
-                      type="button"
-                      disabled={!isOpen}
-                      onClick={() => onReannounceSession(item.id, item.title)}
-                      title={
-                        isOpen
-                          ? tr('ส่งข้อความเช็กชื่อเข้ากลุ่ม LINE อีกครั้ง', 'Send the check-in message to the LINE group again')
-                          : tr('คาบนี้ปิดรับเช็กชื่อแล้ว เปิดรับใหม่ก่อนจึงส่งซ้ำได้', 'This period is closed; reopen it to post it again')
-                      }
-                      className="flex-1 sm:flex-none whitespace-nowrap px-3 py-2 sm:py-1.5 rounded-xl bg-line hover:bg-line-dark text-white text-xs font-bold inline-flex items-center justify-center gap-1 cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-line"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5" />
-                      <span>{tr('ส่งซ้ำใน LINE', 'Post to LINE again')}</span>
-                    </button>
-                  )}
 
                   <button
                     type="button"

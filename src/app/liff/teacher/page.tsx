@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Liff } from "@line/liff";
 import { Link2, Lock } from "lucide-react";
 import { authFetch, setLineAccessToken, setLiffTeacherMode } from "@/lib/auth/lineSession";
-import { KitProvider, Loading, type TeacherContext, type TeacherView } from "@/components/liff-teacher/kit";
+import { dataKindFor, KitProvider, Loading, type DataKind, type TeacherContext, type TeacherView } from "@/components/liff-teacher/kit";
 import { ClassroomView, GuideView, HelpView, HomeView, InviteView, StatusView } from "@/components/liff-teacher/ClassViews";
 import { AttendanceView } from "@/components/liff-teacher/AttendanceView";
 import { PublishView, RemindView, ResultsView } from "@/components/liff-teacher/WorkViews";
@@ -43,6 +43,8 @@ export default function TeacherLiffPage() {
   const [context, setContext] = useState<TeacherContext | null>(null);
   const [blocked, setBlocked] = useState<Blocked | null>(null);
   const [view, setView] = useState<TeacherView>("home");
+  /** The first page's data, which came with the classroom (one request to open the page). */
+  const [initialData, setInitialData] = useState<{ kind: DataKind; data: unknown } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -72,11 +74,16 @@ export default function TeacherLiffPage() {
           setBlocked({ message: "เปิดหน้านี้จากการ์ดเมนูครูในกลุ่ม LINE ของห้องเรียน", code: "no-group" });
           return;
         }
-        const res = await authFetch(`/api/line/liff-teacher?g=${encodeURIComponent(ref)}`, { cache: "no-store" });
+        const kind = dataKindFor(isView(startView) ? startView : "home");
+        const res = await authFetch(`/api/line/liff-teacher?g=${encodeURIComponent(ref)}${kind ? `&view=${kind}` : ""}`, { cache: "no-store" });
         const json = await res.json().catch(() => ({}));
         if (!alive) return;
-        if (!res.ok) setBlocked({ message: json.error || "โหลดข้อมูลไม่สำเร็จ", code: json.code, connectUrl: json.connectUrl });
-        else setContext(json as TeacherContext);
+        if (!res.ok) {
+          setBlocked({ message: json.error || "โหลดข้อมูลไม่สำเร็จ", code: json.code, connectUrl: json.connectUrl });
+          return;
+        }
+        if (kind && json.data) setInitialData({ kind, data: json.data });
+        setContext(json as TeacherContext);
       } catch (err) {
         if (alive) setBlocked({ message: err instanceof Error ? err.message : "เกิดข้อผิดพลาด" });
       }
@@ -129,7 +136,7 @@ export default function TeacherLiffPage() {
 
   const View = VIEWS[view];
   return (
-    <KitProvider value={{ ...context, liff, groupRef, go }}>
+    <KitProvider value={{ ...context, liff, groupRef, go }} initialData={initialData}>
       <View />
     </KitProvider>
   );

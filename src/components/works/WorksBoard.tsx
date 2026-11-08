@@ -19,7 +19,7 @@ import { Collapse } from '@/components/Collapse';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { ComboFilter } from '@/components/works/ComboFilter';
 import { categoryLook } from '@/components/works/CategoryTools';
-import { AnnounceButton, announceConfirmText, announcesResults, DueDateDialog, GradeButton, MetricCells, Pill, RemindButton, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
+import { AnnounceButton, announcesResults, DueDateDialog, GradeButton, MetricCells, Pill, RemindButton, ROW_INSET, WorkDetailSheet, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, BulkStatusDialog, groupStatus, PhoneWorkSummary, StatusButton } from '@/components/works/StatusBits';
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
@@ -250,9 +250,7 @@ export function WorksBoard() {
   const publish = async (items: WorkClass[]) => {
     const list = items.filter((c) => !c.published);
     if (!list.length) return;
-    const title = list[0].assignment.title;
-    const where = list.length > 1 ? tr(` ใน ${list.length} ห้อง`, ` in ${list.length} classes`) : ` · ${list[0].classroom.name}`;
-    if (!confirm(tr(`เผยแพร่ "${title}"${where} ตอนนี้?\nนักเรียนจะเห็นทันทีและได้รับแจ้งใน LINE`, `Publish "${title}"${where} now?\nStudents see it at once and get a LINE message.`))) return;
+    // No confirmation: the LINE share window that follows shows what goes out.
     let done = 0;
     let firstError = '';
     for (const c of list) {
@@ -300,8 +298,6 @@ export function WorksBoard() {
   };
 
   const reannounce = async (c: WorkClass) => {
-    const lineReady = (c.classroom.line_connection_status || (c.classroom.line_group_id ? 'connected' : '')) === 'connected';
-    if (lineReady && !confirm(tr(`ส่งลิงก์ "${c.assignment.title}" เข้ากลุ่ม LINE ของ ${c.classroom.name} อีกครั้ง?`, `Post "${c.assignment.title}" to the ${c.classroom.name} LINE group again?`))) return;
     try {
       const line = await dataService.reannounceAssignment(c.assignment.id, c.assignment.title);
       showToast(
@@ -323,11 +319,6 @@ export function WorksBoard() {
    */
   const remind = async (list: WorkClass[]) => {
     if (!list.length) return;
-    const one = list[0];
-    const ask = list.length > 1
-      ? tr(`ทวงงาน "${one.assignment.title}" ใน ${list.length} ห้อง?`, `Remind about "${one.assignment.title}" in ${list.length} classes?`)
-      : tr(`ทวงงาน "${one.assignment.title}" ในกลุ่ม LINE ของ ${one.classroom.name}?`, `Remind about "${one.assignment.title}" in the ${one.classroom.name} LINE group?`);
-    if (!confirm(ask)) return;
     let sent = 0;
     let manual = 0;
     let done = 0;
@@ -363,8 +354,6 @@ export function WorksBoard() {
   const announce = async (items: WorkClass[]) => {
     const list = items.filter((c) => c.published && c.counts.graded > 0);
     if (!list.length) return;
-    const targets = list.map((c) => ({ title: c.assignment.title, className: c.classroom.name, acceptsSubmissions: c.window.acceptsSubmissions, counts: c.counts }));
-    if (!confirm(announceConfirmText(targets, tr))) return;
     let sent = 0;
     let manual = 0;
     let closed = 0;

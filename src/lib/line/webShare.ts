@@ -92,7 +92,7 @@ export async function loadShareCard(url: string | null): Promise<ShareCard | nul
  * caller falls back to the share page.
  */
 export async function shareCardNow(liff: Liff, url: string | null, card: ShareCard): Promise<"shared" | "cancelled"> {
-  const result = await liff.shareTargetPicker(card.messages, { isMultiple: false });
+  const result = await liff.shareTargetPicker(card.messages, { isMultiple: true });
   if (result?.status !== "success") return "cancelled";
   const token = tokenOf(url);
   // The timeline stops offering it as unsent.

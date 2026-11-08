@@ -366,39 +366,6 @@ export function AnnounceButton({ graded, onClick, title, size = 'md' }: { graded
   );
 }
 
-/** One work in one class, as the "ประกาศคะแนน" confirmation describes it. */
-export type AnnounceTarget = { title: string; className?: string; acceptsSubmissions: boolean; counts: Pick<GradingCounts, 'pending' | 'notSubmitted'> };
-
-/**
- * The confirmation before "ประกาศคะแนน": where it goes, that work still taking
- * hand-ins gets closed first, and who will not see a score yet.
- */
-export function announceConfirmText(targets: AnnounceTarget[], tr: (th: string, en: string) => string): string {
-  const one = targets[0];
-  const many = targets.length > 1;
-  const open = targets.filter((t) => t.acceptsSubmissions).length;
-  const pending = targets.reduce((n, t) => n + t.counts.pending, 0);
-  const missing = targets.reduce((n, t) => n + t.counts.notSubmitted, 0);
-  const lines = [
-    many
-      ? tr(`ประกาศคะแนน "${one.title}" ใน ${targets.length} ห้อง?`, `Announce the scores of "${one.title}" in ${targets.length} classes?`)
-      : tr(`ประกาศคะแนน "${one.title}"${one.className ? ` ในกลุ่ม LINE ของ ${one.className}` : ' ในกลุ่ม LINE'}?`, `Announce the scores of "${one.title}" in the LINE group?`),
-    '',
-  ];
-  if (open) {
-    lines.push(
-      many
-        ? tr(`⚠️ ยังเปิดรับอยู่ ${open} ห้อง — ระบบจะเปลี่ยนสถานะเป็น "ปิดรับงาน" ให้อัตโนมัติ`, `⚠️ ${open} classes still take hand-ins — they will be closed automatically`)
-        : tr('⚠️ งานนี้ยังเปิดรับอยู่ — ระบบจะเปลี่ยนสถานะเป็น "ปิดรับงาน" ให้อัตโนมัติ', '⚠️ This work still takes hand-ins — it will be closed automatically'),
-      tr('นักเรียนจะส่งหรือแก้ไขงานไม่ได้อีก และสิทธิ์ "ให้แก้ไขงาน" ที่ค้างอยู่จะถูกยกเลิก', 'Students can no longer hand in or edit, and running edit permissions end'),
-    );
-  }
-  if (pending) lines.push(tr(`• ยังตรวจไม่ครบ ${pending} คน — คนที่ยังไม่ได้ตรวจจะยังไม่เห็นคะแนน`, `• ${pending} not graded yet — they will not see a score yet`));
-  if (missing) lines.push(tr(`• ยังไม่ส่ง ${missing} คน`, `• ${missing} have not handed in`));
-  lines.push(tr('นักเรียนจะเห็นคะแนนและความเห็นของคุณครูใน Pudding', 'Students then see their scores and your comments in Pudding'));
-  return lines.join('\n');
-}
-
 export const ROW_INSET = {
   /** Class rows sit one border + 12 px padding further in. */
   work: 'max-sm:pr-[13px] @4xl:pr-[13px]',

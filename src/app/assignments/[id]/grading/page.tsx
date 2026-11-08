@@ -29,7 +29,7 @@ import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { ReopenTimeDialog, reopenTimeSuggestion } from '@/components/ReopenTimeDialog';
 import { RetakePicker } from '@/components/RetakePicker';
 import { SiblingClassTabs } from '@/components/works/SiblingClassTabs';
-import { announceConfirmText, announcesResults } from '@/components/works/WorkBits';
+import { announcesResults } from '@/components/works/WorkBits';
 import { isRetake, rosterFor } from '@/lib/utils/retake';
 import {
   Search,
@@ -778,13 +778,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
    */
   const handleAnnounceResults = async () => {
     if (!assignment || !assignmentWindow || announcing) return;
-    const target = {
-      title: assignment.title,
-      className: classroom?.name,
-      acceptsSubmissions: assignmentWindow.acceptsSubmissions,
-      counts: { pending: toGradeTotal, notSubmitted: missingTotal },
-    };
-    if (!confirm(announceConfirmText([target], (thText, enText) => (th ? thText : enText)))) return;
     setAnnouncing(true);
     try {
       const result = await dataService.announceResults(assignment.id, assignment.title);

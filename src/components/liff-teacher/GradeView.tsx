@@ -23,19 +23,20 @@ function WorkList({ onPick }: { onPick: (work: Assignment) => void }) {
   const data = useWork();
   if (data.error) return <Page title="✅ ตรวจงาน"><ErrorBox text={data.error} /></Page>;
   if (!data.data) return <Page title="✅ ตรวจงาน"><Loading /></Page>;
-  const rows = data.data.rows.filter((row) => row.handed > 0);
+  // Waiting to be graded first.
+  const rows = data.rows.filter((row) => row.handed > 0).sort((a, b) => Number(b.toGrade > 0) - Number(a.toGrade > 0));
   return (
     <Page title="✅ ตรวจงาน">
       {rows.length === 0 && <Empty text="ยังไม่มีงานที่นักเรียนส่ง" />}
       {rows.length > 0 && (
         <Card className="p-0! divide-y divide-violet-100 dark:divide-slate-800">
           {rows.map((row) => {
-            const left = row.handed - row.graded;
+            const left = row.toGrade;
             return (
               <button key={row.work.id} type="button" onClick={() => onPick(row.work)} className="w-full px-4 py-3 flex items-center gap-2 text-left cursor-pointer">
                 <span className="flex-1 min-w-0">
                   <span className="block text-sm font-bold truncate">{row.work.is_exam ? "📝" : "📋"} {row.work.title}</span>
-                  <span className="block text-[11px] text-slate-500">ส่งแล้ว {row.handed} คน</span>
+                  <span className="block text-[11px] text-slate-500">ส่งแล้ว {row.handed}/{row.total} คน</span>
                 </span>
                 <Pill tone={left > 0 ? "amber" : "green"}>{left > 0 ? `รอตรวจ ${left}` : "ตรวจครบ"}</Pill>
                 <ChevronRight className="w-4 h-4 text-slate-400" />

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Liff } from "@line/liff";
 import { CheckCircle2, ChevronLeft, Loader2, ShieldAlert } from "lucide-react";
 import { authFetch } from "@/lib/auth/lineSession";
@@ -25,7 +25,31 @@ export type TeacherContext = {
   classroom: { id: string; name: string; title: string; subject: string; inviteCode: string | null; courseId: string | null; groupName: string | null };
 };
 
-export type CardKind = "work" | "attendance" | "invite" | "guide" | "remind" | "open" | "results";
+export type CardKind = "work" | "invite" | "guide" | "remind" | "open" | "results";
+
+/** The data a page shows, loaded with the classroom in one request (see /api/line/liff-teacher). */
+export type DataKind = "work" | "roster" | "attendance";
+export const dataKindFor = (view: TeacherView): DataKind | null =>
+  view === "home" || view === "status" || view === "publish" || view === "results" || view === "remind" || view === "grade"
+    ? "work"
+    : view === "classroom" || view === "invite"
+    ? "roster"
+    : view === "attendance"
+    ? "attendance"
+    : null;
+
+export type RosterStudent = { id: string; first_name: string; last_name: string; student_id?: string; line_uid?: string };
+export type RosterData = { students: RosterStudent[]; pending: RosterStudent[] };
+export type WorkData = {
+  students: number;
+  pending: number;
+  works: Array<{ work: import("@/types/database").Assignment; total: number; handed: number; graded: number; toGrade: number; missing: number }>;
+};
+export type AttendanceData = {
+  sessions: Array<{ id: string; title: string; starts_at: string; on_time_until_minutes: number; late_until_minutes: number; status: "open" | "closed" }>;
+  records: Array<{ session_id: string; student_id: string; status: string }>;
+  students: RosterStudent[];
+};
 
 /** What the server gives for a share: the share page URL carries its token. */
 export type Share = { text: string; url: string | null };
@@ -52,6 +76,10 @@ type Kit = TeacherContext & {
   /** The card for an existing item (work card again, invite, reminder picture…), sent the same way. */
   postKind: (kind: CardKind, item?: { assignmentId?: string; sessionId?: string }) => Promise<PostResult>;
   toast: (text: string, tone?: "ok" | "error") => void;
+  /** The page's data: from the first load when it came with it, else one request. */
+  fetchData: (kind: DataKind) => Promise<unknown>;
+  /** Whether "send to group" goes straight into this group (opened from it, and LINE allows sending). */
+  autoSend: boolean;
 };
 
 const KitContext = createContext<Kit | null>(null);
@@ -68,7 +96,16 @@ async function readJson(res: Response, fallback: string) {
   return json;
 }
 
-export function KitProvider({ value, children }: { value: Omit<Kit, "postMessages" | "postShare" | "postKind" | "toast">; children: ReactNode }) {
+export function KitProvider({
+  value,
+  initialData,
+  children,
+}: {
+  value: Omit<Kit, "postMessages" | "postShare" | "postKind" | "toast" | "fetchData" | "autoSend">;
+  /** Data that came with the first load, used once by its page. */
+  initialData?: { kind: DataKind; data: unknown } | null;
+  children: ReactNode;
+}) {
   const [message, setMessage] = useState<{ text: string; tone: "ok" | "error" } | null>(null);
   const toast = useCallback((text: string, tone: "ok" | "error" = "ok") => setMessage({ text, tone }), []);
   useEffect(() => {
@@ -78,6 +115,33 @@ export function KitProvider({ value, children }: { value: Omit<Kit, "postMessage
   }, [message]);
 
   const { liff, groupRef } = value;
+  const prefetched = useRef(initialData || null);
+  const fetchData = useCallback(
+    async (kind: DataKind) => {
+      if (prefetched.current?.kind === kind) {
+        const { data } = prefetched.current;
+        prefetched.current = null;
+        return data;
+      }
+      const json = await readJson(await authFetch(`/api/line/liff-teacher?g=${encodeURIComponent(groupRef)}&view=${kind}`, { cache: "no-store" }), "โหลดข้อมูลไม่สำเร็จ");
+      return json.data;
+    },
+    [groupRef]
+  );
+  // Opened from a chat, and the LIFF app may send messages there: cards go straight in.
+  const [autoSend, setAutoSend] = useState(() => {
+    const type = liff.getContext()?.type;
+    return type === "group" || type === "room" || type === "utou";
+  });
+  useEffect(() => {
+    if (!autoSend) return;
+    liff.permission
+      ?.query("chat_message.write")
+      .then((status) => {
+        if (status.state === "unavailable") setAutoSend(false);
+      })
+      .catch(() => {});
+  }, [liff, autoSend]);
   const postMessages = useCallback(
     async (messages: LineMessages, text = ""): Promise<PostResult> => {
       const type = liff.getContext()?.type;
@@ -92,7 +156,7 @@ export function KitProvider({ value, children }: { value: Omit<Kit, "postMessage
         }
       }
       if (liff.isApiAvailable("shareTargetPicker")) {
-        const result = await liff.shareTargetPicker(messages, { isMultiple: false }).catch(() => null);
+        const result = await liff.shareTargetPicker(messages, { isMultiple: true }).catch(() => null);
         if (result?.status === "success") {
           toast("แชร์เข้ากลุ่มแล้ว");
           return "shared";
@@ -137,7 +201,7 @@ export function KitProvider({ value, children }: { value: Omit<Kit, "postMessage
   );
 
   return (
-    <KitContext.Provider value={{ ...value, postMessages, postShare, postKind, toast }}>
+    <KitContext.Provider value={{ ...value, postMessages, postShare, postKind, toast, fetchData, autoSend }}>
       {children}
       {message && (
         <div className="fixed inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 pointer-events-none">
@@ -298,6 +362,12 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, version]);
   return { data, error, reload: () => setVersion((v) => v + 1) };
+}
+
+/** A page's data (see DataKind), with reload. */
+export function useViewData<T>(kind: DataKind) {
+  const { fetchData } = useKit();
+  return useLoad(() => fetchData(kind) as Promise<T>, [kind]);
 }
 
 export const errorText = (err: unknown, fallback = "ทำรายการไม่สำเร็จ") => (err instanceof Error ? err.message : fallback);

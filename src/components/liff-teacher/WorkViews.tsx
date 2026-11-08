@@ -1,39 +1,24 @@
 "use client";
 
 import { useState } from "react";
+import { useMemo } from "react";
 import { authFetch } from "@/lib/auth/lineSession";
-import { dataService } from "@/lib/supabase/dataService";
 import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
-import { formatDateTime } from "@/lib/utils/datetime";
-import { isGraded, isHandedIn } from "@/lib/utils/gradingStatus";
-import type { Assignment, Submission } from "@/types/database";
-import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useLoad, type Share } from "./kit";
+import { lineDate } from "@/lib/utils/datetime";
+import type { Assignment } from "@/types/database";
+import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useViewData, type Share, type WorkData } from "./kit";
 
-type WorkRow = {
-  work: Assignment;
-  win: ReturnType<typeof getAssignmentWindow>;
-  handed: number;
-  graded: number;
-};
+export type WorkRow = WorkData["works"][number] & { win: ReturnType<typeof getAssignmentWindow> };
 
-/** The classroom's work with hand-in and grading counts (newest first). */
+/**
+ * The classroom's work, newest first, with its numbers worked out by the
+ * server against the real roster (a retake counts only its students): handed
+ * in, graded, waiting to be graded, not handed in. One request.
+ */
 export function useWork() {
-  const { classroom } = useKit();
-  return useLoad(async () => {
-    const [works, roster] = await Promise.all([dataService.getAssignmentsByClassroomId(classroom.id), dataService.getClassroomRoster(classroom.id)]);
-    const published = works.filter((work) => {
-      const win = getAssignmentWindow(work);
-      return !win.isDraft && !win.isScheduled;
-    });
-    const submissions: Submission[] = await dataService.getSubmissionsByAssignmentIds(published.map((w) => w.id), { includeStudents: false });
-    const rows: WorkRow[] = works
-      .map((work) => {
-        const mine = submissions.filter((sub) => sub.assignment_id === work.id);
-        return { work, win: getAssignmentWindow(work), handed: mine.filter(isHandedIn).length, graded: mine.filter(isGraded).length };
-      })
-      .sort((a, b) => (b.work.created_at || "").localeCompare(a.work.created_at || ""));
-    return { rows, students: roster.students.length };
-  }, [classroom.id]);
+  const data = useViewData<WorkData>("work");
+  const rows = useMemo(() => (data.data?.works || []).map((row) => ({ ...row, win: getAssignmentWindow(row.work) })), [data.data]);
+  return { ...data, rows, students: data.data?.students ?? 0 };
 }
 
 /** POST /api/assignments/override: nothing is pushed; the answer's share is the card the page sends into the group. */
@@ -49,7 +34,7 @@ async function override(assignmentId: string, action: "publish_now" | "announce_
 }
 
 const kindIcon = (work: Assignment) => (work.is_exam ? "📝" : "📋");
-const due = (row: WorkRow) => (row.win.deadline != null ? formatDateTime(new Date(row.win.deadline).toISOString(), "th") : "ไม่มีกำหนด");
+const due = (row: WorkRow) => (row.win.deadline != null ? lineDate(row.win.deadline) : "ไม่มีกำหนด");
 
 function WorkLine({ row, children, right }: { row: WorkRow; children?: React.ReactNode; right?: React.ReactNode }) {
   return (
@@ -57,7 +42,10 @@ function WorkLine({ row, children, right }: { row: WorkRow; children?: React.Rea
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-bold truncate">{kindIcon(row.work)} {row.work.title}</p>
-          <p className="text-[11px] text-slate-500">{row.work.is_exam ? "ปิดรับคำตอบ" : "กำหนดส่ง"}: {due(row)}</p>
+          <p className="text-[11px] text-slate-500">
+            {row.work.is_exam ? "ปิดรับคำตอบ" : "กำหนดส่ง"} {due(row)}
+            {!row.work.is_exam && row.win.lateUntil != null && row.win.lateUntil !== row.win.deadline ? ` · ปิดรับส่งงาน ${lineDate(row.win.lateUntil)}` : ""}
+          </p>
         </div>
         {right}
       </div>
@@ -89,8 +77,9 @@ export function PublishView() {
   const { busy, run } = useBusy();
   if (data.error) return <Page title="📢 เผยแพร่"><ErrorBox text={data.error} /></Page>;
   if (!data.data) return <Page title="📢 เผยแพร่"><Loading /></Page>;
-  const waiting = data.data.rows.filter((row) => row.win.isDraft || row.win.isScheduled);
-  const open = data.data.rows.filter((row) => row.win.acceptsSubmissions);
+  // Straight into the group when opened from it (no group to pick).
+  const waiting = data.rows.filter((row) => row.win.isDraft || row.win.isScheduled);
+  const open = data.rows.filter((row) => row.win.acceptsSubmissions);
   const publish = (row: WorkRow) =>
     run(row.work.id, async () => {
       const result = await override(row.work.id, "publish_now");
@@ -112,7 +101,7 @@ export function PublishView() {
         <p className="text-sm font-black">เปิดรับอยู่ ({open.length})</p>
         {open.length === 0 && <p className="text-xs text-slate-400">ไม่มีงานที่เปิดรับอยู่</p>}
         {open.map((row) => (
-          <WorkLine key={row.work.id} row={row} right={<Pill tone="green">ส่ง {row.handed}/{data.data!.students}</Pill>}>
+          <WorkLine key={row.work.id} row={row} right={<Pill tone="green">ส่ง {row.handed}/{row.total}</Pill>}>
             <Button small tone="soft" busy={busy === row.work.id} onClick={() => run(row.work.id, () => postKind("work", { assignmentId: row.work.id }))}>
               ส่งการ์ดงานอีกครั้ง
             </Button>
@@ -131,10 +120,9 @@ export function ResultsView() {
   const { busy, run } = useBusy();
   if (data.error) return <Page title="📈 ประกาศผล"><ErrorBox text={data.error} /></Page>;
   if (!data.data) return <Page title="📈 ประกาศผล"><Loading /></Page>;
-  const rows = data.data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled && row.handed > 0);
+  const rows = data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled && row.handed > 0);
   const announce = (row: WorkRow) => {
     if (!row.graded) return;
-    if (row.win.acceptsSubmissions && !confirm(`ประกาศคะแนน “${row.work.title}”?\nงานนี้จะถูกปิดรับก่อนประกาศ`)) return;
     void run(row.work.id, async () => {
       const result = await override(row.work.id, "announce_results");
       if (result.share?.url) await postShare(result.share);
@@ -156,7 +144,7 @@ export function ResultsView() {
           ))}
         </Card>
       )}
-      <p className="text-[11px] text-slate-400">ประกาศได้เมื่อตรวจเสร็จอย่างน้อย 1 คน • นักเรียนเห็นคะแนนเมื่องานปิดรับแล้ว</p>
+      <p className="text-[11px] text-slate-400">ประกาศได้เมื่อตรวจเสร็จอย่างน้อย 1 คน • งานที่ยังเปิดรับจะถูกปิดรับก่อนประกาศ (นักเรียนเห็นคะแนนเมื่อปิดรับแล้ว)</p>
     </Page>
   );
 }
@@ -168,15 +156,14 @@ export function RemindView() {
   const { busy, run } = useBusy();
   if (data.error) return <Page title="🔔 ทวงงาน"><ErrorBox text={data.error} /></Page>;
   if (!data.data) return <Page title="🔔 ทวงงาน"><Loading /></Page>;
-  const { students } = data.data;
-  const rows = data.data.rows.filter((row) => row.win.acceptsSubmissions);
+  const rows = data.rows.filter((row) => row.win.acceptsSubmissions);
   return (
     <Page title="🔔 ทวงงาน">
       {rows.length === 0 && <Empty text="ไม่มีงานที่เปิดรับอยู่" />}
       {rows.length > 0 && (
         <Card className="space-y-3">
           {rows.map((row) => {
-            const missing = Math.max(0, students - row.handed);
+            const { missing } = row;
             return (
               <WorkLine key={row.work.id} row={row} right={<Pill tone={missing ? "red" : "green"}>{missing ? `ยังไม่ส่ง ${missing}` : "ส่งครบ"}</Pill>}>
                 <Button small disabled={!missing} busy={busy === row.work.id} onClick={() => run(row.work.id, () => postKind("remind", { assignmentId: row.work.id }))}>
