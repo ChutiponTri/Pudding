@@ -4,35 +4,68 @@ import type { Liff } from "@line/liff";
 
 /**
  * Sharing a card into LINE from the teacher website in one tap. The website
- * runs the LIFF SDK itself (outside the LIFF path it only logs a warning), so
- * once the teacher's browser has signed in to LINE (any earlier /liff/share
- * visit counts; it is the same site), the share button opens LINE's group
- * picker right away, with the card fetched in advance. LINE's picker always
- * needs the teacher to choose the group on the website: only a page opened
- * from inside the group (the teacher LIFF pages) can send without asking.
+ * runs the LIFF SDK itself (outside the LIFF path it only logs a warning). In
+ * a browser the SDK keeps the LINE sign-in in localStorage, so once the
+ * teacher has connected LINE in this browser (a small window that signs in and
+ * closes itself, see connectLine), the share button opens LINE's group picker
+ * straight away, with the card fetched in advance. The picker always asks for
+ * the group on the website: only a page opened from inside the group (the
+ * teacher LIFF pages) can send without asking.
  */
 
 type Messages = Parameters<Liff["shareTargetPicker"]>[0];
 export type ShareCard = { messages: Messages; text: string };
 
-let ready: Promise<Liff | null> | null = null;
+let sdkReady: Promise<Liff | null> | null = null;
 
-/** The LIFF SDK on this page, signed in to LINE; null when it is not available here or not signed in. */
+/** The LIFF SDK on this page (initialised once), or null when LIFF cannot run here. */
 export function webLiff(): Promise<Liff | null> {
-  ready ||= (async () => {
+  sdkReady ||= (async () => {
     try {
       let id = process.env.NEXT_PUBLIC_LINE_LIFF_ID || "";
       if (!id) id = (await (await fetch("/api/liff/config")).json()).liffId || "";
       if (!id) return null;
       const sdk = (await import("@line/liff")).default;
       await sdk.init({ liffId: id });
-      return sdk.isLoggedIn() && sdk.isApiAvailable("shareTargetPicker") ? sdk : null;
+      return sdk;
     } catch (error) {
       console.warn("LIFF is not available on this page:", error);
       return null;
     }
   })();
-  return ready;
+  return sdkReady;
+}
+
+/**
+ * Whether the picker can open here now. Read at the moment it is needed: the
+ * sign-in may have happened since, in the connect window (same site, same storage).
+ */
+export function canShareNow(liff: Liff | null): liff is Liff {
+  try {
+    return !!liff && liff.isLoggedIn() && liff.isApiAvailable("shareTargetPicker");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Connects LINE in this browser once: a small window signs in to LINE
+ * (/liff/share?login=1) and closes itself. Calls `onDone` when that window
+ * has closed, so the caller can check canShareNow again.
+ */
+export function connectLine(liff: Liff | null, onDone: () => void) {
+  const liffId = liff?.id || process.env.NEXT_PUBLIC_LINE_LIFF_ID || "";
+  const url = liffId ? `https://liff.line.me/${liffId}/share?login=1` : `${window.location.origin}/liff/share?login=1`;
+  const win = window.open(url, "pudding-line-connect", "popup,width=480,height=720");
+  if (!win) {
+    window.open(url, "_self");
+    return;
+  }
+  const timer = window.setInterval(() => {
+    if (!win.closed) return;
+    window.clearInterval(timer);
+    onDone();
+  }, 500);
 }
 
 const tokenOf = (url: string | null) => {

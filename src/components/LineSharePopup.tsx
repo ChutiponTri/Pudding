@@ -2,18 +2,19 @@
 
 import { useEffect, useState } from 'react';
 import type { Liff } from '@line/liff';
-import { Check, Copy, Loader2, Send, Share2, X } from 'lucide-react';
+import { Check, Copy, Link2, Loader2, Send, Share2, X } from 'lucide-react';
 import { ModalSheet, ModalSheetBody, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LINE_UNSENT_EVENT, type LineUnsentDetail } from '@/lib/utils/lineShare';
-import { loadShareCard, openSharePage, shareCardNow, webLiff, type ShareCard } from '@/lib/line/webShare';
+import { canShareNow, connectLine, loadShareCard, openSharePage, shareCardNow, webLiff, type ShareCard } from '@/lib/line/webShare';
 
 /**
  * Teacher pages: something to send into the class LINE group from the
  * teacher's own LINE (new work, a check-in, a reminder, scores, or a post the
  * bot could not send), which uses no message quota. The card is loaded as soon
- * as this opens, so one tap opens LINE's group picker on this page; until the
- * browser has signed in to LINE once, the tap opens the share page instead.
+ * as this opens, so one tap opens LINE's group picker on this page. The first
+ * time in a browser, "เชื่อม LINE" signs in to LINE in a small window that
+ * closes itself; from then on it is always one tap.
  * Opened by reportLineUnsent; several at once (work copied to many classes)
  * wait in line.
  */
@@ -25,6 +26,9 @@ export function LineSharePopup() {
   const [liff, setLiff] = useState<Liff | null>(null);
   const [card, setCard] = useState<{ url: string | null; card: ShareCard } | null>(null);
   const [sharing, setSharing] = useState(false);
+  /** Signed in to LINE in this browser (re-checked: the sign-in happens in another window). */
+  const [linked, setLinked] = useState(false);
+  const [connecting, setConnecting] = useState(false);
 
   useEffect(() => {
     const onUnsent = (event: Event) => {
@@ -42,7 +46,11 @@ export function LineSharePopup() {
   useEffect(() => {
     if (!currentUrl) return;
     let alive = true;
-    webLiff().then((sdk) => alive && setLiff(sdk));
+    webLiff().then((sdk) => {
+      if (!alive) return;
+      setLiff(sdk);
+      setLinked(canShareNow(sdk));
+    });
     loadShareCard(currentUrl)
       .then((loaded) => alive && loaded && setCard({ url: currentUrl, card: loaded }))
       .catch((error) => console.warn('Loading the LINE card failed:', error));
@@ -51,6 +59,18 @@ export function LineSharePopup() {
     };
   }, [currentUrl]);
 
+  // The connect window saves the LINE sign-in in this site's storage: pick it up when it lands.
+  useEffect(() => {
+    if (!liff) return;
+    const recheck = () => setLinked(canShareNow(liff));
+    window.addEventListener('storage', recheck);
+    window.addEventListener('focus', recheck);
+    return () => {
+      window.removeEventListener('storage', recheck);
+      window.removeEventListener('focus', recheck);
+    };
+  }, [liff]);
+
   if (!current) return null;
   const next = () => {
     setCopied(false);
@@ -58,10 +78,21 @@ export function LineSharePopup() {
   };
 
   const toGroup = current.reason === 'card';
-  const ready = liff && card?.url === current.url ? card.card : null;
+  const ready = card?.url === current.url ? card.card : null;
+  // LIFF cannot run on this page, or this is a phone: the share page does it. On a
+  // phone it opens in the LINE app, where the group list comes up without another tap.
+  const noLiffHere = !liff || liff.getOS() !== 'web';
+  const connect = () => {
+    setConnecting(true);
+    connectLine(liff, () => {
+      setConnecting(false);
+      setLinked(canShareNow(liff));
+    });
+  };
   const send = async () => {
     if (!current.url) return;
-    if (!ready || !liff) return openSharePage(current.url);
+    // Checked again at the tap: the sign-in may have just happened in the connect window.
+    if (!ready || !canShareNow(liff)) return openSharePage(current.url);
     setSharing(true);
     try {
       if ((await shareCardNow(liff, current.url, ready)) === 'shared') next();
@@ -117,7 +148,19 @@ export function LineSharePopup() {
           <p className="text-[11px] text-slate-700 dark:text-slate-200 whitespace-pre-wrap wrap-break-word leading-relaxed">{current.text}</p>
         </div>
         <div className="flex gap-2">
-          {current.url && (
+          {current.url && !noLiffHere && !linked && (
+            <button
+              type="button"
+              onClick={connect}
+              disabled={connecting}
+              title={tr('ครั้งแรกในเบราว์เซอร์นี้: เข้าสู่ระบบ LINE หน้าต่างจะปิดเอง แล้วกดส่งได้ทันที', 'First time in this browser: sign in to LINE; the window closes by itself, then send in one tap')}
+              className="flex-1 h-10 rounded-xl bg-[#06c755] hover:bg-[#05b34c] text-white font-black text-sm inline-flex items-center justify-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-60"
+            >
+              {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+              {tr('เชื่อม LINE (ครั้งแรก)', 'Connect LINE (first time)')}
+            </button>
+          )}
+          {current.url && (noLiffHere || linked) && (
             <button
               type="button"
               onClick={send}
@@ -142,6 +185,14 @@ export function LineSharePopup() {
             {copied ? tr('คัดลอกแล้ว', 'Copied') : tr('คัดลอก', 'Copy')}
           </button>
         </div>
+        {current.url && !noLiffHere && !linked && (
+          <p className="text-[10px] text-slate-400 leading-relaxed">
+            {tr('เชื่อมครั้งเดียวต่อเบราว์เซอร์ ครั้งต่อไปกด “ส่งเข้ากลุ่ม” แล้วเลือกกลุ่มได้ทันที • ', 'Once per browser; next time “Send to group” goes straight to the group list • ')}
+            <button type="button" onClick={() => current.url && openSharePage(current.url)} className="underline underline-offset-2 cursor-pointer hover:text-slate-600">
+              {tr('หรือเปิดหน้าแชร์', 'or open the share page')}
+            </button>
+          </p>
+        )}
         {current.onDismiss ? (
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] text-slate-400 leading-relaxed">

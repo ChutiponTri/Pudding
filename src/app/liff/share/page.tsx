@@ -5,7 +5,8 @@ import type { Liff } from "@line/liff";
 import { CheckCircle2, Copy, Loader2, Send, ShieldAlert } from "lucide-react";
 
 type Shared = { classroom: string; text: string; messages: Parameters<Liff["shareTargetPicker"]>[0] };
-type Status = "loading" | "ready" | "sharing" | "done" | "error";
+/** linked: opened by the website's "เชื่อม LINE" (?login=1) just to sign in to LINE in this browser. */
+type Status = "loading" | "ready" | "sharing" | "done" | "linked" | "error";
 
 const param = (name: string) => new URLSearchParams(window.location.search).get(name) || "";
 
@@ -56,6 +57,14 @@ export default function LiffSharePage() {
         const token = param("t");
         if (!sdk.isLoggedIn()) {
           sdk.login({ redirectUri: window.location.href });
+          return;
+        }
+        // Signed in: the website's share button now opens LINE's picker by itself.
+        if (param("login") === "1") {
+          if (!alive) return;
+          setLiff(sdk);
+          setStatus("linked");
+          window.close();
           return;
         }
         const res = await fetch(`/api/line/share?t=${encodeURIComponent(token)}`, { cache: "no-store" });
@@ -119,6 +128,17 @@ export default function LiffSharePage() {
           </p>
         )}
       </header>
+
+      {status === "linked" && (
+        <div role="status" className="p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 ring-1 ring-emerald-200 dark:ring-emerald-900 text-center space-y-2">
+          <CheckCircle2 className="w-8 h-8 mx-auto text-emerald-600" />
+          <p className="text-sm font-black text-emerald-800 dark:text-emerald-200">เชื่อม LINE กับเบราว์เซอร์นี้แล้ว</p>
+          <p className="text-xs text-emerald-700 dark:text-emerald-300">ปิดหน้าต่างนี้ แล้วกด “ส่งเข้ากลุ่ม” ในหน้าเว็บได้เลย</p>
+          <button type="button" onClick={() => window.close()} className="text-xs font-bold text-emerald-700 underline cursor-pointer">
+            ปิดหน้าต่างนี้
+          </button>
+        </div>
+      )}
 
       {status === "loading" && (
         <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
