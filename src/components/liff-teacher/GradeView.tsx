@@ -27,7 +27,7 @@ function WorkList({ onPick }: { onPick: (work: Assignment) => void }) {
   const rows = data.rows.filter((row) => row.handed > 0).sort((a, b) => Number(b.toGrade > 0) - Number(a.toGrade > 0));
   return (
     <Page title="✅ ตรวจงาน">
-      {rows.length === 0 && <Empty text="ยังไม่มีงานที่นักเรียนส่ง" />}
+      {rows.length === 0 && <Empty text={data.rows.length ? "ยังไม่มีนักเรียนส่งงาน" : "ยังไม่มีงานในห้องนี้"} />}
       {rows.length > 0 && (
         <Card className="p-0! divide-y divide-violet-100 dark:divide-slate-800">
           {rows.map((row) => {

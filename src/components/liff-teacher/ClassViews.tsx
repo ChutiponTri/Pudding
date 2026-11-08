@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Check, ExternalLink, UserCheck, Users, X } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
 import { Button, Card, Empty, ErrorBox, Loading, Page, Pill, errorText, useKit, useViewData, type RosterData, type RosterStudent, type TeacherView } from "./kit";
-import { useWork } from "./WorkViews";
+import { StatePill, useWork } from "./WorkViews";
 
 const studentName = (s: Partial<RosterStudent>) => `${s.first_name || ""} ${s.last_name || ""}`.trim() || "ไม่ระบุชื่อ";
 
@@ -318,15 +318,18 @@ export function StatusView() {
       </div>
       {waiting > 0 && <p className="text-xs text-slate-500">ฉบับร่าง / ตั้งเวลาไว้ {waiting} งาน</p>}
       <Card className="space-y-3">
-        <p className="text-sm font-black">งานที่เปิดรับ</p>
-        {open.length === 0 && <p className="text-xs text-slate-400">ไม่มีงานที่เปิดรับอยู่</p>}
-        {open.map((row) => {
+        <p className="text-sm font-black">งานทั้งหมด ({work.rows.length})</p>
+        {work.rows.length === 0 && <p className="text-xs text-slate-400">ยังไม่มีงานในห้องนี้ • สร้างได้จากเมนู “สร้าง”</p>}
+        {work.rows.map((row) => {
           const percent = row.total ? Math.round((row.handed / row.total) * 100) : 0;
           return (
             <div key={row.work.id} className="space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-bold truncate">{row.work.is_exam ? "📝" : "📋"} {row.work.title}</p>
-                <Pill tone={row.missing ? "amber" : "green"}>ส่ง {row.handed}/{row.total}</Pill>
+                <span className="flex gap-1 shrink-0">
+                  <StatePill row={row} />
+                  <Pill tone={row.missing ? "amber" : "green"}>ส่ง {row.handed}/{row.total}</Pill>
+                </span>
               </div>
               <div className="h-1.5 rounded-full bg-violet-100 dark:bg-slate-800 overflow-hidden">
                 <div className="h-full bg-violet-500" style={{ width: `${Math.min(100, percent)}%` }} />

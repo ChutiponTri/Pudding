@@ -34,6 +34,19 @@ async function override(assignmentId: string, action: "publish_now" | "announce_
 }
 
 const kindIcon = (work: Assignment) => (work.is_exam ? "📝" : "📋");
+
+/** Where a work stands, for the label every list shows (so closed work is still listed). */
+export function workState(row: WorkRow): { label: string; tone: "slate" | "violet" | "green" | "amber" | "red" } {
+  if (row.win.isDraft) return { label: "ฉบับร่าง", tone: "slate" };
+  if (row.win.isScheduled) return { label: "ตั้งเวลาไว้", tone: "violet" };
+  if (row.win.acceptsSubmissions) return { label: row.win.isPastDeadline ? "รับส่งช้า" : "เปิดรับ", tone: row.win.isPastDeadline ? "amber" : "green" };
+  return { label: "ปิดรับแล้ว", tone: "red" };
+}
+
+export function StatePill({ row }: { row: WorkRow }) {
+  const state = workState(row);
+  return <Pill tone={state.tone}>{state.label}</Pill>;
+}
 const due = (row: WorkRow) => (row.win.deadline != null ? lineDate(row.win.deadline) : "ไม่มีกำหนด");
 
 function WorkLine({ row, children, right }: { row: WorkRow; children?: React.ReactNode; right?: React.ReactNode }) {
@@ -80,6 +93,7 @@ export function PublishView() {
   // Straight into the group when opened from it (no group to pick).
   const waiting = data.rows.filter((row) => row.win.isDraft || row.win.isScheduled);
   const open = data.rows.filter((row) => row.win.acceptsSubmissions);
+  const closed = data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled && !row.win.acceptsSubmissions);
   const publish = (row: WorkRow) =>
     run(row.work.id, async () => {
       const result = await override(row.work.id, "publish_now");
@@ -108,6 +122,15 @@ export function PublishView() {
           </WorkLine>
         ))}
       </Card>
+      {closed.length > 0 && (
+        <Card className="space-y-3">
+          <p className="text-sm font-black">ปิดรับแล้ว ({closed.length})</p>
+          {closed.map((row) => (
+            <WorkLine key={row.work.id} row={row} right={<Pill tone="red">ส่ง {row.handed}/{row.total}</Pill>} />
+          ))}
+          <p className="text-[11px] text-slate-400">เปิดรับอีกครั้งหรือขยายเวลาได้บนเว็บ • ตรวจและประกาศผลได้จากเมนู</p>
+        </Card>
+      )}
       <Button tone="ghost" className="w-full" onClick={() => go("create")}>✏️ สร้างงานใหม่</Button>
     </Page>
   );
@@ -120,7 +143,8 @@ export function ResultsView() {
   const { busy, run } = useBusy();
   if (data.error) return <Page title="📈 ประกาศผล"><ErrorBox text={data.error} /></Page>;
   if (!data.data) return <Page title="📈 ประกาศผล"><Loading /></Page>;
-  const rows = data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled && row.handed > 0);
+  // Every published work: announcing needs at least one graded hand-in.
+  const rows = data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled);
   const announce = (row: WorkRow) => {
     if (!row.graded) return;
     void run(row.work.id, async () => {
@@ -131,11 +155,15 @@ export function ResultsView() {
   };
   return (
     <Page title="📈 ประกาศผล">
-      {rows.length === 0 && <Empty text="ยังไม่มีงานที่นักเรียนส่ง" />}
+      {rows.length === 0 && <Empty text="ยังไม่มีงานที่เผยแพร่" />}
       {rows.length > 0 && (
         <Card className="space-y-3">
           {rows.map((row) => (
-            <WorkLine key={row.work.id} row={row} right={<Pill tone={row.graded >= row.handed ? "green" : "amber"}>ตรวจ {row.graded}/{row.handed}</Pill>}>
+            <WorkLine
+              key={row.work.id}
+              row={row}
+              right={<Pill tone={!row.handed ? "slate" : row.graded >= row.handed ? "green" : "amber"}>{row.handed ? `ตรวจ ${row.graded}/${row.handed}` : "ยังไม่มีคนส่ง"}</Pill>}
+            >
               <div className="flex gap-2">
                 <Button small tone="green" disabled={!row.graded} busy={busy === row.work.id} onClick={() => announce(row)}>📣 ประกาศคะแนน</Button>
                 {row.graded < row.handed && <Button small tone="ghost" onClick={() => go("grade")}>ไปตรวจงาน</Button>}
@@ -159,7 +187,9 @@ export function RemindView() {
   const rows = data.rows.filter((row) => row.win.acceptsSubmissions);
   return (
     <Page title="🔔 ทวงงาน">
-      {rows.length === 0 && <Empty text="ไม่มีงานที่เปิดรับอยู่" />}
+      {rows.length === 0 && (
+        <Empty text={data.rows.length ? `ไม่มีงานที่เปิดรับอยู่ (งานทั้งหมด ${data.rows.length} งานปิดรับแล้วหรือยังไม่เผยแพร่)` : "ยังไม่มีงานในห้องนี้"} />
+      )}
       {rows.length > 0 && (
         <Card className="space-y-3">
           {rows.map((row) => {
