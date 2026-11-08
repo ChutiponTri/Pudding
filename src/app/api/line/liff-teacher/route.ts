@@ -38,7 +38,7 @@ type Context = {
 async function context(request: NextRequest, ref: string | null): Promise<Context | NextResponse> {
   const actor = await getActor(request, { allowIncompleteProfile: true });
   if (!actor || actor.kind !== 'teacher') {
-    return NextResponse.json({ error: 'หน้านี้สำหรับคุณครูเท่านั้น (เข้าสู่ระบบเว็บ Pudding ด้วย LINE บัญชีนี้ก่อน)', code: 'not-teacher' }, { status: 403 });
+    return NextResponse.json({ error: 'หน้านี้สำหรับคุณครูเท่านั้น', code: 'not-teacher' }, { status: 403 });
   }
   if (!ref) return NextResponse.json({ error: 'เปิดหน้านี้จากเมนูครูในกลุ่ม LINE', code: 'no-group' }, { status: 400 });
   const supabase = createServiceSupabaseClient();
