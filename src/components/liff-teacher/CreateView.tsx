@@ -12,13 +12,16 @@ import { Button, Card, Done, Field, Page, errorText, inputClass, useKit } from "
 type Draft = { uid: number; type: QuestionType; text: string; options: string[]; answer: string; score: number };
 
 let nextUid = 1;
-const newQuestion = (type: QuestionType = "multiple_choice"): Draft => ({ uid: nextUid++, type, text: "", options: ["", "", "", ""], answer: "", score: 1 });
+/** A file answer is usually the whole homework (10 points); other questions start at 1, as on the website. */
+const defaultScore = (type: QuestionType) => (type === "file_upload" ? 10 : 1);
+const newQuestion = (type: QuestionType = "multiple_choice"): Draft => ({ uid: nextUid++, type, text: "", options: ["", "", "", ""], answer: "", score: defaultScore(type) });
 
-const QUESTION_TYPES: Array<[QuestionType, string]> = [
-  ["multiple_choice", "ปรนัย"],
-  ["true_false", "ถูก/ผิด"],
-  ["short_answer", "เขียนตอบ"],
-];
+const TYPE_LABEL: Record<QuestionType, string> = { file_upload: "แนบไฟล์ / รูป", short_answer: "ข้อความ", multiple_choice: "ปรนัย", true_false: "ถูก/ผิด" };
+const TYPE_ICON: Record<QuestionType, string> = { file_upload: "📎", short_answer: "✍️", multiple_choice: "🔘", true_false: "⭕" };
+/** Homework takes every kind; a quiz no files (it counts every time the student leaves the screen, as on the website). */
+const TYPES_FOR = (isExam: boolean): QuestionType[] => (isExam ? ["multiple_choice", "true_false", "short_answer"] : ["file_upload", "short_answer", "multiple_choice", "true_false"]);
+/** Homework questions may leave the text empty for these (a sensible prompt is used). */
+const DEFAULT_TEXT: Partial<Record<QuestionType, string>> = { file_upload: "แนบไฟล์งาน", short_answer: "คำตอบ" };
 
 /**
  * "สร้าง": a minimal version of the web's new-work form. Homework: one answer
@@ -36,15 +39,20 @@ export function CreateView() {
   /** "ปิดรับส่งงาน" (optional): empty = LATE_WINDOW_HOURS after the due date. */
   const [closeDate, setCloseDate] = useState("");
   const [closeTime, setCloseTime] = useState("23:59");
-  const [answerType, setAnswerType] = useState<"file_upload" | "short_answer">("file_upload");
-  const [points, setPoints] = useState(10);
   const [minutes, setMinutes] = useState(30);
-  const [questions, setQuestions] = useState<Draft[]>(() => [newQuestion()]);
+  // Each kind keeps its own questions, so switching the tab back and forth loses nothing.
+  const [homeworkQuestions, setHomeworkQuestions] = useState<Draft[]>(() => [newQuestion("file_upload")]);
+  const [quizQuestions, setQuizQuestions] = useState<Draft[]>(() => [newQuestion("multiple_choice")]);
+  const questions = isExam ? quizQuestions : homeworkQuestions;
+  const setQuestions = isExam ? setQuizQuestions : setHomeworkQuestions;
   const [busy, setBusy] = useState<"publish" | "draft" | null>(null);
   /** sent: whether the work card reached the group (the teacher may cancel the picker). */
   const [created, setCreated] = useState<{ title: string; draft: boolean; sent: boolean } | null>(null);
 
   const patch = (uid: number, change: Partial<Draft>) => setQuestions((list) => list.map((q) => (q.uid === uid ? { ...q, ...change } : q)));
+  const changeType = (q: Draft, type: QuestionType) =>
+    // A score still at the old kind's default follows the new kind's.
+    patch(q.uid, { type, answer: "", ...(q.score === defaultScore(q.type) ? { score: defaultScore(type) } : {}) });
 
   const problem = (): string | null => {
     if (!title.trim()) return "กรุณาใส่ชื่องาน";
@@ -54,12 +62,13 @@ export function CreateView() {
       if (closeDate && new Date(localPartsToIso(closeDate, closeTime)).getTime() < new Date(localPartsToIso(dueDate, dueTime)).getTime()) {
         return "เวลาปิดรับส่งงานต้องไม่ก่อนกำหนดส่ง";
       }
-      return null;
     }
-    if (!(minutes > 0)) return "กรุณาใส่เวลาทำข้อสอบ";
+    if (isExam && !(minutes > 0)) return "กรุณาใส่เวลาทำข้อสอบ";
+    if (!questions.length) return "เพิ่มคำถามอย่างน้อย 1 ข้อ";
     for (const [index, q] of questions.entries()) {
       const n = index + 1;
-      if (!q.text.trim()) return `ข้อ ${n}: กรุณาใส่คำถาม`;
+      if (isExam && q.type === "file_upload") return `ข้อ ${n}: แบบทดสอบใช้คำถามแบบแนบไฟล์ไม่ได้`;
+      if (!q.text.trim() && (isExam || !DEFAULT_TEXT[q.type])) return `ข้อ ${n}: กรุณาใส่คำถาม`;
       if (q.type === "multiple_choice") {
         const options = q.options.map((o) => o.trim()).filter(Boolean);
         if (options.length < 2) return `ข้อ ${n}: ใส่ตัวเลือกอย่างน้อย 2 ข้อ`;
@@ -75,26 +84,15 @@ export function CreateView() {
     if (issue) return toast(issue, "error");
     setBusy(draft ? "draft" : "publish");
     try {
-      const rows: Omit<Question, "id" | "assignment_id">[] = isExam
-        ? questions.map((q) => ({
-            type: q.type,
-            question_text: q.text.trim(),
-            options: q.type === "multiple_choice" ? q.options.map((o) => o.trim()).filter(Boolean) : q.type === "true_false" ? [...TRUE_FALSE_OPTIONS] : undefined,
-            ideal_answer: q.answer,
-            rubric_criteria: "",
-            max_score: Number(q.score) || 1,
-            is_required: true,
-          }))
-        : [
-            {
-              type: answerType,
-              question_text: answerType === "file_upload" ? "แนบไฟล์งาน" : "คำตอบ",
-              ideal_answer: "",
-              rubric_criteria: "",
-              max_score: Number(points) || 10,
-              is_required: true,
-            },
-          ];
+      const rows: Omit<Question, "id" | "assignment_id">[] = questions.map((q) => ({
+        type: q.type,
+        question_text: q.text.trim() || DEFAULT_TEXT[q.type] || "",
+        options: q.type === "multiple_choice" ? q.options.map((o) => o.trim()).filter(Boolean) : q.type === "true_false" ? [...TRUE_FALSE_OPTIONS] : undefined,
+        ideal_answer: q.type === "multiple_choice" || q.type === "true_false" ? q.answer : "",
+        rubric_criteria: "",
+        max_score: Number(q.score) || defaultScore(q.type),
+        is_required: true,
+      }));
       const total = rows.reduce((sum, row) => sum + Number(row.max_score || 0), 0);
       const result = await dataService.createAssignment(
         {
@@ -147,7 +145,8 @@ export function CreateView() {
                 setCreated(null);
                 setTitle("");
                 setDescription("");
-                setQuestions([newQuestion()]);
+                setHomeworkQuestions([newQuestion("file_upload")]);
+                setQuizQuestions([newQuestion("multiple_choice")]);
               }}
             >
               สร้างอีกงาน
@@ -161,7 +160,12 @@ export function CreateView() {
 
   return (
     <Page title="✏️ สร้างงาน">
-      <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-amber-100 dark:bg-slate-900">
+      <div role="tablist" aria-label="ประเภทงาน" className="relative grid grid-cols-2 p-1 rounded-xl bg-amber-100 dark:bg-slate-900">
+        {/* The white pill slides under the picked tab. */}
+        <span
+          aria-hidden
+          className={`absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-white dark:bg-amber-600 shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${isExam ? "translate-x-full" : "translate-x-0"}`}
+        />
         {[
           [false, "📋 การบ้าน"],
           [true, "📝 แบบทดสอบ"],
@@ -169,13 +173,24 @@ export function CreateView() {
           <button
             key={String(value)}
             type="button"
+            role="tab"
+            aria-selected={isExam === value}
+            data-no-press
             onClick={() => setIsExam(value as boolean)}
-            className={`h-10 rounded-lg text-sm font-bold cursor-pointer ${isExam === value ? "bg-white dark:bg-amber-600 text-amber-800 dark:text-white shadow-sm" : "text-amber-600 dark:text-slate-400"}`}
+            className={`relative z-10 h-10 rounded-lg text-sm font-bold cursor-pointer transition-colors duration-300 ${isExam === value ? "text-amber-800 dark:text-white" : "text-amber-600/80 dark:text-slate-400"}`}
           >
             {label as string}
           </button>
         ))}
       </div>
+
+      {/* The form slides in from the side of the tab just picked (homework left, quiz right).
+          Wrapped once more: the page's card-rise animation applies to its direct children only. */}
+      <div>
+      <div
+        key={isExam ? "quiz" : "homework"}
+        className={`space-y-4 animate-in fade-in [--tw-duration:360ms] ${isExam ? "[--tw-enter-translate-x:2rem]" : "[--tw-enter-translate-x:-2rem]"}`}
+      >
 
       <Card className="space-y-3">
         <Field label="ชื่องาน *">
@@ -213,30 +228,18 @@ export function CreateView() {
                 `ไม่ระบุ = ส่งช้าได้อีก ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง แล้วปิดรับเอง`
               )}
             </p>
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="ส่งเป็น">
-                <select className={inputClass} value={answerType} onChange={(e) => setAnswerType(e.target.value as "file_upload" | "short_answer")}>
-                  <option value="file_upload">ไฟล์ / รูปภาพ</option>
-                  <option value="short_answer">ข้อความ</option>
-                </select>
-              </Field>
-              <Field label="คะแนนเต็ม">
-                <input className={inputClass} type="number" min={0} inputMode="numeric" value={points} onChange={(e) => setPoints(Number(e.target.value) || 0)} />
-              </Field>
-            </div>
           </>
         )}
       </Card>
 
-      {isExam &&
-        questions.map((q, index) => (
-          <Card key={q.uid} className="space-y-3">
+      {questions.map((q, index) => (
+          <Card key={q.uid} className="liff-rise space-y-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-black">ข้อ {index + 1}</p>
               <div className="flex items-center gap-1">
-                <select className="h-8 px-2 rounded-lg text-xs bg-amber-50 dark:bg-slate-800" value={q.type} onChange={(e) => patch(q.uid, { type: e.target.value as QuestionType, answer: "" })}>
-                  {QUESTION_TYPES.map(([type, label]) => (
-                    <option key={type} value={type}>{label}</option>
+                <select className="h-8 px-2 rounded-lg text-xs bg-amber-50 dark:bg-slate-800" value={q.type} onChange={(e) => changeType(q, e.target.value as QuestionType)}>
+                  {TYPES_FOR(isExam).map((type) => (
+                    <option key={type} value={type}>{TYPE_ICON[type]} {TYPE_LABEL[type]}</option>
                   ))}
                 </select>
                 {questions.length > 1 && (
@@ -246,7 +249,12 @@ export function CreateView() {
                 )}
               </div>
             </div>
-            <textarea className={`${inputClass} h-16 py-2`} placeholder="คำถาม" value={q.text} onChange={(e) => patch(q.uid, { text: e.target.value })} />
+            <textarea
+              className={`${inputClass} h-16 py-2`}
+              placeholder={!isExam && DEFAULT_TEXT[q.type] ? `คำสั่ง (ไม่บังคับ เว้นว่าง = “${DEFAULT_TEXT[q.type]}”)` : "คำถาม"}
+              value={q.text}
+              onChange={(e) => patch(q.uid, { text: e.target.value })}
+            />
             {q.type === "multiple_choice" && (
               <div className="space-y-1.5">
                 <p className="text-[11px] text-slate-500">แตะวงกลมหน้าคำตอบที่ถูกต้อง</p>
@@ -290,16 +298,33 @@ export function CreateView() {
               </div>
             )}
             {q.type === "short_answer" && <p className="text-[11px] text-slate-500">ข้อเขียน คุณครูให้คะแนนเองในเมนู “ตรวจงาน”</p>}
+            {q.type === "file_upload" && <p className="text-[11px] text-slate-500">นักเรียนถ่ายรูปหรือแนบไฟล์ คุณครูให้คะแนนเองในเมนู “ตรวจงาน”</p>}
             <Field label="คะแนน">
               <input className={`${inputClass} w-24!`} type="number" min={0} inputMode="numeric" value={q.score} onChange={(e) => patch(q.uid, { score: Number(e.target.value) || 0 })} />
             </Field>
           </Card>
         ))}
-      {isExam && (
-        <Button tone="soft" className="w-full" onClick={() => setQuestions((list) => [...list, newQuestion(list[list.length - 1]?.type)])}>
-          <Plus className="w-4 h-4" /> เพิ่มข้อ
-        </Button>
-      )}
+      <div className="space-y-1.5">
+        <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> เพิ่มคำถาม</p>
+        <div className={`grid gap-2 ${isExam ? "grid-cols-3" : "grid-cols-4"}`}>
+          {TYPES_FOR(isExam).map((type) => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => setQuestions((list) => [...list, newQuestion(type)])}
+              className="h-14 rounded-xl bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/50 text-amber-800 dark:text-amber-200 text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 cursor-pointer"
+            >
+              <span className="text-base leading-none">{TYPE_ICON[type]}</span>
+              {TYPE_LABEL[type]}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-slate-400">
+          {isExam ? "แบบทดสอบไม่มีคำถามแบบแนบไฟล์ เพราะระบบนับทุกครั้งที่นักเรียนออกจากหน้าจอ" : `รวม ${questions.length} ข้อ · คะแนนเต็ม ${questions.reduce((sum, q) => sum + (Number(q.score) || 0), 0)}`}
+        </p>
+      </div>
+      </div>
+      </div>
 
       <div className="flex gap-2">
         <Button tone="ghost" busy={busy === "draft"} disabled={!!busy} onClick={() => save(true)}>บันทึกร่าง</Button>

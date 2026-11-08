@@ -17,6 +17,12 @@ export const STALE_MS = 15_000;
 const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 
 const memory = new Map<string, Entry>();
+
+/**
+ * Keys with a ":mem:" part live in this page's memory only: students'
+ * answers and behaviour logs are not left on the phone.
+ */
+const memoryOnly = (key: string) => key.includes(":mem:");
 const inflight = new Map<string, Promise<unknown>>();
 const listeners = new Map<string, Set<() => void>>();
 
@@ -30,7 +36,7 @@ function storage(): Storage | null {
 
 export function readCache(key: string): Entry | null {
   const hit = memory.get(key);
-  if (hit) return hit;
+  if (hit || memoryOnly(key)) return hit ?? null;
   try {
     const raw = storage()?.getItem(PREFIX + key);
     if (!raw) return null;
@@ -47,7 +53,7 @@ export function writeCache(key: string, data: unknown, at = Date.now()) {
   const entry = { data, at };
   memory.set(key, entry);
   try {
-    storage()?.setItem(PREFIX + key, JSON.stringify(entry));
+    if (!memoryOnly(key)) storage()?.setItem(PREFIX + key, JSON.stringify(entry));
   } catch {
     // Full or blocked storage: this session still has it in memory.
   }

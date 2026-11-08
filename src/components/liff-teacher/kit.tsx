@@ -81,6 +81,8 @@ type Kit = TeacherContext & {
   toast: (text: string, tone?: "ok" | "error") => void;
   /** The page's data from the server (one request at a time per kind; the answer is cached). */
   fetchData: (kind: DataKind) => Promise<unknown>;
+  /** The request itself, without the cache (useCached wraps it). */
+  loadData: (kind: DataKind) => Promise<unknown>;
   /** Cache key of a kind of data. */
   keyOf: (kind: DataKind) => string;
   /** After a change: those pages' data is refreshed (now if open, else when opened). */
@@ -114,7 +116,7 @@ export function KitProvider({
   value,
   children,
 }: {
-  value: Omit<Kit, "postMessages" | "postShare" | "postKind" | "toast" | "fetchData" | "keyOf" | "invalidate" | "prefetch" | "autoSend" | "fromGroup" | "permission" | "askPermission">;
+  value: Omit<Kit, "postMessages" | "postShare" | "postKind" | "toast" | "fetchData" | "loadData" | "keyOf" | "invalidate" | "prefetch" | "autoSend" | "fromGroup" | "permission" | "askPermission">;
   children: ReactNode;
 }) {
   const [message, setMessage] = useState<{ text: string; tone: "ok" | "error"; id: number } | null>(null);
@@ -128,14 +130,14 @@ export function KitProvider({
 
   const { liff, groupRef, cacheScope } = value;
   const keyOf = useCallback((kind: DataKind) => `${cacheScope}:${kind}`, [cacheScope]);
-  const fetchData = useCallback(
-    (kind: DataKind) =>
-      fetchOnce(keyOf(kind), async () => {
-        const res = await authFetch(`/api/line/liff-teacher?g=${encodeURIComponent(groupRef)}&view=${kind}`, { cache: "no-store" });
-        return (await readJson(res, "โหลดข้อมูลไม่สำเร็จ")).data;
-      }),
-    [groupRef, keyOf]
+  const loadData = useCallback(
+    async (kind: DataKind) => {
+      const res = await authFetch(`/api/line/liff-teacher?g=${encodeURIComponent(groupRef)}&view=${kind}`, { cache: "no-store" });
+      return (await readJson(res, "โหลดข้อมูลไม่สำเร็จ")).data;
+    },
+    [groupRef]
   );
+  const fetchData = useCallback((kind: DataKind) => fetchOnce(keyOf(kind), () => loadData(kind)), [keyOf, loadData]);
   const invalidate = useCallback((...kinds: DataKind[]) => staleCache(kinds.map(keyOf)), [keyOf]);
   const prefetch = useCallback(
     (...kinds: DataKind[]) => {
@@ -237,7 +239,7 @@ export function KitProvider({
 
   return (
     <KitContext.Provider
-      value={{ ...value, postMessages, postShare, postKind, toast, fetchData, keyOf, invalidate, prefetch, autoSend, fromGroup, permission, askPermission }}
+      value={{ ...value, postMessages, postShare, postKind, toast, fetchData, loadData, keyOf, invalidate, prefetch, autoSend, fromGroup, permission, askPermission }}
     >
       {children}
       {message && (
@@ -440,20 +442,22 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
 }
 
 /**
- * A page's data (see DataKind), stale-while-revalidate: whatever the cache
- * has shows at once, and it is refreshed in the background when older than
- * STALE_MS (or after invalidate). `refreshing` is true while that runs;
- * `mutate` changes the cached copy right away (an optimistic update).
+ * Any cached load, stale-while-revalidate (see ./cache): what the cache has
+ * shows at once and is refreshed in the background when older than STALE_MS
+ * (or marked stale). `refreshing` is true while that runs; `mutate` changes
+ * the cached copy right away (an optimistic update). `key` null = not yet.
  */
-export function useViewData<T>(kind: DataKind) {
-  const { fetchData, keyOf } = useKit();
-  const key = keyOf(kind);
-  const subscribe = useCallback((notify: () => void) => subscribeCache(key, notify), [key]);
+export function useCached<T>(key: string | null, load: () => Promise<T>) {
+  const subscribe = useCallback((notify: () => void) => (key ? subscribeCache(key, notify) : () => {}), [key]);
   // The same entry object until it changes, so React re-renders only on a new copy.
-  const entry = useSyncExternalStore(subscribe, () => readCache(key), () => null);
-  const loading = useSyncExternalStore(subscribe, () => isLoading(key), () => false);
+  const entry = useSyncExternalStore(subscribe, () => (key ? readCache(key) : null), () => null);
+  const loading = useSyncExternalStore(subscribe, () => (key ? isLoading(key) : false), () => false);
   const [error, setError] = useState("");
   const alive = useRef(true);
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  });
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -462,12 +466,13 @@ export function useViewData<T>(kind: DataKind) {
   }, []);
 
   const revalidate = useCallback(() => {
-    fetchData(kind)
+    if (!key) return;
+    fetchOnce(key, () => loadRef.current())
       .then(() => alive.current && setError(""))
       .catch((err) => alive.current && setError(err instanceof Error ? err.message : "โหลดข้อมูลไม่สำเร็จ"));
-  }, [fetchData, kind]);
+  }, [key]);
 
-  // Missing, old, or marked stale (invalidate): fetch it. A new copy is fresh, so this does not loop.
+  // Missing, old, or marked stale: fetch it. A new copy is fresh, so this does not loop.
   const stale = !isFresh(entry);
   useEffect(() => {
     if (stale) revalidate();
@@ -475,14 +480,20 @@ export function useViewData<T>(kind: DataKind) {
 
   const mutate = useCallback(
     (change: (current: T) => T) => {
-      const current = readCache(key);
-      if (current) writeCache(key, change(current.data as T), current.at);
+      const current = key ? readCache(key) : null;
+      if (key && current) writeCache(key, change(current.data as T), current.at);
     },
     [key]
   );
   const data = (entry?.data as T | undefined) ?? null;
   // An error only matters when there is nothing to show.
   return { data, error: data ? "" : error, refreshing: loading && !!data, reload: revalidate, mutate };
+}
+
+/** A page's data (see DataKind), through the cache (useCached). */
+export function useViewData<T>(kind: DataKind) {
+  const { loadData, keyOf } = useKit();
+  return useCached<T>(keyOf(kind), () => loadData(kind) as Promise<T>);
 }
 
 export const errorText = (err: unknown, fallback = "ทำรายการไม่สำเร็จ") => (err instanceof Error ? err.message : fallback);

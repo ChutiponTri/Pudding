@@ -6,6 +6,9 @@ import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
 import { lineDate } from "@/lib/utils/datetime";
 import type { Assignment } from "@/types/database";
 import { Button, Card, Empty, ErrorBox, Page, Pill, Skeleton, errorText, useKit, useViewData, type Share, type WorkData } from "./kit";
+import { WorkStatus, workState } from "./StatusSheet";
+
+export { workState };
 
 export type WorkRow = WorkData["works"][number] & { win: ReturnType<typeof getAssignmentWindow> };
 
@@ -34,17 +37,9 @@ async function override(assignmentId: string, action: "publish_now" | "announce_
 
 const kindIcon = (work: Assignment) => (work.is_exam ? "📝" : "📋");
 
-/** Where a work stands, for the label every list shows (so closed work is still listed). */
-export function workState(row: WorkRow): { label: string; tone: "slate" | "violet" | "green" | "amber" | "red" } {
-  if (row.win.isDraft) return { label: "ฉบับร่าง", tone: "slate" };
-  if (row.win.isScheduled) return { label: "ตั้งเวลาไว้", tone: "violet" };
-  if (row.win.acceptsSubmissions) return { label: row.win.isPastDeadline ? "รับส่งช้า" : "เปิดรับ", tone: row.win.isPastDeadline ? "amber" : "green" };
-  return { label: "ปิดรับแล้ว", tone: "red" };
-}
-
+/** The work's acceptance status: a pill that opens the status sheet (published work). */
 export function StatePill({ row }: { row: WorkRow }) {
-  const state = workState(row);
-  return <Pill tone={state.tone}>{state.label}</Pill>;
+  return <WorkStatus work={row.work} />;
 }
 const due = (row: WorkRow) => (row.win.deadline != null ? lineDate(row.win.deadline) : "ไม่มีกำหนด");
 
@@ -52,8 +47,9 @@ function WorkLine({ row, children, right }: { row: WorkRow; children?: React.Rea
   return (
     <div className="space-y-2 pb-3 border-b last:border-0 last:pb-0 border-amber-100 dark:border-slate-800">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-0.5">
           <p className="text-sm font-bold truncate">{kindIcon(row.work)} {row.work.title}</p>
+          <WorkStatus work={row.work} />
           <p className="text-[11px] text-slate-500">
             {row.work.is_exam ? "ปิดรับคำตอบ" : "กำหนดส่ง"} {due(row)}
             {!row.work.is_exam && row.win.lateUntil != null && row.win.lateUntil !== row.win.deadline ? ` · ปิดรับส่งงาน ${lineDate(row.win.lateUntil)}` : ""}
@@ -106,7 +102,7 @@ export function PublishView() {
         <p className="text-sm font-black">ฉบับร่าง / ตั้งเวลาไว้ ({waiting.length})</p>
         {waiting.length === 0 && <p className="text-xs text-slate-400">ไม่มีงานที่รอเผยแพร่</p>}
         {waiting.map((row) => (
-          <WorkLine key={row.work.id} row={row} right={<Pill tone="slate">{row.win.isDraft ? "ฉบับร่าง" : "ตั้งเวลา"}</Pill>}>
+          <WorkLine key={row.work.id} row={row}>
             <Button small busy={busy === row.work.id} onClick={() => publish(row)}>เผยแพร่ตอนนี้ + ส่งการ์ด</Button>
           </WorkLine>
         ))}
@@ -128,7 +124,7 @@ export function PublishView() {
           {closed.map((row) => (
             <WorkLine key={row.work.id} row={row} right={<Pill tone="red">ส่ง {row.handed}/{row.total}</Pill>} />
           ))}
-          <p className="text-[11px] text-slate-400">เปิดรับอีกครั้งหรือขยายเวลาได้บนเว็บ • ตรวจและประกาศผลได้จากเมนู</p>
+          <p className="text-[11px] text-slate-400">แตะ “ปิดรับแล้ว” เพื่อเปิดรับอีกครั้งหรือขยายเวลา • ตรวจและประกาศผลได้จากเมนู</p>
         </Card>
       )}
       <Button tone="ghost" className="w-full" onClick={() => go("create")}>✏️ สร้างงานใหม่</Button>
@@ -186,6 +182,8 @@ export function RemindView() {
   if (data.error) return <Page title="🔔 ทวงงาน"><ErrorBox text={data.error} /></Page>;
   if (!data.data) return <Page title="🔔 ทวงงาน"><Skeleton /></Page>;
   const rows = data.rows.filter((row) => row.win.acceptsSubmissions);
+  // Closed work can be reopened (or extended) here before reminding.
+  const closed = data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled && !row.win.acceptsSubmissions && row.missing > 0);
   return (
     <Page title="🔔 ทวงงาน" refreshing={data.refreshing}>
       {rows.length === 0 && (
@@ -203,6 +201,15 @@ export function RemindView() {
               </WorkLine>
             );
           })}
+        </Card>
+      )}
+      {closed.length > 0 && (
+        <Card className="space-y-3">
+          <p className="text-sm font-black">ปิดรับแล้ว แต่ยังมีคนไม่ส่ง ({closed.length})</p>
+          {closed.map((row) => (
+            <WorkLine key={row.work.id} row={row} right={<Pill tone="red">ยังไม่ส่ง {row.missing}</Pill>} />
+          ))}
+          <p className="text-[11px] text-slate-400">แตะ “ปิดรับแล้ว” เพื่อเปิดรับหรือขยายเวลา แล้วจึงทวงได้</p>
         </Card>
       )}
       <p className="text-[11px] text-slate-400">ส่งภาพ “พุดดิ้งมาทวงแล้ว!” เข้ากลุ่ม แล้วบอทจะตอบด้วยการ์ดรายชื่อและแท็กคนที่ยังไม่ส่ง (ไม่ใช้โควตาข้อความ)</p>
