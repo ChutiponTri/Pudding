@@ -6,6 +6,7 @@ import { reannounceLineText, resultsLineText } from '@/lib/line/classroomAnnounc
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, postShare, reannounceShare, remindShare, resultsShare } from '@/lib/server/classroomPosts';
 import { botSendOrShare } from '@/lib/server/lineSend';
+import { remindPicture, resultsMessages, workMessages, type LineMessage } from '@/lib/line/teacherCards';
 import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { questionsMissingKey } from '@/lib/utils/autoGrade';
@@ -86,10 +87,11 @@ export async function POST(request: NextRequest) {
       const names = await missingStudentNames(supabase, previous, classroom);
       if (!names.length) return NextResponse.json({ assignment: previous, line: 'none', missing: 0 });
       text = reminderLineText(previous, classroom, names);
-      share = remindShare(assignmentId, text);
+      // In the class group the picture is enough: the bot answers it with the card and @mentions.
+      share = remindShare(assignmentId, text, classroom.line_group_id ? [remindPicture(classroom, previous)] : null);
     } else {
       text = reannounceLineText(previous, classroom);
-      share = reannounceShare(assignmentId, text);
+      share = reannounceShare(assignmentId, text, await cardOrNull(workMessages(supabase, previous, classroom)));
     }
     const result = await botSendOrShare(supabase, { groupId: classroom.line_group_id, text, share, teacherId: userId, classroomId: classroom.id });
     return NextResponse.json({ assignment: previous, ...result });
@@ -122,6 +124,8 @@ export async function POST(request: NextRequest) {
       }
       assignment = updated;
     }
+    // The results card is built while the scores are settled below.
+    const cardPromise = cardOrNull(resultsMessages(supabase, assignment, classroom));
     // A running "ให้แก้ไขงาน" / "ให้ส่งงาน" would keep every result hidden.
     const clearedReopens = await clearReopens(supabase, assignmentId);
     // Nothing handed in: an official 0, or the student would have no result to see.
@@ -162,7 +166,7 @@ export async function POST(request: NextRequest) {
     const result = await botSendOrShare(supabase, {
       groupId: classroom.line_group_id,
       text,
-      share: resultsShare(assignmentId, text),
+      share: resultsShare(assignmentId, text, await cardPromise),
       teacherId: userId,
       classroomId: classroom.id,
     });
@@ -210,6 +214,7 @@ export async function POST(request: NextRequest) {
           activityType: published.is_exam ? 'exam' : 'assignment',
           body: assignmentPostBody(published),
           metadata: assignmentPostMetadata(published, assignmentId, isRetake(published) ? await hydratedStudents(supabase, classroom as Classroom) : classroom.students),
+          assignment: published,
         }));
       } catch (postError) {
         console.warn('Unable to post published draft:', postError);
@@ -220,6 +225,8 @@ export async function POST(request: NextRequest) {
     // Move the held-back timeline post to now. The teacher is here, so the
     // work card goes in from their LINE (no push): the post waits as 'card'.
     const lineStatus = classroom.line_group_id ? 'card' : 'no_group';
+    // The work card is built while the held-back post moves.
+    const cardPromise = cardOrNull(workMessages(supabase, published, classroom));
     const { data: posts } = await supabase
       .from('classroom_posts')
       .select('id, metadata')
@@ -253,7 +260,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       assignment: published,
       line: lineStatus,
-      share: post ? postShare(post.id, text) : reannounceShare(assignmentId, text),
+      share: post ? postShare(post.id, text, await cardPromise) : reannounceShare(assignmentId, text, await cardPromise),
     });
   }
 
@@ -278,6 +285,14 @@ export async function POST(request: NextRequest) {
 }
 
 /** Ends every running per-student permission ("ให้แก้ไขงาน" / "ให้ส่งงาน") on a work; returns how many. */
+/** A card being built; null (the plain text card stands in) when it fails. */
+function cardOrNull(card: Promise<LineMessage[] | null>): Promise<LineMessage[] | null> {
+  return card.catch((error) => {
+    console.warn('Building the LINE card failed:', error);
+    return null;
+  });
+}
+
 async function clearReopens(supabase: ReturnType<typeof createServiceSupabaseClient>, assignmentId: string): Promise<number> {
   const { data: cleared, error: clearError } = await supabase
     .from('submissions')

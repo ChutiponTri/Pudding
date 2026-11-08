@@ -3,7 +3,8 @@ import { dueText } from '@/lib/utils/lineDates';
 import { lineDate } from '@/lib/utils/datetime';
 import { randomUUID } from 'node:crypto';
 import { after } from 'next/server';
-import { isLineQuotaError, pushLineGroupText } from '@/lib/line/messaging';
+import { isLineQuotaError, lineMessagesForText, pushLineGroupText } from '@/lib/line/messaging';
+import { workMessages, type LineMessage } from '@/lib/line/teacherCards';
 import { postLineText, type PostActivityType, type PostLineFailure } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { attendanceShareToken, joinShareToken, postShareToken, teacherInviteShareToken, reannounceShareToken, remindShareToken, resultsShareToken } from '@/lib/server/inviteCodes';
@@ -86,6 +87,8 @@ export async function createClassroomPost(
     publishAt?: string;
     /** The LINE message's own wording; otherwise it is built from the post (buildPostLineMessage). */
     lineText?: string;
+    /** The work this post announces (assignment / exam): its card comes with the share. */
+    assignment?: Assignment;
   }
 ): Promise<{
   post: ClassroomPost;
@@ -130,6 +133,15 @@ export async function createClassroomPost(
     metadata,
     created_at: isScheduled ? new Date(publishAtMs).toISOString() : new Date().toISOString(),
   };
+  // The work's card is built while the post is saved, so the share carries it.
+  const isWork = activityType === 'assignment' || activityType === 'exam';
+  const cardPromise: Promise<LineMessage[] | null | undefined> =
+    !isScheduled && isWork && input.assignment
+      ? workMessages(supabase, input.assignment, classroom).catch((cardError) => {
+          console.warn('Building the work card failed:', cardError);
+          return null;
+        })
+      : Promise.resolve(isWork ? undefined : null);
   const { data: saved, error } = await supabase.from('classroom_posts').insert(newPost).select('*').single();
   if (error) throw new Error(error.message);
 
@@ -165,7 +177,7 @@ export async function createClassroomPost(
   let share: PostShare | undefined;
   let result = saved as ClassroomPost;
   if (line === 'failed' || line === 'quota' || line === 'no_group' || line === 'card') {
-    share = postShare(saved.id, postLineText(newPost, classroom));
+    share = postShare(saved.id, postLineText(newPost, classroom), await cardPromise);
     // Remembered on the post: the teacher's timeline keeps offering to share it by hand.
     const marked = { ...metadata, lineStatus: line satisfies PostLineFailure };
     const { error: markError } = await supabase.from('classroom_posts').update({ metadata: marked }).eq('id', saved.id);
@@ -189,6 +201,21 @@ export interface PostShare {
   text: string;
   /** LIFF page that shares the bot's message from the teacher's own LINE (/liff/share); null without a LIFF id. */
   url: string | null;
+  /**
+   * What the teacher's LINE sends (the card), built with the action's answer so
+   * the website and teacher LIFF need no second request. Missing: they load it
+   * from GET /api/line/share with the url's token.
+   */
+  messages?: LineMessage[];
+}
+
+/**
+ * A share with its card: `messages` when built, the plain text card when the
+ * card could not be made (null), none when not built here (undefined).
+ */
+function withMessages(text: string, messages: LineMessage[] | null | undefined, url: string | null): PostShare {
+  if (!url || messages === undefined) return { text, url };
+  return { text, url, messages: messages || lineMessagesForText(text) };
 }
 
 /**
@@ -196,33 +223,33 @@ export interface PostShare {
  * linked group): the teacher sends the same message from their own LINE
  * account, which costs the bot's quota nothing.
  */
-export function postShare(postId: string, text: string): PostShare {
-  return { text, url: shareUrl(postShareToken(postId)) };
+export function postShare(postId: string, text: string, messages?: LineMessage[] | null): PostShare {
+  return withMessages(text, messages, shareUrl(postShareToken(postId)));
 }
 
 /** Re-announcing a work the bot could not send: shared by hand like a post. */
-export function reannounceShare(assignmentId: string, text: string): PostShare {
-  return { text, url: shareUrl(reannounceShareToken(assignmentId)) };
+export function reannounceShare(assignmentId: string, text: string, messages?: LineMessage[] | null): PostShare {
+  return withMessages(text, messages, shareUrl(reannounceShareToken(assignmentId)));
 }
 
 /** A work's reminder ("ทวงงาน") the bot could not send: shared by hand like a post. */
-export function remindShare(assignmentId: string, text: string): PostShare {
-  return { text, url: shareUrl(remindShareToken(assignmentId)) };
+export function remindShare(assignmentId: string, text: string, messages?: LineMessage[] | null): PostShare {
+  return withMessages(text, messages, shareUrl(remindShareToken(assignmentId)));
 }
 
 /** A work's score announcement ("ประกาศคะแนน") the bot could not send: shared by hand like a post. */
-export function resultsShare(assignmentId: string, text: string): PostShare {
-  return { text, url: shareUrl(resultsShareToken(assignmentId)) };
+export function resultsShare(assignmentId: string, text: string, messages?: LineMessage[] | null): PostShare {
+  return withMessages(text, messages, shareUrl(resultsShareToken(assignmentId)));
 }
 
 /** A classroom's join invitation ("เชิญในไลน์") the bot could not send: shared by hand like a post. */
-export function joinShare(classroomId: string, text: string): PostShare {
-  return { text, url: shareUrl(joinShareToken(classroomId)) };
+export function joinShare(classroomId: string, text: string, messages?: LineMessage[] | null): PostShare {
+  return withMessages(text, messages, shareUrl(joinShareToken(classroomId)));
 }
 
 /** An open attendance period's check-in call sent again, shared by hand when the bot cannot. */
-export function attendanceShare(sessionId: string, text: string): PostShare {
-  return { text, url: shareUrl(attendanceShareToken(sessionId)) };
+export function attendanceShare(sessionId: string, text: string, messages?: LineMessage[] | null): PostShare {
+  return withMessages(text, messages, shareUrl(attendanceShareToken(sessionId)));
 }
 
 /** /liff/share page that sends a co-teacher invitation from the teacher's own LINE; null without a LIFF id. */

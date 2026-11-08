@@ -64,6 +64,8 @@ export function LineSharePopup() {
 
   const current = queue[0];
   const currentUrl = current?.url || null;
+  // The server usually sends the card with its answer: no second request then.
+  const hasCard = !!current?.messages?.length;
   const open = !!current;
   // The LIFF SDK starts as soon as the popup opens (even while the server is
   // still preparing the card), so it is ready by the time the card is.
@@ -81,7 +83,7 @@ export function LineSharePopup() {
   }, [open]);
   // Ready before the tap: LINE's picker must open straight from it.
   useEffect(() => {
-    if (!currentUrl) return;
+    if (!currentUrl || hasCard) return;
     let alive = true;
     loadShareCard(currentUrl)
       .then((loaded) => {
@@ -96,7 +98,7 @@ export function LineSharePopup() {
     return () => {
       alive = false;
     };
-  }, [currentUrl]);
+  }, [currentUrl, hasCard]);
 
   // The share page's window saves the LINE sign-in in this site's storage: pick it up when it lands.
   useEffect(() => {
@@ -118,7 +120,11 @@ export function LineSharePopup() {
   };
 
   const toGroup = current.reason === 'card';
-  const ready = card?.url === current.url ? card.card : null;
+  const ready: ShareCard | null = current.messages?.length
+    ? { messages: current.messages as ShareCard['messages'], text: current.text }
+    : card?.url === current.url
+    ? card.card
+    : null;
   /** Still waiting on the server, or on the card the picker sends. */
   const preparing = !!current.pending || (!!current.url && !ready && cardFailed !== current.url && canShareNow(liff));
   // LIFF cannot run on this page, or this is a phone: the share page does it. On a

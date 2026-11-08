@@ -7,13 +7,20 @@ import { attendanceMessages, inviteMessages, remindPicture, resultsMessages, wor
 import { parseShareToken } from '@/lib/server/inviteCodes';
 import { resolveTeacherInvite } from '@/lib/server/dataActions';
 import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
-import type { Assignment } from '@/types/database';
+import type { Assignment, User } from '@/types/database';
 import { classroomTitle } from '@/lib/utils/classroomLabel';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const ROOM_COLUMNS = 'id, name, course_name, subject_code, invite_code, teacher_id, line_group_id';
+/** students: a reminder names who has not handed in. */
+const WORK_ROOM_COLUMNS = `${ROOM_COLUMNS}, students`;
+
+type Room = { id: string; name: string; course_name?: string | null; subject_code?: string | null; invite_code?: string | null; teacher_id?: string | null; line_group_id?: string | null; students?: User[] | null };
+type Post = { id: string; classroom_id: string; body: string; activity_type: string; metadata: Record<string, unknown> | null };
+/** An embedded classroom (PostgREST returns one object for a to-one embed; an array on older setups). */
+const one = <T,>(value: T | T[] | null | undefined): T | null => (Array.isArray(value) ? value[0] ?? null : value ?? null);
 const SESSION_COLUMNS = 'id, classroom_id, title, starts_at, on_time_until_minutes, late_until_minutes, status';
 
 /**
@@ -50,10 +57,16 @@ export async function GET(request: NextRequest) {
   }
   if (target.kind === 'attendance') {
     // An open check-in period: rebuilt now, from its current deadlines.
-    const { data: session } = await supabase.from('attendance_sessions').select(SESSION_COLUMNS).eq('id', target.id).maybeSingle();
-    if (!session) return NextResponse.json({ error: 'ไม่พบคาบเช็กชื่อนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
+    // The session and its classroom in one request.
+    const { data: row } = await supabase
+      .from('attendance_sessions')
+      .select(`${SESSION_COLUMNS}, classroom:classrooms(${ROOM_COLUMNS})`)
+      .eq('id', target.id)
+      .maybeSingle();
+    if (!row) return NextResponse.json({ error: 'ไม่พบคาบเช็กชื่อนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
+    const { classroom: embedded, ...session } = row as typeof row & { classroom?: Room | Room[] | null };
     if (session.status !== 'open') return NextResponse.json({ error: 'คาบเช็กชื่อนี้ปิดรับแล้ว' }, { status: 409 });
-    const { data: room } = await supabase.from('classrooms').select(ROOM_COLUMNS).eq('id', session.classroom_id).maybeSingle();
+    const room = one(embedded);
     if (!room) return NextResponse.json({ error: 'ไม่พบห้องเรียนของคาบนี้' }, { status: 404 });
     return shared(classroomTitle(room), attendanceLineText(session, room), attendanceMessages(session, room));
   }
@@ -64,25 +77,36 @@ export async function GET(request: NextRequest) {
     return shared(classroomTitle(room), joinLineText(room), inviteMessages(room));
   }
 
-  // The rest are about one work (or a post, which may be about one).
+  // The rest are about one work (or a post, which may be about one). Each row
+  // comes with its classroom embedded: one request instead of two.
   let assignmentId = target.kind === 'post' ? '' : target.id;
-  let post: { id: string; classroom_id: string; body: string; activity_type: string; metadata: Record<string, unknown> | null } | null = null;
+  let post: Post | null = null;
+  let room: Room | null = null;
   if (target.kind === 'post') {
-    const { data } = await supabase.from('classroom_posts').select('id, classroom_id, body, activity_type, metadata').eq('id', target.id).maybeSingle();
+    const { data } = await supabase
+      .from('classroom_posts')
+      .select(`id, classroom_id, body, activity_type, metadata, classroom:classrooms(${WORK_ROOM_COLUMNS})`)
+      .eq('id', target.id)
+      .maybeSingle();
     if (!data) return NextResponse.json({ error: 'ไม่พบโพสต์นี้ อาจถูกลบไปแล้ว' }, { status: 404 });
-    post = data;
-    const metadata = (data.metadata || {}) as Record<string, unknown>;
-    if ((data.activity_type === 'assignment' || data.activity_type === 'exam') && typeof metadata.assignmentId === 'string') assignmentId = metadata.assignmentId;
+    const { classroom: embedded, ...rest } = data as typeof data & { classroom?: Room | Room[] | null };
+    post = rest as Post;
+    room = one(embedded);
+    const metadata = (rest.metadata || {}) as Record<string, unknown>;
+    if ((rest.activity_type === 'assignment' || rest.activity_type === 'exam') && typeof metadata.assignmentId === 'string') assignmentId = metadata.assignmentId;
   }
-  const { data: assignment } = assignmentId ? await supabase.from('assignments').select('*').eq('id', assignmentId).maybeSingle<Assignment>() : { data: null };
-  if (assignmentId && !assignment) return NextResponse.json({ error: 'ไม่พบงานนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
-  const classroomId = assignment?.classroom_id || post?.classroom_id || '';
-  // students: a reminder names who has not handed in.
-  const { data: room } = await supabase
-    .from('classrooms')
-    .select('id, name, course_name, subject_code, invite_code, teacher_id, line_group_id, students')
-    .eq('id', classroomId)
-    .maybeSingle();
+  let assignment: Assignment | null = null;
+  if (assignmentId) {
+    const { data } = await supabase
+      .from('assignments')
+      .select(post ? '*' : `*, classroom:classrooms(${WORK_ROOM_COLUMNS})`)
+      .eq('id', assignmentId)
+      .maybeSingle();
+    if (!data) return NextResponse.json({ error: 'ไม่พบงานนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
+    const { classroom: embedded, ...rest } = data as unknown as Assignment & { classroom?: Room | Room[] | null };
+    assignment = rest as Assignment;
+    room ||= one(embedded);
+  }
   if (!room) return NextResponse.json({ error: 'ไม่พบห้องเรียนนี้' }, { status: 404 });
   const title = classroomTitle(room);
 

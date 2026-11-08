@@ -1866,6 +1866,7 @@ export const dataActions = {
         metadata: assignmentPostMetadata(assignmentData, id, await studentsFor(supabase, assignmentData, classroom)),
         // Only when the database kept publish_at; otherwise the assignment is already visible.
         publishAt: row.publish_at || undefined,
+        assignment: newAssignment,
       });
       lineResult = { line: posted.line, share: posted.share, postId: posted.post.id };
     } catch (postError) {

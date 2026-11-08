@@ -53,7 +53,7 @@ export type AttendanceData = {
 };
 
 /** What the server gives for a share: the share page URL carries its token. */
-export type Share = { text: string; url: string | null };
+export type Share = { text: string; url: string | null; messages?: unknown[] };
 
 /** How a card reached the group. */
 export type PostResult = "sent" | "shared" | "copied" | "cancelled";
@@ -211,7 +211,10 @@ export function KitProvider({
     async (share: Share | null | undefined): Promise<PostResult> => {
       const token = share?.url ? new URL(share.url).searchParams.get("t") : null;
       if (!token) throw new Error("ไม่มีข้อความให้ส่ง");
-      const json = await readJson(await authFetch(`/api/line/share?t=${encodeURIComponent(token)}`, { cache: "no-store" }), "โหลดการ์ดไม่สำเร็จ");
+      // The server usually sends the card with its answer; otherwise it is loaded by the token.
+      const json = share?.messages?.length
+        ? { messages: share.messages, text: share.text }
+        : await readJson(await authFetch(`/api/line/share?t=${encodeURIComponent(token)}`, { cache: "no-store" }), "โหลดการ์ดไม่สำเร็จ");
       const result = await postMessages(json.messages as LineMessages, json.text as string);
       // Like /liff/share: the timeline stops offering it as unsent.
       if (result === "sent" || result === "shared") {

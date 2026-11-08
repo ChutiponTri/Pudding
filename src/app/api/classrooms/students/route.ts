@@ -6,6 +6,7 @@ import { personNameError } from '@/lib/utils/studentName';
 import { canonicalInstitution } from '@/lib/data/thaiInstitutions';
 import { joinLineText } from '@/lib/line/classroomAnnouncement';
 import { joinShare } from '@/lib/server/classroomPosts';
+import { inviteMessages } from '@/lib/line/teacherCards';
 import { botSendOrShare } from '@/lib/server/lineSend';
 import { reconcileRosterSnapshot } from '@/lib/server/dataActions';
 
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
   const result = await botSendOrShare(supabase, {
     groupId: classroom.line_group_id,
     text,
-    share: joinShare(classroom.id, text),
+    share: joinShare(classroom.id, text, inviteMessages(classroom)),
     teacherId: userId,
     classroomId: classroom.id,
   });

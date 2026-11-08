@@ -5,6 +5,8 @@ export type LinePostStatus = 'sent' | 'failed' | 'quota' | 'no_group' | 'schedul
 export interface LineShare {
   text: string;
   url: string | null;
+  /** The card the teacher's LINE sends, when the server sent it along (else loaded from the url's token). */
+  messages?: unknown[];
 }
 
 /**

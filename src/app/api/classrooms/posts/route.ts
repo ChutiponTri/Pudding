@@ -94,7 +94,8 @@ async function resendPost(request: NextRequest, id: string) {
   const result = await botSendOrShare(supabase, {
     groupId: classroom.line_group_id,
     text,
-    share: postShare(post.id, text),
+    // A work's card is loaded when shared; any other post's card is its text.
+    share: postShare(post.id, text, post.activity_type === 'assignment' || post.activity_type === 'exam' ? undefined : null),
     teacherId: actor!.kind === 'teacher' ? actor!.userId : '',
     classroomId: classroom.id,
   });
