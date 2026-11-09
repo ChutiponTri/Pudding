@@ -6,6 +6,7 @@ import { CheckCircle2, ChevronLeft, ExternalLink, Loader2, LogOut, Moon, ShieldA
 import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
 import { useTheme } from "@/lib/theme/ThemeContext";
 import { Avatar } from "@/components/Avatar";
+import { BrandLogo } from "@/components/BrandLogo";
 import { clearCache, fetchOnce, isFresh, isLoading, readCache, staleCache, subscribeCache, writeCache } from "./cache";
 
 /** Pages of the teacher LIFF app (/liff/teacher?view=…), one per group menu button. */
@@ -279,7 +280,7 @@ function HeaderActions() {
         onClick={toggleTheme}
         aria-label={theme === "dark" ? "เปลี่ยนเป็นโหมดสว่าง" : "เปลี่ยนเป็นโหมดมืด"}
         title={theme === "dark" ? "โหมดสว่าง" : "โหมดมืด"}
-        className="w-10 h-10 flex items-center justify-center rounded-full bg-amber-100 hover:bg-amber-200 text-amber-800 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 dark:text-amber-200 transition-colors cursor-pointer"
+        className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
       >
         {theme === "dark" ? <Sun className="w-4.5 h-4.5" /> : <Moon className="w-4.5 h-4.5" />}
       </button>
@@ -349,7 +350,7 @@ function ProfileMenu() {
         aria-expanded={open}
         aria-label="โปรไฟล์ของฉัน"
         title={name}
-        className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors cursor-pointer"
+        className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
       >
         <Avatar src={picture} name={name} className="w-8 h-8 text-[11px] ring-2 ring-amber-300 dark:ring-amber-700" />
       </button>
@@ -416,7 +417,7 @@ export function Page({
       <div className="liff-stagger p-4 space-y-4 pb-[calc(5rem+env(safe-area-inset-bottom))]">
       <header className="flex items-center gap-2">
         {back && (
-          <button type="button" onClick={() => go("home")} aria-label="กลับเมนู" className="w-9 h-9 -ml-1 rounded-xl flex items-center justify-center text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/50 cursor-pointer">
+          <button type="button" onClick={() => go("home")} aria-label="กลับเมนู" className="w-9 h-9 -ml-1 rounded-xl flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">
             <ChevronLeft className="w-5 h-5" />
           </button>
         )}
@@ -433,16 +434,17 @@ export function Page({
 }
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-amber-100 dark:ring-slate-800 p-4 ${className}`}>{children}</div>;
+  return <div className={`rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs p-4 ${className}`}>{children}</div>;
 }
 
 type ButtonTone = "primary" | "soft" | "green" | "red" | "ghost";
 const TONES: Record<ButtonTone, string> = {
-  primary: "bg-amber-500 hover:bg-amber-600 text-white",
-  soft: "bg-amber-100 hover:bg-amber-200 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200",
-  green: "bg-emerald-500 hover:bg-emerald-600 text-white",
-  red: "bg-rose-500 hover:bg-rose-600 text-white",
-  ghost: "ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200",
+  // As on the teacher website: amber with dark text; secondary buttons are neutral.
+  primary: "bg-amber-500 hover:bg-amber-600 text-slate-950 font-black shadow-sm shadow-amber-500/20",
+  soft: "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200",
+  green: "bg-emerald-600 hover:bg-emerald-700 text-white",
+  red: "bg-rose-600 hover:bg-rose-700 text-white",
+  ghost: "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200",
 };
 
 export function Button({
@@ -478,7 +480,7 @@ export function Button({
 }
 
 export const inputClass =
-  "w-full h-11 px-3 rounded-xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-700 focus:ring-2 focus:ring-amber-500 outline-none text-sm text-slate-900 dark:text-white";
+  "w-full h-11 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-amber-500 outline-none text-sm text-slate-900 dark:text-white";
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
@@ -490,10 +492,18 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   );
 }
 
-export function Loading({ text = "กำลังโหลด..." }: { text?: string }) {
+/** Full-screen first load, as in the student LIFF: the logo with a spinner. */
+export function Loading({ text = "กำลังโหลด...", hint }: { text?: string; hint?: string }) {
   return (
-    <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500 animate-fade">
-      <Loader2 className="w-4 h-4 animate-spin text-amber-500" /> {text}
+    <div className="flex flex-col items-center justify-center p-6 text-center gap-5 min-h-dvh animate-fade">
+      <div className="relative">
+        <BrandLogo priority className="h-24 w-auto" />
+        <Loader2 className="w-7 h-7 text-amber-500 animate-spin absolute -bottom-1.5 -right-1.5 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md" />
+      </div>
+      <div className="space-y-1">
+        <h2 className="text-base font-bold text-slate-900 dark:text-white">{text}</h2>
+        {hint && <p className="text-sm text-slate-500 dark:text-slate-400">{hint}</p>}
+      </div>
     </div>
   );
 }
@@ -503,7 +513,7 @@ export function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
     <div aria-label="กำลังโหลด" className="space-y-2.5 animate-fade">
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="rounded-2xl bg-white dark:bg-slate-900 ring-1 ring-amber-100 dark:ring-slate-800 p-4 space-y-2">
+        <div key={i} className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-2">
           <div className="h-3 w-2/3 rounded-full bg-slate-200/80 dark:bg-slate-800 animate-pulse" />
           <div className="h-2.5 w-1/3 rounded-full bg-slate-100 dark:bg-slate-800/70 animate-pulse [animation-delay:150ms]" />
         </div>

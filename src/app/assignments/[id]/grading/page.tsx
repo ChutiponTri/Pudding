@@ -31,7 +31,7 @@ import { ReopenTimeDialog, reopenTimeSuggestion } from '@/components/ReopenTimeD
 import { RetakePicker } from '@/components/RetakePicker';
 import { SiblingClassTabs } from '@/components/works/SiblingClassTabs';
 import { announcesResults } from '@/components/works/WorkBits';
-import { isRetake, rosterFor } from '@/lib/utils/retake';
+import { isRetake, isRetakeOf, rosterFor } from '@/lib/utils/retake';
 import {
   Search,
   Filter,
@@ -900,7 +900,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               >
                 {assignment?.is_exam ? t('assignment_creator.mode_exam') : t('assignment_creator.mode_assignment')}
               </span>
-              {isRetake(assignment) && (
+              {isRetakeOf(assignment) && (
                 <span
                   title={th ? `สอบซ่อม ${assignment?.retake_student_ids?.length || 0} คน` : `Retake for ${assignment?.retake_student_ids?.length || 0}`}
                   className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"

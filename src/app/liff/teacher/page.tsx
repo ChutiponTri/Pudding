@@ -194,7 +194,7 @@ export default function TeacherLiffPage() {
       </div>
     );
   }
-  if (!liff || !context) return <Loading text="กำลังเปิดเมนูครู..." />;
+  if (!liff || !context) return <Loading text="กำลังเปิดเมนูครู..." hint="กำลังตรวจสอบบัญชี LINE" />;
 
   const View = VIEWS[view];
   return (

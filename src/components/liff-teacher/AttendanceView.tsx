@@ -96,7 +96,7 @@ export function AttendanceView() {
       {data.error && <ErrorBox text={data.error} />}
       {!data.data && !data.error && <Skeleton rows={2} />}
       {data.data && sessions.length > 0 && (
-        <Card className="p-0! divide-y divide-amber-100 dark:divide-slate-800">
+        <Card className="p-0! divide-y divide-slate-100 dark:divide-slate-800">
           {sessions.slice(0, 10).map((session) => {
             const isOpen = session.status === "open";
             return (

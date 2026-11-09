@@ -25,7 +25,7 @@ import { acceptStatus, BulkStatusDialog, groupStatus, PhoneWorkSummary, StatusBu
 import { AssignmentStatusDialog } from '@/components/AssignmentStatusDialog';
 import { formatAcademicPeriod } from '@/lib/utils/academicYear';
 import { filterClassroomsBySemester, semesterOptions } from '@/lib/utils/semesterFilter';
-import { isRetake } from '@/lib/utils/retake';
+import { isRetakeOf } from '@/lib/utils/retake';
 import { useScheduleNow } from '@/lib/hooks/useScheduleNow';
 import {
   buildWorkGroups,
@@ -701,7 +701,7 @@ export function WorksBoard() {
                         {hidden.every((c) => c.window.isDraft) ? tr('ฉบับร่าง', 'Draft') : tr('ตั้งเวลา', 'Scheduled')}
                       </Pill>
                     )}
-                    {isRetake(g.rep) && <Pill tone="amber" className="shrink-0">{tr('สอบซ่อม', 'Retake')}</Pill>}
+                    {isRetakeOf(g.rep) && <Pill tone="amber" className="shrink-0">{tr('สอบซ่อม', 'Retake')}</Pill>}
                     {g.published && hidden.length > 0 && <Pill tone="sky" className="shrink-0">{tr(`ยังไม่เผยแพร่ ${hidden.length}`, `${hidden.length} unpublished`)}</Pill>}
                     {g.totals.flagged > 0 && (
                       <Pill tone="rose" className="shrink-0">

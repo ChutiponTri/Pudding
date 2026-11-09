@@ -3,7 +3,7 @@ import type { Cell, Sheet } from '@/lib/export/xlsx';
 import { classroomTitle, roomLabel, subjectTitle } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
-import { isRetake } from '@/lib/utils/retake';
+import { isRetakeOf } from '@/lib/utils/retake';
 import { isGraded, isHandedIn, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
@@ -41,7 +41,7 @@ const when = (iso: string | null | undefined, lang: Lang) => (iso ? formatDateTi
  */
 function workOf(data: ExportData, classroomId: string) {
   return data.assignments
-    .filter((a) => a.classroom_id === classroomId && !isAssignmentDraft(a) && isAssignmentPublished(a) && !isRetake(a))
+    .filter((a) => a.classroom_id === classroomId && !isAssignmentDraft(a) && isAssignmentPublished(a) && !isRetakeOf(a))
     .sort(
       (a, b) =>
         (a.group_name || '').localeCompare(b.group_name || '') ||

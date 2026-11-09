@@ -46,12 +46,13 @@ const due = (row: WorkRow) => (row.win.deadline != null ? lineDate(row.win.deadl
 
 function WorkLine({ row, children, right }: { row: WorkRow; children?: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="space-y-2 pb-3 border-b last:border-0 last:pb-0 border-amber-100 dark:border-slate-800">
+    <div className="space-y-2 pb-3 border-b last:border-0 last:pb-0 border-slate-100 dark:border-slate-800">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 space-y-0.5">
           <p className="text-sm font-bold truncate">{kindIcon(row.work)} {row.work.title}</p>
           <WorkStatus work={row.work} />
           <p className="text-[11px] text-slate-500">
+            {row.work.group_name?.trim() && <span className="font-bold text-slate-400">{row.work.group_name.trim()} · </span>}
             {row.work.is_exam ? "ปิดรับคำตอบ" : "กำหนดส่ง"} {due(row)}
             {!row.work.is_exam && row.win.lateUntil != null && row.win.lateUntil !== row.win.deadline ? ` · ปิดรับส่งงาน ${lineDate(row.win.lateUntil)}` : ""}
           </p>

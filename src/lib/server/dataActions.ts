@@ -712,7 +712,7 @@ const signalRoster = (classroomId: string, detail: Omit<Extract<ClassroomSignal,
 
 const isSelf = (actor: Extract<Actor, { kind: 'student' }>, id?: string | null) => !!id && actor.keys.includes(id);
 
-const RETAKE_NOT_YOURS = 'ข้อสอบนี้เป็นการสอบซ่อมสำหรับนักเรียนที่คุณครูเลือกเท่านั้น';
+const RETAKE_NOT_YOURS = 'ข้อสอบนี้สำหรับนักเรียนที่คุณครูเลือกเท่านั้น';
 
 /**
  * Checks a retake before it is saved: the original is a quiz (not itself a
@@ -720,12 +720,16 @@ const RETAKE_NOT_YOURS = 'ข้อสอบนี้เป็นการสอ
  * roster. A retake is always a quiz without LINE reminders.
  */
 async function checkedRetake<T extends Partial<Assignment>>(supabase: Supabase, classroom: Classroom, data: T): Promise<T> {
-  if (!data.retake_of) throw new HttpError(400, 'กรุณาเลือกข้อสอบเดิมที่ต้องการสอบซ่อม');
-  const { data: original, error } = await supabase.from('assignments').select('*').eq('id', data.retake_of).maybeSingle();
-  if (error) throw toDatabaseError(error, 'assignments');
-  const source = original as Assignment | null;
-  if (!source || source.classroom_id !== classroom.id) throw new HttpError(400, 'ไม่พบข้อสอบเดิมในห้องเรียนนี้');
-  if (!source.is_exam || isRetake(source)) throw new HttpError(400, 'สอบซ่อมได้จากข้อสอบปกติเท่านั้น');
+  // No original quiz: a quiz for chosen students only (the teacher unticked some).
+  if (data.retake_of) {
+    const { data: original, error } = await supabase.from('assignments').select('*').eq('id', data.retake_of).maybeSingle();
+    if (error) throw toDatabaseError(error, 'assignments');
+    const source = original as Assignment | null;
+    if (!source || source.classroom_id !== classroom.id) throw new HttpError(400, 'ไม่พบข้อสอบเดิมในห้องเรียนนี้');
+    if (!source.is_exam || isRetake(source)) throw new HttpError(400, 'สอบซ่อมได้จากข้อสอบปกติเท่านั้น');
+  } else if (data.is_exam === false) {
+    throw new HttpError(400, 'เลือกนักเรียนได้เฉพาะแบบทดสอบ');
+  }
   // The teacher picks from the hydrated roster (getAssignmentById / getClassroomRoster):
   // ids come from the users table there, which can differ from the classroom's JSON
   // snapshot (a hand-added student later matched to their LINE account by student
@@ -749,8 +753,8 @@ async function checkedRetake<T extends Partial<Assignment>>(supabase: Supabase, 
     add(s.line_uid, s.id);
   }
   const ids = [...new Set((Array.isArray(data.retake_student_ids) ? data.retake_student_ids : []).map((id) => roster.get(String(id))).filter((id): id is string => !!id))];
-  if (!ids.length) throw new HttpError(400, 'กรุณาเลือกนักเรียนที่ต้องสอบซ่อมอย่างน้อย 1 คน');
-  return { ...data, is_exam: true, retake_student_ids: ids };
+  if (!ids.length) throw new HttpError(400, data.retake_of ? 'กรุณาเลือกนักเรียนที่ต้องสอบซ่อมอย่างน้อย 1 คน' : 'กรุณาเลือกนักเรียนที่ทำแบบทดสอบอย่างน้อย 1 คน');
+  return { ...data, is_exam: true, retake_of: data.retake_of || null, retake_student_ids: ids };
 }
 
 // ==============================================================================
@@ -1880,12 +1884,18 @@ export const dataActions = {
     // Moving work to another classroom is not an edit; nor is turning work into a retake or back.
     const { classroom_id: _cls, retake_of: _of, retake_student_ids: retakeIds, ...rest } = data as Partial<Assignment>;
     let patch: Partial<Assignment> = withCleanAttachments(rest);
-    if (isRetake(previous)) {
+    if (isRetake(previous) && previous.retake_of) {
       // A retake stays a quiz; its list of students may change.
       patch.is_exam = true;
       if (retakeIds !== undefined) {
         patch.retake_student_ids = (await checkedRetake(supabase, ownClassroom, { ...previous, retake_student_ids: retakeIds })).retake_student_ids;
       }
+    } else if (retakeIds !== undefined && (patch.is_exam ?? previous.is_exam)) {
+      // A quiz for chosen students: the list may change, or go back to everyone (null).
+      patch.retake_student_ids = retakeIds === null ? null : (await checkedRetake(supabase, ownClassroom, { ...previous, is_exam: true, retake_of: null, retake_student_ids: retakeIds })).retake_student_ids;
+    } else if (isRetake(previous) && patch.is_exam === false) {
+      // Turned into homework: everyone gets it.
+      patch.retake_student_ids = null;
     }
 
     const due = new Date(patch.due_date ?? previous.due_date).getTime();
@@ -1957,7 +1967,7 @@ export const dataActions = {
     // The timeline post spells out the title and due date; keep it in step.
     const dueChanged = patch.due_date && new Date(patch.due_date).getTime() !== new Date(previous.due_date).getTime();
     // A retake's post is always refreshed: older ones still carry the earlier wording.
-    if (dueChanged || (patch.title && patch.title !== previous.title) || isRetake(previous)) {
+    if (dueChanged || (patch.title && patch.title !== previous.title) || isRetake(previous) || isRetake(next)) {
       const retakeStudents = isRetake(next) ? await hydratedStudents(supabase, ownClassroom) : null;
       const { data: posts } = await supabase.from('classroom_posts').select('id, body, metadata').contains('metadata', { assignmentId: id });
       await Promise.all(

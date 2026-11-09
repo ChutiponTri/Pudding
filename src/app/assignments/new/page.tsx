@@ -9,7 +9,8 @@ import { isUnsent } from '@/lib/utils/lineShare';
 import { dataService } from '@/lib/supabase/dataService';
 import { cachedCall, readCache, TEACHER_DASHBOARD_CACHE_KEY } from '@/lib/cache/sessionCache';
 import { Assignment, AssignmentAttachment, Course, Classroom, LearningIndicator, CourseLearningIndicator, QuestionType, Question, User } from '@/types/database';
-import { isRetake } from '@/lib/utils/retake';
+import { isRetake, isRetakeOf } from '@/lib/utils/retake';
+import { StudentPickLink, StudentPickerSheet } from '@/components/StudentPickerSheet';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { matchChoiceOption } from '@/lib/utils/autoGrade';
 import { DateTimeField } from '@/components/DateTimeField';
@@ -29,7 +30,6 @@ import {
   Lock,
   Clock,
   FilePen,
-  Sparkles,
   BookOpen,
   Send,
   Save,
@@ -71,31 +71,11 @@ interface QuestionDraft {
   is_required: boolean;
 }
 
-/** What the chosen mode means, shown next to (desktop) or under (mobile) the mode toggle. */
-function ModeHint({ isExam, language }: { isExam: boolean; language: string }) {
-  return isExam ? (
-    <span className="inline-flex items-start gap-1.5 text-xs leading-relaxed text-purple-700 dark:text-purple-300 font-semibold bg-purple-50 dark:bg-purple-950/60 px-3.5 py-1.5 rounded-full border border-purple-200 dark:border-purple-800">
-      <Sparkles className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-      <span>
-        {language === 'th'
-          ? 'โหมดข้อสอบ: บันทึกทุกครั้งที่ออกจากหน้าจอ • นักเรียนส่งรูป/ไฟล์ไม่ได้'
-          : 'Exam Mode: every screen exit is logged • students cannot upload photos or files'}
-      </span>
-    </span>
-  ) : (
-    <span className="inline-flex items-start gap-1.5 text-xs leading-relaxed text-emerald-700 dark:text-emerald-300 font-semibold bg-emerald-50 dark:bg-emerald-950/60 px-3.5 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-      <Paperclip className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-      <span>
-        {language === 'th'
-          ? 'โหมดการบ้าน: นักเรียนส่งรูปหรือไฟล์ได้'
-          : 'Assignment Mode: students can upload photos or files'}
-      </span>
-    </span>
-  );
-}
-
 /** Starting points for a new question: file work is worth more than a single short item. */
 const defaultMaxScore = (type: QuestionType) => (type === 'file_upload' ? 10 : 1);
+/** A choice question keeps at least MIN_OPTIONS options (it starts with 4). */
+const MIN_OPTIONS = 2;
+const MAX_OPTIONS = 8;
 
 let questionUidSeq = 0;
 const newQuestionUid = () => `q${++questionUidSeq}`;
@@ -259,6 +239,10 @@ function NewAssignmentContent() {
   })();
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
+  /** Quiz: students unticked per classroom (empty = everyone in it takes the quiz). */
+  const [excludedByClass, setExcludedByClass] = useState<Record<string, string[]>>({});
+  const [rosters, setRosters] = useState<Record<string, User[]>>({});
+  const [pickingClassId, setPickingClassId] = useState<string | null>(null);
   const [existingGroups, setExistingGroups] = useState<string[]>([]);
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState(() => daysFromNowAt(7, 23, 59));
@@ -425,7 +409,13 @@ function NewAssignmentContent() {
         ));
         setIndicators(ind);
 
-        if (crs.length > 0) {
+        // Opened from the dashboard (no classroom in the URL): the teacher picks the course and
+        // classroom ("กรุณาเลือก..."). From a classroom: that classroom and its course.
+        // Edit / copy / template / retake fill these themselves below.
+        if (!urlClassroomId) {
+          setSelectedCourseId('');
+          setSelectedClassroomIds([]);
+        } else if (crs.length > 0) {
           let initialClassroomId = cls[0]?.id || '';
           let initialCourseId = crs[0].id;
 
@@ -513,6 +503,12 @@ function NewAssignmentContent() {
             setSelectedClassroomIds([other?.id || assignment.classroom_id]);
           }
           setIsExam(!!assignment.is_exam);
+          // A quiz for chosen students (not a retake): the others start unticked once the roster loads.
+          setExcludedByClass(
+            editId && isRetake(assignment) && !isRetakeOf(assignment)
+              ? { [assignment.classroom_id]: [`__keep:${(assignment.retake_student_ids || []).join(',')}`] }
+              : {}
+          );
           setTitle(assignment.title || '');
           setGroupName(assignment.group_name || '');
           setDescription(assignment.description || '');
@@ -556,7 +552,7 @@ function NewAssignmentContent() {
           if (savedQuestions.length) {
             setQuestions(savedQuestions.map((q) => {
               const options = q.type === 'multiple_choice'
-                ? [...(q.options || []), '', '', '', ''].slice(0, Math.max(4, (q.options || []).length))
+                ? (q.options || []).length >= MIN_OPTIONS ? [...(q.options || [])] : [...(q.options || []), '', '', '', ''].slice(0, 4)
                 : ['', '', '', ''];
               // The editor marks the correct choice by exact text, but older or imported keys may be
               // "ตอบ ข", a letter, or the text with stray tabs: point them at the option they mean.
@@ -641,13 +637,47 @@ function NewAssignmentContent() {
     };
   }, [selectedClassroomKey]);
 
+  // Quiz: each selected classroom's roster, for "who takes it" (loaded once per classroom).
+  useEffect(() => {
+    if (!isExam || retake) return;
+    const ids = selectedClassroomKey ? selectedClassroomKey.split(',') : [];
+    const missing = ids.filter((id) => !rosters[id]);
+    if (!missing.length) return;
+    let cancelled = false;
+    Promise.all(missing.map((id) => dataService.getClassroomRoster(id).then((r) => [id, r.students || []] as const).catch(() => [id, [] as User[]] as const))).then((loaded) => {
+      if (cancelled) return;
+      setRosters((prev) => ({ ...prev, ...Object.fromEntries(loaded) }));
+      // An edited quiz's saved list: everyone not on it starts unticked.
+      setExcludedByClass((prev) => {
+        const next = { ...prev };
+        for (const [id, students] of loaded) {
+          const keep = next[id]?.[0]?.startsWith('__keep:') ? new Set(next[id][0].slice(7).split(',')) : null;
+          if (keep) next[id] = students.filter((st) => !keep.has(st.id) && !(st.line_uid && keep.has(st.line_uid))).map((st) => st.id);
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rosters is a cache filled here
+  }, [isExam, retake, selectedClassroomKey]);
+  /** Roster ids who take the quiz in a classroom, or null for everyone. */
+  const chosenStudentIds = (classId: string): string[] | null => {
+    const roster = rosters[classId];
+    const out = (excludedByClass[classId] || []).filter((id) => !id.startsWith('__keep:'));
+    if (!isExam || retake || !roster?.length || !out.length) return null;
+    return roster.filter((st) => !out.includes(st.id)).map((st) => st.id);
+  };
+
   const handleCourseChange = (courseId: string) => {
     if (editingAssignment || retake) return; // an edit (or a retake) stays in its own classroom
     setSelectedCourseId(courseId);
+    // Keep the classroom if it belongs to the new course; a course with one classroom picks it; else the teacher chooses.
     const matchingClasses = classrooms.filter((c) => c.course_id === courseId);
-    if (matchingClasses.length > 0) {
-      setSelectedClassroomIds([matchingClasses[0].id]);
-    }
+    setSelectedClassroomIds((prev) =>
+      prev[0] && matchingClasses.some((c) => c.id === prev[0]) ? prev : matchingClasses.length === 1 ? [matchingClasses[0].id] : []
+    );
     // Update available indicators for the newly-selected course
     const previous = courses.find((c) => c.id === selectedCourseId);
     const course = courses.find((c) => c.id === courseId);
@@ -658,15 +688,13 @@ function NewAssignmentContent() {
     }
   };
 
-  const toggleClassroomSelection = (classId: string) => {
-    if (editingAssignment || retake) return;
-    setSelectedClassroomIds((prev) => {
-      if (prev.includes(classId)) {
-        if (prev.length === 1) return prev; // Keep at least one
-        return prev.filter((id) => id !== classId);
-      }
-      return [...prev, classId];
-    });
+  /** One classroom per work (an edit or a retake stays in its own). */
+  const selectClassroom = (classId: string) => {
+    if (editingAssignment || retake || !classId) return;
+    setSelectedClassroomIds([classId]);
+    // Picked before the course: the course follows the classroom.
+    const courseId = classrooms.find((c) => c.id === classId)?.course_id;
+    if (courseId && courseId !== selectedCourseId && courses.some((c) => c.id === courseId)) handleCourseChange(courseId);
   };
 
   /**
@@ -709,6 +737,9 @@ function NewAssignmentContent() {
       lastQuestionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 100);
   };
+
+  /** Written / file questions whose model answer and rubric fields are shown (always, once filled). */
+  const [openRubrics, setOpenRubrics] = useState<string[]>([]);
 
   // A removed card first collapses and fades (see the questions stack), then leaves the list.
   const [removingQuestionUids, setRemovingQuestionUids] = useState<string[]>([]);
@@ -757,6 +788,17 @@ function NewAssignmentContent() {
       copy[qIndex] = { ...current, options: newOpts, ideal_answer: idealFollows ? val : current.ideal_answer };
       return copy;
     });
+  };
+
+  /** Removes one choice (never below MIN_OPTIONS); the key goes with it if it was the correct one. */
+  const handleRemoveOption = (qIndex: number, optIndex: number) => {
+    setQuestions((prev) =>
+      prev.map((q, i) => {
+        if (i !== qIndex || q.options.length <= MIN_OPTIONS) return q;
+        const removed = q.options[optIndex];
+        return { ...q, options: q.options.filter((_, j) => j !== optIndex), ideal_answer: removed.trim() && q.ideal_answer === removed ? '' : q.ideal_answer };
+      })
+    );
   };
 
   const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
@@ -811,6 +853,10 @@ function NewAssignmentContent() {
       }
       return;
     }
+    if (isExam && !retake && selectedClassroomIds.some((id) => chosenStudentIds(id)?.length === 0)) {
+      alert(tr('เลือกนักเรียนที่ทำแบบทดสอบอย่างน้อย 1 คน', 'Choose at least one student to take the quiz'));
+      return;
+    }
     const incompleteChoice = questions.findIndex(
       (q) => q.type === 'multiple_choice' && q.options.filter((opt) => opt.trim()).length < 2
     );
@@ -844,7 +890,11 @@ function NewAssignmentContent() {
 
     setIsSubmitting(true);
     try {
-      const primaryClassId = selectedClassroomIds[0] || classrooms[0]?.id;
+      const primaryClassId = selectedClassroomIds[0];
+      if (courses.length > 0 && !selectedCourseId) {
+        alert(language === 'th' ? 'กรุณาเลือกรายวิชาก่อนสร้างงาน' : 'Please choose a course first');
+        return;
+      }
       if (!primaryClassId) {
         alert(language === 'th' ? 'กรุณาเลือกห้องเรียนก่อนสร้างงาน' : 'Please choose a classroom first');
         return;
@@ -948,7 +998,13 @@ function NewAssignmentContent() {
           ...(!editIsPublished && saveAsDraft ? { publish_at: DRAFT_PUBLISH_AT } : {}),
           total_points: totalPoints,
           attachments: savedAttachments,
-          ...(retake ? { retake_student_ids: retake.ids } : {}),
+          ...(retake
+            ? { retake_student_ids: retake.ids }
+            : isExam && rosters[editingAssignment.classroom_id]
+            ? { retake_student_ids: chosenStudentIds(editingAssignment.classroom_id) }
+            : !isExam && isRetake(editingAssignment)
+            ? { retake_student_ids: null }
+            : {}),
         });
         await dataService.replaceAssignmentQuestions(id, questionRows.map((row, index) => ({ ...row, id: questions[index].id })));
         // Was scheduled or a draft, teacher switched to "publish now".
@@ -1017,7 +1073,11 @@ function NewAssignmentContent() {
             total_points: totalPoints,
             status_override: 'auto',
             attachments: savedAttachments,
-            ...(retake?.source ? { retake_of: retake.source.id, retake_student_ids: retake.ids } : {}),
+            ...(retake?.source
+              ? { retake_of: retake.source.id, retake_student_ids: retake.ids }
+              : chosenStudentIds(classId)
+              ? { retake_student_ids: chosenStudentIds(classId)! }
+              : {}),
           },
           questionRows
         );
@@ -1190,9 +1250,6 @@ function NewAssignmentContent() {
 
       {/* Page Header */}
       <div>
-        <div className="hidden sm:inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-xs font-bold mb-2">
-          <span>{isExam ? '🛡️ ' + t('assignment_creator.mode_exam') : '📚 ' + t('assignment_creator.mode_assignment')}</span>
-        </div>
         <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
           {retake
             ? editId ? tr('แก้ไขข้อสอบซ่อม', 'Edit retake quiz') : tr('สร้างข้อสอบซ่อม', 'New retake quiz')
@@ -1289,15 +1346,12 @@ function NewAssignmentContent() {
             </WorkContextBanner>
           );
         })()}
-        <p className="hidden sm:block text-slate-500 dark:text-slate-400 text-sm mt-1">
-          {t('assignment_creator.subtitle')}
-        </p>
       </div>
 
       <form onSubmit={handleSubmit} onInputCapture={() => setFormTouched(true)} className="space-y-5 sm:space-y-8">
         {/* Mode Selector Toggle: Assignment vs Exam. Sticky under the navbar so the mode can be
             switched from anywhere on a long form; the highlight slides between the two buttons. */}
-        <div className="sticky top-[calc(4rem+env(safe-area-inset-top)+0.5rem)] z-20 p-1.5 sm:p-2.5 rounded-2xl sm:rounded-3xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-lg shadow-slate-900/5 flex items-center justify-between gap-4">
+        <div className="sticky top-[calc(4rem+env(safe-area-inset-top)+0.5rem)] z-20 p-1.5 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between gap-4">
           <div
             ref={trackModeToggle}
             role="radiogroup"
@@ -1343,9 +1397,6 @@ function NewAssignmentContent() {
             })}
           </div>
 
-          <span key={`hint-${isExam}`} className="hidden lg:inline-flex animate-in fade-in slide-in-from-top-1">
-            <ModeHint isExam={isExam} language={language} />
-          </span>
           {((copySource && !retake) || editingAssignment) && (
             <span
               title={copySource ? tr('กำลังสร้างสำเนาใหม่ งานต้นฉบับไม่ถูกแก้ไข', 'Creating a new copy; the original is not changed') : tr('กำลังแก้ไขงานที่บันทึกไว้', 'Editing saved work')}
@@ -1360,18 +1411,10 @@ function NewAssignmentContent() {
             </span>
           )}
         </div>
-        <div key={`hint-${isExam}`} className="hidden sm:block lg:hidden -mt-5 animate-in fade-in slide-in-from-top-1">
-          <ModeHint isExam={isExam} language={language} />
-        </div>
 
         {/* Basic Assignment Details */}
-        <div className="bg-white dark:bg-slate-900 p-3.5 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 sm:space-y-6">
-          <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-amber-500" />
-            <span>{language === 'th' ? 'ข้อมูลรายวิชาและการมอบหมาย' : 'Course & Assignment Details'}</span>
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
             {/* Parent Course Selector */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -1383,6 +1426,7 @@ function NewAssignmentContent() {
                 onChange={(e) => handleCourseChange(e.target.value)}
                 className="w-full px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
+                <option value="" disabled>{language === 'th' ? 'กรุณาเลือกรายวิชา...' : 'Please select a course...'}</option>
                 {courses.map((course) => (
                   <option key={course.id} value={course.id}>
                     {course.code} - {course.name}
@@ -1391,44 +1435,30 @@ function NewAssignmentContent() {
               </select>
             </div>
 
-            {/* Target Classrooms / Sections Multi-select */}
+            {/* Target classroom (one) */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                <MobileText short={language === 'th' ? 'ห้องเรียน' : 'Classrooms'} full={t('assignment_creator.fields.classroom_label')} /> *
+                <MobileText short={language === 'th' ? 'ห้องเรียน' : 'Classroom'} full={t('assignment_creator.fields.classroom_label')} /> *
               </label>
+              <select
+                value={selectedClassroomIds[0] || ''}
+                disabled={!!editingAssignment || !!retake}
+                onChange={(e) => selectClassroom(e.target.value)}
+                className="w-full px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <option value="" disabled>{language === 'th' ? 'กรุณาเลือกห้องเรียน...' : 'Please select a classroom...'}</option>
+                {(editingAssignment ? currentCourseClassrooms.filter((c) => c.id === editingAssignment.classroom_id) : currentCourseClassrooms).map((cls) => (
+                  <option key={cls.id} value={cls.id}>
+                    {cls.name}
+                    {copySource?.classroom_id === cls.id ? ` ${tr('(ต้นฉบับ)', '(original)')}` : ''}
+                  </option>
+                ))}
+              </select>
               {editingAssignment && (
                 <p className="hidden sm:block text-[11px] text-slate-500 dark:text-slate-400">
                   {language === 'th' ? 'งานที่สร้างแล้วย้ายห้องไม่ได้ (แก้ไขเฉพาะห้องนี้)' : 'Saved work stays in its classroom.'}
                 </p>
               )}
-              {copySource && (
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {tr('เลือกได้หลายห้อง — แต่ละห้องได้งานแยกกัน', 'Pick one or more — each classroom gets its own copy')}
-                </p>
-              )}
-              <div className="flex flex-wrap gap-2 pt-0.5">
-                {(editingAssignment ? currentCourseClassrooms.filter((c) => c.id === editingAssignment.classroom_id) : currentCourseClassrooms).map((cls) => {
-                  const isSelected = selectedClassroomIds.includes(cls.id);
-                  return (
-                    <button
-                      key={cls.id}
-                      type="button"
-                      onClick={() => toggleClassroomSelection(cls.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                        isSelected
-                          ? 'bg-amber-500 text-slate-950 border-amber-600 font-bold shadow-xs'
-                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400'
-                      }`}
-                    >
-                      {isSelected && <Check className="w-3.5 h-3.5" />}
-                      <span>{cls.name}</span>
-                      {copySource?.classroom_id === cls.id && (
-                        <span className="text-[10px] font-semibold opacity-70">{tr('(ต้นฉบับ)', '(original)')}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
             </div>
 
             {/* Title */}
@@ -1447,7 +1477,7 @@ function NewAssignmentContent() {
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="assignment-group" className="text-xs font-bold text-slate-700 dark:text-slate-300">{tr('หมวดหมู่การแสดงผล', 'Display group')}</label>
+              <label htmlFor="assignment-group" className="text-xs font-bold text-slate-700 dark:text-slate-300">{tr('หมวดหมู่', 'Category')}</label>
               <input
                 id="assignment-group"
                 type="text"
@@ -1458,7 +1488,6 @@ function NewAssignmentContent() {
               />
               {existingGroups.length > 0 && (
                 <div className="space-y-1.5">
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">{tr('หมวดหมู่ที่มีอยู่แล้ว:', 'Existing groups:')}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {existingGroups.map((name) => {
                       const selected = groupName.trim() === name;
@@ -1506,9 +1535,6 @@ function NewAssignmentContent() {
                   <span>{tr('ไฟล์แนบ', 'Attachments')}</span>
                   <span className="font-semibold text-slate-400">({attachments.length}/{MAX_ASSIGNMENT_ATTACHMENTS})</span>
                 </label>
-                <span className="hidden sm:inline text-[11px] text-slate-400">
-                  {tr('ตัวอย่างผลงาน ใบงาน หรือสื่อประกอบ ให้นักเรียนเปิดดูได้', 'Examples, worksheets or materials students can open')}
-                </span>
               </div>
               {isExam && (
                 <p className="text-[11px] text-purple-600 dark:text-purple-300">
@@ -1771,6 +1797,30 @@ function NewAssignmentContent() {
                   );
                 })()}
               </p>
+              {/* Who takes it: everyone by default; untick some in the popup (per classroom). */}
+              {!retake && (
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {selectedClassroomIds.filter((id) => rosters[id]?.length).map((id) => (
+                    <span key={id} className="inline-flex items-center gap-1">
+                      {selectedClassroomIds.length > 1 && <span className="text-[11px] text-slate-400">{classrooms.find((c) => c.id === id)?.name}:</span>}
+                      <StudentPickLink
+                        total={rosters[id].length}
+                        excludedCount={(excludedByClass[id] || []).filter((x) => rosters[id].some((st) => st.id === x)).length}
+                        onClick={() => setPickingClassId(id)}
+                      />
+                    </span>
+                  ))}
+                </div>
+              )}
+              {pickingClassId && rosters[pickingClassId] && (
+                <StudentPickerSheet
+                  students={rosters[pickingClassId]}
+                  excluded={(excludedByClass[pickingClassId] || []).filter((x) => !x.startsWith('__keep:'))}
+                  onChange={(ids) => setExcludedByClass((prev) => ({ ...prev, [pickingClassId]: ids }))}
+                  onClose={() => setPickingClassId(null)}
+                  title={selectedClassroomIds.length > 1 ? tr(`นักเรียนที่ทำ · ${classrooms.find((c) => c.id === pickingClassId)?.name || ''}`, `Who takes it · ${classrooms.find((c) => c.id === pickingClassId)?.name || ''}`) : undefined}
+                />
+              )}
             </div>
             ) : (
             <div className="space-y-2">
@@ -1868,19 +1918,10 @@ function NewAssignmentContent() {
 
         {/* Dynamic Questions Builder */}
         <div className="space-y-4 sm:space-y-6">
-          <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-            <div className="min-w-0">
-              <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
-                {t('assignment_creator.questions_builder.title')}
-              </h2>
-              <p className="hidden sm:block text-xs text-slate-500 dark:text-slate-400">
-                {language === 'th'
-                  ? 'กำหนดประเภทข้อสอบ เกณฑ์การประเมิน (Rubric) และตัวชี้วัด'
-                  : 'Configure question types, rubric scoring, and standard indicators'}
-              </p>
-            </div>
-            <span className="shrink-0 text-xs font-bold px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-              {visibleQuestionCount} {language === 'th' ? 'ข้อ' : 'Questions'}
+          <div className="flex items-baseline justify-between gap-3 px-1">
+            <h2 className="text-sm font-black text-slate-900 dark:text-white">{t('assignment_creator.questions_builder.title')}</h2>
+            <span className="shrink-0 text-[11px] font-bold text-slate-500">
+              {visibleQuestionCount} {language === 'th' ? 'ข้อ' : 'questions'} · {tr('เต็ม', 'total')} {questions.reduce((sum, q) => sum + (Number(q.max_score) || 0), 0)}
             </span>
           </div>
 
@@ -1899,21 +1940,16 @@ function NewAssignmentContent() {
                   removing ? 'grid-rows-[0fr] opacity-0 scale-[0.97]' : 'grid-rows-[1fr] opacity-100'
                 }`}
               >
-              <div className={`min-h-0 pb-4 sm:pb-6 ${removing ? 'overflow-hidden' : ''}`}>
+              <div className={`min-h-0 pb-3 ${removing ? 'overflow-hidden' : ''}`}>
               <div
                 ref={idx === questions.length - 1 ? lastQuestionRef : null}
-                className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 p-3.5 sm:p-6 shadow-xs space-y-4 sm:space-y-6 relative transition-colors animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]"
+                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-4 relative transition-colors animate-in fade-in slide-in-from-bottom-5 [--tw-duration:320ms]"
               >
                 {/* Question Card Header */}
-                <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-2 sm:gap-3">
-                    <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl sm:rounded-2xl bg-amber-500 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center shadow-xs">
-                      {idx + 1}
-                    </span>
-                    <span className="hidden min-[380px]:inline font-bold text-[13px] sm:text-sm text-slate-900 dark:text-white">
-                      {t('assignment_creator.questions_builder.question_number')} {idx + 1}
-                    </span>
-                  </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-black text-slate-900 dark:text-white">
+                    {t('assignment_creator.questions_builder.question_number')} {idx + 1}
+                  </span>
 
                   <div className="flex items-center gap-2 sm:gap-3">
                     {/* Required / optional (homework only; quizzes may be handed in unfinished) */}
@@ -2085,7 +2121,7 @@ function NewAssignmentContent() {
 
                 {/* Multiple Choice Options Builder: tap the circle to mark the correct option */}
                 {q.type === 'multiple_choice' && (
-                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
+                  <div className="space-y-2.5 animate-in fade-in [--tw-duration:280ms]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                         {t('assignment_creator.questions_builder.options_label')}
@@ -2138,21 +2174,36 @@ function NewAssignmentContent() {
                                   : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'
                               }`}
                             />
-                            {isCorrect && (
-                              <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 shrink-0">
-                                {language === 'th' ? 'ข้อที่ถูก' : 'Correct'}
-                              </span>
+                            {q.options.length > MIN_OPTIONS && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveOption(idx, optIdx)}
+                                aria-label={tr('ลบตัวเลือกนี้', 'Remove this option')}
+                                className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
                             )}
                           </div>
                         );
                       })}
                     </div>
+                    {q.options.length < MAX_OPTIONS && (
+                      <button
+                        type="button"
+                        onClick={() => handleQuestionChange(idx, 'options', [...q.options, ''])}
+                        className="ml-9 inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-amber-600 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        {tr('เพิ่มตัวเลือก', 'Add option')}
+                      </button>
+                    )}
                   </div>
                 )}
 
                 {/* True/false: pick the correct answer (auto-scored, no rubric) */}
                 {q.type === 'true_false' && (
-                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
+                  <div className="space-y-2.5 animate-in fade-in [--tw-duration:280ms]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                         {language === 'th' ? 'คำตอบที่ถูกต้อง' : 'Correct answer'}
@@ -2195,7 +2246,17 @@ function NewAssignmentContent() {
                 )}
 
                 {/* Ideal Answer & Rubric: written / file questions (choices are scored from the key above) */}
-                {q.type !== 'multiple_choice' && q.type !== 'true_false' && (
+                {q.type !== 'multiple_choice' && q.type !== 'true_false' && !(openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
+                  <button
+                    type="button"
+                    onClick={() => setOpenRubrics((prev) => [...prev, q.uid])}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-amber-600 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    {tr('แนวคำตอบ / เกณฑ์ให้คะแนน', 'Model answer / rubric')}
+                  </button>
+                )}
+                {q.type !== 'multiple_choice' && q.type !== 'true_false' && (openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">

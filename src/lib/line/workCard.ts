@@ -49,7 +49,8 @@ export async function buildWorkCard(supabase: ServiceClient, assignment: Assignm
   const statusUrl = buildLiffUrl({ classroomId: classroom.id, inviteCode: classroom.invite_code, view: 'work' });
   const { number, byline } = await workMeta(supabase, assignment, classroom);
   const rows: Array<{ label: string; value: string }> = [];
-  const retake = Array.isArray(assignment.retake_student_ids);
+  const chosen = Array.isArray(assignment.retake_student_ids);
+  const retake = chosen && !!assignment.retake_of;
   if (assignment.is_exam) {
     if (assignment.total_points) rows.push({ label: 'คะแนน', value: `${assignment.total_points} คะแนน` });
     if (assignment.quiz_duration_minutes) rows.push({ label: 'เวลาทำ', value: `${assignment.quiz_duration_minutes} นาที` });
@@ -66,7 +67,7 @@ export async function buildWorkCard(supabase: ServiceClient, assignment: Assignm
     byline,
     title: assignment.title,
     rows,
-    note: retake ? `เฉพาะนักเรียนที่คุณครูเลือก ${(assignment.retake_student_ids || []).length} คน` : undefined,
+    note: chosen ? `เฉพาะนักเรียนที่คุณครูเลือก ${(assignment.retake_student_ids || []).length} คน` : undefined,
     openUrl,
     statusUrl,
   });

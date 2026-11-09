@@ -1,7 +1,7 @@
 "use client";
 
 import { BrandLogo } from '@/components/BrandLogo';
-import { isRetake } from '@/lib/utils/retake';
+import { isRetakeOf } from '@/lib/utils/retake';
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Avatar } from '@/components/Avatar';
 import { AssignmentGroupHeader, assignmentGroupKey, assignmentGroupLabel, type GroupChip } from '@/components/AssignmentGroupHeader';
@@ -3537,7 +3537,7 @@ export default function LiffStudentPage() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <span className="text-[11px] font-semibold text-slate-400">
-                                  {isRetake(assignment) ? '🔁 สอบซ่อม' : assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม {assignment.total_points || 20} คะแนน
+                                  {isRetakeOf(assignment) ? '🔁 สอบซ่อม' : assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม {assignment.total_points || 20} คะแนน
                                   {assignmentAttachments(assignment).length > 0 && ` • 📎 ไฟล์แนบ ${assignmentAttachments(assignment).length}`}
                                 </span>
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
@@ -3799,7 +3799,7 @@ export default function LiffStudentPage() {
                                 return (
                                   <div key={a.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 ring-1 ring-slate-200 dark:ring-slate-700">
                                     <div className="min-w-0">
-                                      <p className="text-[11px] font-semibold text-slate-400">{isRetake(a) ? "🔁 สอบซ่อม" : a.is_exam ? "📝 ข้อสอบ" : "📋 งาน"}</p>
+                                      <p className="text-[11px] font-semibold text-slate-400">{isRetakeOf(a) ? "🔁 สอบซ่อม" : a.is_exam ? "📝 ข้อสอบ" : "📋 งาน"}</p>
                                       <p className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-2">{a.title}</p>
                                     </div>
                                     {done ? (

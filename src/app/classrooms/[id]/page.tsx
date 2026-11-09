@@ -2,7 +2,7 @@
 
 import { announceNote } from '@/lib/utils/announceNote';
 import { usePageTitle } from '@/lib/hooks/usePageTitle';
-import { isRetake, rosterSizeFor } from '@/lib/utils/retake';
+import { isRetakeOf, rosterSizeFor } from '@/lib/utils/retake';
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
@@ -854,7 +854,7 @@ export default function ClassroomWorkspacePage() {
     () =>
       // A retake has no column: its scores are in the original quiz's column.
       assignments
-        .filter((a) => !isRetake(a))
+        .filter((a) => !isRetakeOf(a))
         .sort((a, b) => new Date(a.created_at || a.due_date).getTime() - new Date(b.created_at || b.due_date).getTime()),
     [assignments]
   );

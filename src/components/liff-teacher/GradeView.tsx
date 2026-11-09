@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink, PencilLine, RotateCcw, Send } from "lucide-react";
 import { AntiCheatingBadge } from "@/components/AntiCheatingBadge";
+import { ReopenTimeDialog, reopenTimeSuggestion } from "@/components/ReopenTimeDialog";
+import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
+import { rosterFor } from "@/lib/utils/retake";
 import { IntegrityAuditModal } from "@/components/IntegrityAuditModal";
 import { dataService } from "@/lib/supabase/dataService";
-import { isGraded, isHandedIn } from "@/lib/utils/gradingStatus";
+import { isGraded, isHandedIn, isReopenActive } from "@/lib/utils/gradingStatus";
 import { isSuspiciousActivity } from "@/lib/utils/integrity";
 import type { Assignment, Question, Submission, SubmissionAnswer, SubmissionEvent } from "@/types/database";
 import { fetchOnce, isFresh, readCache, staleCache } from "./cache";
-import { Button, Card, Empty, ErrorBox, Field, Page, Pill, Skeleton, errorText, inputClass, useCached, useKit } from "./kit";
+import { Button, Card, Empty, ErrorBox, Field, Page, Pill, Skeleton, errorText, inputClass, useCached, useKit, useViewData, type RosterData, type RosterStudent } from "./kit";
 import { WorkStatus } from "./StatusSheet";
 import { useWork } from "./WorkViews";
 
@@ -18,6 +21,102 @@ const studentName = (sub: Submission) => `${sub.student?.first_name || ""} ${sub
 /** Anything recorded during the quiz (the badge shows "เฝ้าระวัง" / "น่าสงสัย"). */
 const hasActivity = (sub: Submission) =>
   !!sub.is_flagged_suspicious || (sub.quiz_exit_count || 0) > 0 || (sub.tab_switch_count || 0) > 0 || (sub.total_time_away_seconds || 0) > 0;
+
+/**
+ * Personal adjustments for one student, as on the website's grading page:
+ * "ให้แก้ไขงาน" (handed-in homework), "ให้สอบใหม่" (a handed-in quiz, blank
+ * sheet), "ให้ส่งงาน" (nothing handed in). Close to or after the deadline the
+ * teacher picks how long; otherwise it is granted at once.
+ */
+type AdjustKind = "edit" | "handin" | "retry";
+type AdjustTarget = { key: string; name: string; sub: Submission | null; rosterId?: string };
+
+function useAdjust(work: Assignment, onDone?: (kind: AdjustKind) => void) {
+  const { toast, invalidate, cacheScope } = useKit();
+  const k = keys(cacheScope);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<(AdjustTarget & { kind: AdjustKind; minutes: number }) | null>(null);
+
+  const save = async (target: AdjustTarget, kind: AdjustKind, minutes: number | null) => {
+    const until = minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null;
+    setBusy(target.key);
+    try {
+      if (kind === "retry" && target.sub && until) await dataService.resetQuizSubmission(target.sub.id, until);
+      else if (target.sub) await dataService.setSubmissionReopened(target.sub.id, true, until);
+      else if (target.rosterId) await dataService.allowStudentHandIn(work.id, target.rosterId, until);
+      setDialog(null);
+      staleCache([k.subs(work.id), ...(target.sub ? [k.answers(target.sub.id)] : [])]);
+      invalidate("work");
+      onDone?.(kind);
+      toast(kind === "retry" ? `เปิดให้ ${target.name} สอบใหม่แล้ว` : kind === "edit" ? `เปิดให้ ${target.name} แก้ไขงานแล้ว` : `เปิดให้ ${target.name} ส่งงานแล้ว`);
+    } catch (err) {
+      toast(errorText(err, "บันทึกไม่สำเร็จ"), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const revoke = async (sub: Submission, name: string) => {
+    if (!confirm(`ยกเลิกสิทธิ์ที่เปิดให้ ${name}?`)) return;
+    setBusy(sub.id);
+    try {
+      await dataService.setSubmissionReopened(sub.id, false);
+      staleCache([k.subs(work.id)]);
+      toast("ยกเลิกสิทธิ์แล้ว");
+    } catch (err) {
+      toast(errorText(err, "บันทึกไม่สำเร็จ"), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const request = (target: AdjustTarget, kind: AdjustKind) => {
+    if (kind === "retry") {
+      setDialog({ ...target, kind, minutes: Math.max(10, Number(work.quiz_duration_minutes) || 30) });
+      return;
+    }
+    const suggestion = reopenTimeSuggestion(getAssignmentWindow(work));
+    if (!suggestion.needsTime) void save(target, kind, null);
+    else setDialog({ ...target, kind, minutes: suggestion.minutes });
+  };
+
+  const modal = dialog ? (
+    <ReopenTimeDialog
+      studentName={dialog.name}
+      kind={dialog.kind}
+      deadline={getAssignmentWindow(work).deadline}
+      defaultMinutes={dialog.minutes}
+      busy={busy === dialog.key}
+      onConfirm={(minutes) => void save(dialog, dialog.kind, minutes)}
+      onClose={() => setDialog(null)}
+    />
+  ) : null;
+  return { busy, request, revoke, modal };
+}
+
+/** The adjust button (or the running permission with an undo) for one student. */
+function AdjustControl({ adjust, target, kind }: { adjust: ReturnType<typeof useAdjust>; target: AdjustTarget; kind: AdjustKind }) {
+  const sub = target.sub;
+  if (kind !== "retry" && sub && isReopenActive(sub)) {
+    return (
+      <span className="inline-flex items-center gap-1 h-8 pl-2.5 pr-1 rounded-lg bg-orange-50 dark:bg-orange-950/40 ring-1 ring-orange-200 dark:ring-orange-900 text-[11px] font-bold text-orange-800 dark:text-orange-200">
+        {kind === "edit" ? "เปิดให้แก้ไข" : "เปิดให้ส่ง"}
+        <button type="button" onClick={() => adjust.revoke(sub, target.name)} disabled={adjust.busy === sub.id} className="h-6 px-2 rounded-md bg-white/90 dark:bg-slate-900/70 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer disabled:opacity-50">
+          ยกเลิก
+        </button>
+      </span>
+    );
+  }
+  const Icon = kind === "retry" ? RotateCcw : kind === "edit" ? PencilLine : Send;
+  return (
+    <Button small tone="soft" busy={adjust.busy === target.key} onClick={() => adjust.request(target, kind)}>
+      {adjust.busy !== target.key && <Icon className="w-3.5 h-3.5" />}
+      {kind === "retry" ? "ให้สอบใหม่" : kind === "edit" ? "ให้แก้ไขงาน" : "ให้ส่งงาน"}
+    </Button>
+  );
+}
+
+const rosterName = (s: RosterStudent) => `${s.first_name || ""} ${s.last_name || ""}`.trim() || "นักเรียน";
 
 /** Cache keys of this screen. Answers and behaviour logs stay in memory only (":mem:"). */
 const keys = (scope: string) => ({
@@ -48,7 +147,7 @@ function WorkList({ work: data, onPick }: { work: ReturnType<typeof useWork>; on
     <Page title="✅ ตรวจงาน" refreshing={data.refreshing}>
       {rows.length === 0 && <Empty text={data.rows.length ? "ยังไม่มีนักเรียนส่งงาน" : "ยังไม่มีงานในห้องนี้"} />}
       {rows.length > 0 && (
-        <Card className="p-0! divide-y divide-amber-100 dark:divide-slate-800">
+        <Card className="p-0! divide-y divide-slate-100 dark:divide-slate-800">
           {rows.map((row) => {
             const left = row.toGrade;
             return (
@@ -103,11 +202,14 @@ function Integrity({ sub, onOpen }: { sub: Submission; onOpen: (sub: Submission)
 function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: () => void; onPick: (sub: Submission) => void }) {
   const { cacheScope } = useKit();
   const k = keys(cacheScope);
-  const data = useCached<Submission[]>(k.subs(work.id), async () => (await dataService.getSubmissions(work.id)).filter(isHandedIn));
+  // Every row (also "allowed to hand in" ones without work yet); the list shows the handed-in ones.
+  const data = useCached<Submission[]>(k.subs(work.id), () => dataService.getSubmissions(work.id));
+  const roster = useViewData<RosterData>("roster");
   const audit = useAudit();
+  const adjust = useAdjust(work);
   // Quizzes track leaving the screen (as on the website): only they show the integrity chip.
   const tracksAway = !!work.is_exam;
-  const rows = [...(data.data || [])].sort((a, b) => Number(isGraded(a)) - Number(isGraded(b)) || studentName(a).localeCompare(studentName(b), "th"));
+  const rows = [...(data.data || [])].filter(isHandedIn).sort((a, b) => Number(isGraded(a)) - Number(isGraded(b)) || studentName(a).localeCompare(studentName(b), "th"));
   const flagged = rows.filter((sub) => sub.is_flagged_suspicious || (sub.quiz_exit_count || 0) > 0 || isSuspiciousActivity(sub.tab_switch_count || 0, sub.total_time_away_seconds || 0)).length;
 
   // The logs a teacher will likely open (anything recorded) load quietly, so the popup has them already.
@@ -141,7 +243,7 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
       {!data.data && !data.error && <Skeleton rows={4} />}
       {data.data && rows.length === 0 && <Empty text="ยังไม่มีใครส่ง" />}
       {rows.length > 0 && (
-        <Card className="p-0! divide-y divide-amber-100 dark:divide-slate-800">
+        <Card className="p-0! divide-y divide-slate-100 dark:divide-slate-800">
           {rows.map((sub) => (
             <div key={sub.id} className="px-4 py-3 flex items-center gap-2">
               <button type="button" onClick={() => onPick(sub)} className="flex-1 min-w-0 text-left cursor-pointer">
@@ -157,9 +259,35 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
           ))}
         </Card>
       )}
+      {data.data && roster.data && (() => {
+        // Roster students with nothing handed in: the teacher may let one hand in (late, or after it closed).
+        const byStudent = new Map((data.data || []).map((sub) => [sub.student_id, sub]));
+        const missing = rosterFor(work, roster.data.students)
+          .map((student) => ({ student, sub: byStudent.get(student.id) || (student.line_uid ? byStudent.get(student.line_uid) : undefined) || null }))
+          .filter(({ sub }) => !sub || !isHandedIn(sub));
+        const win = getAssignmentWindow(work);
+        // Like the website: offered once the student may soon be unable to hand in by themselves (a running permission always shows).
+        const canOffer = !win.isDraft && !win.isScheduled && reopenTimeSuggestion(win).needsTime;
+        const shown = missing.filter(({ sub }) => canOffer || isReopenActive(sub));
+        if (!shown.length) return null;
+        return (
+          <>
+            <p className="px-1 text-[11px] font-bold text-slate-500">ยังไม่ส่ง ({missing.length})</p>
+            <Card className="p-0! divide-y divide-slate-100 dark:divide-slate-800">
+              {shown.map(({ student, sub }) => (
+                <div key={student.id} className="px-4 py-2.5 flex items-center gap-2">
+                  <span className="flex-1 min-w-0 text-sm truncate">{rosterName(student)}</span>
+                  <AdjustControl adjust={adjust} target={{ key: sub?.id || student.id, name: rosterName(student), sub, rosterId: student.id }} kind="handin" />
+                </div>
+              ))}
+            </Card>
+          </>
+        );
+      })()}
     </Page>
     {/* Outside the page: its cards' rise animation must not move the popup. */}
     {audit.modal}
+    {adjust.modal}
     </>
   );
 }
@@ -171,6 +299,8 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
   const questions = useCached<Question[]>(k.questions(work.id), () => dataService.getQuestions(work.id));
   const answers = useCached<Record<string, SubmissionAnswer>>(k.answers(submission.id), () => dataService.getSubmissionAnswers(submission.id));
   const audit = useAudit();
+  // A quiz sheet taken again is blank: back to the list.
+  const adjust = useAdjust(work, (kind) => kind === "retry" && onDone());
   const data = questions.data && answers.data ? { questions: questions.data, answers: answers.data } : null;
   const loadError = questions.error || answers.error;
   const [scores, setScores] = useState<Record<string, { score: string; comment: string }>>({});
@@ -210,7 +340,13 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
     <Page title={studentName(submission)} subtitle={work.title} refreshing={questions.refreshing || answers.refreshing}>
       <div className="flex items-center justify-between gap-2">
         <Button tone="ghost" small onClick={onDone}>← รายชื่อ</Button>
-        {work.is_exam && <Integrity sub={submission} onOpen={audit.open} />}
+        <span className="flex items-center gap-1.5">
+          {work.is_exam && <Integrity sub={submission} onOpen={audit.open} />}
+          {/* A score copied from a retake is retaken there, not here. */}
+          {!(work.is_exam && submission.retake_submission_id) && (
+            <AdjustControl adjust={adjust} target={{ key: submission.id, name: studentName(submission), sub: submission }} kind={work.is_exam ? "retry" : "edit"} />
+          )}
+        </span>
       </div>
       {loadError && <ErrorBox text={loadError} />}
       {!data && !loadError && <Skeleton rows={2} />}
@@ -254,6 +390,7 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
     </Page>
     {/* Outside the page: its cards' rise animation must not move the popup. */}
     {audit.modal}
+    {adjust.modal}
     </>
   );
 }

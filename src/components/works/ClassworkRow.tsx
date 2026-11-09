@@ -8,7 +8,7 @@ import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import type { GradingCounts } from '@/lib/utils/gradingStatus';
-import { isRetake } from '@/lib/utils/retake';
+import { isRetakeOf } from '@/lib/utils/retake';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { AnnounceButton, announcesResults, GradeButton, MetricCells, PhoneProgress, Pill, RemindButton, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, StatusButton } from '@/components/works/StatusBits';
@@ -65,7 +65,7 @@ export function ClassworkRow({
   const win = getAssignmentWindow(assignment, now);
   const hidden = win.isDraft || win.isScheduled;
   const status = acceptStatus({ assignment, window: win, counts }, th, language, now);
-  const retake = isRetake(assignment);
+  const retake = isRetakeOf(assignment);
   const resultsMode = !!onAnnounceResults && announcesResults(counts, win.acceptsSubmissions);
 
   const typePill = (

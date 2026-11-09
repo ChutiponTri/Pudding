@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Check, Layers, Plus, Trash2, X } from "lucide-react";
+import { StudentPickLink, StudentPickerSheet } from "@/components/StudentPickerSheet";
 import { dataService } from "@/lib/supabase/dataService";
 import { DRAFT_PUBLISH_AT, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindow";
 import { daysFromNowAt, localPartsToIso, toLocalDateValue, toLocalTimeValue } from "@/lib/utils/datetime";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import type { Question, QuestionType } from "@/types/database";
-import { Button, Card, Done, Field, Page, errorText, inputClass, useKit } from "./kit";
+import { Button, Card, Done, Field, Page, errorText, inputClass, useKit, useViewData, type RosterData, type WorkData } from "./kit";
 
 type Draft = { uid: number; type: QuestionType; text: string; options: string[]; answer: string; score: number };
 
@@ -15,6 +16,10 @@ let nextUid = 1;
 /** A file answer is usually the whole homework (10 points); other questions start at 1, as on the website. */
 const defaultScore = (type: QuestionType) => (type === "file_upload" ? 10 : 1);
 const newQuestion = (type: QuestionType = "multiple_choice"): Draft => ({ uid: nextUid++, type, text: "", options: ["", "", "", ""], answer: "", score: defaultScore(type) });
+/** A choice question keeps at least this many options (4 to start with). */
+const MIN_OPTIONS = 2;
+const MAX_OPTIONS = 8;
+const OPTION_LETTERS = "กขคงจฉชซ";
 
 const TYPE_LABEL: Record<QuestionType, string> = { file_upload: "แนบไฟล์ / รูป", short_answer: "ข้อความ", multiple_choice: "ปรนัย", true_false: "ถูก/ผิด" };
 const TYPE_ICON: Record<QuestionType, string> = { file_upload: "📎", short_answer: "✍️", multiple_choice: "🔘", true_false: "⭕" };
@@ -33,6 +38,21 @@ export function CreateView() {
   const [isExam, setIsExam] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  /** Category ("" = the default one: งานทั่วไป / ข้อสอบ). */
+  const [groupName, setGroupName] = useState("");
+  /** Quiz: roster ids unticked in the picker (empty = everyone takes it). */
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const [picking, setPicking] = useState(false);
+  const work = useViewData<WorkData>("work");
+  const roster = useViewData<RosterData>("roster");
+  const students = roster.data?.students || [];
+  // Categories this class already uses, offered as one-tap choices.
+  const categories = useMemo(
+    () => [...new Set((work.data?.works || []).map((row) => row.work.group_name?.trim()).filter((name): name is string => !!name))].sort((a, b) => a.localeCompare(b, "th")),
+    [work.data]
+  );
+  // Only ids still on the roster count (a student may have left).
+  const excludedNow = excluded.filter((id) => students.some((s) => s.id === id));
   const defaultDue = daysFromNowAt(7, 23, 59);
   const [dueDate, setDueDate] = useState(toLocalDateValue(defaultDue));
   const [dueTime, setDueTime] = useState(toLocalTimeValue(defaultDue));
@@ -65,6 +85,7 @@ export function CreateView() {
     }
     if (isExam && !(minutes > 0)) return "กรุณาใส่เวลาทำข้อสอบ";
     if (!questions.length) return "เพิ่มคำถามอย่างน้อย 1 ข้อ";
+    if (isExam && students.length && excludedNow.length >= students.length) return "เลือกนักเรียนที่ทำแบบทดสอบอย่างน้อย 1 คน";
     for (const [index, q] of questions.entries()) {
       const n = index + 1;
       if (isExam && q.type === "file_upload") return `ข้อ ${n}: แบบทดสอบใช้คำถามแบบแนบไฟล์ไม่ได้`;
@@ -101,7 +122,10 @@ export function CreateView() {
           classroom_name: classroom.name,
           title: title.trim(),
           description: description.trim(),
+          ...(groupName.trim() ? { group_name: groupName.trim() } : {}),
           is_exam: isExam,
+          // Some students unticked: only the rest see and take the quiz.
+          ...(isExam && excludedNow.length ? { retake_student_ids: students.filter((s) => !excludedNow.includes(s.id)).map((s) => s.id) } : {}),
           // A quiz runs for its minutes from publishing; the server moves it again when a draft is published.
           due_date: isExam ? new Date(Date.now() + minutes * 60_000).toISOString() : localPartsToIso(dueDate, dueTime),
           ...(!isExam && closeDate ? { close_at: localPartsToIso(closeDate, closeTime) } : {}),
@@ -145,6 +169,7 @@ export function CreateView() {
                 setCreated(null);
                 setTitle("");
                 setDescription("");
+                setExcluded([]);
                 setHomeworkQuestions([newQuestion("file_upload")]);
                 setQuizQuestions([newQuestion("multiple_choice")]);
               }}
@@ -160,11 +185,11 @@ export function CreateView() {
 
   return (
     <Page title="✏️ สร้างงาน">
-      <div role="tablist" aria-label="ประเภทงาน" className="relative grid grid-cols-2 p-1 rounded-xl bg-amber-100 dark:bg-slate-900">
+      <div role="tablist" aria-label="ประเภทงาน" className="relative grid grid-cols-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-900">
         {/* The white pill slides under the picked tab. */}
         <span
           aria-hidden
-          className={`absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-white dark:bg-amber-600 shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${isExam ? "translate-x-full" : "translate-x-0"}`}
+          className={`absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-amber-500 shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${isExam ? "translate-x-full" : "translate-x-0"}`}
         />
         {[
           [false, "📋 การบ้าน"],
@@ -177,7 +202,7 @@ export function CreateView() {
             aria-selected={isExam === value}
             data-no-press
             onClick={() => setIsExam(value as boolean)}
-            className={`relative z-10 h-10 rounded-lg text-sm font-bold cursor-pointer transition-colors duration-300 ${isExam === value ? "text-amber-800 dark:text-white" : "text-amber-600/80 dark:text-slate-400"}`}
+            className={`relative z-10 h-10 rounded-lg text-sm font-bold cursor-pointer transition-colors duration-300 ${isExam === value ? "text-slate-950" : "text-slate-500 dark:text-slate-400"}`}
           >
             {label as string}
           </button>
@@ -196,13 +221,42 @@ export function CreateView() {
         <Field label="ชื่องาน *">
           <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={isExam ? "เช่น แบบทดสอบบทที่ 1" : "เช่น การบ้าน 1"} />
         </Field>
+        <div className="space-y-1.5">
+          <Field label="หมวดหมู่">
+            <input className={inputClass} value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={categories.length ? "เลือกด้านล่าง หรือพิมพ์ชื่อใหม่" : isExam ? "ไม่ระบุ = ข้อสอบ" : "ไม่ระบุ = งานทั่วไป"} />
+          </Field>
+          {categories.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {categories.map((name) => {
+                const on = groupName.trim() === name;
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setGroupName(on ? "" : name)}
+                    className={`h-7 px-2.5 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                      on ? "bg-amber-500 text-slate-950" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                    }`}
+                  >
+                    {on ? <Check className="w-3 h-3" /> : <Layers className="w-3 h-3" />}
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <Field label="รายละเอียด">
           <textarea className={`${inputClass} h-20 py-2`} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
         {isExam ? (
-          <Field label="เวลาทำ (นาที)" hint="นับจากเวลาที่เผยแพร่">
-            <input className={inputClass} type="number" min={1} inputMode="numeric" value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 0)} />
-          </Field>
+          <>
+            <Field label="เวลาทำ (นาที)" hint="นับจากเวลาที่เผยแพร่">
+              <input className={inputClass} type="number" min={1} inputMode="numeric" value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 0)} />
+            </Field>
+            {students.length > 0 && <StudentPickLink total={students.length} excludedCount={excludedNow.length} onClick={() => setPicking(true)} />}
+          </>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-2">
@@ -270,7 +324,7 @@ export function CreateView() {
                     />
                     <input
                       className={`${inputClass} h-9!`}
-                      placeholder={`ตัวเลือก ${"กขคง"[i] || i + 1}`}
+                      placeholder={`ตัวเลือก ${OPTION_LETTERS[i] || i + 1}`}
                       value={option}
                       onChange={(e) => {
                         const options = [...q.options];
@@ -279,8 +333,26 @@ export function CreateView() {
                         patch(q.uid, { options, ...(wasAnswer ? { answer: e.target.value.trim() } : {}) });
                       }}
                     />
+                    {q.options.length > MIN_OPTIONS && (
+                      <button
+                        type="button"
+                        aria-label={`ลบตัวเลือก ${OPTION_LETTERS[i] || i + 1}`}
+                        onClick={() => {
+                          const wasAnswer = !!q.answer && q.answer === option.trim();
+                          patch(q.uid, { options: q.options.filter((_, j) => j !== i), ...(wasAnswer ? { answer: "" } : {}) });
+                        }}
+                        className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
+                {q.options.length < MAX_OPTIONS && (
+                  <button type="button" onClick={() => patch(q.uid, { options: [...q.options, ""] })} className="ml-7 h-8 px-2 rounded-lg text-xs font-bold text-slate-500 hover:text-amber-600 inline-flex items-center gap-1 cursor-pointer">
+                    <Plus className="w-3.5 h-3.5" /> เพิ่มตัวเลือก
+                  </button>
+                )}
               </div>
             )}
             {q.type === "true_false" && (
@@ -290,7 +362,7 @@ export function CreateView() {
                     key={option}
                     type="button"
                     onClick={() => patch(q.uid, { answer: option })}
-                    className={`h-10 rounded-xl text-sm font-bold cursor-pointer ${q.answer === option ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-800 dark:bg-slate-800 dark:text-slate-200"}`}
+                    className={`h-10 rounded-xl text-sm font-bold cursor-pointer ${q.answer === option ? "bg-amber-500 text-slate-950" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"}`}
                   >
                     {option}
                   </button>
@@ -312,7 +384,7 @@ export function CreateView() {
               key={type}
               type="button"
               onClick={() => setQuestions((list) => [...list, newQuestion(type)])}
-              className="h-14 rounded-xl bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/50 text-amber-800 dark:text-amber-200 text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 cursor-pointer"
+              className="h-14 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 cursor-pointer"
             >
               <span className="text-base leading-none">{TYPE_ICON[type]}</span>
               {TYPE_LABEL[type]}
@@ -331,6 +403,7 @@ export function CreateView() {
         <Button className="flex-1" busy={busy === "publish"} disabled={!!busy} onClick={() => save(false)}>เผยแพร่ + ส่งการ์ดเข้ากลุ่ม</Button>
       </div>
       <p className="text-[11px] text-slate-400">ต้องการแนบไฟล์ ตัวชี้วัด หรือตั้งเวลาเผยแพร่ ใช้หน้าสร้างงานบนเว็บ</p>
+      {picking && <StudentPickerSheet students={students} excluded={excludedNow} onChange={setExcluded} onClose={() => setPicking(false)} />}
     </Page>
   );
 }

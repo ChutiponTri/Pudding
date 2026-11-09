@@ -9,8 +9,14 @@ import type { Assignment, User } from '@/types/database';
 
 type RetakeFields = Pick<Assignment, 'retake_student_ids'>;
 
-/** A retake quiz (only some students may take it). */
+/**
+ * Only some students may see and take this work: a retake, or a quiz the
+ * teacher gave to chosen students only (retake_student_ids without retake_of).
+ */
 export const isRetake = (a: RetakeFields | null | undefined): boolean => Array.isArray(a?.retake_student_ids);
+
+/** A real retake: chosen students, and its score replaces the original quiz's (retake_of). */
+export const isRetakeOf = (a: (RetakeFields & Pick<Assignment, 'retake_of'>) | null | undefined): boolean => isRetake(a) && !!a?.retake_of;
 
 /** Whether a student (any of their ids: users.id, LINE id) may see and take this work. */
 export function retakeIncludes(a: RetakeFields, keys: Array<string | null | undefined>): boolean {
