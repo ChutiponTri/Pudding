@@ -738,7 +738,7 @@ function NewAssignmentContent() {
     }, 100);
   };
 
-  /** Written / file questions whose model answer and rubric fields are shown (always, once filled). */
+  /** File questions whose model answer and rubric fields were opened (written questions always show them). */
   const [openRubrics, setOpenRubrics] = useState<string[]>([]);
 
   // A removed card first collapses and fades (see the questions stack), then leaves the list.
@@ -2245,8 +2245,8 @@ function NewAssignmentContent() {
                   </div>
                 )}
 
-                {/* Ideal Answer & Rubric: written / file questions (choices are scored from the key above) */}
-                {q.type !== 'multiple_choice' && q.type !== 'true_false' && !(openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
+                {/* Ideal Answer & Rubric: always shown for written questions; file questions open them on demand (choices are scored from the key above) */}
+                {q.type === 'file_upload' && !(openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
                   <button
                     type="button"
                     onClick={() => setOpenRubrics((prev) => [...prev, q.uid])}
@@ -2256,7 +2256,7 @@ function NewAssignmentContent() {
                     {tr('แนวคำตอบ / เกณฑ์ให้คะแนน', 'Model answer / rubric')}
                   </button>
                 )}
-                {q.type !== 'multiple_choice' && q.type !== 'true_false' && (openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
+                {q.type !== 'multiple_choice' && q.type !== 'true_false' && (q.type === 'short_answer' || openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">

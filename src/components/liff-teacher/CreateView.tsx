@@ -8,14 +8,16 @@ import { DRAFT_PUBLISH_AT, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindo
 import { daysFromNowAt, localPartsToIso, toLocalDateValue, toLocalTimeValue } from "@/lib/utils/datetime";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import type { Question, QuestionType } from "@/types/database";
+import { AttachmentsField, uploadAttachments, type AttachmentDraft } from "./AttachmentsField";
 import { Button, Card, Done, Field, Page, dateInputClass, errorText, inputClass, useKit, useViewData, type RosterData, type WorkData } from "./kit";
 
-type Draft = { uid: number; type: QuestionType; text: string; options: string[]; answer: string; score: number };
+/** answer: the key for choice questions, the reference answer for written ones. */
+type Draft = { uid: number; type: QuestionType; text: string; options: string[]; answer: string; rubric: string; score: number };
 
 let nextUid = 1;
 /** A file answer is usually the whole homework (10 points); other questions start at 1, as on the website. */
 const defaultScore = (type: QuestionType) => (type === "file_upload" ? 10 : 1);
-const newQuestion = (type: QuestionType = "multiple_choice"): Draft => ({ uid: nextUid++, type, text: "", options: ["", "", "", ""], answer: "", score: defaultScore(type) });
+const newQuestion = (type: QuestionType = "multiple_choice"): Draft => ({ uid: nextUid++, type, text: "", options: ["", "", "", ""], answer: "", rubric: "", score: defaultScore(type) });
 /** A choice question keeps at least this many options (4 to start with). */
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 8;
@@ -65,6 +67,8 @@ export function CreateView() {
   const [quizQuestions, setQuizQuestions] = useState<Draft[]>(() => [newQuestion("multiple_choice")]);
   const questions = isExam ? quizQuestions : homeworkQuestions;
   const setQuestions = isExam ? setQuizQuestions : setHomeworkQuestions;
+  /** Shared by both tabs (links, Drive, images / PDFs); picked files upload on save. */
+  const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [busy, setBusy] = useState<"publish" | "draft" | null>(null);
   /** sent: whether the work card reached the group (the teacher may cancel the picker). */
   const [created, setCreated] = useState<{ title: string; draft: boolean; sent: boolean } | null>(null);
@@ -109,12 +113,14 @@ export function CreateView() {
         type: q.type,
         question_text: q.text.trim() || DEFAULT_TEXT[q.type] || "",
         options: q.type === "multiple_choice" ? q.options.map((o) => o.trim()).filter(Boolean) : q.type === "true_false" ? [...TRUE_FALSE_OPTIONS] : undefined,
-        ideal_answer: q.type === "multiple_choice" || q.type === "true_false" ? q.answer : "",
-        rubric_criteria: "",
+        ideal_answer: q.type === "file_upload" ? "" : q.answer.trim(),
+        rubric_criteria: q.type === "short_answer" ? q.rubric.trim() : "",
         max_score: Number(q.score) || defaultScore(q.type),
         is_required: true,
       }));
       const total = rows.reduce((sum, row) => sum + Number(row.max_score || 0), 0);
+      // Files first: if one fails nothing is saved, and uploaded ones are kept for a retry.
+      const savedAttachments = await uploadAttachments(attachments, (done) => setAttachments((list) => list.map((a) => (a.uid === done.uid ? done : a))));
       const result = await dataService.createAssignment(
         {
           course_id: classroom.courseId || undefined,
@@ -122,6 +128,7 @@ export function CreateView() {
           classroom_name: classroom.name,
           title: title.trim(),
           description: description.trim(),
+          ...(savedAttachments.length ? { attachments: savedAttachments } : {}),
           ...(groupName.trim() ? { group_name: groupName.trim() } : {}),
           is_exam: isExam,
           // Some students unticked: only the rest see and take the quiz.
@@ -169,6 +176,7 @@ export function CreateView() {
                 setCreated(null);
                 setTitle("");
                 setDescription("");
+                setAttachments([]);
                 setExcluded([]);
                 setHomeworkQuestions([newQuestion("file_upload")]);
                 setQuizQuestions([newQuestion("multiple_choice")]);
@@ -250,6 +258,7 @@ export function CreateView() {
         <Field label="รายละเอียด">
           <textarea className={`${inputClass} h-20 py-2`} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
+        <AttachmentsField isExam={isExam} attachments={attachments} setAttachments={setAttachments} busy={!!busy} />
         {isExam ? (
           <>
             <Field label="เวลาทำ (นาที)" hint="นับจากเวลาที่เผยแพร่">
@@ -369,7 +378,17 @@ export function CreateView() {
                 ))}
               </div>
             )}
-            {q.type === "short_answer" && <p className="text-[11px] text-slate-500">ข้อเขียน คุณครูให้คะแนนเองในเมนู “ตรวจงาน”</p>}
+            {q.type === "short_answer" && (
+              <>
+                <p className="text-[11px] text-slate-500">ข้อเขียน คุณครูให้คะแนนเองในเมนู “ตรวจงาน”</p>
+                <Field label="คำตอบอ้างอิง (เฉลย) · ไม่บังคับ">
+                  <textarea className={`${inputClass} h-16 py-2`} placeholder="ใช้เป็นเกณฑ์เทียบให้ AI ตรวจ" value={q.answer} onChange={(e) => patch(q.uid, { answer: e.target.value })} />
+                </Field>
+                <Field label="เกณฑ์การให้คะแนน · ไม่บังคับ">
+                  <textarea className={`${inputClass} h-16 py-2`} placeholder="เช่น ระบุองค์ประกอบครบ 3 ข้อได้ 5 คะแนน" value={q.rubric} onChange={(e) => patch(q.uid, { rubric: e.target.value })} />
+                </Field>
+              </>
+            )}
             {q.type === "file_upload" && <p className="text-[11px] text-slate-500">นักเรียนถ่ายรูปหรือแนบไฟล์ คุณครูให้คะแนนเองในเมนู “ตรวจงาน”</p>}
             <Field label="คะแนน">
               <input className={`${inputClass} w-24!`} type="number" min={0} inputMode="numeric" value={q.score} onChange={(e) => patch(q.uid, { score: Number(e.target.value) || 0 })} />
