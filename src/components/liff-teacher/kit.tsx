@@ -480,11 +480,18 @@ export function Button({
 }
 
 export const inputClass =
-  "w-full h-11 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-amber-500 outline-none text-sm text-slate-900 dark:text-white";
+  "w-full min-w-0 h-11 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-amber-500 outline-none text-sm text-slate-900 dark:text-white";
+
+/**
+ * Date and time inputs: phones (iOS above all) give them a wide built-in size
+ * and centred text, which overflows a half-width column.
+ */
+export const dateInputClass = "appearance-none [&::-webkit-date-and-time-value]:text-left [&::-webkit-date-and-time-value]:min-h-[1.25rem] px-2.5! text-[13px]!";
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <label className="block space-y-1">
+    // min-w-0: in a grid, a date / time field must shrink to its column instead of overflowing.
+    <label className="block min-w-0 space-y-1">
       <span className="text-xs font-bold text-slate-600 dark:text-slate-300">{label}</span>
       {children}
       {hint && <span className="block text-[11px] text-slate-400">{hint}</span>}

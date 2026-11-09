@@ -8,7 +8,7 @@ import { DRAFT_PUBLISH_AT, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindo
 import { daysFromNowAt, localPartsToIso, toLocalDateValue, toLocalTimeValue } from "@/lib/utils/datetime";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import type { Question, QuestionType } from "@/types/database";
-import { Button, Card, Done, Field, Page, errorText, inputClass, useKit, useViewData, type RosterData, type WorkData } from "./kit";
+import { Button, Card, Done, Field, Page, dateInputClass, errorText, inputClass, useKit, useViewData, type RosterData, type WorkData } from "./kit";
 
 type Draft = { uid: number; type: QuestionType; text: string; options: string[]; answer: string; score: number };
 
@@ -261,18 +261,18 @@ export function CreateView() {
           <>
             <div className="grid grid-cols-2 gap-2">
               <Field label="กำหนดส่ง">
-                <input className={inputClass} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                <input className={`${inputClass} ${dateInputClass}`} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
               </Field>
               <Field label="เวลา">
-                <input className={inputClass} type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
+                <input className={`${inputClass} ${dateInputClass}`} type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Field label="ปิดรับส่งงาน (ไม่บังคับ)">
-                <input className={inputClass} type="date" value={closeDate} min={dueDate} onChange={(e) => setCloseDate(e.target.value)} />
+                <input className={`${inputClass} ${dateInputClass}`} type="date" value={closeDate} min={dueDate} onChange={(e) => setCloseDate(e.target.value)} />
               </Field>
               <Field label="เวลา">
-                <input className={inputClass} type="time" value={closeTime} disabled={!closeDate} onChange={(e) => setCloseTime(e.target.value)} />
+                <input className={`${inputClass} ${dateInputClass}`} type="time" value={closeTime} disabled={!closeDate} onChange={(e) => setCloseTime(e.target.value)} />
               </Field>
             </div>
             <p className="-mt-1 text-[11px] text-slate-400">
