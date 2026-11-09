@@ -495,7 +495,9 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 /** Full-screen first load, as in the student LIFF: the logo with a spinner. */
 export function Loading({ text = "กำลังโหลด...", hint }: { text?: string; hint?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center p-6 text-center gap-5 min-h-dvh animate-fade">
+    // Fixed over the whole screen: nothing rendered around it (banners, bars, the LIFF header's
+    // safe area) can push the logo down or make it jump while the page opens.
+    <div role="status" aria-live="polite" className="fixed inset-0 z-40 flex flex-col items-center justify-center p-6 text-center gap-5 bg-slate-50 dark:bg-slate-950 animate-fade">
       <div className="relative">
         <BrandLogo priority className="h-24 w-auto" />
         <Loader2 className="w-7 h-7 text-amber-500 animate-spin absolute -bottom-1.5 -right-1.5 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md" />

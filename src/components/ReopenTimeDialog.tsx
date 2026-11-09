@@ -174,7 +174,8 @@ export function ReopenTimeDialog({
                 max={MAX_MINUTES}
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                autoFocus
+                // Mouse / trackpad only: on phones (the teacher LIFF too) focusing would pop the keyboard over the presets.
+                autoFocus={typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches}
                 className={`flex-1 min-w-0 h-12 px-3 rounded-2xl text-center text-xl font-black tabular-nums bg-white dark:bg-slate-800 text-slate-900 dark:text-white outline-hidden ring-2 transition-colors ${
                   valid ? 'ring-orange-300 focus:ring-orange-500 dark:ring-orange-800' : 'ring-rose-400'
                 }`}
