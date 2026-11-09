@@ -491,8 +491,8 @@ export const dateInputClass = "appearance-none [&::-webkit-date-and-time-value]:
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     // min-w-0: in a grid, a date / time field must shrink to its column instead of overflowing.
-    <label className="block min-w-0 space-y-1">
-      <span className="text-xs font-bold text-slate-600 dark:text-slate-300">{label}</span>
+    <label className="block min-w-0 space-y-1.5">
+      <span className="block text-xs font-bold text-slate-600 dark:text-slate-300">{label}</span>
       {children}
       {hint && <span className="block text-[11px] text-slate-400">{hint}</span>}
     </label>
