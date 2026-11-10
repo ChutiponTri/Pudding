@@ -2594,6 +2594,20 @@ export default function LiffStudentPage() {
     setViewingGradedSub((prev) => (prev?.submission.id === s.id ? { ...prev, ...detail, loadFailed: false } : prev));
   };
 
+  // Linked work missing from the student's list: only for students the teacher chose, or gone.
+  const explainUnavailableWork = (assignmentId: string) => {
+    dataService
+      .getAssignmentById(assignmentId)
+      .then(({ assignment }) => alert(assignment ? "ยังเปิดงานนี้ไม่ได้ ลองใหม่อีกครั้ง" : "ไม่พบงานนี้ — อาจถูกลบไปแล้ว"))
+      .catch((error) =>
+        alert(
+          error instanceof Error && error.message.includes("นักเรียนที่คุณครูเลือก")
+            ? "คุณไม่มีสิทธิ์ทำข้อสอบนี้ — สำหรับนักเรียนที่คุณครูเลือกเท่านั้น"
+            : "ไม่พบงานนี้ — อาจถูกลบหรือยังไม่เผยแพร่"
+        )
+      );
+  };
+
   // Apply a LINE deep link once the first load has finished.
   useEffect(() => {
     if (isLoadingData || !currentStudent) return;
@@ -2612,11 +2626,19 @@ export default function LiffStudentPage() {
       setJoinWait({ classroomId: targetClassroom.id, assignmentId: link.assignmentId, view: link.view });
       return;
     }
+    // A link into a classroom the student is not in (and could not join from it): say so.
+    // An unfinished profile is asked for first; saving it runs the link again.
+    if (!targetClassroom && (link.classroomId || link.assignmentId)) {
+      if (profileReady) {
+        alert("คุณยังไม่ได้อยู่ในห้องเรียนนี้ — เข้าร่วมห้องเรียนด้วยรหัสเชิญจากคุณครูก่อน");
+        setIsJoinModalOpen(true);
+      }
+      return;
+    }
     if (link.assignmentId) {
       const assignment = assignments.find((item) => item.id === link.assignmentId);
       if (!assignment) {
-        // A retake for other students (or deleted work) in the student's own classroom.
-        if (targetClassroom) alert("ไม่พบงานนี้ — อาจถูกลบ หรือเป็นการสอบซ่อมเฉพาะนักเรียนที่คุณครูเลือก");
+        explainUnavailableWork(link.assignmentId);
         return;
       }
       const assignmentClassroom = classrooms.find((c) => c.id === assignment.classroom_id);
@@ -2663,7 +2685,10 @@ export default function LiffStudentPage() {
       setSelectedClassroom(cls);
       setCourseTab(joinWait.view || (joinWait.assignmentId ? "work" : "timeline"));
       const assignment = joinWait.assignmentId ? assignments.find((a) => a.id === joinWait.assignmentId) : undefined;
-      if (!assignment) return;
+      if (!assignment) {
+        if (joinWait.assignmentId) explainUnavailableWork(joinWait.assignmentId);
+        return;
+      }
       const submission = submissions[assignment.id];
       if (submission && hasResult(assignment)) handleOpenGradedDetail(assignment, submission);
       else handleOpenAssignment(assignment);
