@@ -19,6 +19,7 @@ import {
   ChevronDown,
   GripVertical,
   CalendarCog,
+  Trash2,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { BrandLogo } from '@/components/BrandLogo';
@@ -698,7 +699,22 @@ export const GlobalClassroomSidebar: React.FC = () => {
 
         {/* Footer */}
         <div className="p-3 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
-          <span className="text-[10px] text-slate-400 font-medium truncate">Pudding</span>
+          {isGuest ? (
+            <span className="text-[10px] text-slate-400 font-medium truncate">Pudding</span>
+          ) : (
+            <Link
+              href="/trash"
+              onClick={handleItemClick}
+              className={`h-9 px-3 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 min-w-0 transition-colors ${
+                pathname.startsWith('/trash')
+                  ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300'
+                  : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800'
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{tr('ถังขยะ', 'Trash')}</span>
+            </Link>
+          )}
           <LanguageSwitcher full />
         </div>
       </aside>

@@ -31,6 +31,7 @@ const SECTIONS: Array<{ test: (path: string) => boolean; th: string; en: string 
   { test: (p) => p.startsWith('/classrooms'), th: 'ห้องเรียน', en: 'Classrooms' },
   { test: (p) => p.startsWith('/students'), th: 'นักเรียน', en: 'Students' },
   { test: (p) => p.startsWith('/exports'), th: 'ส่งออกข้อมูล', en: 'Export' },
+  { test: (p) => p.startsWith('/trash'), th: 'ถังขยะ', en: 'Trash' },
   { test: (p) => p.startsWith('/teacher-invite'), th: 'คำเชิญครู', en: 'Invite' },
   { test: (p) => p.startsWith('/pending-approval'), th: 'รออนุมัติ', en: 'Pending' },
   { test: (p) => p.startsWith('/admin'), th: 'ผู้ดูแลระบบ', en: 'Admin' },

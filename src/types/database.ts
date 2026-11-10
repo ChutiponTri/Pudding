@@ -280,3 +280,20 @@ export interface SubmissionEvent {
   created_at: string;
   details?: string;
 }
+
+/** ถังขยะ: a deleted classroom or work, kept 7 days (see src/lib/server/trash.ts). */
+export type TrashKind = 'assignment' | 'classroom';
+
+export interface TrashItem {
+  id: string;
+  kind: TrashKind;
+  item_id: string;
+  title: string;
+  /** Classroom name (work) or course name (classroom). */
+  subtitle: string;
+  classroom_id: string | null;
+  deleted_at: string;
+  /** Deleted for good (with its files) after this. */
+  expires_at: string;
+  counts: { questions: number; submissions: number; assignments: number; students: number };
+}

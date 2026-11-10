@@ -34,6 +34,7 @@ import { DRAFT_RETENTION_MS, canRecordNoSubmission, getAssignmentWindow, isAssig
 import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions, type ResultRelease } from '@/lib/server/resultRelease';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
+import { deleteFromTrash, listTrash, purgeExpiredTrashOccasionally, putInTrash, restoreFromTrash, snapshotAssignment, snapshotClassroom } from '@/lib/server/trash';
 import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, rescaleChangedMaxScores, zeroFillNoSubmissions } from '@/lib/server/grading';
 import { invalidMaxScoreMessage, isObjectiveQuestion, missingKeyMessage } from '@/lib/utils/autoGrade';
 import { cleanSurveyQuestion, isSurvey, surveyProblem } from '@/lib/utils/survey';
@@ -695,6 +696,7 @@ async function loadAssignments(supabase: Supabase, classroomIds: string[], forTe
 /** Newest first, without drafts past DRAFT_RETENTION_DAYS (hidden until the sweep deletes them). */
 function teacherVisibleAssignments(supabase: Supabase, list: Assignment[]): Assignment[] {
   after(() => deleteExpiredAssignmentDraftsOccasionally(supabase));
+  after(() => purgeExpiredTrashOccasionally(supabase));
   const draftCutoff = Date.now() - DRAFT_RETENTION_MS;
   return list
     .filter((a) => !isAssignmentDraft(a) || !a.created_at || new Date(a.created_at).getTime() >= draftCutoff)
@@ -1437,14 +1439,24 @@ export const dataActions = {
     });
   },
 
+  /** Moves the classroom (with its work, roster and attendance) to the trash for TRASH_DAYS. */
   async deleteClassroom({ supabase, actor }: Ctx, id: string) {
-    await requireTeacherOfClassroom(supabase, actor, id);
-    // Its assignments (and their submissions) go with it, so their files go from storage too.
+    const classroom = await requireTeacherOfClassroom(supabase, actor, id);
+    // Its assignments' files stay in storage until the trash item expires.
     const { data: assignments } = await supabase.from('assignments').select('id').eq('classroom_id', id);
     const fileKeys = await assignmentFileKeys(supabase, (assignments || []).map((a) => a.id as string));
+    await putInTrash(supabase, {
+      kind: 'classroom',
+      itemId: id,
+      ownerId: actor!.userId,
+      title: classroom.name,
+      subtitle: [classroom.course_name, classroom.subject_code].filter(Boolean).join(' · '),
+      classroomId: id,
+      payload: await snapshotClassroom(supabase, classroom),
+      fileKeys,
+    });
     const { error } = await supabase.from('classrooms').delete().eq('id', id);
     if (error) throw toDatabaseError(error, 'classrooms');
-    after(() => removeFiles(supabase, fileKeys));
   },
 
   /**
@@ -2207,10 +2219,21 @@ export const dataActions = {
     return { assignment, questions };
   },
 
+  /** Moves the work (with its questions and answers) to the trash for TRASH_DAYS. */
   async deleteAssignment({ supabase, actor }: Ctx, id: string) {
-    const { assignment } = await requireTeacherOfAssignment(supabase, actor, id);
-    // Students' uploaded work and the reference file are deleted from storage with it.
+    const { assignment, classroom } = await requireTeacherOfAssignment(supabase, actor, id);
+    // Students' uploaded work and the reference file are deleted from storage when the trash item expires.
     const fileKeys = await assignmentFileKeys(supabase, [id]);
+    await putInTrash(supabase, {
+      kind: 'assignment',
+      itemId: id,
+      ownerId: actor!.userId,
+      title: assignment.title,
+      subtitle: classroom.name,
+      classroomId: assignment.classroom_id,
+      payload: await snapshotAssignment(supabase, assignment),
+      fileKeys,
+    });
     // The original quiz gets back the scores this retake replaced.
     await unlinkRetake(supabase, assignment);
     await Promise.all([
@@ -2220,8 +2243,30 @@ export const dataActions = {
     ]);
     const { error } = await supabase.from('assignments').delete().eq('id', id);
     if (error) throw toDatabaseError(error, 'assignments');
-    after(() => removeFiles(supabase, fileKeys));
     after(() => signalClassroom(assignment.classroom_id, { type: 'timeline' }));
+    return true;
+  },
+
+  // ---------- TRASH (ถังขยะ) ----------
+  /** The signed-in teacher's deleted classrooms and work (kept TRASH_DAYS). */
+  async getTrash({ supabase, actor }: Ctx) {
+    const teacher = requireTeacher(actor);
+    return listTrash(supabase, teacher.userId);
+  },
+
+  async restoreTrashItem({ supabase, actor }: Ctx, trashId: string) {
+    const teacher = requireTeacher(actor);
+    const result = await restoreFromTrash(supabase, teacher.userId, trashId, async (classroomId) => {
+      const room = await loadClassroom(supabase, classroomId);
+      return !!room && isTeacherOf(room, teacher.userId);
+    });
+    if (result.classroomId) after(() => signalClassroom(result.classroomId, { type: 'timeline' }));
+    return result;
+  },
+
+  async deleteTrashItem({ supabase, actor }: Ctx, trashId: string) {
+    const teacher = requireTeacher(actor);
+    await deleteFromTrash(supabase, teacher.userId, trashId);
     return true;
   },
 

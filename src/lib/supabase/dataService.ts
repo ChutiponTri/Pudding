@@ -13,6 +13,8 @@ import {
   SubmissionOverrideStatus,
   TeacherRole,
   User,
+  TrashItem,
+  TrashKind,
 } from '@/types/database';
 import { createClient, isSupabaseConfigured } from './client';
 import { authFetch } from '@/lib/auth/lineSession';
@@ -372,6 +374,23 @@ export const dataService = {
   async deleteClassroom(id: string): Promise<void> {
     await call('deleteClassroom', id);
     notifyClassroomsChanged({ classroomId: id, action: 'deleted' });
+  },
+
+  /** ถังขยะ: the teacher's deleted classrooms and work, newest first. */
+  async getTrash(): Promise<TrashItem[]> {
+    return call<TrashItem[]>('getTrash');
+  },
+
+  /** Puts a trashed classroom or work back where it was. */
+  async restoreTrashItem(trashId: string): Promise<{ kind: TrashKind; itemId: string; classroomId: string | null }> {
+    const result = await call<{ kind: TrashKind; itemId: string; classroomId: string | null }>('restoreTrashItem', trashId);
+    if (result.kind === 'classroom') notifyClassroomsChanged({ classroomId: result.itemId, action: 'created' });
+    return result;
+  },
+
+  /** Deletes a trashed item for good (with its files). */
+  async deleteTrashItem(trashId: string): Promise<void> {
+    await call('deleteTrashItem', trashId);
   },
 
   async addStudentToClassroom(

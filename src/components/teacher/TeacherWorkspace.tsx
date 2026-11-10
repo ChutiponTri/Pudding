@@ -1068,8 +1068,14 @@ export function TeacherWorkspace({
   // Delete Classroom
   const handleDeleteClassroom = async (cls: Classroom) => {
     if (confirm(t('classroom_mgmt.delete_confirm'))) {
-      await dataService.deleteClassroom(cls.id);
-      showToast(language === 'th' ? 'ลบห้องเรียนเรียบร้อย' : 'Classroom deleted');
+      try {
+        await dataService.deleteClassroom(cls.id);
+      } catch (err) {
+        // e.g. the trash table is missing: nothing was deleted.
+        showToast(err instanceof Error && err.message ? err.message : language === 'th' ? 'ลบไม่สำเร็จ' : 'Could not delete');
+        return;
+      }
+      showToast(language === 'th' ? 'ย้ายห้องเรียนไปถังขยะแล้ว' : 'Classroom moved to trash');
       if (managingClassroom?.id === cls.id) {
         setManagingClassroom(null);
       }

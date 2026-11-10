@@ -291,11 +291,11 @@ export function WorksBoard() {
   };
 
   const remove = async (c: WorkClass) => {
-    if (!confirm(tr(`ลบ "${c.assignment.title}" ของห้อง ${c.classroom.name}?\nคำตอบและคะแนนของห้องนี้จะถูกลบด้วย`, `Delete "${c.assignment.title}" for ${c.classroom.name}?\nThis class's answers and scores are deleted too.`))) return;
+    if (!confirm(tr(`ลบ "${c.assignment.title}" ของห้อง ${c.classroom.name}?\nย้ายไปถังขยะ กู้คืนได้ภายใน 7 วัน`, `Delete "${c.assignment.title}" for ${c.classroom.name}?\nIt moves to the trash and can be restored within 7 days.`))) return;
     try {
       await dataService.deleteAssignment(c.assignment.id);
       patch(c.assignment.id, null);
-      showToast(tr('ลบแล้ว', 'Deleted'));
+      showToast(tr('ย้ายไปถังขยะแล้ว', 'Moved to trash'));
     } catch (err) {
       showToast(errorText(err, tr('ลบไม่สำเร็จ', 'Could not delete')));
     }
@@ -305,7 +305,7 @@ export function WorksBoard() {
   const removeAll = async (g: WorkGroup) => {
     const n = g.classes.length;
     if (n === 1) return remove(g.classes[0]);
-    if (!confirm(tr(`ลบ "${g.rep.title}" ทั้ง ${n} ห้อง?\nคำตอบและคะแนนของทุกห้องจะถูกลบด้วย`, `Delete "${g.rep.title}" from all ${n} classes?\nAnswers and scores in every class are deleted too.`))) return;
+    if (!confirm(tr(`ลบ "${g.rep.title}" ทั้ง ${n} ห้อง?\nย้ายไปถังขยะ กู้คืนได้ภายใน 7 วัน`, `Delete "${g.rep.title}" from all ${n} classes?\nThey move to the trash and can be restored within 7 days.`))) return;
     let failed = 0;
     let firstError = '';
     await Promise.all(
@@ -319,7 +319,7 @@ export function WorksBoard() {
         }
       })
     );
-    showToast(failed ? `${firstError} (${tr(`${failed}/${n} ห้อง`, `${failed}/${n} classes`)})` : tr(`ลบแล้ว ${n} ห้อง`, `Deleted from ${n} classes`));
+    showToast(failed ? `${firstError} (${tr(`${failed}/${n} ห้อง`, `${failed}/${n} classes`)})` : tr(`ย้ายไปถังขยะแล้ว ${n} ห้อง`, `Moved ${n} classes to trash`));
   };
 
   const reannounce = async (c: WorkClass) => {

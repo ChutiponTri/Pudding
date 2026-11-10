@@ -941,14 +941,14 @@ export default function ClassroomWorkspacePage() {
   // CRUD HANDLERS: ASSIGNMENTS / EXAMS
   // ----------------------------------------------------
   const handleDeleteAssignment = async (assignmentId: string) => {
-    if (!confirm(tr('ลบงาน/ข้อสอบนี้? คำตอบและคะแนนทั้งหมดจะถูกลบด้วย', 'Delete this assignment/exam? All answers and scores will be deleted too.'))) return;
+    if (!confirm(tr('ลบงาน/ข้อสอบนี้?\nย้ายไปถังขยะ กู้คืนได้ภายใน 7 วัน', 'Delete this assignment/exam?\nIt moves to the trash and can be restored within 7 days.'))) return;
     try {
       await dataService.deleteAssignment(assignmentId);
       setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
       setSubmissions((prev) => prev.filter((s) => s.assignment_id !== assignmentId));
       // The server removed its timeline announcement(s) too.
       setPosts((prev) => prev.filter((p) => p.metadata?.assignmentId !== assignmentId));
-      setNotice(tr('ลบงาน/ข้อสอบแล้ว', 'Assignment/exam deleted'));
+      setNotice(tr('ย้ายไปถังขยะแล้ว', 'Moved to trash'));
     } catch {
       setNotice(tr('เกิดข้อผิดพลาดในการลบงาน/ข้อสอบ', 'Something went wrong while deleting'));
     }
