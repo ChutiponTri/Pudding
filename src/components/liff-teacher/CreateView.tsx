@@ -263,10 +263,12 @@ export function CreateView() {
         </div>
         {/* "ไม่นับคะแนน": homework only (a quiz always counts). */}
         {!isExam && (
-          <label className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 cursor-pointer">
-            <input type="checkbox" checked={!countsTowardGrade} onChange={(e) => setCountsTowardGrade(!e.target.checked)} className="w-4 h-4 accent-amber-500 cursor-pointer" />
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">ไม่นับคะแนน</span>
-          </label>
+          <Field label="การนับคะแนน">
+            <select className={inputClass} value={countsTowardGrade ? "counts" : "not"} onChange={(e) => setCountsTowardGrade(e.target.value === "counts")}>
+              <option value="counts">นับคะแนน</option>
+              <option value="not">ไม่นับคะแนน</option>
+            </select>
+          </Field>
         )}
         <Field label="รายละเอียด">
           <textarea className={`${inputClass} h-20 py-2`} value={description} onChange={(e) => setDescription(e.target.value)} />

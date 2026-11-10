@@ -1507,8 +1507,9 @@ function NewAssignmentContent() {
               />
             </div>
 
-            <div className="space-y-2">
-              <label htmlFor="assignment-group" className="text-xs font-bold text-slate-700 dark:text-slate-300">{tr('หมวดหมู่', 'Category')}</label>
+            {/* Full width when the grading choice beside it is hidden (quiz / retake). */}
+            <div className={`space-y-2 ${isExam || retake ? 'md:col-span-2' : ''}`}>
+              <label htmlFor="assignment-group" className="block text-xs font-bold text-slate-700 dark:text-slate-300">{tr('หมวดหมู่', 'Category')}</label>
               <input
                 id="assignment-group"
                 type="text"
@@ -1544,20 +1545,21 @@ function NewAssignmentContent() {
               )}
             </div>
 
-            {/* Counts toward the grade: homework only (a quiz always counts). Phones get a checkbox. */}
+            {/* Counts toward the grade: homework only (a quiz always counts). Phones get a dropdown. */}
             {!retake && !isExam && (
               <div className="space-y-2">
-                <span className="hidden sm:block text-xs font-bold text-slate-700 dark:text-slate-300">{tr('การนับคะแนน', 'Grading')}</span>
-                <label className="sm:hidden flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!countsTowardGrade}
-                    onChange={(e) => setCountsTowardGrade(!e.target.checked)}
-                    className="w-4 h-4 accent-amber-500 cursor-pointer"
-                  />
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{tr('ไม่นับคะแนน', "Doesn't count toward the grade")}</span>
-                </label>
-                <div className="relative hidden sm:grid grid-cols-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+                <label htmlFor="assignment-counts" className="block text-xs font-bold text-slate-700 dark:text-slate-300">{tr('การนับคะแนน', 'Grading')}</label>
+                <select
+                  id="assignment-counts"
+                  value={countsTowardGrade ? 'counts' : 'not'}
+                  onChange={(e) => setCountsTowardGrade(e.target.value === 'counts')}
+                  className="sm:hidden w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
+                >
+                  <option value="counts">{tr('นับคะแนน', 'Counts')}</option>
+                  <option value="not">{tr('ไม่นับคะแนน', "Doesn't count")}</option>
+                </select>
+                {/* Same height as the category box beside it (38px from sm up). */}
+                <div className="relative hidden sm:grid grid-cols-2 h-[38px] p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
                   {/* The pill slides under the picked choice. */}
                   <span
                     aria-hidden
@@ -1574,7 +1576,7 @@ function NewAssignmentContent() {
                       type="button"
                       aria-pressed={countsTowardGrade === value}
                       onClick={() => setCountsTowardGrade(value)}
-                      className={`relative z-10 py-1.5 rounded-lg text-xs font-bold transition-colors duration-300 cursor-pointer ${
+                      className={`relative z-10 rounded-lg text-xs font-bold transition-colors duration-300 cursor-pointer ${
                         countsTowardGrade === value
                           ? value ? 'text-slate-950' : 'text-slate-950 dark:text-white'
                           : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
