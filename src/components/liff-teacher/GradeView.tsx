@@ -376,6 +376,9 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
                     min={0}
                     max={q.max_score}
                     value={current.score}
+                    onKeyDown={(e) => {
+                      if (e.key === "-" || e.key === "e" || e.key === "E") e.preventDefault();
+                    }}
                     onChange={(e) => setScores((all) => ({ ...all, [q.id]: { ...current, score: e.target.value } }))}
                   />
                 </Field>

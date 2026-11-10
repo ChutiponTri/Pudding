@@ -7,6 +7,7 @@ import { dataService } from "@/lib/supabase/dataService";
 import { DRAFT_PUBLISH_AT, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindow";
 import { daysFromNowAt, localPartsToIso, toLocalDateValue, toLocalTimeValue } from "@/lib/utils/datetime";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
+import { nonNegativeScore } from "@/lib/utils/autoGrade";
 import type { Question, QuestionType } from "@/types/database";
 import { AttachmentsField, uploadAttachments, type AttachmentDraft } from "./AttachmentsField";
 import { Button, Card, Done, Field, Page, dateInputClass, errorText, inputClass, useKit, useViewData, type RosterData, type WorkData } from "./kit";
@@ -16,6 +17,8 @@ type Draft = { uid: number; type: QuestionType; text: string; options: string[];
 
 let nextUid = 1;
 /** A file answer is usually the whole homework (10 points); other questions start at 1, as on the website. */
+/** Same presets as the website's quiz form. */
+const QUIZ_MINUTE_PRESETS = [10, 15, 20, 30, 45, 60, 90, 120];
 const defaultScore = (type: QuestionType) => (type === "file_upload" ? 10 : 1);
 const newQuestion = (type: QuestionType = "multiple_choice"): Draft => ({ uid: nextUid++, type, text: "", options: ["", "", "", ""], answer: "", rubric: "", score: defaultScore(type) });
 /** A choice question keeps at least this many options (4 to start with). */
@@ -42,6 +45,8 @@ export function CreateView() {
   const [description, setDescription] = useState("");
   /** Category ("" = the default one: งานทั่วไป / ข้อสอบ). */
   const [groupName, setGroupName] = useState("");
+  /** false = "ไม่นับคะแนน": students still see the score; the grade book leaves it out of the total / percent. */
+  const [countsTowardGrade, setCountsTowardGrade] = useState(true);
   /** Quiz: roster ids unticked in the picker (empty = everyone takes it). */
   const [excluded, setExcluded] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
@@ -115,7 +120,7 @@ export function CreateView() {
         options: q.type === "multiple_choice" ? q.options.map((o) => o.trim()).filter(Boolean) : q.type === "true_false" ? [...TRUE_FALSE_OPTIONS] : undefined,
         ideal_answer: q.type === "file_upload" ? "" : q.answer.trim(),
         rubric_criteria: q.type === "short_answer" ? q.rubric.trim() : "",
-        max_score: Number(q.score) || defaultScore(q.type),
+        max_score: nonNegativeScore(q.score) || defaultScore(q.type),
         is_required: true,
       }));
       const total = rows.reduce((sum, row) => sum + Number(row.max_score || 0), 0);
@@ -131,6 +136,7 @@ export function CreateView() {
           ...(savedAttachments.length ? { attachments: savedAttachments } : {}),
           ...(groupName.trim() ? { group_name: groupName.trim() } : {}),
           is_exam: isExam,
+          ...(countsTowardGrade ? {} : { counts_toward_grade: false }),
           // Some students unticked: only the rest see and take the quiz.
           ...(isExam && excludedNow.length ? { retake_student_ids: students.filter((s) => !excludedNow.includes(s.id)).map((s) => s.id) } : {}),
           // A quiz runs for its minutes from publishing; the server moves it again when a draft is published.
@@ -255,16 +261,61 @@ export function CreateView() {
             </div>
           )}
         </div>
+        <Field label="การนับคะแนน" hint={countsTowardGrade ? "รวมในคะแนนรวมและร้อยละ" : "นักเรียนยังเห็นคะแนนและคำติชม • Excel แสดงคะแนน แต่ไม่รวมในคะแนนรวมและร้อยละ"}>
+          <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+            {([
+              [true, "นับคะแนน"],
+              [false, "ไม่นับคะแนน"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={String(value)}
+                type="button"
+                aria-pressed={countsTowardGrade === value}
+                onClick={() => setCountsTowardGrade(value)}
+                className={`h-8 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                  countsTowardGrade === value ? "bg-amber-500 text-slate-950" : "text-slate-500 dark:text-slate-400"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Field>
         <Field label="รายละเอียด">
           <textarea className={`${inputClass} h-20 py-2`} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
         <AttachmentsField isExam={isExam} attachments={attachments} setAttachments={setAttachments} busy={!!busy} />
         {isExam ? (
           <>
-            <Field label="เวลาทำ (นาที)" hint="นับจากเวลาที่เผยแพร่">
-              <input className={inputClass} type="number" min={1} inputMode="numeric" value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 0)} />
+            <Field label="เวลาทำข้อสอบ (นับจากเผยแพร่)">
+              <div className="space-y-2">
+                <div className="grid grid-cols-4 gap-1.5">
+                  {QUIZ_MINUTE_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      aria-pressed={minutes === preset}
+                      onClick={() => setMinutes(preset)}
+                      className={`h-9 rounded-lg text-[11px] font-bold whitespace-nowrap cursor-pointer transition-colors ${
+                        minutes === preset ? "bg-amber-500 text-slate-950" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                      }`}
+                    >
+                      {preset >= 60 && preset % 60 === 0 ? `${preset / 60} ชม.` : `${preset} นาที`}
+                    </button>
+                  ))}
+                </div>
+                <div className="relative">
+                  <input className={`${inputClass} pr-14`} type="number" min={1} inputMode="numeric" value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 0)} />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">นาที</span>
+                </div>
+              </div>
             </Field>
-            {students.length > 0 && <StudentPickLink total={students.length} excludedCount={excludedNow.length} onClick={() => setPicking(true)} />}
+            {students.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-[11px] font-bold text-slate-500">นักเรียนที่ทำแบบทดสอบ</p>
+                <StudentPickLink total={students.length} excludedCount={excludedNow.length} onClick={() => setPicking(true)} />
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -391,7 +442,7 @@ export function CreateView() {
             )}
             {q.type === "file_upload" && <p className="text-[11px] text-slate-500">นักเรียนถ่ายรูปหรือแนบไฟล์ คุณครูให้คะแนนเองในเมนู “ตรวจงาน”</p>}
             <Field label="คะแนน">
-              <input className={`${inputClass} w-24!`} type="number" min={0} inputMode="numeric" value={q.score} onChange={(e) => patch(q.uid, { score: Number(e.target.value) || 0 })} />
+              <input className={`${inputClass} w-24!`} type="number" min={0} inputMode="numeric" value={q.score} onKeyDown={(e) => { if (e.key === "-" || e.key === "e" || e.key === "E") e.preventDefault(); }} onChange={(e) => patch(q.uid, { score: nonNegativeScore(e.target.value) })} />
             </Field>
           </Card>
         ))}

@@ -155,6 +155,9 @@ export async function relatedCounts(supabase: Supabase, table: AdminTable, id: s
   );
 }
 
+/** Score columns an admin edit may never set below 0. */
+const SCORE_COLUMNS = new Set(['max_score', 'teacher_score', 'total_score', 'max_total_score', 'total_points']);
+
 /** Applies an admin's edit. Only real, writable columns of the row are changed. */
 export async function updateRecord(supabase: Supabase, table: AdminTable, id: string, changes: Row) {
   const current = await getRecord(supabase, table, id);
@@ -162,6 +165,9 @@ export async function updateRecord(supabase: Supabase, table: AdminTable, id: st
   const patch: Row = {};
   for (const [column, value] of Object.entries(changes || {})) {
     if (!(column in current) || isReadOnlyColumn(table, column)) continue;
+    if (SCORE_COLUMNS.has(column) && value != null && value !== '' && !(Number(value) >= 0)) {
+      throw new Error(`${column} ต้องไม่ติดลบ`);
+    }
     patch[column] = value;
   }
   if (!Object.keys(patch).length) return current;

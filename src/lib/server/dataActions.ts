@@ -35,9 +35,9 @@ import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions, type ResultRelease } from '@/lib/server/resultRelease';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
 import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, rescaleChangedMaxScores, zeroFillNoSubmissions } from '@/lib/server/grading';
-import { isObjectiveQuestion, missingKeyMessage } from '@/lib/utils/autoGrade';
-import { isRetake, retakeIncludes, rosterFor } from '@/lib/utils/retake';
-import { RETAKE_MIGRATION_MESSAGE, resyncRetakesOf, syncRetakeScores, unlinkRetake } from '@/lib/server/retake';
+import { invalidMaxScoreMessage, isObjectiveQuestion, missingKeyMessage } from '@/lib/utils/autoGrade';
+import { isRetake, isRetakeOf, retakeIncludes, rosterFor } from '@/lib/utils/retake';
+import { RETAKE_MIGRATION_MESSAGE, noteRetakeSheetReset, resyncRetakesOf, syncRetakeScores, unlinkRetake, withHistoryEntry } from '@/lib/server/retake';
 import { personNameError, studentProfileError } from '@/lib/utils/studentName';
 import type {
   Assignment,
@@ -116,7 +116,7 @@ async function withTeacherAvatars<T extends { teachers?: ClassroomTeacher[] | nu
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
 const IN_CHUNK = 150;
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
-const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes', 'close_at'] as const;
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes', 'close_at', 'counts_toward_grade'] as const;
 const ATTACHMENTS_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการแนบหลายไฟล์ (ยังไม่มีคอลัมน์ attachments) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือแนบเพียง 1 รายการ';
 
@@ -142,6 +142,8 @@ function withCleanAttachments<T extends Partial<Assignment>>(data: T): T {
 function assertAttachmentsFit(row: Partial<Assignment>) {
   if ((row.attachments?.length || 0) > 1) throw new Error(ATTACHMENTS_MIGRATION_MESSAGE);
 }
+const COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE =
+  'ฐานข้อมูลยังไม่รองรับงานแบบ "ไม่นับคะแนน" (ยังไม่มีคอลัมน์ counts_toward_grade) กรุณารัน SQL ใน supabase_counts_toward_grade_update.sql ก่อน หรือเลือก "นับคะแนน"';
 const PUBLISH_AT_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการตั้งเวลาเผยแพร่ (ยังไม่มีคอลัมน์ publish_at) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือเลือก "เผยแพร่ทันที"';
 
@@ -1813,6 +1815,8 @@ export const dataActions = {
       const { retake_of: _of, retake_student_ids: _ids, ...plain } = assignmentData;
       assignmentData = plain;
     }
+    const scoreProblem = invalidMaxScoreMessage(questionsData);
+    if (scoreProblem) throw new HttpError(400, scoreProblem);
     // Published or scheduled work needs every choice / true-false key (a draft may wait).
     if (!isAssignmentDraft(assignmentData)) {
       const keyProblem = missingKeyMessage(questionsData);
@@ -1838,6 +1842,8 @@ export const dataActions = {
       // Dropping a requested publish time would release the work right away; refuse instead.
       if (column === 'publish_at' && row.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
       if (column === 'attachments') assertAttachmentsFit(row);
+      // Dropping "does not count" would quietly count the work; refuse instead.
+      if (column === 'counts_toward_grade' && row.counts_toward_grade === false) throw new HttpError(503, COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE);
       const { [column]: _unused, ...rest } = row;
       row = rest;
       ({ error } = await supabase.from('assignments').insert(row));
@@ -1910,6 +1916,7 @@ export const dataActions = {
       if (!error?.message?.includes(column)) continue;
       if (column === 'publish_at' && patch.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
       if (column === 'attachments') assertAttachmentsFit(patch);
+      if (column === 'counts_toward_grade' && patch.counts_toward_grade === false) throw new HttpError(503, COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE);
       const { [column]: _unused, ...others } = patch;
       patch = others;
       ({ data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle());
@@ -2010,6 +2017,8 @@ export const dataActions = {
     questionsData: Array<Omit<Question, 'assignment_id' | 'id'> & { id?: string }>
   ) {
     const { assignment } = await requireTeacherOfAssignment(supabase, actor, id);
+    const scoreProblem = invalidMaxScoreMessage(questionsData);
+    if (scoreProblem) throw new HttpError(400, scoreProblem);
     if (!isAssignmentDraft(assignment)) {
       const keyProblem = missingKeyMessage(questionsData);
       if (keyProblem) throw new HttpError(400, keyProblem);
@@ -2158,6 +2167,7 @@ export const dataActions = {
       sample_work_title: source.sample_work_title,
       sample_work_description: source.sample_work_description,
       group_name: source.group_name,
+      counts_toward_grade: source.counts_toward_grade,
     };
     const questions = ((questionsResult.data || []) as Question[]).map((q) => ({ ...q, indicator_id: undefined, indicator: undefined }));
     return { assignment, questions };
@@ -2468,13 +2478,27 @@ export const dataActions = {
       reopen_until: reopenUntil,
       updated_at: now,
     };
+    const current = sub as Submission;
+    if (isRetakeOf(assignment)) {
+      // The score this sheet wrote into the original quiz is given up there.
+      await noteRetakeSheetReset(supabase, assignment, submissionId, now);
+    } else if (isHandedIn(current) || current.total_score != null) {
+      // The grade book marks the cell สอบใหม่ and the export lists the score given up.
+      reset.score_history = withHistoryEntry(current, {
+        kind: 'reset',
+        previous_score: current.total_score ?? null,
+        previous_max: current.max_total_score ?? null,
+        previous_status: current.status,
+        at: now,
+      });
+    }
     // Older databases lack some of these columns: drop the missing one and try again.
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < 7; attempt++) {
       const { error } = await supabase.from('submissions').update(reset).eq('id', submissionId);
       if (!error) break;
       const missing = Object.keys(reset).find((column) => error.message.includes(column));
       if (/reopen(ed_at|_until)/.test(error.message)) throw new HttpError(503, REOPEN_MIGRATION_MESSAGE);
-      if (!missing || attempt === 5) throw toDatabaseError(error, 'submissions');
+      if (!missing || attempt === 6) throw toDatabaseError(error, 'submissions');
       const { [missing]: _dropped, ...rest } = reset;
       reset = rest;
     }

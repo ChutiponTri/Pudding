@@ -73,6 +73,9 @@ export function ClassworkRow({
       <Pill tone={retake ? 'amber' : assignment.is_exam ? 'sky' : 'emerald'} className="shrink-0">
         {retake ? tr('สอบซ่อม', 'Retake') : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : tr('การบ้าน', 'Homework')}
       </Pill>
+      {assignment.counts_toward_grade === false && (
+        <Pill tone="slate" className="shrink-0">{tr('ไม่นับคะแนน', "Doesn't count")}</Pill>
+      )}
     </span>
   );
 

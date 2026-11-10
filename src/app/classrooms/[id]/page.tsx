@@ -3,6 +3,10 @@
 import { announceNote } from '@/lib/utils/announceNote';
 import { usePageTitle } from '@/lib/hooks/usePageTitle';
 import { isRetakeOf, rosterSizeFor } from '@/lib/utils/retake';
+import { gradeCellOf, scoreMarkLabel, type GradeCell } from '@/lib/utils/scoreHistory';
+import { buildReports } from '@/lib/export/teacherReports';
+import { createXlsx, XLSX_MIME } from '@/lib/export/xlsx';
+import { downloadBlob } from '@/lib/storage/zip';
 import { useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { CreateWorkMenu } from '@/components/CreateWorkMenu';
@@ -54,7 +58,7 @@ function writeCategoryColors(classroomId: string, colors: Record<string, WorkCol
 }
 import { AssignmentGroupHeader, teacherGroupChips } from '@/components/AssignmentGroupHeader';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
-import { gradingCounts, isGraded, isHandedIn, isStudentSubmission, needsGrading, type GradingCounts } from '@/lib/utils/gradingStatus';
+import { gradingCounts, isStudentSubmission, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { roomLabel } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
@@ -1588,19 +1592,20 @@ export default function ClassroomWorkspacePage() {
   };
 
   // Export the grade book: one row per student, one column per assignment/quiz (in the order given)
+  /**
+   * The class grade book as Excel, built like the export page's: missing work
+   * reads 0 with its status, and สอบซ่อม / สอบใหม่ cells are coloured with a
+   * comment listing every earlier score.
+   */
   const exportGrades = () => {
     if (!classroom) return;
-    downloadCsv(`grades-${classroom.name}-${csvDateStamp()}.csv`, [
-      [tr('ชื่อ-นามสกุล', 'Full name'), tr('รหัสนักเรียน', 'Student ID'), ...gradeColumns.map((item) => `${item.is_exam ? tr('[ข้อสอบ] ', '[Exam] ') : tr('[งาน] ', '[Work] ')}${item.title} (${tr('เต็ม', 'out of')} ${item.total_points || 20})`), tr('คะแนนรวม', 'Total')],
-      ...(classroom.students || []).map((student) => {
-        const scores = gradeColumns.map((item) => {
-          const sub = findStudentSubmission(submissions, item.id, student);
-          return sub && isGraded(sub) ? sub.total_score ?? '-' : sub && needsGrading(sub) ? tr('รอตรวจ', 'To grade') : '-';
-        });
-        const total = scores.reduce<number>((sum, score) => sum + (typeof score === 'number' ? score : 0), 0);
-        return [`${student.first_name} ${student.last_name}`, student.student_id || '', ...scores, total];
-      }),
-    ]);
+    const sheets = buildReports(
+      { classrooms: [classroom], assignments, questions: [], submissions, answers: [], sessions: [], records: [] },
+      ['gradebook'],
+      language === 'th' ? 'th' : 'en'
+    );
+    // [0] is the all-classrooms summary; this tab needs the class sheet only.
+    downloadBlob(`grades-${classroom.name}-${csvDateStamp()}.xlsx`, createXlsx(sheets.slice(1)), XLSX_MIME);
   };
 
   // ----------------------------------------------------
@@ -2657,7 +2662,7 @@ export default function ClassroomWorkspacePage() {
                     className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Download className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{tr('ส่งออก CSV', 'Export CSV')}</span>
+                    <span>{tr('ส่งออก Excel', 'Export Excel')}</span>
                   </button>
                 </div>
               </div>
@@ -2694,29 +2699,11 @@ export default function ClassroomWorkspacePage() {
                           {student.first_name} {student.last_name}
                         </td>
                         <td className="p-3 text-slate-500 font-mono whitespace-nowrap">{student.student_id || '-'}</td>
-                        {gradeColumns.map((item) => {
-                          const sub = findStudentSubmission(submissions, item.id, student);
-                          return (
-                            <td key={item.id} className="p-3 text-center font-bold">
-                              {sub && isGraded(sub) && !isHandedIn(sub) ? (
-                                <span className="text-rose-600 dark:text-rose-400 font-black text-sm" title={tr('ไม่ส่งงาน', 'No submission')}>
-                                  {sub.total_score}
-                                  <span className="block text-[9px] font-bold opacity-80">{tr('ไม่ส่ง', 'none')}</span>
-                                </span>
-                              ) : sub && isGraded(sub) ? (
-                                <span className="text-emerald-600 dark:text-emerald-400 font-black text-sm">
-                                  {sub.total_score}
-                                </span>
-                              ) : sub && needsGrading(sub) ? (
-                                <span className="text-amber-500 text-[10px] bg-amber-50 dark:bg-amber-950 px-2 py-0.5 rounded-full font-bold">
-                                  {tr('รอตรวจ', 'To grade')}
-                                </span>
-                              ) : (
-                                <span className="text-slate-300">-</span>
-                              )}
-                            </td>
-                          );
-                        })}
+                        {gradeColumns.map((item) => (
+                          <td key={item.id} className="p-2 text-center font-bold">
+                            <GradeBookCell cell={gradeCellOf(findStudentSubmission(submissions, item.id, student), item, language === 'th' ? 'th' : 'en', nowMs)} />
+                          </td>
+                        ))}
                       </tr>
                     ))}
                   </tbody>
@@ -3145,6 +3132,39 @@ export default function ClassroomWorkspacePage() {
       )}
       <ActionToast toast={toast} onClose={hideToast} />
     </div>
+  );
+}
+
+/**
+ * One grade-book cell. สอบซ่อม (violet) and สอบใหม่ (sky) replace the score in
+ * place, labelled, with every earlier score on hover; missing, not yet handed
+ * in and to-grade work reads 0 with its status.
+ */
+function GradeBookCell({ cell }: { cell: GradeCell }) {
+  const { language } = useLanguage();
+  const lang = language === 'th' ? 'th' : 'en';
+  if (cell.tone === 'to_grade' && !cell.mark) {
+    return <span className="text-amber-600 dark:text-amber-400 text-[10px] bg-amber-50 dark:bg-amber-950 px-2 py-0.5 rounded-full font-bold">{cell.label}</span>;
+  }
+  if (cell.score === null && !cell.mark) return <span className="text-slate-300">-</span>;
+  const look = cell.mark === 'retake'
+    ? 'bg-violet-100 text-violet-800 ring-violet-300 dark:bg-violet-950/60 dark:text-violet-200 dark:ring-violet-800'
+    : cell.mark === 'reset'
+    ? 'bg-sky-100 text-sky-800 ring-sky-300 dark:bg-sky-950/60 dark:text-sky-200 dark:ring-sky-800'
+    : cell.tone === 'missing'
+    ? 'text-rose-600 dark:text-rose-400 ring-transparent'
+    : cell.tone === 'to_grade'
+    ? 'text-amber-600 dark:text-amber-400 ring-transparent'
+    : cell.tone === 'not_yet'
+    ? 'text-slate-400 dark:text-slate-500 ring-transparent'
+    : 'text-emerald-600 dark:text-emerald-400 ring-transparent';
+  const caption = [cell.mark ? scoreMarkLabel(cell.mark, lang) : null, cell.label].filter(Boolean).join(' · ');
+  const title = [caption, ...cell.history].filter(Boolean).join('\n') || undefined;
+  return (
+    <span title={title} className={`inline-flex flex-col items-center min-w-12 px-2 py-1 rounded-lg ring-1 ${look}`}>
+      <span className="font-black text-sm tabular-nums leading-tight">{cell.score ?? '–'}</span>
+      {caption && <span className="text-[9px] font-bold opacity-90 whitespace-nowrap leading-tight">{caption}</span>}
+    </span>
   );
 }
 

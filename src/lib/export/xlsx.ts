@@ -10,6 +10,17 @@ import { createZipBytes, type ZipEntry } from '@/lib/storage/zip';
 
 export type Cell = string | number | boolean | null | undefined;
 
+/** Background colours a body cell may get. */
+export type CellFill = 'violet' | 'sky' | 'rose' | 'amber' | 'slate';
+const FILLS: Record<CellFill, string> = { violet: 'FFEDE9FE', sky: 'FFE0F2FE', rose: 'FFFFE4E6', amber: 'FFFEF3C7', slate: 'FFF1F5F9' };
+const FILL_ORDER = Object.keys(FILLS) as CellFill[];
+
+/** A body cell's colour and/or comment (a note shown on hover in Excel / Google Sheets). */
+export interface CellMark {
+  fill?: CellFill;
+  comment?: string;
+}
+
 export interface Sheet {
   /** Sheet tab name (cleaned and made unique, max 31 characters). */
   name: string;
@@ -18,7 +29,11 @@ export interface Sheet {
   rows: Cell[][];
   /** Column widths in characters; guessed from the content when missing. */
   widths?: number[];
+  /** Body cells to colour or comment, keyed by markKey(rowIndex, columnIndex) (0-based within `rows`). */
+  marks?: Record<string, CellMark>;
 }
+
+export const markKey = (row: number, column: number) => `${row}:${column}`;
 
 /** Rows of objects → a sheet (columns from `columns`, or every key seen). Nested values become JSON. */
 export function sheetFromObjects(name: string, rows: Array<Record<string, unknown>>, columns?: string[]): Sheet {
@@ -58,11 +73,57 @@ const MAX_CELL = 32767;
 
 function cellXml(value: Cell, ref: string, style = 0) {
   const s = style ? ` s="${style}"` : '';
-  if (value === null || value === undefined || value === '') return '';
+  if (value === null || value === undefined || value === '') return style ? `<c r="${ref}"${s}/>` : '';
   if (typeof value === 'number') return Number.isFinite(value) ? `<c r="${ref}"${s}><v>${value}</v></c>` : '';
   if (typeof value === 'boolean') return `<c r="${ref}"${s} t="b"><v>${value ? 1 : 0}</v></c>`;
   const text = String(value).slice(0, MAX_CELL);
   return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEscape(text)}</t></is></c>`;
+}
+
+/** Cell style index: 0 plain, 1 header, 2… one per fill. */
+const fillStyle = (fill?: CellFill) => (fill ? 2 + FILL_ORDER.indexOf(fill) : 0);
+
+const commentsOf = (sheet: Sheet) =>
+  Object.entries(sheet.marks || {})
+    .filter(([, m]) => m.comment)
+    .map(([key, m]) => {
+      const [row, column] = key.split(':').map(Number);
+      return { row, column, text: m.comment! };
+    });
+
+function commentsXml(sheet: Sheet) {
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><authors><author>Pudding</author></authors><commentList>' +
+    commentsOf(sheet)
+      .map((c) => `<comment ref="${columnName(c.column)}${c.row + 2}" authorId="0"><text><r><t xml:space="preserve">${xmlEscape(c.text.slice(0, MAX_CELL))}</t></r></text></comment>`)
+      .join('') +
+    '</commentList></comments>'
+  );
+}
+
+/** Excel shows comments only with these legacy VML shapes (one per comment, hidden until hover). */
+function vmlXml(sheet: Sheet, sheetIndex: number) {
+  const shapes = commentsOf(sheet)
+    .map((c, i) => {
+      const r = c.row + 1; // 0-based sheet row (the header is row 0)
+      const lines = Math.min(12, c.text.split('\n').length + 1);
+      return (
+        `<v:shape id="_x0000_s${(sheetIndex + 1) * 1024 + i + 1}" type="#_x0000_t202" style="position:absolute;margin-left:60pt;margin-top:2pt;width:220pt;height:${lines * 14}pt;z-index:${i + 1};visibility:hidden" fillcolor="#ffffe1" o:insetmode="auto">` +
+        '<v:fill color2="#ffffe1"/><v:shadow on="t" color="black" obscured="t"/><v:path o:connecttype="none"/>' +
+        '<v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>' +
+        `<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/><x:Anchor>${c.column + 1}, 15, ${r}, 2, ${c.column + 4}, 15, ${r + lines}, 4</x:Anchor>` +
+        `<x:AutoFill>False</x:AutoFill><x:Row>${r}</x:Row><x:Column>${c.column}</x:Column></x:ClientData></v:shape>`
+      );
+    })
+    .join('');
+  return (
+    '<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+    `<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="${sheetIndex + 1}"/></o:shapelayout>` +
+    '<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>' +
+    shapes +
+    '</xml>'
+  );
 }
 
 function sheetXml(sheet: Sheet) {
@@ -77,16 +138,17 @@ function sheetXml(sheet: Sheet) {
   const cols = `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`;
   const header = `<row r="1">${sheet.header.map((h, i) => cellXml(h, `${columnName(i)}1`, 1)).join('')}</row>`;
   const body = sheet.rows
-    .map((row, r) => `<row r="${r + 2}">${row.map((v, i) => cellXml(v, `${columnName(i)}${r + 2}`)).join('')}</row>`)
+    .map((row, r) => `<row r="${r + 2}">${row.map((v, i) => cellXml(v, `${columnName(i)}${r + 2}`, fillStyle(sheet.marks?.[markKey(r, i)]?.fill))).join('')}</row>`)
     .join('');
   const lastRef = `${columnName(columnCount - 1)}${sheet.rows.length + 1}`;
   return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
     '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
     cols +
     `<sheetData>${header}${body}</sheetData>` +
     (sheet.header.length ? `<autoFilter ref="A1:${lastRef}"/>` : '') +
+    (commentsOf(sheet).length ? '<legacyDrawing r:id="rId2"/>' : '') +
     '</worksheet>'
   );
 }
@@ -110,15 +172,18 @@ export function createXlsx(sheets: Sheet[]): Uint8Array {
   const enc = new TextEncoder();
   const file = (name: string, text: string): ZipEntry => ({ name, data: enc.encode(text) });
   const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  const commented = list.map((sheet, i) => (commentsOf(sheet).length ? i : -1)).filter((i) => i >= 0);
   return createZipBytes([
     file(
       '[Content_Types].xml',
       `${xml}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
         '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>' +
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
         '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
         list.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('') +
+        commented.map((i) => `<Override PartName="/xl/comments${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`).join('') +
         '</Types>'
     ),
     file(
@@ -153,16 +218,32 @@ export function createXlsx(sheets: Sheet[]): Uint8Array {
       'xl/styles.xml',
       `${xml}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
         '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
-        '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
-        '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+        `<fills count="${3 + FILL_ORDER.length}">` +
+        '<fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+        '<fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill>' +
+        FILL_ORDER.map((f) => `<fill><patternFill patternType="solid"><fgColor rgb="${FILLS[f]}"/><bgColor indexed="64"/></patternFill></fill>`).join('') +
+        '</fills>' +
         '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-        '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
-        '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>' +
+        `<cellXfs count="${2 + FILL_ORDER.length}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+        '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+        FILL_ORDER.map((_, i) => `<xf numFmtId="0" fontId="0" fillId="${3 + i}" borderId="0" xfId="0" applyFill="1"/>`).join('') +
+        '</cellXfs>' +
         '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
         '</styleSheet>'
     ),
     ...list.map((sheet, i) => file(`xl/worksheets/sheet${i + 1}.xml`, sheetXml(sheet))),
+    ...commented.flatMap((i) => [
+      file(
+        `xl/worksheets/_rels/sheet${i + 1}.xml.rels`,
+        `${xml}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+          `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments${i + 1}.xml"/>` +
+          `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing${i + 1}.vml"/>` +
+          '</Relationships>'
+      ),
+      file(`xl/comments${i + 1}.xml`, commentsXml(list[i])),
+      file(`xl/drawings/vmlDrawing${i + 1}.vml`, vmlXml(list[i], i)),
+    ]),
   ]);
 }
 

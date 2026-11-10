@@ -100,3 +100,18 @@ export function missingKeyMessage(questions: Array<Pick<Question, 'type' | 'idea
   const missing = questionsMissingKey(questions);
   return missing.length ? `ข้อ ${missing.join(', ')} ยังไม่ได้เลือกคำตอบที่ถูกต้อง กรุณาเลือกก่อนเผยแพร่ (บันทึกเป็นฉบับร่างได้)` : null;
 }
+
+/** A full score below 0 (or not a number) is refused everywhere a question is saved. */
+export function invalidMaxScoreMessage(questions: Array<Pick<Question, 'max_score'>>): string | null {
+  const bad = questions
+    .map((q, i) => ({ i, v: Number(q.max_score) }))
+    .filter(({ v }) => !Number.isFinite(v) || v < 0)
+    .map(({ i }) => i + 1);
+  return bad.length ? `ข้อ ${bad.join(', ')} คะแนนเต็มต้องไม่ติดลบ` : null;
+}
+
+/** A typed full score, never below 0. */
+export function nonNegativeScore(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}

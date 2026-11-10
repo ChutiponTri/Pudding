@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Check, Search, X } from 'lucide-react';
+import { Check, ChevronRight, Search, Users, X } from 'lucide-react';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
@@ -103,9 +103,28 @@ export function StudentPickerSheet({
 export function StudentPickLink({ total, excludedCount, onClick }: { total: number; excludedCount: number; onClick: () => void }) {
   const { tr } = useLanguage();
   const chosen = Math.max(0, total - excludedCount);
+  const everyone = excludedCount === 0;
+  // A real button (not a text link): who takes the quiz is easy to miss otherwise.
   return (
-    <button type="button" onClick={onClick} className="text-[11px] font-bold text-slate-500 dark:text-slate-400 underline underline-offset-2 decoration-dotted hover:text-amber-600 cursor-pointer">
-      {excludedCount === 0 ? tr(`ทำได้ทุกคน (${total} คน) · เลือกนักเรียน`, `Everyone (${total}) · choose students`) : tr(`เฉพาะ ${chosen}/${total} คน · แก้ไข`, `Only ${chosen}/${total} · edit`)}
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full sm:w-auto min-h-11 inline-flex items-center gap-2.5 px-3 py-2 rounded-xl border-2 text-left text-xs font-bold cursor-pointer transition-colors ${
+        everyone
+          ? 'border-dashed border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/70'
+          : 'border-amber-500 bg-amber-500 text-slate-950 hover:bg-amber-400'
+      }`}
+    >
+      <Users className="w-4 h-4 shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block leading-tight">
+          {everyone ? tr(`นักเรียนที่ทำ: ทุกคน (${total} คน)`, `Who takes it: everyone (${total})`) : tr(`นักเรียนที่ทำ: ${chosen}/${total} คน`, `Who takes it: ${chosen}/${total}`)}
+        </span>
+        <span className={`block text-[10px] font-semibold leading-tight ${everyone ? 'text-amber-700 dark:text-amber-300' : 'text-slate-900/70'}`}>
+          {everyone ? tr('แตะเพื่อเลือกเฉพาะบางคน', 'Tap to choose only some students') : tr('แตะเพื่อแก้ไขรายชื่อ', 'Tap to edit the list')}
+        </span>
+      </span>
+      <ChevronRight className="w-4 h-4 shrink-0 opacity-70" />
     </button>
   );
 }

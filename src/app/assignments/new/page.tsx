@@ -12,7 +12,7 @@ import { Assignment, AssignmentAttachment, Course, Classroom, LearningIndicator,
 import { isRetake, isRetakeOf } from '@/lib/utils/retake';
 import { StudentPickLink, StudentPickerSheet } from '@/components/StudentPickerSheet';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
-import { matchChoiceOption } from '@/lib/utils/autoGrade';
+import { matchChoiceOption, nonNegativeScore } from '@/lib/utils/autoGrade';
 import { DateTimeField } from '@/components/DateTimeField';
 import { Collapse } from '@/components/Collapse';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
@@ -239,6 +239,8 @@ function NewAssignmentContent() {
   })();
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
+  // false = "ไม่นับคะแนน": students still see the score; the grade book lists it without adding it to the total / percent.
+  const [countsTowardGrade, setCountsTowardGrade] = useState(true);
   /** Quiz: students unticked per classroom (empty = everyone in it takes the quiz). */
   const [excludedByClass, setExcludedByClass] = useState<Record<string, string[]>>({});
   const [rosters, setRosters] = useState<Record<string, User[]>>({});
@@ -511,6 +513,7 @@ function NewAssignmentContent() {
           );
           setTitle(assignment.title || '');
           setGroupName(assignment.group_name || '');
+          setCountsTowardGrade(assignment.counts_toward_grade !== false);
           setDescription(assignment.description || '');
           // A copy can't start with a deadline that has already passed.
           const dueMs = assignment.due_date ? new Date(assignment.due_date).getTime() : NaN;
@@ -575,7 +578,7 @@ function NewAssignmentContent() {
               options,
               ideal_answer: idealAnswer,
               rubric_criteria: q.rubric_criteria || '',
-              max_score: Number(q.max_score) || defaultMaxScore(q.type),
+              max_score: nonNegativeScore(q.max_score) || defaultMaxScore(q.type),
               is_required: q.is_required !== false,
               };
             }));
@@ -921,7 +924,7 @@ function NewAssignmentContent() {
         alert(language === 'th' ? 'กรุณากำหนดแผนการสอน/สมรรถนะก่อนสร้างงาน' : 'Please configure competency lesson plans before creating an assignment');
         return;
       }
-      const totalPoints = questions.reduce((acc, q) => acc + Number(q.max_score || 0), 0);
+      const totalPoints = questions.reduce((acc, q) => acc + (nonNegativeScore(q.max_score) || defaultMaxScore(q.type)), 0);
 
       const questionRows = questions.map((q) => ({
         type: q.type,
@@ -933,7 +936,7 @@ function NewAssignmentContent() {
           : q.ideal_answer,
         // Choice and true/false are scored from the key alone.
         rubric_criteria: q.type === 'multiple_choice' || q.type === 'true_false' ? '' : q.rubric_criteria,
-        max_score: Number(q.max_score) || defaultMaxScore(q.type),
+        max_score: nonNegativeScore(q.max_score) || defaultMaxScore(q.type),
         is_required: isExam ? true : q.is_required,
       }));
       // Upload picked files first: if one fails, nothing is saved and the
@@ -1006,6 +1009,7 @@ function NewAssignmentContent() {
           group_name: groupName.trim(),
           description,
           is_exam: isExam,
+          ...(retake || countsTowardGrade === (editingAssignment.counts_toward_grade !== false) ? {} : { counts_toward_grade: countsTowardGrade }),
           due_date: dueDate || editingAssignment.due_date,
           close_at: isExam ? null : closeAt || null,
           ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
@@ -1035,6 +1039,7 @@ function NewAssignmentContent() {
           if (dueDate && new Date(dueDate).getTime() !== new Date(before.due_date).getTime()) changed.due_date = dueDate;
           if ((isExam ? null : closeAt || null) !== (before.close_at || null)) changed.close_at = isExam ? null : closeAt || null;
           if (isExam !== !!before.is_exam) changed.is_exam = isExam;
+          if (!retake && countsTowardGrade !== (before.counts_toward_grade !== false)) changed.counts_toward_grade = countsTowardGrade;
           if (isExam && quizMinutesValue !== Number(before.quiz_duration_minutes)) changed.quiz_duration_minutes = quizMinutesValue;
           const sameQuestion = (a: Pick<Question, 'type' | 'question_text'>, b: Pick<Question, 'type' | 'question_text'>) =>
             a.type === b.type && (a.question_text || '').trim() === (b.question_text || '').trim();
@@ -1081,6 +1086,7 @@ function NewAssignmentContent() {
             group_name: groupName.trim() || undefined,
             description,
             is_exam: isExam,
+            ...(!retake && !countsTowardGrade ? { counts_toward_grade: false } : {}),
             due_date: dueDate || daysFromNowAt(7, 23, 59),
             ...(!isExam && closeAt ? { close_at: closeAt } : {}),
             ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
@@ -1536,6 +1542,38 @@ function NewAssignmentContent() {
               )}
             </div>
 
+            {/* Counts toward the grade (a retake follows its original quiz) */}
+            {!retake && (
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">{tr('การนับคะแนน', 'Grading')}</span>
+                <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+                  {([
+                    [true, tr('นับคะแนน', 'Counts')],
+                    [false, tr('ไม่นับคะแนน', "Doesn't count")],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={String(value)}
+                      type="button"
+                      aria-pressed={countsTowardGrade === value}
+                      onClick={() => setCountsTowardGrade(value)}
+                      className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        countsTowardGrade === value
+                          ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  {countsTowardGrade
+                    ? tr('รวมในคะแนนรวมและร้อยละของสมุดคะแนน', 'Included in the grade book total and percent')
+                    : tr('นักเรียนยังเห็นคะแนนและคำติชม • ไฟล์ Excel แสดงคะแนน แต่ไม่รวมในคะแนนรวมและร้อยละ', 'Students still see the score and feedback • Excel shows the score but leaves it out of the total and percent')}
+                </p>
+              </div>
+            )}
+
             {/* Description */}
             <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -1768,11 +1806,13 @@ function NewAssignmentContent() {
             {/* Due Date (homework) / minutes to do it after publishing (quiz) */}
             {isExam ? (
             <div className="space-y-2">
-              <label htmlFor="quiz-minutes" className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-amber-500" />
-                <span><MobileText short={tr('เวลาทำข้อสอบ', 'Quiz time')} full={tr('เวลาทำข้อสอบ (นับจากเผยแพร่)', 'Time to do the quiz (from publishing)')} /></span>
+              <label htmlFor="quiz-minutes" className="text-xs font-bold text-slate-700 dark:text-slate-300 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><Clock className="w-3.5 h-3.5 text-amber-500 self-center" />{tr('เวลาทำข้อสอบ', 'Quiz time')}</span>
+                <span className="text-[11px] font-semibold text-slate-400 whitespace-nowrap">{tr('(นับจากเผยแพร่)', '(from publishing)')}</span>
               </label>
-              <div className="flex flex-wrap gap-1.5">
+              {/* Even rows at every width: 4 per row when narrow, all 8 in one row when there is room. */}
+              <div className="@container">
+              <div className="grid grid-cols-4 @md:grid-cols-8 gap-1.5">
                 {QUIZ_MINUTE_PRESETS.map((minutes) => {
                   const active = quizMinutesValue === minutes;
                   return (
@@ -1781,7 +1821,7 @@ function NewAssignmentContent() {
                       type="button"
                       onClick={() => setQuizMinutes(String(minutes))}
                       aria-pressed={active}
-                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-colors cursor-pointer ${
+                      className={`px-1 py-1.5 rounded-lg border text-[11px] font-bold whitespace-nowrap text-center transition-colors cursor-pointer ${
                         active
                           ? 'bg-amber-500 border-amber-500 text-slate-950'
                           : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-amber-400'
@@ -1791,6 +1831,7 @@ function NewAssignmentContent() {
                     </button>
                   );
                 })}
+              </div>
               </div>
               <div className="relative max-w-48">
                 <input
@@ -1822,10 +1863,10 @@ function NewAssignmentContent() {
               </p>
               {/* Who takes it: everyone by default; untick some in the popup (per classroom). */}
               {!retake && (
-                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 pt-1">
                   {selectedClassroomIds.filter((id) => rosters[id]?.length).map((id) => (
-                    <span key={id} className="inline-flex items-center gap-1">
-                      {selectedClassroomIds.length > 1 && <span className="text-[11px] text-slate-400">{classrooms.find((c) => c.id === id)?.name}:</span>}
+                    <span key={id} className="flex flex-col gap-1 sm:w-auto">
+                      {selectedClassroomIds.length > 1 && <span className="text-[11px] font-bold text-slate-500">{classrooms.find((c) => c.id === id)?.name}</span>}
                       <StudentPickLink
                         total={rosters[id].length}
                         excludedCount={(excludedByClass[id] || []).filter((x) => rosters[id].some((st) => st.id === x)).length}
@@ -2003,11 +2044,14 @@ function NewAssignmentContent() {
                       </span>
                       <input
                         type="number"
-                        min="1"
+                        min="0"
                         max="50"
                         value={q.max_score}
+                        onKeyDown={(e) => {
+                          if (e.key === '-' || e.key === 'e' || e.key === 'E') e.preventDefault();
+                        }}
                         onChange={(e) =>
-                          handleQuestionChange(idx, 'max_score', Number(e.target.value))
+                          handleQuestionChange(idx, 'max_score', nonNegativeScore(e.target.value))
                         }
                         className="w-16 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center font-bold text-slate-900 dark:text-white"
                       />

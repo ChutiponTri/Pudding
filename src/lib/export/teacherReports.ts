@@ -1,9 +1,10 @@
 import type { Assignment, Classroom, Question, Submission, SubmissionAnswer, User } from '@/types/database';
-import type { Cell, Sheet } from '@/lib/export/xlsx';
+import { markKey, type Cell, type CellMark, type Sheet } from '@/lib/export/xlsx';
 import { classroomTitle, roomLabel, subjectTitle } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { isRetakeOf } from '@/lib/utils/retake';
+import { gradeCellOf, scoreMarkLabel, type GradeCell } from '@/lib/utils/scoreHistory';
 import { isGraded, isHandedIn, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
@@ -31,6 +32,8 @@ type Lang = 'th' | 'en';
 const t = (lang: Lang, th: string, en: string) => (lang === 'th' ? th : en);
 const fullName = (s?: Partial<User>) => `${s?.first_name || ''} ${s?.last_name || ''}`.trim() || s?.name || '-';
 const pointsOf = (a: Assignment) => a.total_points || 20;
+/** "ไม่นับคะแนน" work: listed with its score, left out of totals and percent. */
+const countsTowardGrade = (a: Assignment) => a.counts_toward_grade !== false;
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const when = (iso: string | null | undefined, lang: Lang) => (iso ? formatDateTime(iso, lang) : '');
 
@@ -76,28 +79,43 @@ function statusText(sub: Submission | undefined, a: Assignment, lang: Lang) {
   return sub.status === 'late' ? t(lang, 'ส่งช้า', 'Late') : t(lang, 'ส่งตรงเวลา', 'On time');
 }
 
+/**
+ * A grade-book cell's colour and comment: สอบซ่อม violet, สอบใหม่ sky (the
+ * comment lists every earlier score, oldest first); otherwise ไม่ส่ง rose,
+ * รอตรวจ amber, ยังไม่ส่ง grey, with the status as the comment.
+ */
+export function gradeCellMark(cell: GradeCell, lang: Lang): CellMark | null {
+  const lines = [
+    ...(cell.mark ? [`${scoreMarkLabel(cell.mark, lang)}${cell.label ? ` · ${cell.label}` : ''}`] : cell.label ? [cell.label] : []),
+    ...cell.history,
+  ];
+  const fill = cell.mark === 'retake' ? 'violet' : cell.mark === 'reset' ? 'sky' : cell.tone === 'missing' ? 'rose' : cell.tone === 'to_grade' ? 'amber' : cell.tone === 'not_yet' ? 'slate' : undefined;
+  if (!fill && !lines.length) return null;
+  return { fill, comment: lines.length ? lines.join('\n') : undefined };
+}
+
 function gradebook(data: ExportData, lang: Lang): Sheet[] {
   const byAssignment = submissionsByAssignment(data);
   const summary: Cell[][] = [];
   const sheets = data.classrooms.map((c) => {
     const work = workOf(data, c.id);
-    const maxTotal = work.reduce((sum, a) => sum + pointsOf(a), 0);
-    const rows = studentsOf(c).map((student) => {
+    const maxTotal = work.reduce((sum, a) => sum + (countsTowardGrade(a) ? pointsOf(a) : 0), 0);
+    const marks: Record<string, CellMark> = {};
+    const rows = studentsOf(c).map((student, rowIndex) => {
       let total = 0;
       let missing = 0;
       let toGrade = 0;
-      const cells = work.map((a): Cell => {
+      const cells = work.map((a, workIndex): Cell => {
         const sub = findSub(byAssignment, a.id, student);
+        // Missing and not yet handed in read as 0; to-grade stays empty. The status is the cell's colour and comment.
+        const cell = gradeCellOf(sub, a, lang);
         if (sub && isGraded(sub)) {
-          total += Number(sub.total_score) || 0;
-          return Number(sub.total_score);
-        }
-        if (sub && needsGrading(sub)) {
-          toGrade++;
-          return t(lang, 'รอตรวจ', 'To grade');
-        }
-        if (!getAssignmentWindow(a).acceptsSubmissions) missing++;
-        return getAssignmentWindow(a).acceptsSubmissions ? '' : t(lang, 'ไม่ส่ง', 'Missing');
+          if (countsTowardGrade(a)) total += Number(sub.total_score) || 0;
+        } else if (cell.tone === 'to_grade') toGrade++;
+        else if (cell.tone === 'missing') missing++;
+        const mark = gradeCellMark(cell, lang);
+        if (mark) marks[markKey(rowIndex, 2 + workIndex)] = mark;
+        return cell.score;
       });
       total = round1(total);
       const percent = maxTotal ? round1((total / maxTotal) * 100) : null;
@@ -109,7 +127,10 @@ function gradebook(data: ExportData, lang: Lang): Sheet[] {
       header: [
         t(lang, 'รหัสนักเรียน', 'Student ID'),
         t(lang, 'ชื่อ-นามสกุล', 'Full name'),
-        ...work.map((a) => `${a.is_exam ? t(lang, '[ข้อสอบ] ', '[Exam] ') : ''}${a.title} (${t(lang, 'เต็ม', 'of')} ${pointsOf(a)})`),
+        ...work.map(
+          (a) =>
+            `${a.is_exam ? t(lang, '[ข้อสอบ] ', '[Exam] ') : ''}${a.title} (${t(lang, 'เต็ม', 'of')} ${pointsOf(a)})${countsTowardGrade(a) ? '' : t(lang, ' [ไม่นับคะแนน]', " [doesn't count]")}`
+        ),
         t(lang, 'คะแนนรวม', 'Total'),
         t(lang, 'คะแนนเต็ม', 'Max'),
         t(lang, 'ร้อยละ', 'Percent'),
@@ -118,6 +139,7 @@ function gradebook(data: ExportData, lang: Lang): Sheet[] {
       ],
       rows,
       widths: [14, 26, ...work.map(() => 14), 10, 10, 8, 10, 10],
+      marks,
     } satisfies Sheet;
   });
   return [
@@ -204,24 +226,29 @@ function submissionLog(data: ExportData, lang: Lang): Sheet {
   const nameById = new Map<string, string>();
   for (const c of data.classrooms) for (const s of c.students || []) nameById.set(s.id, fullName(s));
   const rows: Cell[][] = [];
+  const marks: Record<string, CellMark> = {};
   for (const c of data.classrooms) {
     for (const a of workOf(data, c.id)) {
       for (const student of studentsOf(c)) {
         const sub = findSub(byAssignment, a.id, student);
+        const cell = gradeCellOf(sub, a, lang);
+        const mark = gradeCellMark(cell, lang);
+        // Column 9 = score.
+        if (mark) marks[markKey(rows.length, 9)] = mark;
         rows.push([
           classroomTitle(c),
           a.group_name || '',
           a.title,
-          a.is_exam ? t(lang, 'ข้อสอบ', 'Exam') : t(lang, 'งาน', 'Work'),
+          (a.is_exam ? t(lang, 'ข้อสอบ', 'Exam') : t(lang, 'งาน', 'Work')) + (countsTowardGrade(a) ? '' : t(lang, ' (ไม่นับคะแนน)', " (doesn't count)")),
           when(getAssignmentWindow(a).deadline ? new Date(getAssignmentWindow(a).deadline!).toISOString() : a.due_date, lang),
           student.student_id || '',
           fullName(student),
           statusText(sub, a, lang),
           when(sub && isHandedIn(sub) ? sub.submitted_at : null, lang),
-          sub && isGraded(sub) ? Number(sub.total_score) : null,
+          cell.score,
           pointsOf(a),
           (sub && needsGrading(sub) ? t(lang, 'รอตรวจ', 'To grade') : sub && isGraded(sub) ? t(lang, 'ตรวจแล้ว', 'Graded') : '') +
-            (sub?.retake_submission_id ? t(lang, ' (คะแนนสอบซ่อม)', ' (retake score)') : ''),
+            (cell.mark ? ` (${scoreMarkLabel(cell.mark, lang)})` : ''),
           sub?.reopened_at ? t(lang, 'เปิดให้แก้ไขอยู่', 'Editing allowed') : '',
           sub?.submitted_by ? nameById.get(sub.submitted_by) || sub.submitted_by : '',
           a.is_exam && sub ? sub.tab_switch_count || 0 : null,
@@ -243,6 +270,7 @@ function submissionLog(data: ExportData, lang: Lang): Sheet {
       t(lang, 'ส่งจากเครื่องของ', 'Sent from phone of'), t(lang, 'ออกจากจอ (ครั้ง)', 'Left screen'), t(lang, 'ความผิดปกติ', 'Integrity'),
     ],
     rows,
+    marks,
   };
 }
 

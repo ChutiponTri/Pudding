@@ -1,6 +1,6 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Assignment, Submission } from '@/types/database';
+import type { Assignment, ScoreHistoryEntry, Submission } from '@/types/database';
 import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { isRetake, scaleRetakeScore } from '@/lib/utils/retake';
 
@@ -15,7 +15,8 @@ export const RETAKE_MIGRATION_MESSAGE = 'ฐานข้อมูลยังไ
 
 type Supabase = SupabaseClient;
 type RetakeSub = Pick<Submission, 'id' | 'student_id' | 'status' | 'total_score' | 'max_total_score' | 'submitted_at'>;
-type OriginalRow = Pick<Submission, 'id' | 'student_id' | 'status' | 'total_score' | 'max_total_score' | 'submitted_at' | 'retake_submission_id' | 'retake_previous'>;
+type OriginalRow = Pick<Submission, 'id' | 'student_id' | 'status' | 'total_score' | 'max_total_score' | 'submitted_at' | 'retake_submission_id' | 'retake_previous' | 'score_history'>;
+const ORIGINAL_COLUMNS = 'id, student_id, status, total_score, max_total_score, submitted_at, retake_submission_id, retake_previous';
 
 const IN_CHUNK = 100;
 function chunk<T>(items: T[], size = IN_CHUNK): T[][] {
@@ -29,8 +30,43 @@ function fail(error: { message: string }): never {
   throw new Error(error.message);
 }
 
+/** Databases without submissions.score_history (supabase_score_history_update.sql) still work, without the history. */
+const missingHistory = (error: { message: string } | null) => !!error && /score_history/.test(error.message);
+
+/** Original rows of these students, with score_history when the column exists. */
+async function originalRowsOf(supabase: Supabase, originalId: string, filter: { column: 'student_id' | 'retake_submission_id'; values: string[] }) {
+  const rows: OriginalRow[] = [];
+  let columns = `${ORIGINAL_COLUMNS}, score_history`;
+  for (const part of chunk(filter.values)) {
+    let { data, error } = await supabase.from('submissions').select(columns).eq('assignment_id', originalId).in(filter.column, part);
+    if (missingHistory(error)) {
+      columns = ORIGINAL_COLUMNS;
+      ({ data, error } = await supabase.from('submissions').select(columns).eq('assignment_id', originalId).in(filter.column, part));
+    }
+    if (error) fail(error);
+    rows.push(...((data || []) as unknown as OriginalRow[]));
+  }
+  return rows;
+}
+
+/** Updates a submission; score_history is dropped when the database has no such column. */
+export async function updateSubmissionRow(supabase: Supabase, id: string, patch: Record<string, unknown>) {
+  let { error } = await supabase.from('submissions').update(patch).eq('id', id);
+  if (missingHistory(error) && 'score_history' in patch) {
+    const { score_history: _unused, ...rest } = patch;
+    ({ error } = await supabase.from('submissions').update(rest).eq('id', id));
+  }
+  if (error) fail(error);
+}
+
+/** The row's history with one more entry at the end. */
+export const withHistoryEntry = (row: Pick<Submission, 'score_history'>, entry: ScoreHistoryEntry): ScoreHistoryEntry[] => [
+  ...(Array.isArray(row.score_history) ? row.score_history : []),
+  entry,
+];
+
 /** Puts an original row back the way it was before a retake replaced its score. */
-async function restore(supabase: Supabase, row: OriginalRow) {
+async function restore(supabase: Supabase, row: OriginalRow, droppedRetakeId?: string) {
   const previous = row.retake_previous;
   if (!previous) {
     // The row only existed for the retake (the student had no row on the original quiz).
@@ -38,18 +74,18 @@ async function restore(supabase: Supabase, row: OriginalRow) {
     if (error) fail(error);
     return;
   }
-  const { error } = await supabase
-    .from('submissions')
-    .update({
-      status: previous.status,
-      total_score: previous.total_score ?? null,
-      max_total_score: previous.max_total_score ?? null,
-      submitted_at: previous.submitted_at ?? null,
-      retake_submission_id: null,
-      retake_previous: null,
-    })
-    .eq('id', row.id);
-  if (error) fail(error);
+  await updateSubmissionRow(supabase, row.id, {
+    status: previous.status,
+    total_score: previous.total_score ?? null,
+    max_total_score: previous.max_total_score ?? null,
+    submitted_at: previous.submitted_at ?? null,
+    retake_submission_id: null,
+    retake_previous: null,
+    // A deleted retake leaves no trace in the history; a reopened retake sheet keeps its entries.
+    ...(droppedRetakeId && Array.isArray(row.score_history)
+      ? { score_history: row.score_history.filter((e) => !(e.kind === 'retake' && e.source_id === droppedRetakeId)) }
+      : {}),
+  });
 }
 
 /**
@@ -83,16 +119,7 @@ export async function syncRetakeScores(supabase: Supabase, retake: Assignment, s
   if (originalError) fail(originalError);
   if (!original || !subs.length) return;
 
-  const originalRows: OriginalRow[] = [];
-  for (const part of chunk([...new Set(subs.map((s) => s.student_id))])) {
-    const { data, error } = await supabase
-      .from('submissions')
-      .select('id, student_id, status, total_score, max_total_score, submitted_at, retake_submission_id, retake_previous')
-      .eq('assignment_id', originalId)
-      .in('student_id', part);
-    if (error) fail(error);
-    originalRows.push(...((data || []) as OriginalRow[]));
-  }
+  const originalRows = await originalRowsOf(supabase, originalId, { column: 'student_id', values: [...new Set(subs.map((s) => s.student_id))] });
   const rowOf = new Map(originalRows.map((r) => [r.student_id, r]));
   const originalMax = Number(original.total_points) || 20;
   const retakeMax = Number(retake.total_points) || 20;
@@ -104,9 +131,16 @@ export async function syncRetakeScores(supabase: Supabase, retake: Assignment, s
       continue;
     }
     const score = scaleRetakeScore(sub.total_score, Number(sub.max_total_score) || retakeMax, originalMax);
+    const entry: ScoreHistoryEntry = {
+      kind: 'retake',
+      previous_score: row?.total_score ?? null,
+      previous_max: row?.max_total_score ?? null,
+      previous_status: row?.status ?? 'none',
+      at: sub.submitted_at || new Date().toISOString(),
+      source_id: retake.id,
+    };
     if (!row) {
-      const { error } = await supabase.from('submissions').upsert(
-        {
+      const fresh = {
           id: `sub-${originalId}-${sub.student_id}`,
           assignment_id: originalId,
           student_id: sub.student_id,
@@ -121,17 +155,19 @@ export async function syncRetakeScores(supabase: Supabase, retake: Assignment, s
           max_total_score: originalMax,
           retake_submission_id: sub.id,
           retake_previous: null,
-        },
-        { onConflict: 'assignment_id,student_id' }
-      );
+          score_history: [entry],
+        };
+      let { error } = await supabase.from('submissions').upsert(fresh, { onConflict: 'assignment_id,student_id' });
+      if (missingHistory(error)) {
+        const { score_history: _unused, ...rest } = fresh;
+        ({ error } = await supabase.from('submissions').upsert(rest, { onConflict: 'assignment_id,student_id' }));
+      }
       if (error) fail(error);
       continue;
     }
     const linked = !!row.retake_submission_id;
     const handedInBefore = isHandedIn(row.retake_previous || row);
-    const { error } = await supabase
-      .from('submissions')
-      .update({
+    await updateSubmissionRow(supabase, row.id, {
         total_score: score,
         max_total_score: originalMax,
         // Work recorded as "no submission" now counts as handed in (by the retake).
@@ -141,9 +177,9 @@ export async function syncRetakeScores(supabase: Supabase, retake: Assignment, s
         ...(linked
           ? {}
           : { retake_previous: { status: row.status, total_score: row.total_score ?? null, max_total_score: row.max_total_score ?? null, submitted_at: row.submitted_at ?? null } }),
-      })
-      .eq('id', row.id);
-    if (error) fail(error);
+        // A retake sheet linked for the first time (or after a re-sit) adds the score it replaced.
+        ...(row.retake_submission_id === sub.id ? {} : { score_history: withHistoryEntry(row, entry) }),
+      });
   }
 }
 
@@ -153,15 +189,28 @@ export async function unlinkRetake(supabase: Supabase, retake: Pick<Assignment, 
   const { data: subs, error } = await supabase.from('submissions').select('id').eq('assignment_id', retake.id);
   if (error) fail(error);
   const ids = (subs || []).map((s) => s.id as string);
-  for (const part of chunk(ids)) {
-    const { data, error: rowsError } = await supabase
-      .from('submissions')
-      .select('id, student_id, status, total_score, max_total_score, submitted_at, retake_submission_id, retake_previous')
-      .eq('assignment_id', retake.retake_of)
-      .in('retake_submission_id', part);
-    if (rowsError) fail(rowsError);
-    for (const row of (data || []) as OriginalRow[]) await restore(supabase, row);
-  }
+  const rows = await originalRowsOf(supabase, retake.retake_of, { column: 'retake_submission_id', values: ids });
+  for (const row of rows) await restore(supabase, row, retake.id);
+}
+
+/**
+ * ให้สอบใหม่ on a retake sheet: the original quiz's row, whose score that
+ * sheet wrote, records the score being given up (before the restore).
+ */
+export async function noteRetakeSheetReset(supabase: Supabase, retake: Pick<Assignment, 'id' | 'retake_of' | 'retake_student_ids'>, retakeSubmissionId: string, at: string) {
+  if (!isRetake(retake) || !retake.retake_of) return;
+  const [row] = await originalRowsOf(supabase, retake.retake_of, { column: 'retake_submission_id', values: [retakeSubmissionId] });
+  if (!row) return;
+  await updateSubmissionRow(supabase, row.id, {
+    score_history: withHistoryEntry(row, {
+      kind: 'reset',
+      previous_score: row.total_score ?? null,
+      previous_max: row.max_total_score ?? null,
+      previous_status: row.status,
+      at,
+      source_id: retake.id,
+    }),
+  });
 }
 
 /** After an original quiz's points changed: its retakes rescale the scores they wrote. */

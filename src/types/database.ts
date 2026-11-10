@@ -156,6 +156,12 @@ export interface Assignment {
    * publish time + this, also when a draft or scheduled quiz is published early.
    */
   quiz_duration_minutes?: number | null;
+  /**
+   * false = "ไม่นับคะแนน": graded and shown to students as usual, listed in the
+   * export grade book, but left out of the total / full score / percentage.
+   * Missing (older databases) = counts.
+   */
+  counts_toward_grade?: boolean | null;
 }
 
 export type QuestionType = 'multiple_choice' | 'short_answer' | 'file_upload' | 'true_false';
@@ -216,6 +222,22 @@ export interface Submission {
   retake_submission_id?: string | null;
   /** Original quiz row: the values before the retake replaced them. */
   retake_previous?: Pick<Submission, 'status' | 'total_score' | 'max_total_score' | 'submitted_at'> | null;
+  /** Oldest first: each สอบซ่อม / สอบใหม่ that replaced this row's score (see scoreHistory.ts). */
+  score_history?: ScoreHistoryEntry[] | null;
+}
+
+/** One score this grade-book cell had before a retake (สอบซ่อม) or a quiz reset (สอบใหม่) replaced it. */
+export interface ScoreHistoryEntry {
+  kind: 'retake' | 'reset';
+  /** The score before; null = none yet (not handed in, or still to grade). */
+  previous_score: number | null;
+  previous_max: number | null;
+  /** Status before; 'none' = the student had no row at all. */
+  previous_status: SubmissionStatus | 'none';
+  /** When it was replaced (retake: when the retake was handed in). */
+  at: string;
+  /** Retake: the retake quiz's assignment id. */
+  source_id?: string | null;
 }
 
 export interface TeacherGradeRecord {
