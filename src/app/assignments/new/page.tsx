@@ -924,6 +924,8 @@ function NewAssignmentContent() {
         alert(language === 'th' ? 'กรุณากำหนดแผนการสอน/สมรรถนะก่อนสร้างงาน' : 'Please configure competency lesson plans before creating an assignment');
         return;
       }
+      // "ไม่นับคะแนน" is for homework only: a quiz always counts.
+      const countsNow = isExam || countsTowardGrade;
       const totalPoints = questions.reduce((acc, q) => acc + (nonNegativeScore(q.max_score) || defaultMaxScore(q.type)), 0);
 
       const questionRows = questions.map((q) => ({
@@ -1009,7 +1011,7 @@ function NewAssignmentContent() {
           group_name: groupName.trim(),
           description,
           is_exam: isExam,
-          ...(retake || countsTowardGrade === (editingAssignment.counts_toward_grade !== false) ? {} : { counts_toward_grade: countsTowardGrade }),
+          ...(retake || countsNow === (editingAssignment.counts_toward_grade !== false) ? {} : { counts_toward_grade: countsNow }),
           due_date: dueDate || editingAssignment.due_date,
           close_at: isExam ? null : closeAt || null,
           ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
@@ -1039,7 +1041,7 @@ function NewAssignmentContent() {
           if (dueDate && new Date(dueDate).getTime() !== new Date(before.due_date).getTime()) changed.due_date = dueDate;
           if ((isExam ? null : closeAt || null) !== (before.close_at || null)) changed.close_at = isExam ? null : closeAt || null;
           if (isExam !== !!before.is_exam) changed.is_exam = isExam;
-          if (!retake && countsTowardGrade !== (before.counts_toward_grade !== false)) changed.counts_toward_grade = countsTowardGrade;
+          if (!retake && countsNow !== (before.counts_toward_grade !== false)) changed.counts_toward_grade = countsNow;
           if (isExam && quizMinutesValue !== Number(before.quiz_duration_minutes)) changed.quiz_duration_minutes = quizMinutesValue;
           const sameQuestion = (a: Pick<Question, 'type' | 'question_text'>, b: Pick<Question, 'type' | 'question_text'>) =>
             a.type === b.type && (a.question_text || '').trim() === (b.question_text || '').trim();
@@ -1086,7 +1088,7 @@ function NewAssignmentContent() {
             group_name: groupName.trim() || undefined,
             description,
             is_exam: isExam,
-            ...(!retake && !countsTowardGrade ? { counts_toward_grade: false } : {}),
+            ...(!retake && !countsNow ? { counts_toward_grade: false } : {}),
             due_date: dueDate || daysFromNowAt(7, 23, 59),
             ...(!isExam && closeAt ? { close_at: closeAt } : {}),
             ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
@@ -1542,11 +1544,27 @@ function NewAssignmentContent() {
               )}
             </div>
 
-            {/* Counts toward the grade (a retake follows its original quiz) */}
-            {!retake && (
+            {/* Counts toward the grade: homework only (a quiz always counts). Phones get a checkbox. */}
+            {!retake && !isExam && (
               <div className="space-y-2">
-                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">{tr('การนับคะแนน', 'Grading')}</span>
-                <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+                <span className="hidden sm:block text-xs font-bold text-slate-700 dark:text-slate-300">{tr('การนับคะแนน', 'Grading')}</span>
+                <label className="sm:hidden flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!countsTowardGrade}
+                    onChange={(e) => setCountsTowardGrade(!e.target.checked)}
+                    className="w-4 h-4 accent-amber-500 cursor-pointer"
+                  />
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{tr('ไม่นับคะแนน', "Doesn't count toward the grade")}</span>
+                </label>
+                <div className="relative hidden sm:grid grid-cols-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+                  {/* The pill slides under the picked choice. */}
+                  <span
+                    aria-hidden
+                    className={`absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg shadow-xs transition-[translate,background-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                      countsTowardGrade ? 'translate-x-0 bg-amber-500' : 'translate-x-full bg-white dark:bg-slate-600'
+                    }`}
+                  />
                   {([
                     [true, tr('นับคะแนน', 'Counts')],
                     [false, tr('ไม่นับคะแนน', "Doesn't count")],
@@ -1556,9 +1574,9 @@ function NewAssignmentContent() {
                       type="button"
                       aria-pressed={countsTowardGrade === value}
                       onClick={() => setCountsTowardGrade(value)}
-                      className={`py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      className={`relative z-10 py-1.5 rounded-lg text-xs font-bold transition-colors duration-300 cursor-pointer ${
                         countsTowardGrade === value
-                          ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                          ? value ? 'text-slate-950' : 'text-slate-950 dark:text-white'
                           : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                       }`}
                     >
@@ -1566,11 +1584,6 @@ function NewAssignmentContent() {
                     </button>
                   ))}
                 </div>
-                <p className="text-[11px] text-slate-400">
-                  {countsTowardGrade
-                    ? tr('รวมในคะแนนรวมและร้อยละของสมุดคะแนน', 'Included in the grade book total and percent')
-                    : tr('นักเรียนยังเห็นคะแนนและคำติชม • ไฟล์ Excel แสดงคะแนน แต่ไม่รวมในคะแนนรวมและร้อยละ', 'Students still see the score and feedback • Excel shows the score but leaves it out of the total and percent')}
-                </p>
               </div>
             )}
 
@@ -1810,9 +1823,27 @@ function NewAssignmentContent() {
                 <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><Clock className="w-3.5 h-3.5 text-amber-500 self-center" />{tr('เวลาทำข้อสอบ', 'Quiz time')}</span>
                 <span className="text-[11px] font-semibold text-slate-400 whitespace-nowrap">{tr('(นับจากเผยแพร่)', '(from publishing)')}</span>
               </label>
-              {/* Even rows at every width: 4 per row when narrow, all 8 in one row when there is room. */}
-              <div className="@container">
-              <div className="grid grid-cols-4 @md:grid-cols-8 gap-1.5">
+              {/* The minutes box first, its shortcuts below: both the same width at every size. */}
+              <div className="w-full max-w-sm space-y-2">
+              <div className="relative">
+                <input
+                  id="quiz-minutes"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={MAX_QUIZ_MINUTES}
+                  step={1}
+                  value={quizMinutes}
+                  onChange={(e) => setQuizMinutes(e.target.value)}
+                  aria-invalid={!quizMinutesValid}
+                  className={`w-full pl-3.5 pr-14 py-2.5 rounded-xl border text-sm font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 ${
+                    quizMinutesValid ? 'border-slate-200 dark:border-slate-700' : 'border-rose-400 dark:border-rose-600'
+                  }`}
+                />
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">{tr('นาที', 'min')}</span>
+              </div>
+              {/* Shortcuts: always two even rows, as wide as the box above. */}
+              <div className="grid grid-cols-4 gap-1.5">
                 {QUIZ_MINUTE_PRESETS.map((minutes) => {
                   const active = quizMinutesValue === minutes;
                   return (
@@ -1832,23 +1863,6 @@ function NewAssignmentContent() {
                   );
                 })}
               </div>
-              </div>
-              <div className="relative max-w-48">
-                <input
-                  id="quiz-minutes"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={MAX_QUIZ_MINUTES}
-                  step={1}
-                  value={quizMinutes}
-                  onChange={(e) => setQuizMinutes(e.target.value)}
-                  aria-invalid={!quizMinutesValid}
-                  className={`w-full pl-3.5 pr-14 py-2.5 rounded-xl border text-sm font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 ${
-                    quizMinutesValid ? 'border-slate-200 dark:border-slate-700' : 'border-rose-400 dark:border-rose-600'
-                  }`}
-                />
-                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">{tr('นาที', 'min')}</span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {(() => {

@@ -136,7 +136,7 @@ export function CreateView() {
           ...(savedAttachments.length ? { attachments: savedAttachments } : {}),
           ...(groupName.trim() ? { group_name: groupName.trim() } : {}),
           is_exam: isExam,
-          ...(countsTowardGrade ? {} : { counts_toward_grade: false }),
+          ...(isExam || countsTowardGrade ? {} : { counts_toward_grade: false }),
           // Some students unticked: only the rest see and take the quiz.
           ...(isExam && excludedNow.length ? { retake_student_ids: students.filter((s) => !excludedNow.includes(s.id)).map((s) => s.id) } : {}),
           // A quiz runs for its minutes from publishing; the server moves it again when a draft is published.
@@ -261,26 +261,13 @@ export function CreateView() {
             </div>
           )}
         </div>
-        <Field label="การนับคะแนน" hint={countsTowardGrade ? "รวมในคะแนนรวมและร้อยละ" : "นักเรียนยังเห็นคะแนนและคำติชม • Excel แสดงคะแนน แต่ไม่รวมในคะแนนรวมและร้อยละ"}>
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
-            {([
-              [true, "นับคะแนน"],
-              [false, "ไม่นับคะแนน"],
-            ] as const).map(([value, label]) => (
-              <button
-                key={String(value)}
-                type="button"
-                aria-pressed={countsTowardGrade === value}
-                onClick={() => setCountsTowardGrade(value)}
-                className={`h-8 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
-                  countsTowardGrade === value ? "bg-amber-500 text-slate-950" : "text-slate-500 dark:text-slate-400"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </Field>
+        {/* "ไม่นับคะแนน": homework only (a quiz always counts). */}
+        {!isExam && (
+          <label className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 cursor-pointer">
+            <input type="checkbox" checked={!countsTowardGrade} onChange={(e) => setCountsTowardGrade(!e.target.checked)} className="w-4 h-4 accent-amber-500 cursor-pointer" />
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">ไม่นับคะแนน</span>
+          </label>
+        )}
         <Field label="รายละเอียด">
           <textarea className={`${inputClass} h-20 py-2`} value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
@@ -289,6 +276,10 @@ export function CreateView() {
           <>
             <Field label="เวลาทำข้อสอบ (นับจากเผยแพร่)">
               <div className="space-y-2">
+                <div className="relative">
+                  <input className={`${inputClass} pr-14`} type="number" min={1} inputMode="numeric" value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 0)} />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">นาที</span>
+                </div>
                 <div className="grid grid-cols-4 gap-1.5">
                   {QUIZ_MINUTE_PRESETS.map((preset) => (
                     <button
@@ -303,10 +294,6 @@ export function CreateView() {
                       {preset >= 60 && preset % 60 === 0 ? `${preset / 60} ชม.` : `${preset} นาที`}
                     </button>
                   ))}
-                </div>
-                <div className="relative">
-                  <input className={`${inputClass} pr-14`} type="number" min={1} inputMode="numeric" value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 0)} />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">นาที</span>
                 </div>
               </div>
             </Field>

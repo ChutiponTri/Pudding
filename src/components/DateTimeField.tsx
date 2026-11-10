@@ -158,8 +158,11 @@ export function DateTimeField({
 
   return (
     <div className={`space-y-2 ${className}`}>
-      <div className="flex flex-wrap items-stretch gap-2">
-        <div className="relative flex-1 min-w-36">
+      <div className="flex items-stretch gap-2">
+      {/* Date and time side by side when there is room; stacked (both full width, same length) when not. */}
+      <div className="@container flex-1 min-w-0">
+      <div className="grid grid-cols-1 @xs:grid-cols-[minmax(0,1fr)_auto] gap-2">
+        <div className="relative min-w-0">
           <Calendar className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${icon}`} />
           <input
             type="date"
@@ -173,7 +176,7 @@ export function DateTimeField({
         </div>
         {/* Hour/minute selects instead of <input type="time">, which shows AM/PM in some locales. */}
         <div
-          className={`flex items-center gap-1 pl-3 pr-1 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shrink-0 transition-colors duration-200 ${focusWithin}`}
+          className={`flex items-center gap-1 pl-3 pr-1 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-colors duration-200 ${focusWithin}`}
         >
           <Clock className={`w-4 h-4 shrink-0 pointer-events-none ${icon}`} />
           <select
@@ -203,6 +206,8 @@ export function DateTimeField({
           </select>
           {th && <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 pr-1">น.</span>}
         </div>
+      </div>
+      </div>
         {allowEmpty && value && (
           <button
             type="button"
