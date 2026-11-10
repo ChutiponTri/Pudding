@@ -921,6 +921,11 @@ export const dataService = {
     return call<Record<string, SubmissionAnswer>>('getSubmissionAnswers', submissionId);
   },
 
+  /** A survey's questions and every handed-in answer (teacher only). */
+  async getSurveyResponses(assignmentId: string): Promise<{ questions: Question[]; responses: number; answers: Array<{ submission_id: string; question_id: string; text_answer: string | null }> }> {
+    return call('getSurveyResponses', assignmentId);
+  },
+
   /** Score rows for many submissions in one request (used by the student LIFF). */
   async getAnswersForSubmissions(submissionIds: string[]): Promise<SubmissionAnswer[]> {
     const ids = [...new Set(submissionIds.filter(Boolean))];

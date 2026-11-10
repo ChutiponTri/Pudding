@@ -9,6 +9,7 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import type { GradingCounts } from '@/lib/utils/gradingStatus';
 import { isRetakeOf } from '@/lib/utils/retake';
+import { isSurvey } from '@/lib/utils/survey';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
 import { AnnounceButton, announcesResults, GradeButton, MetricCells, PhoneProgress, Pill, RemindButton, WorkRowLayout } from '@/components/works/WorkBits';
 import { acceptStatus, StatusButton } from '@/components/works/StatusBits';
@@ -66,14 +67,16 @@ export function ClassworkRow({
   const hidden = win.isDraft || win.isScheduled;
   const status = acceptStatus({ assignment, window: win, counts }, th, language, now);
   const retake = isRetakeOf(assignment);
-  const resultsMode = !!onAnnounceResults && announcesResults(counts, win.acceptsSubmissions);
+  const survey = isSurvey(assignment);
+  // A survey has no scores to announce.
+  const resultsMode = !survey && !!onAnnounceResults && announcesResults(counts, win.acceptsSubmissions);
 
   const typePill = (
     <span className="contents" title={retake ? tr(`สอบซ่อม ${assignment.retake_student_ids?.length || 0} คน`, `Retake for ${assignment.retake_student_ids?.length || 0}`) : undefined}>
-      <Pill tone={retake ? 'amber' : assignment.is_exam ? 'sky' : 'emerald'} className="shrink-0">
-        {retake ? tr('สอบซ่อม', 'Retake') : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : tr('การบ้าน', 'Homework')}
+      <Pill tone={retake ? 'amber' : assignment.is_exam ? 'sky' : survey ? 'slate' : 'emerald'} className="shrink-0">
+        {retake ? tr('สอบซ่อม', 'Retake') : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : survey ? tr('แบบสอบถาม', 'Survey') : tr('การบ้าน', 'Homework')}
       </Pill>
-      {assignment.counts_toward_grade === false && (
+      {assignment.counts_toward_grade === false && !survey && (
         <Pill tone="slate" className="shrink-0">{tr('ไม่นับคะแนน', "Doesn't count")}</Pill>
       )}
     </span>

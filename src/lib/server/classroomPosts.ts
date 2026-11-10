@@ -31,7 +31,7 @@ type RosterStudent = Pick<User, 'id' | 'line_uid' | 'first_name' | 'last_name'> 
  * students' names), while the timeline card keeps the one-line body.
  */
 export function assignmentPostMetadata(
-  a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'group_name' | 'retake_student_ids' | 'retake_of'>,
+  a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'group_name' | 'retake_student_ids' | 'retake_of'> & Partial<Pick<Assignment, 'is_survey'>>,
   assignmentId: string,
   /** The classroom roster: a retake's LINE message names its students from it. */
   students?: RosterStudent[] | null
@@ -39,14 +39,14 @@ export function assignmentPostMetadata(
   return {
     assignmentId,
     dueDate: a.due_date,
-    groupName: a.group_name || (a.is_exam ? 'ข้อสอบ' : 'งานทั่วไป'),
+    groupName: a.group_name || (a.is_exam ? 'ข้อสอบ' : a.is_survey ? 'แบบสอบถาม' : 'งานทั่วไป'),
     // Chosen students only (a retake, or a quiz the teacher gave to some): their names go in the LINE message.
     ...(Array.isArray(a.retake_student_ids) ? { ...(a.retake_of ? { retake: true } : {}), lineBody: retakeLineBody(a, students) } : {}),
   };
 }
 
 /** Prefixes of work posts; the edit path rewrites posts that start with one of them. */
-export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอบใหม่|ข้อสอบซ่อม|สอบซ่อม):/;
+export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอบใหม่|ข้อสอบซ่อม|สอบซ่อม|แบบสอบถามใหม่):/;
 
 /**
  * The system adds "สอบซ่อม" itself (labels, posts, LINE), so a title that
@@ -55,11 +55,11 @@ export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอ�
 export const retakeTitle = (title: string) => title.replace(/^\s*สอบซ่อม(\s*[:：-]\s*|\s+)/, '') || title;
 
 /** Timeline card text for new work: one line, title and deadline. */
-export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'> & Partial<Pick<Assignment, 'close_at' | 'status_override' | 'extended_until' | 'retake_of'>>) {
+export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'due_date' | 'retake_student_ids'> & Partial<Pick<Assignment, 'close_at' | 'status_override' | 'extended_until' | 'retake_of' | 'is_survey'>>) {
   const due = dueText({ ...a, status_override: a.status_override || 'auto', extended_until: a.extended_until }, ' · ');
   if (Array.isArray(a.retake_student_ids) && a.retake_of) return `ข้อสอบซ่อม: ${retakeTitle(a.title)} (${due})`;
   if (Array.isArray(a.retake_student_ids)) return `ข้อสอบใหม่: ${a.title} (${due} · เฉพาะ ${a.retake_student_ids.length} คน)`;
-  return `${a.is_exam ? 'ข้อสอบใหม่' : 'งานใหม่'}: ${a.title} (${due})`;
+  return `${a.is_exam ? 'ข้อสอบใหม่' : a.is_survey ? 'แบบสอบถามใหม่' : 'งานใหม่'}: ${a.title} (${due})`;
 }
 
 /** A retake's LINE message body: title, deadline, and who takes it (only they can open it). */

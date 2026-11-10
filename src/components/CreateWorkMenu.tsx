@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { BookOpen, ChevronRight, Copy, RotateCcw, ShieldAlert } from 'lucide-react';
+import { BookOpen, ChevronRight, ClipboardList, Copy, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { ReuseWorkPicker } from '@/components/ReuseWorkPicker';
 import { RetakePicker } from '@/components/RetakePicker';
@@ -17,8 +17,8 @@ const CLOSE_MS = 130;
 
 /**
  * The "new assignment / quiz" button. Opens a small menu right next to the
- * button (below, or above when there is no room) with four starts:
- * homework, quiz, a retake quiz for chosen students, or reuse earlier work.
+ * button (below, or above when there is no room) with five starts:
+ * homework, quiz, survey, a retake quiz for chosen students, or reuse earlier work.
  * All end on the normal creation page, set up for the choice.
  */
 export function CreateWorkMenu({
@@ -78,7 +78,7 @@ export function CreateWorkMenu({
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const menuHeight = menuRef.current?.offsetHeight || 230;
+    const menuHeight = menuRef.current?.offsetHeight || 280;
     const spaceBelow = window.innerHeight - rect.bottom;
     const above = spaceBelow < menuHeight + MENU_GAP + VIEWPORT_MARGIN && rect.top > spaceBelow;
     const width = Math.min(MENU_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2);
@@ -177,6 +177,14 @@ export function CreateWorkMenu({
       onSelect: () => go(query({ mode: 'quiz' })),
     },
     {
+      key: 'survey',
+      icon: ClipboardList,
+      tile: 'bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-400',
+      label: tr('แบบสอบถาม', 'Survey'),
+      hint: tr('ไม่มีคะแนน', 'No scores'),
+      onSelect: () => go(query({ mode: 'survey' })),
+    },
+    {
       key: 'retake',
       icon: RotateCcw,
       tile: 'bg-orange-50 dark:bg-orange-950/50 text-orange-600 dark:text-orange-400',
@@ -238,11 +246,11 @@ export function CreateWorkMenu({
                 : `opacity-0 scale-95 ${position?.above ? 'translate-y-1' : '-translate-y-1'} pointer-events-none transition-[opacity,scale,translate] duration-[130ms] ease-in`
             }`}
           >
-            {options.map((option, index) => {
+            {options.map((option) => {
               const Icon = option.icon;
               return (
                 <div key={option.key}>
-                  {index === 3 && <div className="my-1 mx-2 border-t border-slate-100 dark:border-slate-800" aria-hidden="true" />}
+                  {option.key === 'retake' && <div className="my-1 mx-2 border-t border-slate-100 dark:border-slate-800" aria-hidden="true" />}
                   <button
                     type="button"
                     role="menuitem"

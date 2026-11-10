@@ -196,6 +196,8 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   retake_of TEXT REFERENCES public.assignments(id) ON DELETE SET NULL, -- Retake quiz: the original quiz
   retake_student_ids TEXT[],                  -- Retake quiz: roster ids allowed to take it (NULL = everyone)
   quiz_duration_minutes INTEGER,              -- Quiz: minutes to do it after publishing (due_date = publish + this)
+  counts_toward_grade BOOLEAN NOT NULL DEFAULT TRUE, -- false = "ไม่นับคะแนน" (left out of totals)
+  is_survey BOOLEAN NOT NULL DEFAULT FALSE,   -- แบบสอบถาม: no scores, not in the grade book
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -211,7 +213,7 @@ CREATE TABLE IF NOT EXISTS public.questions (
   id TEXT PRIMARY KEY,
   assignment_id TEXT NOT NULL REFERENCES public.assignments(id) ON DELETE CASCADE,
   indicator_id TEXT,
-  type TEXT NOT NULL CHECK (type IN ('multiple_choice', 'short_answer', 'file_upload', 'true_false')),
+  type TEXT NOT NULL CHECK (type IN ('multiple_choice', 'short_answer', 'file_upload', 'true_false', 'checkboxes', 'scale')),
   question_text TEXT NOT NULL,
   options JSONB DEFAULT '[]'::JSONB,          -- For multiple choice items
   ideal_answer TEXT,                          -- Model answer for AI ASAG scoring

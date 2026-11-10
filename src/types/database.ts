@@ -162,9 +162,16 @@ export interface Assignment {
    * Missing (older databases) = counts.
    */
   counts_toward_grade?: boolean | null;
+  /**
+   * "แบบสอบถาม": a form like Google Forms. No scores, answer keys or
+   * indicators; handed-in responses need no grading (total_score 0 of 0) and
+   * the work stays out of the grade book. Missing (older databases) = false.
+   */
+  is_survey?: boolean | null;
 }
 
-export type QuestionType = 'multiple_choice' | 'short_answer' | 'file_upload' | 'true_false';
+/** checkboxes (several picks) and scale (1–5) are survey-only. */
+export type QuestionType = 'multiple_choice' | 'short_answer' | 'file_upload' | 'true_false' | 'checkboxes' | 'scale';
 
 export interface Question {
   id: string;

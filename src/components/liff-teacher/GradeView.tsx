@@ -1,5 +1,8 @@
 "use client";
 
+import { isSurvey } from "@/lib/utils/survey";
+import { SurveyResults } from "@/components/SurveyResults";
+
 import { useEffect, useState } from "react";
 import { ChevronRight, ExternalLink, PencilLine, RotateCcw, Send } from "lucide-react";
 import { AntiCheatingBadge } from "@/components/AntiCheatingBadge";
@@ -133,6 +136,15 @@ export function GradeView() {
   const [submission, setSubmission] = useState<Submission | null>(null);
   // The latest copy of the picked work (its status may change on this screen).
   const current = picked ? work.rows.find((row) => row.work.id === picked.id)?.work || picked : null;
+  // A survey has nothing to grade: its summary instead.
+  if (current && isSurvey(current)) {
+    return (
+      <Page title={current.title} subtitle="สรุปคำตอบ">
+        <Button tone="ghost" small onClick={() => setPicked(null)}>← งานทั้งหมด</Button>
+        <SurveyResults assignmentId={current.id} lang="th" totalStudents={work.rows.find((row) => row.work.id === current.id)?.total} />
+      </Page>
+    );
+  }
   if (current && submission) return <GradeSubmission work={current} submission={submission} onDone={() => setSubmission(null)} />;
   if (current) return <SubmissionList work={current} onBack={() => setPicked(null)} onPick={setSubmission} />;
   return <WorkList work={work} onPick={setPicked} />;
@@ -153,12 +165,12 @@ function WorkList({ work: data, onPick }: { work: ReturnType<typeof useWork>; on
             return (
               <div key={row.work.id} className="px-4 py-3 flex items-center gap-2">
                 <button type="button" onClick={() => onPick(row.work)} className="flex-1 min-w-0 text-left cursor-pointer">
-                  <span className="block text-sm font-bold truncate">{row.work.is_exam ? "📝" : "📋"} {row.work.title}</span>
+                  <span className="block text-sm font-bold truncate">{row.work.is_exam ? "📝" : isSurvey(row.work) ? "📊" : "📋"} {row.work.title}</span>
                   <span className="block text-[11px] text-slate-500">ส่งแล้ว {row.handed}/{row.total} คน</span>
                 </button>
                 <WorkStatus work={row.work} />
                 <button type="button" onClick={() => onPick(row.work)} aria-label={`ตรวจ ${row.work.title}`} className="flex items-center gap-1 shrink-0 cursor-pointer">
-                  <Pill tone={left > 0 ? "amber" : "green"}>{left > 0 ? `รอตรวจ ${left}` : "ตรวจครบ"}</Pill>
+                  {isSurvey(row.work) ? <Pill tone="violet">ดูสรุป</Pill> : <Pill tone={left > 0 ? "amber" : "green"}>{left > 0 ? `รอตรวจ ${left}` : "ตรวจครบ"}</Pill>}
                   <ChevronRight className="w-4 h-4 text-slate-400" />
                 </button>
               </div>

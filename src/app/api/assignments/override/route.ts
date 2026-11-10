@@ -12,6 +12,7 @@ import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@
 import { questionsMissingKey } from '@/lib/utils/autoGrade';
 import type { Assignment, Classroom, Question, SubmissionOverrideStatus, TeacherRole } from '@/types/database';
 import { hydratedStudents, recordNoSubmissionZeros } from '@/lib/server/dataActions';
+import { isSurvey } from '@/lib/utils/survey';
 import { rosterFor } from '@/lib/utils/retake';
 import { isRetake } from '@/lib/utils/retake';
 
@@ -72,6 +73,7 @@ export async function POST(request: NextRequest) {
     classroom?.teacher_id === userId ||
     (classroom?.teachers || []).some((teacher: { teacher_id?: string }) => teacher.teacher_id === userId);
   if (!classroom || !isTeacher) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (announceResults && isSurvey(previous)) return NextResponse.json({ error: 'แบบสอบถามไม่มีคะแนนให้ประกาศ' }, { status: 400 });
 
   // Posts the work's link to the class LINE group again (rationed: billed per group member).
   // Whenever the bot cannot (no group, re-announce limit, LINE refused), the

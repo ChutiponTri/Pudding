@@ -5,6 +5,7 @@ import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@
 import { formatDateTime } from '@/lib/utils/datetime';
 import { isRetakeOf } from '@/lib/utils/retake';
 import { gradeCellOf, scoreMarkLabel, type GradeCell } from '@/lib/utils/scoreHistory';
+import { isSurvey } from '@/lib/utils/survey';
 import { isGraded, isHandedIn, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
 
 /**
@@ -44,7 +45,8 @@ const when = (iso: string | null | undefined, lang: Lang) => (iso ? formatDateTi
  */
 function workOf(data: ExportData, classroomId: string) {
   return data.assignments
-    .filter((a) => a.classroom_id === classroomId && !isAssignmentDraft(a) && isAssignmentPublished(a) && !isRetakeOf(a))
+    // Surveys have no scores: they stay out of every score report.
+    .filter((a) => a.classroom_id === classroomId && !isAssignmentDraft(a) && isAssignmentPublished(a) && !isRetakeOf(a) && !isSurvey(a))
     .sort(
       (a, b) =>
         (a.group_name || '').localeCompare(b.group_name || '') ||

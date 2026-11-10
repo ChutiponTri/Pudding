@@ -63,6 +63,7 @@ export async function buildWorkCard(supabase: ServiceClient, assignment: Assignm
   return workCard({
     isExam: !!assignment.is_exam,
     retake,
+    survey: !!assignment.is_survey,
     number,
     byline,
     title: assignment.title,

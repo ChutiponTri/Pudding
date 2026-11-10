@@ -1,5 +1,7 @@
 "use client";
 
+import { isSurvey } from "@/lib/utils/survey";
+
 import { announceNote } from '@/lib/utils/announceNote';
 import { useMemo, useState } from "react";
 import { authFetch } from "@/lib/auth/lineSession";
@@ -142,7 +144,8 @@ export function ResultsView() {
   if (data.error) return <Page title="📈 ประกาศผล"><ErrorBox text={data.error} /></Page>;
   if (!data.data) return <Page title="📈 ประกาศผล"><Skeleton /></Page>;
   // Every published work: announcing needs at least one graded hand-in.
-  const rows = data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled);
+  // Surveys have no scores to announce.
+  const rows = data.rows.filter((row) => !row.win.isDraft && !row.win.isScheduled && !isSurvey(row.work));
   const announce = (row: WorkRow) => {
     if (!row.graded) return;
     void run(row.work.id, async () => {

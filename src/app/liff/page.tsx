@@ -10,6 +10,7 @@ import { CountUp } from '@/components/CountUp';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import {
   CheckCircle2,
+  Check,
   Clock,
   Upload,
   ChevronRight,
@@ -61,6 +62,7 @@ import type { QuizOpenResult } from "@/lib/utils/quizExit";
 import { canEditSubmission, isHandInAllowed, isHandedIn, isReopenActive, isTeacherGraded } from "@/lib/utils/gradingStatus";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { isObjectiveAnswerCorrect, isPickedOption } from "@/lib/utils/autoGrade";
+import { decodeChecks, encodeChecks, isSurvey, SCALE_POINTS, surveyAnswerText } from "@/lib/utils/survey";
 import { assignmentAttachments } from "@/lib/utils/referenceWork";
 import { AttachmentList, opensPreview } from "@/components/AssignmentAttachments";
 import { releaseUpload, UploadError, uploadToStorage } from "@/lib/storage/uploadClient";
@@ -3514,7 +3516,9 @@ export default function LiffStudentPage() {
                         // A row only carrying the teacher's "hand in now" permission is still to do.
                         const isSubmitted = hasResult(assignment);
                         const handInAllowed = !isSubmitted && isHandInAllowed(submission);
-                        const isGraded = Boolean(isSubmitted && gradedSubmissionIds.has(submission.id));
+                        // A survey has no score: handed in is all there is.
+                        const surveyWork = isSurvey(assignment);
+                        const isGraded = Boolean(isSubmitted && !surveyWork && gradedSubmissionIds.has(submission.id));
                         const window_ = getAssignmentWindow(assignment);
                         // Students are never told a quiz sheet arrived late (only teachers see that).
                         const isLateSubmitted = isSubmitted && !assignment.is_exam && (
@@ -3544,7 +3548,7 @@ export default function LiffStudentPage() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <span className="text-[11px] font-semibold text-slate-400">
-                                  {isRetakeOf(assignment) ? '🔁 สอบซ่อม' : assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม {assignment.total_points || 20} คะแนน
+                                  {surveyWork ? '📊 แบบสอบถาม' : `${isRetakeOf(assignment) ? '🔁 สอบซ่อม' : assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม ${assignment.total_points || 20} คะแนน`}
                                   {assignmentAttachments(assignment).length > 0 && ` • 📎 ไฟล์แนบ ${assignmentAttachments(assignment).length}`}
                                 </span>
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
@@ -3596,7 +3600,7 @@ export default function LiffStudentPage() {
                               {/* Closed homework still opens read-only; a closed quiz does not. */}
                               {(!isClosed || !assignment.is_exam) && (
                                 <span className="font-bold text-brand shrink-0 flex items-center gap-0.5">
-                                  {isClosed ? 'ดูงาน' : isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : canHandInOverMissing(assignment, submission) ? 'ส่งงาน' : isGraded ? 'ดูผล' : 'ดูงานที่ส่ง') : handInAllowed ? 'ส่งงาน' : 'เริ่มทำ'}
+                                  {isClosed ? 'ดูงาน' : isSubmitted ? (canEditWork(assignment, submission) ? 'ดู / แก้ไข' : canHandInOverMissing(assignment, submission) ? 'ส่งงาน' : isGraded ? 'ดูผล' : surveyWork ? 'ดูคำตอบ' : 'ดูงานที่ส่ง') : handInAllowed ? 'ส่งงาน' : 'เริ่มทำ'}
                                   <ChevronRight className="w-3.5 h-3.5" />
                                 </span>
                               )}
@@ -3939,11 +3943,11 @@ export default function LiffStudentPage() {
                 <CheckCircle2 className="w-7 h-7" />
               </div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                {editingSubmission ? "ส่งงานที่แก้ไขแล้ว" : isTrackingAway ? "ส่งข้อสอบแล้ว" : "ส่งงานแล้ว"}
+                {isSurvey(activeAssignment) ? "ส่งแบบสอบถามแล้ว ขอบคุณ" : editingSubmission ? "ส่งงานที่แก้ไขแล้ว" : isTrackingAway ? "ส่งข้อสอบแล้ว" : "ส่งงานแล้ว"}
               </h2>
               {/* Flagged by the server: shown with no reason. */}
               {submittedResult?.submission.is_flagged_suspicious && <SuspiciousLabel />}
-              {submittedResult?.submission.results_hidden ? (
+              {isSurvey(activeAssignment) ? null : submittedResult?.submission.results_hidden ? (
                 <ResultsHiddenNote isExam={!!activeAssignment?.is_exam} compact />
               ) : submittedResult && submittedResult.total !== null ? (
                 <div className="liff-sheen liff-rise px-4 py-3 rounded-2xl bg-linear-to-br from-violet-500 to-purple-700 text-white">
@@ -3966,7 +3970,7 @@ export default function LiffStudentPage() {
                     onClick={() => handleOpenGradedDetail(activeAssignment, submittedResult.submission)}
                     className="h-11 px-2 rounded-2xl ring-1 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm cursor-pointer active:scale-[0.98] transition-transform"
                   >
-                    {submittedResult.autoScored > 0 ? "ดูคะแนนรายข้อ" : "ดูงานที่ส่ง"}
+                    {isSurvey(activeAssignment) ? "ดูคำตอบ" : submittedResult.autoScored > 0 ? "ดูคะแนนรายข้อ" : "ดูงานที่ส่ง"}
                   </button>
                 )}
                 <button
@@ -4080,6 +4084,10 @@ export default function LiffStudentPage() {
                     ? q.options
                     : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : [];
                   const isChoice = (q.type === 'multiple_choice' || q.type === 'true_false') && choiceOptions.length > 0;
+                  // Survey-only kinds: several picks (stored as a JSON list) and a 1–5 scale.
+                  const isChecks = q.type === 'checkboxes';
+                  const isScale = q.type === 'scale';
+                  const surveyWork = isSurvey(activeAssignment);
                   const currentAnswer = studentAnswers[q.id]?.text || "";
                   const isAnswered = Boolean(currentAnswer.trim() || studentAnswers[q.id]?.file_url || studentAnswers[q.id]?.link?.trim());
                   const answer = studentAnswers[q.id];
@@ -4095,7 +4103,7 @@ export default function LiffStudentPage() {
                         </span>
                         <div className="min-w-0 flex-1 space-y-1">
                           <span className="text-[11px] font-semibold text-slate-400">
-                            ข้อ {idx + 1}/{activeQuestions.length} • {q.max_score} คะแนน{isFileUpload ? ' • แนบไฟล์' : isChoice ? ' • ปรนัย' : ''}
+                            ข้อ {idx + 1}/{activeQuestions.length}{surveyWork ? (isChecks ? ' • เลือกได้หลายข้อ' : '') : ` • ${q.max_score} คะแนน${isFileUpload ? ' • แนบไฟล์' : isChoice ? ' • ปรนัย' : ''}`}
                             {!activeAssignment.is_exam && (
                               q.is_required !== false
                                 ? <span className="ml-1.5 text-rose-600 dark:text-rose-400">• จำเป็น *</span>
@@ -4142,7 +4150,74 @@ export default function LiffStudentPage() {
                         </div>
                       )}
 
-                      {!isChoice && (
+                      {isChecks && (
+                        <div className="grid gap-2" role="group">
+                          {choiceOptions.map((opt, optIdx) => {
+                            const picks = decodeChecks(currentAnswer);
+                            const isSelected = picks.includes(opt);
+                            return (
+                              <button
+                                type="button"
+                                role="checkbox"
+                                aria-checked={isSelected}
+                                key={optIdx}
+                                onClick={() =>
+                                  setStudentAnswers((prev) => ({
+                                    ...prev,
+                                    [q.id]: { ...prev[q.id], text: encodeChecks(isSelected ? picks.filter((p) => p !== opt) : [...picks, opt]) },
+                                  }))
+                                }
+                                className={`min-h-12 p-3 rounded-2xl text-left text-sm font-medium transition-all ring-1 flex items-center gap-3 cursor-pointer active:scale-[0.99] ${
+                                  isSelected
+                                    ? "bg-violet-50 dark:bg-violet-950/40 ring-2 ring-brand text-violet-900 dark:text-violet-100"
+                                    : "bg-slate-50 dark:bg-slate-800/70 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200 hover:ring-slate-300 dark:hover:ring-slate-600"
+                                }`}
+                              >
+                                <span
+                                  className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors ${
+                                    isSelected ? "bg-brand text-white" : "bg-white dark:bg-slate-700 ring-1 ring-slate-300 dark:ring-slate-600"
+                                  }`}
+                                >
+                                  {isSelected && <Check className="w-4 h-4" />}
+                                </span>
+                                <span className="flex-1 wrap-break-word">{opt}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {isScale && (
+                        <div className="space-y-1.5">
+                          <div className="grid grid-cols-5 gap-2" role="radiogroup">
+                            {SCALE_POINTS.map((point) => {
+                              const isSelected = currentAnswer === String(point);
+                              return (
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={isSelected}
+                                  key={point}
+                                  onClick={() => setStudentAnswers((prev) => ({ ...prev, [q.id]: { ...prev[q.id], text: String(point) } }))}
+                                  className={`h-12 rounded-2xl text-base font-bold transition-all ring-1 cursor-pointer active:scale-[0.97] ${
+                                    isSelected
+                                      ? "bg-brand text-white ring-brand"
+                                      : "bg-slate-50 dark:bg-slate-800/70 ring-slate-200 dark:ring-slate-700 text-slate-700 dark:text-slate-200"
+                                  }`}
+                                >
+                                  {point}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="flex justify-between px-1 text-[11px] text-slate-400">
+                            <span>น้อย</span>
+                            <span>มาก</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {!isChoice && !isChecks && !isScale && (
                         <div className="space-y-1.5">
                           <label htmlFor={`answer-${q.id}`} className="text-xs font-semibold text-slate-500">
                             {isFileUpload ? "คำอธิบายประกอบไฟล์ (ถ้ามี)" : "คำตอบของคุณ"}
@@ -4594,7 +4669,7 @@ export default function LiffStudentPage() {
               <span className="w-11 h-11 rounded-2xl bg-violet-100 dark:bg-violet-950 text-xl flex items-center justify-center shrink-0">🏆</span>
               <div className="min-w-0">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  {gradedSubmissionIds.has(viewingGradedSub.submission.id) ? "ผลการประเมิน" : "งานที่ส่ง"}
+                  {isSurvey(viewingGradedSub.assignment) ? "คำตอบของคุณ" : gradedSubmissionIds.has(viewingGradedSub.submission.id) ? "ผลการประเมิน" : "งานที่ส่ง"}
                 </h3>
                 <p className="text-xs text-slate-500 truncate">{viewingGradedSub.assignment.title}</p>
               </div>
@@ -4611,7 +4686,7 @@ export default function LiffStudentPage() {
           {/* Flagged by the server: shown with no reason. */}
           {viewingGradedSub.submission.is_flagged_suspicious && <SuspiciousLabel />}
 
-          {gradedSubmissionIds.has(viewingGradedSub.submission.id) && viewingGradedSub.submission.total_score != null ? (
+          {isSurvey(viewingGradedSub.assignment) ? null : gradedSubmissionIds.has(viewingGradedSub.submission.id) && viewingGradedSub.submission.total_score != null ? (
             <div className="liff-sheen p-5 rounded-2xl bg-linear-to-br from-violet-500 to-purple-700 text-white text-center space-y-1">
               <p className="text-4xl font-black tabular-nums">
                 <CountUp value={Number(viewingGradedSub.submission.total_score)} />
@@ -4628,7 +4703,7 @@ export default function LiffStudentPage() {
 
           <div className="space-y-3">
             <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">
-              {gradedSubmissionIds.has(viewingGradedSub.submission.id) ? "คะแนนและข้อเสนอแนะรายข้อ" : "คำตอบที่ส่ง"}
+              {gradedSubmissionIds.has(viewingGradedSub.submission.id) && !isSurvey(viewingGradedSub.assignment) ? "คะแนนและข้อเสนอแนะรายข้อ" : "คำตอบที่ส่ง"}
             </h4>
             {viewingGradedSub.questions === null && viewingGradedSub.loadFailed ? (
               <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 ring-1 ring-rose-200 dark:ring-rose-900 text-center space-y-2">
@@ -4665,7 +4740,7 @@ export default function LiffStudentPage() {
                       <span className="text-slate-400">ข้อ {i + 1}.</span> {q.question_text}
                     </p>
                     {/* Scores only once the results are released (the server leaves them out before). */}
-                    {score != null && (
+                    {score != null && !isSurvey(viewingGradedSub.assignment) && (
                       <span className="text-sm font-bold text-brand shrink-0 tabular-nums">
                         {score}/{q.max_score}
                       </span>
@@ -4676,7 +4751,7 @@ export default function LiffStudentPage() {
                   ) : (
                   <div className="p-3 rounded-xl bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-300 wrap-break-word">
                     <span className="text-xs font-semibold text-slate-400 block mb-0.5">คำตอบของคุณ</span>
-                    {ans?.text_answer || "(ไม่มีข้อความ)"}
+                    {surveyAnswerText(q.type, ans?.text_answer) || "(ไม่ได้ตอบ)"}
                     {ans?.file_url && (
                       <a href={ans.file_url} target="_blank" rel="noreferrer" className="mt-1.5 flex items-center gap-1 text-xs font-semibold text-brand hover:underline">
                         <Upload className="w-3 h-3" /> ดูไฟล์ที่แนบ

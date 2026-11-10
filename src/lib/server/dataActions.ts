@@ -36,6 +36,8 @@ import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions,
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
 import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, rescaleChangedMaxScores, zeroFillNoSubmissions } from '@/lib/server/grading';
 import { invalidMaxScoreMessage, isObjectiveQuestion, missingKeyMessage } from '@/lib/utils/autoGrade';
+import { cleanSurveyQuestion, isSurvey, surveyProblem } from '@/lib/utils/survey';
+import { indicatorChoicesFor, missingIndicatorMessage } from '@/lib/utils/questionIndicator';
 import { isRetake, isRetakeOf, retakeIncludes, rosterFor } from '@/lib/utils/retake';
 import { RETAKE_MIGRATION_MESSAGE, noteRetakeSheetReset, resyncRetakesOf, syncRetakeScores, unlinkRetake, withHistoryEntry } from '@/lib/server/retake';
 import { personNameError, studentProfileError } from '@/lib/utils/studentName';
@@ -116,7 +118,7 @@ async function withTeacherAvatars<T extends { teachers?: ClassroomTeacher[] | nu
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
 const IN_CHUNK = 150;
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
-const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes', 'close_at', 'counts_toward_grade'] as const;
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes', 'close_at', 'counts_toward_grade', 'is_survey'] as const;
 const ATTACHMENTS_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการแนบหลายไฟล์ (ยังไม่มีคอลัมน์ attachments) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือแนบเพียง 1 รายการ';
 
@@ -144,6 +146,26 @@ function assertAttachmentsFit(row: Partial<Assignment>) {
 }
 const COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับงานแบบ "ไม่นับคะแนน" (ยังไม่มีคอลัมน์ counts_toward_grade) กรุณารัน SQL ใน supabase_counts_toward_grade_update.sql ก่อน หรือเลือก "นับคะแนน"';
+const SURVEY_MIGRATION_MESSAGE =
+  'ฐานข้อมูลยังไม่รองรับแบบสอบถาม กรุณารัน SQL ใน supabase_survey_update.sql ก่อน';
+
+/**
+ * What graded questions may name (see questionIndicator): the course's lesson
+ * plans or indicators, or the shared indicator list for a course without its own.
+ */
+async function indicatorChoicesOfCourse(supabase: Supabase, courseId: string | null | undefined) {
+  const { data: course } = courseId ? await supabase.from('courses').select('*').eq('id', courseId).maybeSingle() : { data: null };
+  const c = course as Course | null;
+  const needsShared = c?.indicator_mode !== 'competency' && !(c?.indicators || []).length;
+  const { data: shared } = needsShared ? await supabase.from('learning_indicators').select('id, title').order('order_index') : { data: [] };
+  return indicatorChoicesFor(c, (shared || []) as Array<Pick<LearningIndicator, 'id' | 'title'>>);
+}
+
+async function assertIndicators(supabase: Supabase, courseId: string | null | undefined, questions: Array<{ indicator_id?: string | null }>) {
+  const problem = missingIndicatorMessage(questions, await indicatorChoicesOfCourse(supabase, courseId));
+  if (problem) throw new HttpError(400, problem);
+}
+
 const PUBLISH_AT_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการตั้งเวลาเผยแพร่ (ยังไม่มีคอลัมน์ publish_at) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือเลือก "เผยแพร่ทันที"';
 
@@ -410,6 +432,8 @@ export async function recordNoSubmissionZeros(
   teacher: { id: string; name: string; role: TeacherRole },
   options: { onlyUnscored?: boolean } = {}
 ): Promise<Array<{ id: string }>> {
+  // A survey has no score to give: a missing response stays missing.
+  if (isSurvey(assignment)) return [];
   const assignmentId = assignment.id;
   const keys = [...new Set(roster.flatMap((s) => [s.id, s.line_uid]).filter((k): k is string => !!k))];
   if (!keys.length) return [];
@@ -1809,18 +1833,31 @@ export const dataActions = {
   ) {
     const me = requireTeacher(actor);
     const classroom = await requireTeacherOfClassroom(supabase, actor, assignmentData.classroom_id);
-    if (assignmentData.retake_of || assignmentData.retake_student_ids) {
-      assignmentData = await checkedRetake(supabase, classroom, assignmentData);
+    if (isSurvey(assignmentData)) {
+      // A survey: everyone answers, nothing is scored, it never counts toward the grade.
+      const { retake_of: _of, retake_student_ids: _ids, quiz_duration_minutes: _minutes, ...plain } = assignmentData;
+      assignmentData = { ...plain, is_survey: true, is_exam: false, counts_toward_grade: false, total_points: 0 };
+      questionsData = questionsData.map(cleanSurveyQuestion);
+      const problem = surveyProblem(questionsData);
+      if (problem) throw new HttpError(400, problem);
     } else {
-      const { retake_of: _of, retake_student_ids: _ids, ...plain } = assignmentData;
-      assignmentData = plain;
-    }
-    const scoreProblem = invalidMaxScoreMessage(questionsData);
-    if (scoreProblem) throw new HttpError(400, scoreProblem);
-    // Published or scheduled work needs every choice / true-false key (a draft may wait).
-    if (!isAssignmentDraft(assignmentData)) {
-      const keyProblem = missingKeyMessage(questionsData);
-      if (keyProblem) throw new HttpError(400, keyProblem);
+      const { is_survey: _survey, ...graded } = assignmentData;
+      assignmentData = graded;
+      if (assignmentData.retake_of || assignmentData.retake_student_ids) {
+        assignmentData = await checkedRetake(supabase, classroom, assignmentData);
+      } else {
+        const { retake_of: _of, retake_student_ids: _ids, ...plain } = assignmentData;
+        assignmentData = plain;
+      }
+      const scoreProblem = invalidMaxScoreMessage(questionsData);
+      if (scoreProblem) throw new HttpError(400, scoreProblem);
+      // Published or scheduled work needs every choice / true-false key (a draft may wait).
+      if (!isAssignmentDraft(assignmentData)) {
+        const keyProblem = missingKeyMessage(questionsData);
+        if (keyProblem) throw new HttpError(400, keyProblem);
+      }
+      // Every graded question names its indicator / lesson plan (no default).
+      await assertIndicators(supabase, assignmentData.course_id || classroom.course_id, questionsData);
     }
     const stamp = Date.now();
     const id = `assign-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1843,7 +1880,9 @@ export const dataActions = {
       if (column === 'publish_at' && row.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
       if (column === 'attachments') assertAttachmentsFit(row);
       // Dropping "does not count" would quietly count the work; refuse instead.
-      if (column === 'counts_toward_grade' && row.counts_toward_grade === false) throw new HttpError(503, COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE);
+      if (column === 'counts_toward_grade' && row.counts_toward_grade === false && !row.is_survey) throw new HttpError(503, COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE);
+      // Without is_survey the survey would become ordinary homework.
+      if (column === 'is_survey' && row.is_survey) throw new HttpError(503, SURVEY_MIGRATION_MESSAGE);
       const { [column]: _unused, ...rest } = row;
       row = rest;
       ({ error } = await supabase.from('assignments').insert(row));
@@ -1857,6 +1896,8 @@ export const dataActions = {
       }
       if (qError) {
         await supabase.from('assignments').delete().eq('id', id);
+        // The survey-only question types need the newer type check.
+        if (qError.message?.includes('questions_type_check')) throw new HttpError(503, SURVEY_MIGRATION_MESSAGE);
         throw toDatabaseError(qError, 'questions');
       }
     }
@@ -1872,7 +1913,7 @@ export const dataActions = {
         classroom,
         authorId: me.userId,
         activityType: assignmentData.is_exam ? 'exam' : 'assignment',
-        body: assignmentPostBody(assignmentData),
+        body: assignmentPostBody({ ...assignmentData, is_survey: !!row.is_survey }),
         metadata: assignmentPostMetadata(assignmentData, id, await studentsFor(supabase, assignmentData, classroom)),
         // Only when the database kept publish_at; otherwise the assignment is already visible.
         publishAt: row.publish_at || undefined,
@@ -1888,8 +1929,10 @@ export const dataActions = {
   async updateAssignment({ supabase, actor }: Ctx, id: string, data: Partial<Omit<Assignment, 'id' | 'created_at'>>) {
     const { assignment: previous, classroom: ownClassroom } = await requireTeacherOfAssignment(supabase, actor, id);
     // Moving work to another classroom is not an edit; nor is turning work into a retake or back.
-    const { classroom_id: _cls, retake_of: _of, retake_student_ids: retakeIds, ...rest } = data as Partial<Assignment>;
+    const { classroom_id: _cls, retake_of: _of, retake_student_ids: retakeIds, is_survey: _survey, ...rest } = data as Partial<Assignment>;
     let patch: Partial<Assignment> = withCleanAttachments(rest);
+    // A survey stays a survey (and work never becomes one): no quiz, never counted.
+    if (isSurvey(previous)) patch = { ...patch, is_exam: false, counts_toward_grade: false, total_points: 0, quiz_duration_minutes: null };
     if (isRetake(previous) && previous.retake_of) {
       // A retake stays a quiz; its list of students may change.
       patch.is_exam = true;
@@ -1916,7 +1959,7 @@ export const dataActions = {
       if (!error?.message?.includes(column)) continue;
       if (column === 'publish_at' && patch.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
       if (column === 'attachments') assertAttachmentsFit(patch);
-      if (column === 'counts_toward_grade' && patch.counts_toward_grade === false) throw new HttpError(503, COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE);
+      if (column === 'counts_toward_grade' && patch.counts_toward_grade === false && !isSurvey(previous)) throw new HttpError(503, COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE);
       const { [column]: _unused, ...others } = patch;
       patch = others;
       ({ data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle());
@@ -2016,12 +2059,20 @@ export const dataActions = {
     id: string,
     questionsData: Array<Omit<Question, 'assignment_id' | 'id'> & { id?: string }>
   ) {
-    const { assignment } = await requireTeacherOfAssignment(supabase, actor, id);
-    const scoreProblem = invalidMaxScoreMessage(questionsData);
-    if (scoreProblem) throw new HttpError(400, scoreProblem);
-    if (!isAssignmentDraft(assignment)) {
-      const keyProblem = missingKeyMessage(questionsData);
-      if (keyProblem) throw new HttpError(400, keyProblem);
+    const { assignment, classroom: ownClassroom } = await requireTeacherOfAssignment(supabase, actor, id);
+    const survey = isSurvey(assignment);
+    if (survey) {
+      questionsData = questionsData.map(cleanSurveyQuestion);
+      const problem = surveyProblem(questionsData);
+      if (problem) throw new HttpError(400, problem);
+    } else {
+      const scoreProblem = invalidMaxScoreMessage(questionsData);
+      if (scoreProblem) throw new HttpError(400, scoreProblem);
+      if (!isAssignmentDraft(assignment)) {
+        const keyProblem = missingKeyMessage(questionsData);
+        if (keyProblem) throw new HttpError(400, keyProblem);
+      }
+      await assertIndicators(supabase, assignment.course_id || ownClassroom.course_id, questionsData);
     }
     const { data: existing, error: loadError } = await supabase.from('questions').select('*').eq('assignment_id', id);
     if (loadError) throw toDatabaseError(loadError, 'questions');
@@ -2041,6 +2092,7 @@ export const dataActions = {
       if (error?.message?.includes('is_required')) {
         ({ error } = await supabase.from('questions').upsert(rows.map(({ is_required: _unused, ...q }) => q)));
       }
+      if (error?.message?.includes('questions_type_check')) throw new HttpError(503, SURVEY_MIGRATION_MESSAGE);
       if (error) throw toDatabaseError(error, 'questions');
     }
     const keep = new Set(rows.map((q) => q.id));
@@ -2054,6 +2106,11 @@ export const dataActions = {
     }
     const totalPoints = rows.reduce((sum, q) => sum + Number(q.max_score || 0), 0);
     await supabase.from('assignments').update({ total_points: totalPoints }).eq('id', id);
+    // Survey responses carry no scores: nothing to re-score or total.
+    if (survey) {
+      after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: id }));
+      return rows;
+    }
 
     // Every kept choice / true-false question is re-scored for everyone who
     // handed in, not only the ones whose key visibly changed: a fixed key,
@@ -2217,6 +2274,32 @@ export const dataActions = {
         : ans;
     }
     return mapped;
+  },
+
+  /**
+   * A survey's results for its teacher: the questions and every handed-in
+   * response's answers (text only), for the summary like Google Forms'.
+   */
+  async getSurveyResponses({ supabase, actor }: Ctx, assignmentId: string) {
+    const { assignment } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
+    if (!isSurvey(assignment)) throw new HttpError(400, 'งานนี้ไม่ใช่แบบสอบถาม');
+    const [{ data: questions, error: qError }, { data: subs, error: sError }] = await Promise.all([
+      supabase.from('questions').select('*').eq('assignment_id', assignmentId),
+      supabase.from('submissions').select('id, status').eq('assignment_id', assignmentId).in('status', ['submitted', 'late']),
+    ]);
+    if (qError) throw toDatabaseError(qError, 'questions');
+    if (sError) throw toDatabaseError(sError, 'submissions');
+    const ids = (subs || []).map((r: { id: string }) => r.id);
+    const results = await Promise.all(
+      chunk(ids).map((part) => supabase.from('submission_answers').select('submission_id, question_id, text_answer').in('submission_id', part))
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw toDatabaseError(failed.error, 'submission_answers');
+    return {
+      questions: (questions || []) as Question[],
+      responses: ids.length,
+      answers: results.flatMap((r) => (r.data || []) as Array<{ submission_id: string; question_id: string; text_answer: string | null }>),
+    };
   },
 
   /** Score rows for the student's own submissions (LIFF result badges). */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Layers, Plus, Trash2, X } from "lucide-react";
 import { StudentPickLink, StudentPickerSheet } from "@/components/StudentPickerSheet";
 import { dataService } from "@/lib/supabase/dataService";
@@ -8,26 +8,29 @@ import { DRAFT_PUBLISH_AT, LATE_WINDOW_HOURS } from "@/lib/utils/assignmentWindo
 import { daysFromNowAt, localPartsToIso, toLocalDateValue, toLocalTimeValue } from "@/lib/utils/datetime";
 import { TRUE_FALSE_OPTIONS } from "@/lib/utils/trueFalse";
 import { nonNegativeScore } from "@/lib/utils/autoGrade";
+import { SCALE_POINTS, SURVEY_TYPES, SURVEY_TYPE_LABEL, hasOptions, surveyProblem } from "@/lib/utils/survey";
+import { indicatorChoicesFor, missingIndicatorMessage, type IndicatorChoices } from "@/lib/utils/questionIndicator";
 import type { Question, QuestionType } from "@/types/database";
 import { AttachmentsField, uploadAttachments, type AttachmentDraft } from "./AttachmentsField";
 import { Button, Card, Done, Field, Page, dateInputClass, errorText, inputClass, useKit, useViewData, type RosterData, type WorkData } from "./kit";
 
-/** answer: the key for choice questions, the reference answer for written ones. */
-type Draft = { uid: number; type: QuestionType; text: string; options: string[]; answer: string; rubric: string; score: number };
+/** answer: the key for choice questions, the reference answer for written ones. indicator: the picked indicator / lesson plan (graded work). required: survey only. */
+type Draft = { uid: number; type: QuestionType; text: string; options: string[]; answer: string; rubric: string; score: number; indicator: string; required: boolean };
+type Kind = "homework" | "quiz" | "survey";
 
 let nextUid = 1;
 /** A file answer is usually the whole homework (10 points); other questions start at 1, as on the website. */
 /** Same presets as the website's quiz form. */
 const QUIZ_MINUTE_PRESETS = [10, 15, 20, 30, 45, 60, 90, 120];
 const defaultScore = (type: QuestionType) => (type === "file_upload" ? 10 : 1);
-const newQuestion = (type: QuestionType = "multiple_choice"): Draft => ({ uid: nextUid++, type, text: "", options: ["", "", "", ""], answer: "", rubric: "", score: defaultScore(type) });
+const newQuestion = (type: QuestionType = "multiple_choice"): Draft => ({ uid: nextUid++, type, text: "", options: ["", "", "", ""], answer: "", rubric: "", score: defaultScore(type), indicator: "", required: true });
 /** A choice question keeps at least this many options (4 to start with). */
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 8;
 const OPTION_LETTERS = "กขคงจฉชซ";
 
-const TYPE_LABEL: Record<QuestionType, string> = { file_upload: "แนบไฟล์ / รูป", short_answer: "ข้อความ", multiple_choice: "ปรนัย", true_false: "ถูก/ผิด" };
-const TYPE_ICON: Record<QuestionType, string> = { file_upload: "📎", short_answer: "✍️", multiple_choice: "🔘", true_false: "⭕" };
+const TYPE_LABEL: Partial<Record<QuestionType, string>> = { file_upload: "แนบไฟล์ / รูป", short_answer: "ข้อความ", multiple_choice: "ปรนัย", true_false: "ถูก/ผิด" };
+const TYPE_ICON: Partial<Record<QuestionType, string>> = { file_upload: "📎", short_answer: "✍️", multiple_choice: "🔘", true_false: "⭕" };
 /** Homework takes every kind; a quiz no files (it counts every time the student leaves the screen, as on the website). */
 const TYPES_FOR = (isExam: boolean): QuestionType[] => (isExam ? ["multiple_choice", "true_false", "short_answer"] : ["file_upload", "short_answer", "multiple_choice", "true_false"]);
 /** Homework questions may leave the text empty for these (a sensible prompt is used). */
@@ -40,7 +43,23 @@ const DEFAULT_TEXT: Partial<Record<QuestionType, string>> = { file_upload: "แ�
  */
 export function CreateView() {
   const { classroom, postShare, toast, go, invalidate } = useKit();
-  const [isExam, setIsExam] = useState(false);
+  const [kind, setKind] = useState<Kind>("homework");
+  const isExam = kind === "quiz";
+  const isSurvey = kind === "survey";
+  /** What graded questions may name (the course's lesson plans or indicators); null while loading. */
+  const [indicatorChoices, setIndicatorChoices] = useState<IndicatorChoices | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const course = classroom.courseId ? await dataService.getCourseById(classroom.courseId).catch(() => null) : null;
+      const needsShared = course?.indicator_mode !== "competency" && !(course?.indicators || []).length;
+      const shared = needsShared ? await dataService.getLearningIndicators().catch(() => []) : [];
+      if (alive) setIndicatorChoices(indicatorChoicesFor(course, shared, "th"));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [classroom.courseId]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   /** Category ("" = the default one: งานทั่วไป / ข้อสอบ). */
@@ -70,8 +89,9 @@ export function CreateView() {
   // Each kind keeps its own questions, so switching the tab back and forth loses nothing.
   const [homeworkQuestions, setHomeworkQuestions] = useState<Draft[]>(() => [newQuestion("file_upload")]);
   const [quizQuestions, setQuizQuestions] = useState<Draft[]>(() => [newQuestion("multiple_choice")]);
-  const questions = isExam ? quizQuestions : homeworkQuestions;
-  const setQuestions = isExam ? setQuizQuestions : setHomeworkQuestions;
+  const [surveyQuestions, setSurveyQuestions] = useState<Draft[]>(() => [newQuestion("multiple_choice")]);
+  const questions = isExam ? quizQuestions : isSurvey ? surveyQuestions : homeworkQuestions;
+  const setQuestions = isExam ? setQuizQuestions : isSurvey ? setSurveyQuestions : setHomeworkQuestions;
   /** Shared by both tabs (links, Drive, images / PDFs); picked files upload on save. */
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [busy, setBusy] = useState<"publish" | "draft" | null>(null);
@@ -94,6 +114,10 @@ export function CreateView() {
     }
     if (isExam && !(minutes > 0)) return "กรุณาใส่เวลาทำข้อสอบ";
     if (!questions.length) return "เพิ่มคำถามอย่างน้อย 1 ข้อ";
+    if (isSurvey) return surveyProblem(questions.map((q) => ({ type: q.type, question_text: q.text, options: q.options })));
+    if (!indicatorChoices) return "กำลังโหลดตัวชี้วัด ลองอีกครั้ง";
+    const indicatorIssue = missingIndicatorMessage(questions.map((q) => ({ indicator_id: q.indicator })), indicatorChoices);
+    if (indicatorIssue) return indicatorIssue.replace("ที่แดชบอร์ด", "บนเว็บ");
     if (isExam && students.length && excludedNow.length >= students.length) return "เลือกนักเรียนที่ทำแบบทดสอบอย่างน้อย 1 คน";
     for (const [index, q] of questions.entries()) {
       const n = index + 1;
@@ -114,15 +138,20 @@ export function CreateView() {
     if (issue) return toast(issue, "error");
     setBusy(draft ? "draft" : "publish");
     try {
-      const rows: Omit<Question, "id" | "assignment_id">[] = questions.map((q) => ({
-        type: q.type,
-        question_text: q.text.trim() || DEFAULT_TEXT[q.type] || "",
-        options: q.type === "multiple_choice" ? q.options.map((o) => o.trim()).filter(Boolean) : q.type === "true_false" ? [...TRUE_FALSE_OPTIONS] : undefined,
-        ideal_answer: q.type === "file_upload" ? "" : q.answer.trim(),
-        rubric_criteria: q.type === "short_answer" ? q.rubric.trim() : "",
-        max_score: nonNegativeScore(q.score) || defaultScore(q.type),
-        is_required: true,
-      }));
+      const rows: Omit<Question, "id" | "assignment_id">[] = questions.map((q) =>
+        isSurvey
+          ? { type: q.type, question_text: q.text.trim(), options: hasOptions(q.type) ? q.options.map((o) => o.trim()).filter(Boolean) : [], ideal_answer: "", rubric_criteria: "", max_score: 0, is_required: q.required }
+          : {
+              type: q.type,
+              question_text: q.text.trim() || DEFAULT_TEXT[q.type] || "",
+              indicator_id: q.indicator,
+              options: q.type === "multiple_choice" ? q.options.map((o) => o.trim()).filter(Boolean) : q.type === "true_false" ? [...TRUE_FALSE_OPTIONS] : undefined,
+              ideal_answer: q.type === "file_upload" ? "" : q.answer.trim(),
+              rubric_criteria: q.type === "short_answer" ? q.rubric.trim() : "",
+              max_score: nonNegativeScore(q.score) || defaultScore(q.type),
+              is_required: true,
+            }
+      );
       const total = rows.reduce((sum, row) => sum + Number(row.max_score || 0), 0);
       // Files first: if one fails nothing is saved, and uploaded ones are kept for a retry.
       const savedAttachments = await uploadAttachments(attachments, (done) => setAttachments((list) => list.map((a) => (a.uid === done.uid ? done : a))));
@@ -136,7 +165,7 @@ export function CreateView() {
           ...(savedAttachments.length ? { attachments: savedAttachments } : {}),
           ...(groupName.trim() ? { group_name: groupName.trim() } : {}),
           is_exam: isExam,
-          ...(isExam || countsTowardGrade ? {} : { counts_toward_grade: false }),
+          ...(isSurvey ? { is_survey: true } : isExam || countsTowardGrade ? {} : { counts_toward_grade: false }),
           // Some students unticked: only the rest see and take the quiz.
           ...(isExam && excludedNow.length ? { retake_student_ids: students.filter((s) => !excludedNow.includes(s.id)).map((s) => s.id) } : {}),
           // A quiz runs for its minutes from publishing; the server moves it again when a draft is published.
@@ -186,6 +215,7 @@ export function CreateView() {
                 setExcluded([]);
                 setHomeworkQuestions([newQuestion("file_upload")]);
                 setQuizQuestions([newQuestion("multiple_choice")]);
+                setSurveyQuestions([newQuestion("multiple_choice")]);
               }}
             >
               สร้างอีกงาน
@@ -199,26 +229,31 @@ export function CreateView() {
 
   return (
     <Page title="✏️ สร้างงาน">
-      <div role="tablist" aria-label="ประเภทงาน" className="relative grid grid-cols-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-900">
-        {/* The white pill slides under the picked tab. */}
+      <div role="tablist" aria-label="ประเภทงาน" className="relative grid grid-cols-3 p-1 rounded-xl bg-slate-100 dark:bg-slate-900">
+        {/* The pill slides under the picked tab. */}
         <span
           aria-hidden
-          className={`absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-amber-500 shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${isExam ? "translate-x-full" : "translate-x-0"}`}
+          className={`absolute top-1 bottom-1 left-1 w-[calc((100%-0.5rem)/3)] rounded-lg bg-amber-500 shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+            isExam ? "translate-x-full" : isSurvey ? "translate-x-[200%]" : "translate-x-0"
+          }`}
         />
-        {[
-          [false, "📋 การบ้าน"],
-          [true, "📝 แบบทดสอบ"],
-        ].map(([value, label]) => (
+        {(
+          [
+            ["homework", "📋 การบ้าน"],
+            ["quiz", "📝 แบบทดสอบ"],
+            ["survey", "📊 แบบสอบถาม"],
+          ] as const
+        ).map(([value, label]) => (
           <button
-            key={String(value)}
+            key={value}
             type="button"
             role="tab"
-            aria-selected={isExam === value}
+            aria-selected={kind === value}
             data-no-press
-            onClick={() => setIsExam(value as boolean)}
-            className={`relative z-10 h-10 rounded-lg text-sm font-bold cursor-pointer transition-colors duration-300 ${isExam === value ? "text-slate-950" : "text-slate-500 dark:text-slate-400"}`}
+            onClick={() => setKind(value)}
+            className={`relative z-10 h-10 rounded-lg text-[13px] font-bold whitespace-nowrap cursor-pointer transition-colors duration-300 ${kind === value ? "text-slate-950" : "text-slate-500 dark:text-slate-400"}`}
           >
-            {label as string}
+            {label}
           </button>
         ))}
       </div>
@@ -227,17 +262,17 @@ export function CreateView() {
           Wrapped once more: the page's card-rise animation applies to its direct children only. */}
       <div>
       <div
-        key={isExam ? "quiz" : "homework"}
-        className={`space-y-4 animate-in fade-in [--tw-duration:360ms] ${isExam ? "[--tw-enter-translate-x:2rem]" : "[--tw-enter-translate-x:-2rem]"}`}
+        key={kind}
+        className={`space-y-4 animate-in fade-in [--tw-duration:360ms] ${kind === "homework" ? "[--tw-enter-translate-x:-2rem]" : "[--tw-enter-translate-x:2rem]"}`}
       >
 
       <Card className="space-y-3">
         <Field label="ชื่องาน *">
-          <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={isExam ? "เช่น แบบทดสอบบทที่ 1" : "เช่น การบ้าน 1"} />
+          <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} placeholder={isExam ? "เช่น แบบทดสอบบทที่ 1" : isSurvey ? "เช่น ความพึงพอใจต่อการเรียน" : "เช่น การบ้าน 1"} />
         </Field>
         <div className="space-y-1.5">
           <Field label="หมวดหมู่">
-            <input className={inputClass} value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={categories.length ? "เลือกด้านล่าง หรือพิมพ์ชื่อใหม่" : isExam ? "ไม่ระบุ = ข้อสอบ" : "ไม่ระบุ = งานทั่วไป"} />
+            <input className={inputClass} value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={categories.length ? "เลือกด้านล่าง หรือพิมพ์ชื่อใหม่" : isExam ? "ไม่ระบุ = ข้อสอบ" : isSurvey ? "ไม่ระบุ = แบบสอบถาม" : "ไม่ระบุ = งานทั่วไป"} />
           </Field>
           {categories.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
@@ -261,8 +296,8 @@ export function CreateView() {
             </div>
           )}
         </div>
-        {/* "ไม่นับคะแนน": homework only (a quiz always counts). */}
-        {!isExam && (
+        {/* "ไม่นับคะแนน": homework only (a quiz always counts, a survey never). */}
+        {kind === "homework" && (
           <Field label="การนับคะแนน">
             <select className={inputClass} value={countsTowardGrade ? "counts" : "not"} onChange={(e) => setCountsTowardGrade(e.target.value === "counts")}>
               <option value="counts">นับคะแนน</option>
@@ -335,7 +370,16 @@ export function CreateView() {
         )}
       </Card>
 
-      {questions.map((q, index) => (
+      {questions.map((q, index) => isSurvey ? (
+          <SurveyQuestionCard
+            key={q.uid}
+            q={q}
+            index={index}
+            canRemove={questions.length > 1}
+            patch={(change) => patch(q.uid, change)}
+            remove={() => setQuestions((list) => list.filter((item) => item.uid !== q.uid))}
+          />
+        ) : (
           <Card key={q.uid} className="liff-rise space-y-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-black">ข้อ {index + 1}</p>
@@ -430,6 +474,26 @@ export function CreateView() {
               </>
             )}
             {q.type === "file_upload" && <p className="text-[11px] text-slate-500">นักเรียนถ่ายรูปหรือแนบไฟล์ คุณครูให้คะแนนเองในเมนู “ตรวจงาน”</p>}
+            {indicatorChoices && (
+              <Field label={indicatorChoices.kind === "plan" ? "แผนการสอน / สมรรถนะ *" : "ตัวชี้วัด *"}>
+                {indicatorChoices.choices.length ? (
+                  <select
+                    className={`${inputClass} ${indicatorChoices.choices.some((c) => c.id === q.indicator) ? "" : "text-slate-400"}`}
+                    value={indicatorChoices.choices.some((c) => c.id === q.indicator) ? q.indicator : ""}
+                    onChange={(e) => patch(q.uid, { indicator: e.target.value })}
+                  >
+                    <option value="" disabled>{indicatorChoices.kind === "plan" ? "กรุณาเลือกแผนการสอน..." : "กรุณาเลือกตัวชี้วัด..."}</option>
+                    {indicatorChoices.choices.map((choice) => (
+                      <option key={choice.id} value={choice.id} className="text-slate-900">{choice.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-[11px] font-semibold text-amber-600">
+                    {indicatorChoices.kind === "plan" ? "ยังไม่มีแผนการสอนในวิชานี้ — ตั้งค่าบนเว็บก่อน" : "ยังไม่มีตัวชี้วัดในวิชานี้ — ตั้งค่าบนเว็บก่อน"}
+                  </p>
+                )}
+              </Field>
+            )}
             <Field label="คะแนน">
               <input className={`${inputClass} w-24!`} type="number" min={0} inputMode="numeric" value={q.score} onKeyDown={(e) => { if (e.key === "-" || e.key === "e" || e.key === "E") e.preventDefault(); }} onChange={(e) => patch(q.uid, { score: nonNegativeScore(e.target.value) })} />
             </Field>
@@ -438,20 +502,20 @@ export function CreateView() {
       <div className="space-y-1.5">
         <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> เพิ่มคำถาม</p>
         <div className={`grid gap-2 ${isExam ? "grid-cols-3" : "grid-cols-4"}`}>
-          {TYPES_FOR(isExam).map((type) => (
+          {(isSurvey ? [...SURVEY_TYPES] : TYPES_FOR(isExam)).map((type) => (
             <button
               key={type}
               type="button"
               onClick={() => setQuestions((list) => [...list, newQuestion(type)])}
               className="h-14 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 cursor-pointer"
             >
-              <span className="text-base leading-none">{TYPE_ICON[type]}</span>
-              {TYPE_LABEL[type]}
+              <span className="text-base leading-none">{isSurvey ? SURVEY_TYPE_LABEL[type as keyof typeof SURVEY_TYPE_LABEL].icon : TYPE_ICON[type]}</span>
+              {isSurvey ? SURVEY_TYPE_LABEL[type as keyof typeof SURVEY_TYPE_LABEL].th : TYPE_LABEL[type]}
             </button>
           ))}
         </div>
         <p className="text-[11px] text-slate-400">
-          {isExam ? "แบบทดสอบไม่มีคำถามแบบแนบไฟล์ เพราะระบบนับทุกครั้งที่นักเรียนออกจากหน้าจอ" : `รวม ${questions.length} ข้อ · คะแนนเต็ม ${questions.reduce((sum, q) => sum + (Number(q.score) || 0), 0)}`}
+          {isExam ? "แบบทดสอบไม่มีคำถามแบบแนบไฟล์" : isSurvey ? `รวม ${questions.length} ข้อ · ไม่มีคะแนน` : `รวม ${questions.length} ข้อ · คะแนนเต็ม ${questions.reduce((sum, q) => sum + (Number(q.score) || 0), 0)}`}
         </p>
       </div>
       </div>
@@ -461,8 +525,77 @@ export function CreateView() {
         <Button tone="ghost" busy={busy === "draft"} disabled={!!busy} onClick={() => save(true)}>บันทึกร่าง</Button>
         <Button className="flex-1" busy={busy === "publish"} disabled={!!busy} onClick={() => save(false)}>เผยแพร่ + ส่งการ์ดเข้ากลุ่ม</Button>
       </div>
-      <p className="text-[11px] text-slate-400">ต้องการแนบไฟล์ ตัวชี้วัด หรือตั้งเวลาเผยแพร่ ใช้หน้าสร้างงานบนเว็บ</p>
+      <p className="text-[11px] text-slate-400">ตั้งเวลาเผยแพร่ได้ที่หน้าสร้างงานบนเว็บ</p>
       {picking && <StudentPickerSheet students={students} excluded={excludedNow} onChange={setExcluded} onClose={() => setPicking(false)} />}
     </Page>
+  );
+}
+
+/** One survey question: type, text, options (no correct answer) or the 1–5 scale, and whether it must be answered. */
+function SurveyQuestionCard({ q, index, canRemove, patch, remove }: { q: Draft; index: number; canRemove: boolean; patch: (change: Partial<Draft>) => void; remove: () => void }) {
+  return (
+    <Card className="liff-rise space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-black">ข้อ {index + 1}</p>
+        <div className="flex items-center gap-1">
+          <select className="h-8 px-2 rounded-lg text-xs bg-amber-50 dark:bg-slate-800" value={q.type} onChange={(e) => patch({ type: e.target.value as QuestionType })}>
+            {SURVEY_TYPES.map((type) => (
+              <option key={type} value={type}>{SURVEY_TYPE_LABEL[type].icon} {SURVEY_TYPE_LABEL[type].th}</option>
+            ))}
+          </select>
+          {canRemove && (
+            <button type="button" aria-label="ลบข้อนี้" onClick={remove} className="w-8 h-8 rounded-lg flex items-center justify-center text-rose-500 cursor-pointer">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+      <textarea className={`${inputClass} h-16 py-2`} placeholder="คำถาม" value={q.text} onChange={(e) => patch({ text: e.target.value })} />
+      {hasOptions(q.type) && (
+        <div className="space-y-1.5">
+          {q.options.map((option, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span aria-hidden className={`w-4 h-4 shrink-0 border-2 border-slate-300 ${q.type === "checkboxes" ? "rounded-[4px]" : "rounded-full"}`} />
+              <input
+                className={`${inputClass} h-9!`}
+                placeholder={`ตัวเลือก ${i + 1}`}
+                value={option}
+                onChange={(e) => patch({ options: q.options.map((o, j) => (j === i ? e.target.value : o)) })}
+              />
+              {q.options.length > MIN_OPTIONS && (
+                <button
+                  type="button"
+                  aria-label={`ลบตัวเลือก ${i + 1}`}
+                  onClick={() => patch({ options: q.options.filter((_, j) => j !== i) })}
+                  className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          ))}
+          {q.options.length < MAX_OPTIONS && (
+            <button type="button" onClick={() => patch({ options: [...q.options, ""] })} className="ml-6 h-8 px-2 rounded-lg text-xs font-bold text-slate-500 hover:text-amber-600 inline-flex items-center gap-1 cursor-pointer">
+              <Plus className="w-3.5 h-3.5" /> เพิ่มตัวเลือก
+            </button>
+          )}
+        </div>
+      )}
+      {q.type === "scale" && (
+        <div className="flex items-center justify-between gap-1 text-[11px] text-slate-400">
+          <span>น้อย</span>
+          {SCALE_POINTS.map((point) => (
+            <span key={point} className="w-8 h-8 rounded-full border border-slate-200 dark:border-slate-700 flex items-center justify-center text-xs font-bold text-slate-500">
+              {point}
+            </span>
+          ))}
+          <span>มาก</span>
+        </div>
+      )}
+      <label className="flex items-center gap-2 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer w-fit">
+        <input type="checkbox" className="w-4 h-4 accent-amber-500" checked={q.required} onChange={(e) => patch({ required: e.target.checked })} />
+        ต้องตอบ
+      </label>
+    </Card>
   );
 }

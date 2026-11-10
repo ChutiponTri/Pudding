@@ -4,6 +4,7 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getAssignmentWindow, QUIZ_LATE_GRACE_MS } from '@/lib/utils/assignmentWindow';
 import { formatDateTime, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade';
+import { decodeChecks, encodeChecks, isSurvey, scaleValue } from '@/lib/utils/survey';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { getActor } from '@/lib/auth/actor';
 import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
@@ -129,10 +130,12 @@ export async function POST(request: NextRequest) {
       student_first_name,
       student_last_name,
       student_avatar,
-      answers = [],
+      answers: rawAnswers = [],
       antiCheating = {},
       proxy_student_number,
     } = body;
+    // A survey's answers are normalised below.
+    let answers = rawAnswers;
 
     // The student is whoever LINE says the token belongs to, never an id from the body.
     const actor = await getActor(request);
@@ -345,6 +348,23 @@ export async function POST(request: NextRequest) {
       .eq('assignment_id', assignment_id);
 
     const qsList = (questions || []) as Question[];
+    const survey = isSurvey(assignment);
+    // Survey answers in their stored form: checkbox picks as a JSON list of real
+    // options, a scale as 1–5; anything else becomes blank.
+    if (survey) {
+      answers = ((answers as IncomingAnswer[]) || []).map((a) => {
+        const q = qsList.find((item) => item.id === a.question_id);
+        if (!q) return a;
+        const text = String(a.answer_text || '').trim();
+        const options = (q.options || []).map(String);
+        const clean =
+          q.type === 'checkboxes' ? encodeChecks(decodeChecks(text).filter((p) => options.includes(p)))
+          : q.type === 'scale' ? (scaleValue(text) ? String(scaleValue(text)) : '')
+          : q.type === 'multiple_choice' ? (options.includes(text) ? text : '')
+          : text;
+        return { ...a, answer_text: clean, file_url: null };
+      });
+    }
     // Left the quiz more often than warned about: whatever arrives, a blank sheet is handed in (0 points).
     const forfeited = tracked && quizOpenAction(quizExits, qsList.length) === 'forfeit';
 
@@ -390,7 +410,9 @@ export async function POST(request: NextRequest) {
 
         let questionScore: number | undefined = undefined;
 
-        if (forfeited) {
+        if (survey) {
+          // Survey answers are not scored (the response is complete as handed in).
+        } else if (forfeited) {
           // The blank sheet is fully scored: nothing left for the teacher to grade.
           questionScore = 0;
         } else if (isObjectiveQuestion(q)) {
@@ -416,6 +438,11 @@ export async function POST(request: NextRequest) {
       // The total is only given once every question has a score: with written or
       // file answers still to grade, students see their choice scores but no total yet.
       if (allGraded) calculatedTotalScore = Math.round(runningScore * 10) / 10;
+    }
+    // A survey response is complete as it is: 0 of 0, so it never waits for grading.
+    if (survey) {
+      calculatedTotalScore = 0;
+      assignmentMaxScore = 0;
     }
 
     // Closing the quiz and coming back is always suspicious, even within the warnings.

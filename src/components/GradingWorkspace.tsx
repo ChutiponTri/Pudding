@@ -8,6 +8,7 @@ import { Avatar } from '@/components/Avatar';
 import { useSidebar } from '@/components/SidebarContext';
 import { isImageUrl, isPdfUrl as isPdf } from '@/lib/utils/referenceWork';
 import { isObjectiveAnswerCorrect, isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade';
+import { surveyAnswerText } from '@/lib/utils/survey';
 import { TRUE_FALSE_OPTIONS } from '@/lib/utils/trueFalse';
 import { isIntegrityFlagged } from '@/lib/utils/gradingStatus';
 import {
@@ -864,7 +865,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                       </div>
                     ) : ans?.text_answer ? (
                       <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap">
-                        {ans.text_answer}
+                        {/* Survey checkbox picks are stored as a list. */}
+                        {surveyAnswerText(q.type, ans.text_answer)}
                       </div>
                     ) : (
                       <div className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-400">

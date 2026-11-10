@@ -13,6 +13,8 @@ import { isRetake, isRetakeOf } from '@/lib/utils/retake';
 import { StudentPickLink, StudentPickerSheet } from '@/components/StudentPickerSheet';
 import { TRUE_FALSE_OPTIONS, parseTrueFalse } from '@/lib/utils/trueFalse';
 import { matchChoiceOption, nonNegativeScore } from '@/lib/utils/autoGrade';
+import { SCALE_POINTS, SURVEY_TYPES, SURVEY_TYPE_LABEL, hasOptions, surveyProblem } from '@/lib/utils/survey';
+import { indicatorChoicesFor, missingIndicatorMessage } from '@/lib/utils/questionIndicator';
 import { DateTimeField } from '@/components/DateTimeField';
 import { Collapse } from '@/components/Collapse';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
@@ -50,6 +52,7 @@ import {
   Plus,
   RotateCcw,
   X,
+  ClipboardList,
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/LoadingState';
 
@@ -79,6 +82,18 @@ const MAX_OPTIONS = 8;
 
 let questionUidSeq = 0;
 const newQuestionUid = () => `q${++questionUidSeq}`;
+/** A blank question card (no indicator: the teacher picks one). */
+const blankQuestion = (type: QuestionType): QuestionDraft => ({
+  uid: newQuestionUid(),
+  indicator_id: '',
+  type,
+  question_text: '',
+  options: ['', '', '', ''],
+  ideal_answer: '',
+  rubric_criteria: '',
+  max_score: defaultMaxScore(type),
+  is_required: true,
+});
 /** Matches the card's collapse transition (duration-300). */
 const QUESTION_EXIT_MS = 300;
 /** Sliding highlight colour per release option (draft reads as "not live yet", the others use the app accent). */
@@ -90,7 +105,7 @@ const RELEASE_PILL = {
 
 /**
  * The same indicator (or lesson plan) in another course: kept when that course
- * has it, else the one at the same position, else the course's first. Used
+ * has it, else the one at the same position, else none (the teacher picks). Used
  * when work moves to a classroom of another course (reuse, course change).
  */
 function remapIndicatorId(id: string, from: Course | undefined, to: Course | undefined): string {
@@ -102,8 +117,8 @@ function remapIndicatorId(id: string, from: Course | undefined, to: Course | und
   if (indicatorIndex >= 0 && toIndicators[indicatorIndex]) return toIndicators[indicatorIndex].id;
   const planIndex = from?.lesson_plans?.findIndex((p) => p.id === id) ?? -1;
   if (planIndex >= 0 && toPlans[planIndex]) return toPlans[planIndex].id;
-  const preferred = to.indicator_mode === 'competency' ? toPlans : toIndicators;
-  return preferred[0]?.id || toIndicators[0]?.id || id;
+  // No match: the teacher picks one (there is no default).
+  return '';
 }
 
 /**
@@ -207,7 +222,7 @@ function NewAssignmentContent() {
   const [selectedClassroomIds, setSelectedClassroomIds] = useState<string[]>([]);
   const [indicators, setIndicators] = useState<LearningIndicator[]>([]);
   // Course-level indicators derived from the selected course
-  const [courseIndicators, setCourseIndicators] = useState<CourseLearningIndicator[]>([]);
+  const [, setCourseIndicators] = useState<CourseLearningIndicator[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
   const [copySource, setCopySource] = useState<Assignment | null>(null);
@@ -226,13 +241,19 @@ function NewAssignmentContent() {
 
   // Form fields
   const [isExam, setIsExam] = useState(() => !editId && ((!copyId && urlMode === 'quiz') || !!retakeOfParam));
-  const [trackModeToggle, modeIndicator] = useSlidingIndicator(isExam);
+  // "แบบสอบถาม": no scores, keys or indicators (never together with isExam).
+  const [isSurveyMode, setIsSurveyMode] = useState(() => !editId && !copyId && !retakeOfParam && urlMode === 'survey');
+  const workMode = isExam ? 'quiz' : isSurveyMode ? 'survey' : 'homework';
+  const [trackModeToggle, modeIndicator] = useSlidingIndicator(workMode);
+  // Graded and survey questions are kept apart; switching between them parks the other set here.
+  const parkedQuestionsRef = useRef<QuestionDraft[] | null>(null);
   // Back to the work list on the tab of what is being made (quiz → quizzes, homework → assignments).
   const returnTo = (() => {
     if (!allowedReturn?.startsWith('/works')) return allowedReturn;
     const [path, query = ''] = allowedReturn.split('?');
     const params = new URLSearchParams(query);
     if (isExam) params.set('tab', 'quiz');
+    else if (isSurveyMode) params.set('tab', 'survey');
     else params.delete('tab');
     const next = params.toString();
     return next ? `${path}?${next}` : path;
@@ -366,19 +387,19 @@ function NewAssignmentContent() {
   };
 
   // Dynamic Questions
-  const [questions, setQuestions] = useState<QuestionDraft[]>(() => [
-    {
-      uid: newQuestionUid(),
-      indicator_id: '',
-      type: 'short_answer',
-      question_text: '',
-      options: ['', '', '', ''],
-      ideal_answer: '',
-      rubric_criteria: '',
-      max_score: defaultMaxScore('short_answer'),
-      is_required: true,
-    },
-  ]);
+  const [questions, setQuestions] = useState<QuestionDraft[]>(() => [blankQuestion(isSurveyMode ? 'multiple_choice' : 'short_answer')]);
+
+  /** Homework / quiz / survey. Survey questions are a set of their own, so switching keeps both. */
+  const pickMode = (mode: 'homework' | 'quiz' | 'survey') => {
+    if (retake || mode === workMode) return;
+    if ((mode === 'survey') !== isSurveyMode) {
+      const parked = parkedQuestionsRef.current;
+      parkedQuestionsRef.current = questions;
+      setQuestions(parked || [blankQuestion(mode === 'survey' ? 'multiple_choice' : 'short_answer')]);
+    }
+    setIsExam(mode === 'quiz');
+    setIsSurveyMode(mode === 'survey');
+  };
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const lastQuestionRef = useRef<HTMLDivElement | null>(null);
@@ -438,15 +459,6 @@ function NewAssignmentContent() {
           const matchedCourse = crs.find((c) => c.id === initialCourseId) || crs[0];
           const firstCourseInds = matchedCourse.indicators || [];
           setCourseIndicators(firstCourseInds);
-          if (firstCourseInds.length > 0) {
-            setQuestions((prev) =>
-              prev.map((q) => ({ ...q, indicator_id: firstCourseInds[0].id }))
-            );
-          } else if (ind.length > 0) {
-            setQuestions((prev) =>
-              prev.map((q) => ({ ...q, indicator_id: ind[0].id }))
-            );
-          }
         } else if (cls.length > 0) {
           setSelectedClassroomIds([urlClassroomId || cls[0].id]);
         }
@@ -504,7 +516,8 @@ function NewAssignmentContent() {
             const other = cls.find((c) => c.id !== assignment.classroom_id && (!courseId || c.course_id === courseId));
             setSelectedClassroomIds([other?.id || assignment.classroom_id]);
           }
-          setIsExam(!!assignment.is_exam);
+          setIsExam(!!assignment.is_exam && !assignment.is_survey);
+          setIsSurveyMode(!!assignment.is_survey);
           // A quiz for chosen students (not a retake): the others start unticked once the roster loads.
           setExcludedByClass(
             editId && isRetake(assignment) && !isRetakeOf(assignment)
@@ -539,8 +552,6 @@ function NewAssignmentContent() {
           if (legacyNote && !(assignment.description || '').includes(legacyNote)) {
             setDescription([assignment.description?.trim(), legacyNote].filter(Boolean).join('\n\n'));
           }
-          // Shared work comes without indicators: use the target course's first one.
-          const templateIndicatorId = (targetCourse?.indicators || crs[0]?.indicators || [])[0]?.id || '';
           if (editId) {
             originalQuestionIdsRef.current = savedQuestions.map((q) => q.id);
             originalQuestionsRef.current = savedQuestions;
@@ -554,7 +565,7 @@ function NewAssignmentContent() {
           }
           if (savedQuestions.length) {
             setQuestions(savedQuestions.map((q) => {
-              const options = q.type === 'multiple_choice'
+              const options = q.type === 'multiple_choice' || q.type === 'checkboxes'
                 ? (q.options || []).length >= MIN_OPTIONS ? [...(q.options || [])] : [...(q.options || []), '', '', '', ''].slice(0, 4)
                 : ['', '', '', ''];
               // The editor marks the correct choice by exact text, but older or imported keys may be
@@ -570,8 +581,9 @@ function NewAssignmentContent() {
               uid: newQuestionUid(),
               // A copy gets new questions of its own.
               id: editId ? q.id : undefined,
+              // Shared work comes without indicators: the teacher picks them.
               indicator_id: templateToken
-                ? templateIndicatorId
+                ? ''
                 : targetCourseId !== courseId ? remapIndicatorId(q.indicator_id || '', sourceCourse, targetCourse) : q.indicator_id || '',
               type: q.type,
               question_text: q.question_text || '',
@@ -734,13 +746,12 @@ function NewAssignmentContent() {
 
   const handleAddQuestion = (type: QuestionType = 'short_answer') => {
     if (type === 'file_upload' && !allowFileQuestion()) return;
-    // Use courseIndicators first, fall back to global indicators
-    const defaultIndId = courseIndicators[0]?.id || indicators[0]?.id || '';
     setQuestions((prev) => [
       ...prev,
       {
         uid: newQuestionUid(),
-        indicator_id: defaultIndId,
+        // No default: the teacher picks the indicator / lesson plan.
+        indicator_id: '',
         type,
         question_text: '',
         options: ['', '', '', ''],
@@ -875,8 +886,15 @@ function NewAssignmentContent() {
       alert(tr('เลือกนักเรียนที่ทำแบบทดสอบอย่างน้อย 1 คน', 'Choose at least one student to take the quiz'));
       return;
     }
+    if (isSurveyMode) {
+      const problem = surveyProblem(questions);
+      if (problem) {
+        alert(problem);
+        return;
+      }
+    }
     const incompleteChoice = questions.findIndex(
-      (q) => q.type === 'multiple_choice' && q.options.filter((opt) => opt.trim()).length < 2
+      (q) => hasOptions(q.type) && q.options.filter((opt) => opt.trim()).length < 2
     );
     if (incompleteChoice !== -1) {
       alert(
@@ -887,9 +905,10 @@ function NewAssignmentContent() {
       return;
     }
 
+    // A survey has no answer keys.
     const noAnswerKey = questions
       .map((q, i) => ({ q, n: i + 1 }))
-      .filter(({ q }) =>
+      .filter(({ q }) => !isSurveyMode &&
         q.type === 'multiple_choice'
           ? !q.options.some((opt) => opt.trim() && opt === q.ideal_answer)
           : q.type === 'true_false' && parseTrueFalse(q.ideal_answer) === null
@@ -920,25 +939,29 @@ function NewAssignmentContent() {
       // One copy per selected classroom (each gets its own timeline post and LINE message).
       const targetClassIds = selectedClassroomIds.length ? selectedClassroomIds : [primaryClassId];
       const selectedCourse = courses.find((course) => course.id === selectedCourseId);
-      if (selectedCourse?.indicator_mode === 'competency' && (selectedCourse.lesson_plans || []).length === 0) {
-        alert(language === 'th' ? 'กรุณากำหนดแผนการสอน/สมรรถนะก่อนสร้างงาน' : 'Please configure competency lesson plans before creating an assignment');
+      // Every graded question names its indicator / lesson plan (surveys have none).
+      const indicatorProblem = isSurveyMode ? null : missingIndicatorMessage(questions, indicatorChoicesFor(selectedCourse, indicators, language === 'th' ? 'th' : 'en'));
+      if (indicatorProblem) {
+        alert(indicatorProblem);
+        const first = questions.findIndex((q) => !q.indicator_id);
+        document.getElementById(`question-${Math.max(0, first)}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
-      // "ไม่นับคะแนน" is for homework only: a quiz always counts.
-      const countsNow = isExam || countsTowardGrade;
-      const totalPoints = questions.reduce((acc, q) => acc + (nonNegativeScore(q.max_score) || defaultMaxScore(q.type)), 0);
+      // "ไม่นับคะแนน" is for homework only: a quiz always counts, a survey never.
+      const countsNow = !isSurveyMode && (isExam || countsTowardGrade);
+      const totalPoints = isSurveyMode ? 0 : questions.reduce((acc, q) => acc + (nonNegativeScore(q.max_score) || defaultMaxScore(q.type)), 0);
 
       const questionRows = questions.map((q) => ({
         type: q.type,
         question_text: q.question_text || 'คำถามข้อนี้',
-        indicator_id: q.indicator_id,
-        options: q.type === 'multiple_choice' ? q.options.map((opt) => opt.trim()).filter(Boolean) : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : undefined,
+        ...(isSurveyMode ? {} : { indicator_id: q.indicator_id }),
+        options: hasOptions(q.type) ? q.options.map((opt) => opt.trim()).filter(Boolean) : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : undefined,
         ideal_answer: q.type === 'true_false'
           ? (parseTrueFalse(q.ideal_answer) === null ? '' : parseTrueFalse(q.ideal_answer) ? 'ถูก' : 'ผิด')
           : q.ideal_answer,
         // Choice and true/false are scored from the key alone.
         rubric_criteria: q.type === 'multiple_choice' || q.type === 'true_false' ? '' : q.rubric_criteria,
-        max_score: nonNegativeScore(q.max_score) || defaultMaxScore(q.type),
+        max_score: isSurveyMode ? 0 : nonNegativeScore(q.max_score) || defaultMaxScore(q.type),
         is_required: isExam ? true : q.is_required,
       }));
       // Upload picked files first: if one fails, nothing is saved and the
@@ -1011,7 +1034,7 @@ function NewAssignmentContent() {
           group_name: groupName.trim(),
           description,
           is_exam: isExam,
-          ...(retake || countsNow === (editingAssignment.counts_toward_grade !== false) ? {} : { counts_toward_grade: countsNow }),
+          ...(retake || isSurveyMode || countsNow === (editingAssignment.counts_toward_grade !== false) ? {} : { counts_toward_grade: countsNow }),
           due_date: dueDate || editingAssignment.due_date,
           close_at: isExam ? null : closeAt || null,
           ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
@@ -1041,7 +1064,7 @@ function NewAssignmentContent() {
           if (dueDate && new Date(dueDate).getTime() !== new Date(before.due_date).getTime()) changed.due_date = dueDate;
           if ((isExam ? null : closeAt || null) !== (before.close_at || null)) changed.close_at = isExam ? null : closeAt || null;
           if (isExam !== !!before.is_exam) changed.is_exam = isExam;
-          if (!retake && countsNow !== (before.counts_toward_grade !== false)) changed.counts_toward_grade = countsNow;
+          if (!retake && !isSurveyMode && countsNow !== (before.counts_toward_grade !== false)) changed.counts_toward_grade = countsNow;
           if (isExam && quizMinutesValue !== Number(before.quiz_duration_minutes)) changed.quiz_duration_minutes = quizMinutesValue;
           const sameQuestion = (a: Pick<Question, 'type' | 'question_text'>, b: Pick<Question, 'type' | 'question_text'>) =>
             a.type === b.type && (a.question_text || '').trim() === (b.question_text || '').trim();
@@ -1088,7 +1111,7 @@ function NewAssignmentContent() {
             group_name: groupName.trim() || undefined,
             description,
             is_exam: isExam,
-            ...(!retake && !countsNow ? { counts_toward_grade: false } : {}),
+            ...(isSurveyMode ? { is_survey: true } : !retake && !countsNow ? { counts_toward_grade: false } : {}),
             due_date: dueDate || daysFromNowAt(7, 23, 59),
             ...(!isExam && closeAt ? { close_at: closeAt } : {}),
             ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
@@ -1120,7 +1143,7 @@ function NewAssignmentContent() {
             : `Draft saved • hidden until you press "Publish now"\nDeleted if not published within ${DRAFT_RETENTION_DAYS} days`
           : schedulePublish
           ? language === 'th'
-            ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
+            ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : isSurveyMode ? 'แบบสอบถาม' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
             : `Scheduled for ${formatDateTime(publishAt, 'en')}. Students will see it then.`
           : retake
           ? selectedClassroomsLineReady && !lineUnsent && lineCards
@@ -1130,6 +1153,8 @@ function NewAssignmentContent() {
             : tr(`สร้างข้อสอบซ่อมแล้ว · เปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก\nห้องนี้ยังไม่เชื่อม LINE จึงต้องส่งลิงก์เอง`, `Retake created · only the ${retake.ids.length} chosen students can open it\nThis class has no LINE group, so share the link yourself`)
           : isExam
           ? (language === 'th' ? 'สร้างแบบทดสอบสำเร็จ!' : 'Quiz created successfully!')
+          : isSurveyMode
+          ? tr('สร้างแบบสอบถามแล้ว', 'Survey created')
           : (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')) +
         (lineUnsent
           ? tr(
@@ -1371,33 +1396,38 @@ function NewAssignmentContent() {
             ref={trackModeToggle}
             role="radiogroup"
             aria-label={language === 'th' ? 'ประเภทงาน' : 'Work type'}
-            className="relative grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/80 w-full lg:w-auto"
+            className="relative grid grid-cols-3 gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/80 w-full lg:w-auto"
           >
             {modeIndicator && (
               <span
                 aria-hidden
                 className={`absolute top-0 left-0 rounded-xl shadow-md transition-[transform,width,height,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                  isExam ? 'bg-purple-600 shadow-purple-500/25' : 'bg-emerald-600 shadow-emerald-500/25'
+                  isExam ? 'bg-purple-600 shadow-purple-500/25' : isSurveyMode ? 'bg-sky-600 shadow-sky-500/25' : 'bg-emerald-600 shadow-emerald-500/25'
                 }`}
                 style={indicatorStyle(modeIndicator)}
               />
             )}
             {([
-              { exam: false, icon: BookOpen, short: language === 'th' ? 'การบ้าน' : 'Assignment', label: t('assignment_creator.mode_assignment'), pill: 'bg-emerald-600' },
-              { exam: true, icon: ShieldAlert, short: language === 'th' ? 'ข้อสอบ' : 'Quiz', label: t('assignment_creator.mode_exam'), pill: 'bg-purple-600' },
+              { mode: 'homework', icon: BookOpen, short: language === 'th' ? 'การบ้าน' : 'Homework', label: t('assignment_creator.mode_assignment'), pill: 'bg-emerald-600' },
+              { mode: 'quiz', icon: ShieldAlert, short: language === 'th' ? 'ข้อสอบ' : 'Quiz', label: t('assignment_creator.mode_exam'), pill: 'bg-purple-600' },
+              { mode: 'survey', icon: ClipboardList, short: language === 'th' ? 'แบบสอบถาม' : 'Survey', label: language === 'th' ? 'แบบสอบถาม' : 'Survey', pill: 'bg-sky-600' },
             ] as const).map((option) => {
               const Icon = option.icon;
-              const selected = isExam === option.exam;
+              const selected = workMode === option.mode;
+              // A retake stays a quiz; saved work can't turn into a survey or back.
+              const locked = retake
+                ? option.mode !== 'quiz'
+                : !!editingAssignment && (option.mode === 'survey') !== !!editingAssignment.is_survey;
               return (
                 <button
-                  key={String(option.exam)}
+                  key={option.mode}
                   type="button"
                   role="radio"
                   aria-checked={selected}
                   data-active={selected}
-                  onClick={() => !retake && setIsExam(option.exam)}
-                  disabled={!!retake && !option.exam}
-                  className={`relative lg:min-w-40 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors duration-300 cursor-pointer ${
+                  onClick={() => pickMode(option.mode)}
+                  disabled={locked}
+                  className={`relative lg:min-w-36 px-2 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors duration-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                     selected
                       ? `text-white ${modeIndicator ? '' : option.pill}`
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
@@ -1493,7 +1523,7 @@ function NewAssignmentContent() {
             </div>
 
             {/* Full width when the grading choice beside it is hidden (quiz / retake). */}
-            <div className={`space-y-2 ${isExam || retake ? 'md:col-span-2' : ''}`}>
+            <div className={`space-y-2 ${isExam || retake || isSurveyMode ? 'md:col-span-2' : ''}`}>
               <label htmlFor="assignment-group" className="block text-xs font-bold text-slate-700 dark:text-slate-300">{tr('หมวดหมู่', 'Category')}</label>
               <input
                 id="assignment-group"
@@ -1530,8 +1560,8 @@ function NewAssignmentContent() {
               )}
             </div>
 
-            {/* Counts toward the grade: homework only (a quiz always counts). Phones get a dropdown. */}
-            {!retake && !isExam && (
+            {/* Counts toward the grade: homework only (a quiz always counts, a survey never). Phones get a dropdown. */}
+            {!retake && !isExam && !isSurveyMode && (
               <div className="space-y-2">
                 <label htmlFor="assignment-counts" className="block text-xs font-bold text-slate-700 dark:text-slate-300">{tr('การนับคะแนน', 'Grading')}</label>
                 <select
@@ -2021,7 +2051,8 @@ function NewAssignmentContent() {
                       </button>
                     )}
 
-                    {/* Score */}
+                    {/* Score (a survey has none) */}
+                    {!isSurveyMode && (
                     <div className="flex items-center gap-1.5 text-xs">
                       <span className="text-slate-500 font-semibold">
                         <MobileText short={language === 'th' ? 'คะแนน' : 'Pts'} full={t('assignment_creator.questions_builder.max_score')} />:
@@ -2040,6 +2071,7 @@ function NewAssignmentContent() {
                         className="w-16 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center font-bold text-slate-900 dark:text-white"
                       />
                     </div>
+                    )}
 
                     {/* Delete Question */}
                     {visibleQuestionCount > 1 && (
@@ -2055,7 +2087,7 @@ function NewAssignmentContent() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className={`grid grid-cols-1 gap-4 ${isSurveyMode ? '' : 'md:grid-cols-2'}`}>
                   {/* Question Type */}
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -2070,81 +2102,68 @@ function NewAssignmentContent() {
                       }}
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                     >
-                      <option value="multiple_choice">
-                        {t('assignment_creator.questions_builder.type_multiple_choice')}
-                      </option>
-                      <option value="short_answer">
-                        {t('assignment_creator.questions_builder.type_short_answer')}
-                      </option>
-                      <option value="file_upload">
-                        {t('assignment_creator.questions_builder.type_file_upload')}
-                      </option>
-                      <option value="true_false">
-                        {t('assignment_creator.questions_builder.type_true_false')}
-                      </option>
+                      {isSurveyMode ? (
+                        SURVEY_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {SURVEY_TYPE_LABEL[type][language === 'th' ? 'th' : 'en']}
+                          </option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="multiple_choice">
+                            {t('assignment_creator.questions_builder.type_multiple_choice')}
+                          </option>
+                          <option value="short_answer">
+                            {t('assignment_creator.questions_builder.type_short_answer')}
+                          </option>
+                          <option value="file_upload">
+                            {t('assignment_creator.questions_builder.type_file_upload')}
+                          </option>
+                          <option value="true_false">
+                            {t('assignment_creator.questions_builder.type_true_false')}
+                          </option>
+                        </>
+                      )}
                     </select>
                   </div>
 
-                  {/* Indicator / Competency Select — sourced from selected course */}
+                  {/* Indicator / lesson plan (required, no default) — from the selected course; a survey has none */}
+                  {!isSurveyMode && (
                   <div className="space-y-1.5">
                     {(() => {
                       const selectedCourse = courses.find((c) => c.id === selectedCourseId);
-                      const isCompetency = selectedCourse?.indicator_mode === 'competency';
-                      const lessonPlans = selectedCourse?.lesson_plans || [];
-
-                      if (isCompetency) {
-                        // Competency mode: choose a lesson plan entry (which maps to competency items)
-                        return (
-                          <>
-                            <label className="text-xs font-bold text-violet-700 dark:text-violet-300">
-                              {tr('แผนการสอน / สมรรถนะ', 'Lesson plan / competency')}
-                            </label>
-                            <select
-                              value={q.indicator_id}
-                              onChange={(e) => handleQuestionChange(idx, 'indicator_id', e.target.value)}
-                              className="w-full px-3 py-2 rounded-xl bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-violet-500 cursor-pointer"
-                            >
-                              {lessonPlans.map((plan, planIdx) => {
-                                const mappedLabels = (plan.mapped_indicator_ids || [])
-                                  .map((mid) => {
-                                    const ci = courseIndicators.find((c) => c.id === mid);
-                                    const ciIdx = courseIndicators.findIndex((c) => c.id === mid);
-                                    return ci ? `${tr('สมรรถนะ', 'Competency')} ${ciIdx + 1}` : null;
-                                  })
-                                  .filter(Boolean)
-                                  .join(', ');
-                                return (
-                                  <option key={plan.id} value={plan.id}>
-                                    {tr('แผน', 'Plan')} {planIdx + 1}: {plan.title.substring(0, 35) || tr('(ไม่มีชื่อ)', '(untitled)')}
-                                    {mappedLabels ? ` → ${mappedLabels}` : ''}
-                                  </option>
-                                );
-                              })}
-                            </select>
-                          </>
-                        );
-                      }
-
-                      // Indicator mode: choose from course's CourseLearningIndicator list
-                      const indOptions = courseIndicators.length > 0 ? courseIndicators : indicators;
+                      const { kind, choices } = indicatorChoicesFor(selectedCourse, indicators, language === 'th' ? 'th' : 'en');
+                      const isPlan = kind === 'plan';
+                      const picked = choices.some((c) => c.id === q.indicator_id);
                       return (
                         <>
-                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                            {t('assignment_creator.questions_builder.indicator_select')}
+                          <label htmlFor={`question-indicator-${idx}`} className={`block text-xs font-bold ${isPlan ? 'text-violet-700 dark:text-violet-300' : 'text-slate-700 dark:text-slate-300'}`}>
+                            {isPlan ? tr('แผนการสอน / สมรรถนะ', 'Lesson plan / competency') : t('assignment_creator.questions_builder.indicator_select')} *
                           </label>
-                          {indOptions.length === 0 ? (
+                          {choices.length === 0 ? (
                             <p className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
-                              {tr('ยังไม่มีตัวชี้วัดในวิชานี้ — ไปตั้งค่าใน Dashboard ก่อน', 'This course has no indicators yet — set them up on the Dashboard first')}
+                              {isPlan
+                                ? tr('ยังไม่มีแผนการสอนในวิชานี้ — ไปตั้งค่าใน Dashboard ก่อน', 'This course has no lesson plans yet — set them up on the Dashboard first')
+                                : tr('ยังไม่มีตัวชี้วัดในวิชานี้ — ไปตั้งค่าใน Dashboard ก่อน', 'This course has no indicators yet — set them up on the Dashboard first')}
                             </p>
                           ) : (
                             <select
-                              value={q.indicator_id}
+                              id={`question-indicator-${idx}`}
+                              required
+                              value={picked ? q.indicator_id : ''}
                               onChange={(e) => handleQuestionChange(idx, 'indicator_id', e.target.value)}
-                              className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
+                              className={`w-full px-3 py-2 rounded-xl border text-xs focus:outline-hidden cursor-pointer ${
+                                isPlan
+                                  ? 'bg-violet-50 dark:bg-violet-950/30 border-violet-200 dark:border-violet-800 focus:border-violet-500'
+                                  : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 focus:border-amber-500'
+                              } ${picked ? 'text-slate-900 dark:text-white' : 'text-slate-400'}`}
                             >
-                              {indOptions.map((ind, indIdx) => (
-                                <option key={ind.id} value={ind.id}>
-                                  {tr('ข้อ', 'Item')} {indIdx + 1}: {ind.title.substring(0, 50)}{ind.title.length > 50 ? '…' : ''}
+                              <option value="" disabled>
+                                {isPlan ? tr('กรุณาเลือกแผนการสอน...', 'Please select a lesson plan...') : tr('กรุณาเลือกตัวชี้วัด...', 'Please select an indicator...')}
+                              </option>
+                              {choices.map((choice) => (
+                                <option key={choice.id} value={choice.id} className="text-slate-900 dark:text-white">
+                                  {choice.label}
                                 </option>
                               ))}
                             </select>
@@ -2153,6 +2172,7 @@ function NewAssignmentContent() {
                       );
                     })()}
                   </div>
+                  )}
                 </div>
 
                 {/* Question Prompt */}
@@ -2170,8 +2190,63 @@ function NewAssignmentContent() {
                   />
                 </div>
 
+                {/* Survey: options to pick from (one, or several for checkboxes), no correct answer */}
+                {isSurveyMode && hasOptions(q.type) && (
+                  <div className="space-y-2 animate-in fade-in [--tw-duration:280ms]">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">{tr('ตัวเลือก', 'Options')}</label>
+                    {q.options.map((opt, optIdx) => (
+                      <div key={optIdx} className="flex items-center gap-2">
+                        <span
+                          aria-hidden
+                          className={`w-4 h-4 shrink-0 border-2 border-slate-300 dark:border-slate-600 ${q.type === 'checkboxes' ? 'rounded-[4px]' : 'rounded-full'}`}
+                        />
+                        <input
+                          type="text"
+                          value={opt}
+                          onChange={(e) => handleOptionChange(idx, optIdx, e.target.value)}
+                          placeholder={tr(`ตัวเลือก ${optIdx + 1}`, `Option ${optIdx + 1}`)}
+                          className="flex-1 px-3 py-1.5 rounded-lg border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white"
+                        />
+                        {q.options.length > MIN_OPTIONS && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveOption(idx, optIdx)}
+                            aria-label={tr('ลบตัวเลือกนี้', 'Remove this option')}
+                            className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {q.options.length < MAX_OPTIONS && (
+                      <button
+                        type="button"
+                        onClick={() => handleQuestionChange(idx, 'options', [...q.options, ''])}
+                        className="ml-6 inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-sky-600 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        {tr('เพิ่มตัวเลือก', 'Add option')}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Survey scale: students pick 1 (lowest) to 5 (highest) */}
+                {isSurveyMode && q.type === 'scale' && (
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400 animate-in fade-in [--tw-duration:280ms]">
+                    <span>{tr('น้อย', 'Low')}</span>
+                    {SCALE_POINTS.map((point) => (
+                      <span key={point} className="w-8 h-8 rounded-full border border-slate-200 dark:border-slate-700 flex items-center justify-center text-xs font-bold text-slate-500 dark:text-slate-300">
+                        {point}
+                      </span>
+                    ))}
+                    <span>{tr('มาก', 'High')}</span>
+                  </div>
+                )}
+
                 {/* Multiple Choice Options Builder: tap the circle to mark the correct option */}
-                {q.type === 'multiple_choice' && (
+                {q.type === 'multiple_choice' && !isSurveyMode && (
                   <div className="space-y-2.5 animate-in fade-in [--tw-duration:280ms]">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -2307,7 +2382,7 @@ function NewAssignmentContent() {
                     {tr('แนวคำตอบ / เกณฑ์ให้คะแนน', 'Model answer / rubric')}
                   </button>
                 )}
-                {q.type !== 'multiple_choice' && q.type !== 'true_false' && (q.type === 'short_answer' || openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
+                {!isSurveyMode && q.type !== 'multiple_choice' && q.type !== 'true_false' && (q.type === 'short_answer' || openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 [--tw-duration:280ms]">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -2350,12 +2425,19 @@ function NewAssignmentContent() {
             </p>
             {/* Phones: one row of four (icon above a short label); wider screens: the full labels in a wrapped row. */}
             <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-2.5">
-              {([
-                { type: 'multiple_choice', th: ['ปรนัย', 'ปรนัย'], en: ['Choice', 'Multiple Choice'] },
-                { type: 'short_answer', th: ['ข้อความ', 'ข้อความสั้น'], en: ['Text', 'Short Answer'] },
-                { type: 'file_upload', th: ['ไฟล์', 'อัปโหลดไฟล์'], en: ['File', 'File Upload'] },
-                { type: 'true_false', th: ['ถูก/ผิด', 'ถูก/ผิด'], en: ['T/F', 'True/False'] },
-              ] as const).map((option, i) => {
+              {(isSurveyMode
+                ? SURVEY_TYPES.map((type) => {
+                    const label = SURVEY_TYPE_LABEL[type];
+                    const short = { multiple_choice: ['ตัวเลือก', 'Choice'], checkboxes: ['หลายข้อ', 'Checks'], scale: ['ระดับ', 'Scale'], short_answer: ['ข้อความ', 'Text'] }[type];
+                    return { type, th: [short[0], label.th], en: [short[1], label.en] } as const;
+                  })
+                : ([
+                    { type: 'multiple_choice', th: ['ปรนัย', 'ปรนัย'], en: ['Choice', 'Multiple Choice'] },
+                    { type: 'short_answer', th: ['ข้อความ', 'ข้อความสั้น'], en: ['Text', 'Short Answer'] },
+                    { type: 'file_upload', th: ['ไฟล์', 'อัปโหลดไฟล์'], en: ['File', 'File Upload'] },
+                    { type: 'true_false', th: ['ถูก/ผิด', 'ถูก/ผิด'], en: ['T/F', 'True/False'] },
+                  ] as const)
+              ).map((option, i) => {
                 const [short, full] = language === 'th' ? option.th : option.en;
                 return (
                   <button

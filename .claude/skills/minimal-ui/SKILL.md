@@ -1,69 +1,58 @@
 ---
 name: minimal-ui
-description: Trim Pudding's web UI (and teacher/student LIFF) down to minimal copy — cut helper paragraphs, hints that restate the label, "•"-chained explanations and AI-sounding phrasing, in both Thai and English. Use when the user asks to make a page/component minimal, cleaner, less wordy, "less AI-like", or to remove unnecessary text. Args: a page, component path, or "all".
+description: Trim Pudding's web UI (and teacher/student LIFF) to minimal copy that fits every screen size — cut helper paragraphs, hints that restate the label, "•"-chained explanations and AI-sounding phrasing (Thai + English), and fix text that wraps/overflows on phones. Use when the user asks to make a page/component minimal, cleaner, less wordy, "less AI-like", or to remove unnecessary text. Args: a page, component path, or "all".
 ---
 
-# Minimal UI copy
+# Minimal UI
 
-Goal: a teacher understands each screen from labels, values and buttons alone. Text that explains what the UI already shows is noise. Change copy and the elements that only exist to hold it — never behaviour.
+Each screen should read from labels, values and buttons alone, at every width (320 px phone / LIFF → desktop). Change copy and the elements that only hold it — never behaviour.
 
 ## Scope
+- Path → that file (+ page-specific children). Page name → find files, confirm in one line, go.
+- "all" → one page at a time: `src/app/assignments/new/page.tsx`, `src/app/classrooms/[id]/page.tsx`, `src/app/exports/page.tsx`, `src/components/liff-teacher/*`.
+- Skip: `src/lib/server/*` errors, `src/lib/line/*` message text, Excel headers.
 
-- Arg is a path → only that file (and components it renders that are clearly page-specific).
-- Arg is a page name (e.g. "grades tab", "create assignment") → find it, confirm the files in one line, go.
-- "all" → work page by page, starting with the busiest: `src/app/assignments/new/page.tsx`, `src/app/classrooms/[id]/page.tsx`, `src/app/exports/page.tsx`, `src/components/liff-teacher/*`.
-- Don't touch: server error messages in `src/lib/server/*`, LINE message text (`src/lib/line/*`), Excel export headers.
+## Work cheaply
+- Don't read whole big files. Find copy first: `grep -nE "tr\(|hint=|<p |placeholder=|title=|·|•|—" <file>`, then `Read` only those line ranges.
+- Edit with small `Edit` calls; no rewrites of whole files, no re-reading after edits.
+- Report briefly (see Finish). Don't echo before/after code.
 
-## What to cut
+## Cut
+1. Hints restating the label/option ("การนับคะแนน" + "รวมในคะแนนรวมและร้อยละ").
+2. Helper paragraphs under section titles.
+3. "•" / "—" / "·" chains → keep only the fact that changes what the teacher does, usually none.
+4. Consequence essays on toggles — a clear option name is enough.
+5. Duplicate title/subtitle/label → one.
+6. Counts/meta nobody acts on.
+7. Empty-state sermons → one line ("ยังไม่มีงาน") + action button.
+8. Decorative emoji (keep established LIFF tab/menu icons).
 
-1. **Hints that restate the label or the choice.** Label "การนับคะแนน" + hint "รวมในคะแนนรวมและร้อยละ" → drop the hint.
-2. **Helper paragraphs under a section title** describing what the section is for. Title says it.
-3. **"•" / "—" / "·" chains** joining two or three facts. Keep at most the one fact that changes what the teacher does; usually none.
-4. **Consequence essays** on toggles ("นักเรียนยังเห็นคะแนนและคำติชม • ไฟล์ Excel แสดงคะแนน แต่ไม่รวม…"). A clear option name is enough.
-5. **Duplicate headings**: card title + subtitle + label saying the same thing → one.
-6. **Counts and meta nobody acts on** ("12 งาน/ข้อสอบ" next to a table that shows them).
-7. **Empty-state sermons** → one short line ("ยังไม่มีงาน") + the action button.
-8. **Emoji decoration** in labels, except where it's the established tab/menu icon in LIFF.
+AI phrasing → delete or state the result: ระบบจะ…อัตโนมัติ / The system will…; เพื่อให้…, เพื่อความสะดวก / so that…; ง่ายๆ, ได้ทันที / easily, instantly, seamlessly; ช่วยให้คุณครู…, คุณครูสามารถ… / helps you, you can… (start with the verb); กรุณา / Please in hints (keep in errors); ไม่ต้องกังวล / Don't worry; long explanatory parentheses (→ `title=` tooltip or delete).
 
-## AI-like phrasing → replace or delete
+## Keep
+Validation/errors, `confirm(...)` text, data-loss or students-can-see warnings, units (นาที, น., /10), state not shown elsewhere (deadlines, ปิดรับ, ฉบับร่าง, รอตรวจ 3), `(ไม่บังคับ)`, migration/setup messages. Unsure → cut, but list it in the report.
 
-| Thai | English | Do |
-|---|---|---|
-| ระบบจะ…ให้อัตโนมัติ, ระบบจะช่วย… | The system will automatically… | Say the result or delete |
-| เพื่อให้…, เพื่อความสะดวก | so that…, for convenience | Delete the purpose clause |
-| ได้อย่างง่ายดาย, ได้ทันที, ง่ายๆ | easily, instantly, simply, seamlessly | Delete |
-| ช่วยให้คุณครู…, คุณครูสามารถ… | helps you…, you can… | Start with the verb |
-| กรุณา… (in hints, not errors) | Please… | Delete in hints; keep in validation errors |
-| ไม่ต้องกังวล, สบายใจได้ | Don't worry | Delete |
-| Long parentheses explaining a term | | Delete or move to `title=` tooltip |
+## Fit every screen
+Check each touched element at ~320 px, `sm` (640), `md`/`lg` desktop:
+- Labels: Thai 1–3 words, English ≤ 3. Thai is wider than it looks — a button label must fit one line at 320 px.
+- Long but needed → `MobileText short full` (`src/components/MobileText.tsx`), not a longer string.
+- Rows of buttons/chips: `flex-wrap gap-2`, or stack `flex-col sm:flex-row`. Never fixed widths (`w-[…px]`) on text.
+- Text in flex rows: `min-w-0` on the flex child + `truncate` (single line) or `break-words` (multi-line); put `title=` on truncated text.
+- Segmented control with 2–3 options that wraps on phones → checkbox or `<select>` below `sm:`.
+- Tables: wrap in `overflow-x-auto`; hide low-value columns below `sm:` (`hidden sm:table-cell`) rather than shrinking text.
+- Tap targets ≥ 40 px tall on phones (`py-2`+); don't shrink below `text-sm` to make copy fit — cut copy instead.
+- Removed hint → remove its wrapper (`<p>`, `hint=`, spacing) so no gap remains.
+- Match neighbours' Tailwind/dark-mode classes; don't restyle untouched code.
 
-## What to keep
+## Edit rules
+`tr('ไทย', 'English')` on web, plain Thai in LIFF. Change both languages together.
 
-- Validation and error text, destructive-action confirms (`confirm(...)`), anything about data loss or students seeing something.
-- Units and formats next to inputs (นาที, น., /10).
-- State that isn't visible elsewhere: deadlines, "ปิดรับ …", "ฉบับร่าง", counts that drive an action (รอตรวจ 3).
-- `(ไม่บังคับ)` on optional fields.
-- Required-migration / setup messages.
-
-If unsure whether a line is needed, it isn't — but list it in the report so the user can restore it.
-
-## How to edit
-
-- Strings are `tr('ไทย', 'English')` (web) or plain Thai (LIFF). Change **both languages** together; never leave a lone translation.
-- Short labels: Thai 1–3 words, English ≤ 3 words. Use `MobileText short full` only when the full label genuinely doesn't fit on phones — not to keep a long label.
-- When a hint is removed, remove its wrapper (`<p>`, `hint=` prop, spacing classes) so no empty gap stays.
-- Prefer moving a still-useful explanation to a `title` tooltip over keeping it inline.
-- Phones: replace a wide segmented control with a checkbox or `<select>` below `sm:` if it only has two/three options and the text wraps.
-- Keep layout tokens (Tailwind classes, dark-mode variants) consistent with neighbours; don't restyle what you're not trimming.
-
-## Examples (before → after, from this repo)
-
-- `assignments/new` grading toggle: removed both hints under นับคะแนน / ไม่นับคะแนน; phones get a single "☐ ไม่นับคะแนน" checkbox.
-- Exports page: `'ข้อมูลดึงใหม่ทุกครั้งที่กดดาวน์โหลด • ปุ่ม “ส่งออก CSV” ในแต่ละห้องเรียนยังใช้ได้ตามเดิม'` → delete (implementation detail).
-- `'กำลังแก้ไขงานเดิม · นักเรียนเห็นการเปลี่ยนแปลงทันทีที่บันทึก'` → `'กำลังแก้ไขงาน'` (keep only the state).
+## Examples
+- `'กำลังแก้ไขงานเดิม · นักเรียนเห็นการเปลี่ยนแปลงทันทีที่บันทึก'` → `'กำลังแก้ไขงาน'`.
 - `'หลังกำหนดส่งยังส่งได้ (นับเป็นส่งช้า) จนถึงเวลาปิดรับ แล้วปิดรับเอง'` → `'หลังกำหนดส่ง นับเป็นส่งช้า'`.
+- Exports `'ข้อมูลดึงใหม่ทุกครั้งที่กดดาวน์โหลด • …'` → delete.
+- นับคะแนน/ไม่นับคะแนน toggle: hints removed; phones get one "☐ ไม่นับคะแนน" checkbox.
 
 ## Finish
-
-1. `npx tsc --noEmit -p .` and `npx eslint <changed files>` — fix errors and any unused imports/vars your cuts created.
-2. Report a compact table per file: **removed / shortened → new text**, and a separate short list of lines you were unsure about. No commit unless asked.
+1. `npx tsc --noEmit -p .` and `npx eslint <changed files>`; fix errors and unused imports your cuts left.
+2. Report per file, one line per change: `old → new` (or `removed`), plus `layout: …` for responsive fixes. Then a short "unsure" list. No commit unless asked.

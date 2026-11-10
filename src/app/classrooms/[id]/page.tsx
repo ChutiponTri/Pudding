@@ -4,6 +4,7 @@ import { announceNote } from '@/lib/utils/announceNote';
 import { usePageTitle } from '@/lib/hooks/usePageTitle';
 import { isRetakeOf, rosterSizeFor } from '@/lib/utils/retake';
 import { gradeCellOf, scoreMarkLabel, type GradeCell } from '@/lib/utils/scoreHistory';
+import { isSurvey } from '@/lib/utils/survey';
 import { buildReports } from '@/lib/export/teacherReports';
 import { createXlsx, XLSX_MIME } from '@/lib/export/xlsx';
 import { downloadBlob } from '@/lib/storage/zip';
@@ -853,9 +854,9 @@ export default function ClassroomWorkspacePage() {
   // Grade book columns: assignments and quizzes in the order they were given.
   const gradeColumns = useMemo(
     () =>
-      // A retake has no column: its scores are in the original quiz's column.
+      // A retake has no column (its scores are in the original quiz's column); a survey has no score.
       assignments
-        .filter((a) => !isRetakeOf(a))
+        .filter((a) => !isRetakeOf(a) && !isSurvey(a))
         .sort((a, b) => new Date(a.created_at || a.due_date).getTime() - new Date(b.created_at || b.due_date).getTime()),
     [assignments]
   );

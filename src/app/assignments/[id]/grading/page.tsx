@@ -32,6 +32,8 @@ import { RetakePicker } from '@/components/RetakePicker';
 import { SiblingClassTabs } from '@/components/works/SiblingClassTabs';
 import { announcesResults } from '@/components/works/WorkBits';
 import { isRetake, isRetakeOf, rosterFor } from '@/lib/utils/retake';
+import { isSurvey } from '@/lib/utils/survey';
+import { SurveyResults } from '@/components/SurveyResults';
 import {
   Search,
   Filter,
@@ -637,8 +639,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   // A student with nothing handed in: no grading, only "no submission" (0) once the deadline has passed.
   const missingActions = (row: RosterRow) => {
-    if (!row.rosterId || !grader || grader.role === 'researcher') {
-      return <span className="text-[11px] text-slate-400 italic">{th ? 'รอนักเรียนส่งงาน' : 'Awaiting student'}</span>;
+    // A survey has no score: a missing response just stays missing.
+    if (!row.rosterId || !grader || grader.role === 'researcher' || isSurvey(assignment)) {
+      return <span className="text-[11px] text-slate-400 italic">{th ? 'ยังไม่ตอบ' : 'No response yet'}</span>;
     }
     if (!canMarkNoSubmission) {
       return (
@@ -768,7 +771,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   // "ประกาศคะแนน", as on the classwork and works lists: offered once nobody is
   // left to remind (everyone handed in or has a score, or the work is closed).
   const canAnnounce =
-    !!assignment && !!assignmentWindow && !!grader && grader.role !== 'researcher' &&
+    !!assignment && !isSurvey(assignment) && !!assignmentWindow && !!grader && grader.role !== 'researcher' &&
     !assignmentWindow.isDraft && !assignmentWindow.isScheduled &&
     announcesResults({ notSubmitted: missingTotal }, assignmentWindow.acceptsSubmissions);
   const [announcing, setAnnouncing] = useState(false);
@@ -895,10 +898,12 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold ${
                   assignment?.is_exam
                     ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                    : isSurvey(assignment)
+                    ? 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300'
                     : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
                 }`}
               >
-                {assignment?.is_exam ? t('assignment_creator.mode_exam') : t('assignment_creator.mode_assignment')}
+                {assignment?.is_exam ? t('assignment_creator.mode_exam') : isSurvey(assignment) ? (th ? 'แบบสอบถาม' : 'Survey') : t('assignment_creator.mode_assignment')}
               </span>
               {isRetakeOf(assignment) && (
                 <span
@@ -1115,6 +1120,14 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
             );
           }}
         />
+      )}
+
+      {/* Survey: the summary of every response comes first (the roster below shows who answered). */}
+      {assignment && isSurvey(assignment) && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-black text-slate-900 dark:text-white">{th ? 'สรุปคำตอบ' : 'Summary'}</h2>
+          <SurveyResults assignmentId={assignment.id} lang={th ? 'th' : 'en'} totalStudents={rosterRows.length} />
+        </section>
       )}
 
       {/* Submissions Table & Filter Controls */}

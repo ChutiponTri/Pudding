@@ -103,10 +103,11 @@ export type WorkCardInput = {
   /** Opens the student's list of work (their hand-in status). */
   statusUrl?: string | null;
   retake?: boolean;
+  survey?: boolean;
 };
 
 export function workCard(input: WorkCardInput): FlexMessage {
-  const kind = input.retake ? 'สอบซ่อม' : input.isExam ? 'ข้อสอบ' : 'งาน';
+  const kind = input.retake ? 'สอบซ่อม' : input.isExam ? 'ข้อสอบ' : input.survey ? 'แบบสอบถาม' : 'งาน';
   const tag = input.number ? `#${kind}ที่ ${input.number}` : `#${kind}ใหม่`;
   const body: unknown[] = [
     {

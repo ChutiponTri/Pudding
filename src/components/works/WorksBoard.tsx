@@ -4,7 +4,7 @@ import { announceNote } from '@/lib/utils/announceNote';
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, BellRing, BookOpen, Calendar, Check, ChevronDown, Clock, Copy, Edit2, Eye, EyeOff, FileText, GripVertical, ListChecks, Lock, Megaphone, MessageCircle, NotebookPen, Palette, Plus, Rocket, School, Search, ShieldAlert, Trash2, Unlock, X } from 'lucide-react';
+import { ArrowLeft, BellRing, BookOpen, Calendar, Check, ChevronDown, ClipboardList, Clock, Copy, Edit2, Eye, EyeOff, FileText, GripVertical, ListChecks, Lock, Megaphone, MessageCircle, NotebookPen, Palette, Plus, Rocket, School, Search, ShieldAlert, Trash2, Unlock, X } from 'lucide-react';
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useTeacherDashboardData, type TeacherDashboardData } from '@/lib/hooks/useTeacherDashboardData';
@@ -32,8 +32,11 @@ import {
   type WorkClass,
   type WorkGroup,
 } from '@/lib/utils/workGroups';
+import { isSurvey } from '@/lib/utils/survey';
 
-type Tab = 'homework' | 'quiz';
+type Tab = 'homework' | 'quiz' | 'survey';
+const TAB_ORDER: Tab[] = ['homework', 'quiz', 'survey'];
+const tabOf = (g: WorkGroup): Tab => (isSurvey(g.rep) ? 'survey' : g.isExam ? 'quiz' : 'homework');
 type LocalEdits = { base: TeacherDashboardData | null; updated: Record<string, Partial<Assignment>>; deleted: string[] };
 
 const NO_EDITS: LocalEdits = { base: null, updated: {}, deleted: [] };
@@ -65,7 +68,10 @@ export function WorksBoard() {
 
   // Tab and course live in local state (instant) and are mirrored to the URL
   // without a navigation, so "back" from grading returns to the same view.
-  const [tab, setTab] = useState<Tab>(() => (search.get('tab') === 'quiz' ? 'quiz' : 'homework'));
+  const [tab, setTab] = useState<Tab>(() => {
+    const v = search.get('tab');
+    return v === 'quiz' || v === 'survey' ? v : 'homework';
+  });
   const [courseFilter, setCourseFilter] = useState(() => search.get('course') || 'all');
   const [query, setQuery] = useState('');
   // Filters: whether it takes work, and whether grading is done (also kept in the URL).
@@ -86,9 +92,9 @@ export function WorksBoard() {
   };
   const selectTab = (next: Tab) => {
     if (next === tab) return;
-    setTabDirection(next === 'quiz' ? 1 : -1);
+    setTabDirection(TAB_ORDER.indexOf(next) > TAB_ORDER.indexOf(tab) ? 1 : -1);
     setTab(next);
-    setParam('tab', next === 'quiz' ? 'quiz' : null);
+    setParam('tab', next === 'homework' ? null : next);
   };
   const [classFilter, setClassFilter] = useState(() => search.get('class') || 'all');
   const selectCourse = (id: string) => {
@@ -178,20 +184,17 @@ export function WorksBoard() {
       (!q || g.rep.title.toLowerCase().includes(q) || g.classes.some((c) => c.classroom.name.toLowerCase().includes(q))),
     [activeCourse, activeClass, acceptFilter, gradeFilter, q]
   );
-  const tabCounts = useMemo(
-    () => ({
-      homework: allGroups.filter((g) => !g.isExam && matches(g)).length,
-      quiz: allGroups.filter((g) => g.isExam && matches(g)).length,
-    }),
-    [allGroups, matches]
-  );
-  const tabPending = useMemo(
-    () => ({
-      homework: allGroups.filter((g) => !g.isExam && matches(g)).reduce((n, g) => n + g.totals.pending, 0),
-      quiz: allGroups.filter((g) => g.isExam && matches(g)).reduce((n, g) => n + g.totals.pending, 0),
-    }),
-    [allGroups, matches]
-  );
+  const { tabCounts, tabPending } = useMemo(() => {
+    const counts: Record<Tab, number> = { homework: 0, quiz: 0, survey: 0 };
+    const pending: Record<Tab, number> = { homework: 0, quiz: 0, survey: 0 };
+    for (const g of allGroups) {
+      if (!matches(g)) continue;
+      const t = tabOf(g);
+      counts[t] += 1;
+      pending[t] += g.totals.pending;
+    }
+    return { tabCounts: counts, tabPending: pending };
+  }, [allGroups, matches]);
 
   // Both tabs are worked out together, so switching tabs only swaps what is shown.
   // Where the teacher dragged a work, it stays. Only work that is not in the
@@ -199,16 +202,16 @@ export function WorksBoard() {
   // graded → fully graded, latest deadline first.
   // The whole tab in order (filters ignored): a filtered list is a view of it.
   const fullByTab = useMemo(() => {
-    const build = (isExam: boolean) => {
+    const build = (t: Tab) => {
       const groups = allGroups
-        .filter((g) => g.isExam === isExam)
+        .filter((g) => tabOf(g) === t)
         .sort((a, b) => workRank(a) - workRank(b) || b.lastDeadline - a.lastDeadline || a.rep.title.localeCompare(b.rep.title, 'th'));
       return applySavedOrder(groups, (g) => g.rep.id, prefs.order, (item, other) => workRank(item) <= workRank(other));
     };
-    return { homework: build(false), quiz: build(true) };
+    return { homework: build('homework'), quiz: build('quiz'), survey: build('survey') };
   }, [allGroups, prefs.order]);
   const byTab = useMemo(
-    () => ({ homework: fullByTab.homework.filter(matches), quiz: fullByTab.quiz.filter(matches) }),
+    () => ({ homework: fullByTab.homework.filter(matches), quiz: fullByTab.quiz.filter(matches), survey: fullByTab.survey.filter(matches) }),
     [fullByTab, matches]
   );
   const works = byTab[tab];
@@ -345,7 +348,7 @@ export function WorksBoard() {
   };
 
   /** Classes where "ทวงงาน" has turned into "ประกาศคะแนน" (see announcesResults). */
-  const resultsMode = (c: WorkClass) => c.published && announcesResults(c.counts, c.window.acceptsSubmissions);
+  const resultsMode = (c: WorkClass) => c.published && !isSurvey(c.assignment) && announcesResults(c.counts, c.window.acceptsSubmissions);
 
   /**
    * "ประกาศคะแนน": after the teacher confirms, classes still taking hand-ins are
@@ -810,10 +813,11 @@ export function WorksBoard() {
 
   // ---------------------------------------------------------------- page
   const termLabel = semesterKey === 'all' ? tr('ทุกภาคเรียน', 'All terms') : formatAcademicPeriod(Number(semesterKey.split('_')[0]), Number(semesterKey.split('_')[1]), language);
-  const total = tabCounts.homework + tabCounts.quiz;
+  const total = tabCounts.homework + tabCounts.quiz + tabCounts.survey;
   const TABS: Array<{ id: Tab; label: string }> = [
     { id: 'homework', label: tr('การบ้าน / ใบงาน', 'Assignments') },
     { id: 'quiz', label: tr('ข้อสอบ', 'Quizzes') },
+    { id: 'survey', label: tr('แบบสอบถาม', 'Surveys') },
   ];
 
   return (
@@ -850,8 +854,8 @@ export function WorksBoard() {
 
       {/* Desktop: only the tabs stay pinned under the navbar while scrolling; filters scroll with the page. */}
       <div className="hidden md:block md:sticky md:top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 md:py-3 md:bg-slate-50/90 md:dark:bg-slate-950/90 md:backdrop-blur-xl md:border-b md:border-slate-200/80 md:dark:border-slate-800">
-        {/* Two main tabs; the highlight slides between them. */}
-        <div ref={setTabGroup} role="tablist" className="grid relative grid-cols-2 p-1 rounded-2xl bg-slate-200/70 dark:bg-slate-900 ring-1 ring-slate-300/70 dark:ring-slate-700">
+        {/* Main tabs; the highlight slides between them. */}
+        <div ref={setTabGroup} role="tablist" className="grid relative grid-cols-3 p-1 rounded-2xl bg-slate-200/70 dark:bg-slate-900 ring-1 ring-slate-300/70 dark:ring-slate-700">
           {tabIndicator && (
             <span
               aria-hidden
@@ -971,24 +975,24 @@ export function WorksBoard() {
         </div>
         </div>
 
-      {/* Phones: the two tabs as a bottom bar (like the classroom page). */}
+      {/* Phones: the tabs as a bottom bar (like the classroom page). */}
       <nav
         aria-label={tr('ประเภทงาน', 'Work type')}
         // The solid ::after under the bar fills any sliver between it and the screen's edge
         // (fractional pixel ratios, browser toolbars sliding away), so the page never shows through.
         className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 pb-[env(safe-area-inset-bottom)] after:content-[''] after:absolute after:inset-x-0 after:top-full after:h-24 after:bg-white dark:after:bg-slate-900"
       >
-        <div className="relative grid grid-cols-2 px-1 py-1.5">
+        <div className="relative grid grid-cols-3 px-1 py-1.5">
           <span
             aria-hidden
-            className="pointer-events-none absolute inset-y-1.5 left-1 w-[calc((100%-0.5rem)/2)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-            style={{ transform: `translateX(${tab === 'quiz' ? 100 : 0}%)` }}
+            className="pointer-events-none absolute inset-y-1.5 left-1 w-[calc((100%-0.5rem)/3)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            style={{ transform: `translateX(${TAB_ORDER.indexOf(tab) * 100}%)` }}
           >
             <span className="absolute top-1 left-1/2 -translate-x-1/2 h-7 w-14 rounded-full bg-amber-100 dark:bg-amber-950/70" />
           </span>
           {TABS.map(({ id, label }) => {
             const active = tab === id;
-            const Icon = id === 'quiz' ? ListChecks : NotebookPen;
+            const Icon = id === 'quiz' ? ListChecks : id === 'survey' ? ClipboardList : NotebookPen;
             return (
               <button
                 key={id}
@@ -1031,12 +1035,14 @@ export function WorksBoard() {
                 ? tr('ไม่พบงานตามที่เลือก', 'Nothing matches')
                 : tab === 'quiz'
                 ? tr('ภาคเรียนนี้ยังไม่มีข้อสอบ', 'No quizzes this term')
+                : tab === 'survey'
+                ? tr('ภาคเรียนนี้ยังไม่มีแบบสอบถาม', 'No surveys this term')
                 : tr('ภาคเรียนนี้ยังไม่มีการบ้าน', 'No assignments this term')}
             </p>
             {!filtering && (
               <CreateWorkMenu from="works" returnTo={returnTo} className="h-10 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs inline-flex items-center gap-1.5 cursor-pointer">
                 <Plus className="w-4 h-4" />
-                {tr('สร้างงาน / ข้อสอบ', 'New assignment / quiz')}
+                {tr('สร้าง', 'New')}
               </CreateWorkMenu>
             )}
           </div>
