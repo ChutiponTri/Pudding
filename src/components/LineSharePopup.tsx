@@ -209,7 +209,7 @@ export function LineSharePopup() {
                 tr(`เลือกกลุ่ม LINE ของห้อง ${shareTarget.classroom}`, `Pick the LINE group of ${shareTarget.classroom}`)
               )}
               <span className="block text-[11px] opacity-80">
-                {shareTarget.classroom} · {tr('อย่าเลือกแชตส่วนตัวหรือกลุ่มของห้องอื่น', 'not a personal chat or another class’s group')}
+                {shareTarget.classroom}
               </span>
             </span>
           </div>

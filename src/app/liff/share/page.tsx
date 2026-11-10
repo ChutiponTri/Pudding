@@ -14,7 +14,7 @@ const param = (name: string) => new URLSearchParams(window.location.search).get(
  * when the website opened this page just for it (?auto=1), the page closes.
  */
 async function pick(sdk: Liff, data: Shared): Promise<"done" | "ready"> {
-  const result = await sdk.shareTargetPicker(data.messages, { isMultiple: false });
+  const result = await sdk.shareTargetPicker(data.messages, { isMultiple: true });
   // undefined = the teacher closed the picker without sending.
   if (result?.status !== "success") return "ready";
   // The class timeline stops offering this post as unsent.
@@ -120,7 +120,7 @@ export default function LiffSharePage() {
             <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
             <span className="min-w-0 break-words">
               {shared.groupName ? <>เลือกกลุ่ม <b>“{shared.groupName}”</b> เท่านั้น</> : <>เลือกกลุ่ม LINE ของห้อง “{shared.classroom}”</>}
-              <span className="block text-[11px] opacity-80">ห้อง {shared.classroom} · อย่าเลือกแชตส่วนตัวหรือกลุ่มของห้องอื่น</span>
+              <span className="block text-[11px] opacity-80">ห้อง {shared.classroom}</span>
             </span>
           </div>
         )}

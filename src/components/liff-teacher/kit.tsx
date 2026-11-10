@@ -218,8 +218,8 @@ export function KitProvider({
       // Anywhere else (or LINE refused): the teacher picks the group.
       if (liff.isApiAvailable("shareTargetPicker")) {
         if (!(await confirmTarget("pick"))) return "cancelled";
-        // One chat only: a card picked into several chats is easy to send to the wrong one.
-        const result = await liff.shareTargetPicker(messages, { isMultiple: false }).catch(() => null);
+        // isMultiple: false lists friends only in LINE's picker, so groups need true.
+        const result = await liff.shareTargetPicker(messages, { isMultiple: true }).catch(() => null);
         if (result?.status === "success") {
           toast("แชร์เข้ากลุ่มแล้ว");
           return "shared";
@@ -284,9 +284,7 @@ export function KitProvider({
                   {value.classroom.title}
                   {value.classroom.groupName ? <> · กลุ่ม <b>{value.classroom.groupName}</b></> : null}
                 </p>
-                <p className="text-xs text-slate-500">
-                  {check.mode === "group" ? "ถ้าแชตนี้ไม่ใช่กลุ่มของห้องนี้ ให้กดยกเลิก" : "อย่าเลือกแชตส่วนตัวหรือกลุ่มของห้องอื่น"}
-                </p>
+                {check.mode === "group" && <p className="text-xs text-slate-500">ถ้าแชตนี้ไม่ใช่กลุ่มของห้องนี้ ให้กดยกเลิก</p>}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
