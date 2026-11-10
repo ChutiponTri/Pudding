@@ -1,11 +1,9 @@
 import { auth } from '@clerk/nextjs/server';
 import { canUseTeacherApp } from '@/lib/server/teacherProfileGuard';
-import { getLineTestQuota } from '@/lib/server/lineTestQuota';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { leaveGroup } from '@/lib/line/messaging';
-import { sendLineTestMessage, type TestSendClassroom } from '@/lib/server/lineTestSend';
-import { canLinkLine, getClassroom, linkErrorMessage, linkGroupByRef, listUnlinkedTeacherGroups, type ServiceClient } from '@/lib/line/groupLink';
+import { canLinkLine, getClassroom, linkErrorMessage, linkGroupByRef, listUnlinkedTeacherGroups } from '@/lib/line/groupLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,19 +52,17 @@ export async function GET(request: NextRequest) {
   if (!classroom) return NextResponse.json({ error: 'Classroom not found' }, { status: 404 });
   // Linked or not; an old "waiting" request (from before groups were picked directly) counts as not linked.
   const status = classroom.line_group_id ? 'connected' : 'disconnected';
-  const testQuota = classroom.line_group_id ? await getLineTestQuota(createServiceSupabaseClient(), userId, classroomId) : null;
   return NextResponse.json({
     status,
     groupName: classroom.line_group_name || undefined,
     connectedAt: classroom.line_connected_at,
-    testQuota: testQuota || undefined,
   });
 }
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const classroomId = typeof body.classroomId === 'string' ? body.classroomId : '';
-  const action = body.action as 'test' | 'disconnect' | 'link-group' | undefined;
+  const action = body.action as 'disconnect' | 'link-group' | undefined;
   if (!classroomId || !action) return NextResponse.json({ error: 'classroomId and action are required' }, { status: 400 });
 
   const { userId, classroom } = await getOwnedClassroom(classroomId);
@@ -97,8 +93,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'disconnected' });
   }
 
-  if (action === 'test') return sendTestMessage(supabase, userId, classroom);
-
   if (action === 'link-group') {
     // A group the bot is in, picked in the dialog (or the group whose button
     // opened "สร้างห้องเรียนใหม่"): LINE confirms the teacher is a member.
@@ -114,28 +108,4 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
-}
-
-/** "ทดสอบส่งข้อความ" (see sendLineTestMessage); the answer carries `tone` for the toast. */
-async function sendTestMessage(supabase: ServiceClient, userId: string, classroom: TestSendClassroom & { line_connected_at?: string | null }) {
-  const result = await sendLineTestMessage(supabase, { teacherId: userId, classroom, source: 'web' });
-  if (!result.ok) {
-    return NextResponse.json(
-      {
-        error: result.message,
-        code: result.code,
-        tone: result.tone,
-        testQuota: result.testQuota,
-        ...(result.code === 'no_group' || result.unlinked ? { status: 'disconnected' } : {}),
-      },
-      { status: result.httpStatus, headers: result.retryAfterSeconds ? { 'Retry-After': String(result.retryAfterSeconds) } : undefined }
-    );
-  }
-  return NextResponse.json({
-    status: 'connected',
-    groupName: result.groupName,
-    connectedAt: classroom.line_connected_at,
-    testQuota: result.testQuota,
-    lineMessagesLeft: result.lineMessagesLeft,
-  });
 }

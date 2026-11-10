@@ -48,7 +48,6 @@ import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { lineDate, SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import { classroomTitle, subjectName, type LabelledClassroom } from '@/lib/utils/classroomLabel';
 import type { Assignment } from '@/types/database';
-import { sendLineTestMessage, testSentText } from '@/lib/server/lineTestSend';
 import { teacherAccessMessage } from '@/lib/server/teacherProfileGuard';
 import { teacherAccessOf } from '@/lib/utils/teacherProfile';
 
@@ -347,47 +346,6 @@ async function handleConnectCommand(supabase: ServiceClient, groupId: string, li
       : 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียน\nแตะปุ่มด้านล่างเพื่อเลือกห้องเรียน (สำหรับคุณครู)',
     { card: !linked }
   );
-}
-
-/**
- * `#pudding test [classroom]` in the teacher's 1:1 chat: the same checks and
- * words as the web's "ทดสอบส่งข้อความ" (sendLineTestMessage). With several
- * linked classrooms and none named, the teacher taps one (quick replies).
- */
-async function handleTestCommand(supabase: ServiceClient, teacherId: string, classrooms: LinkClassroom[], args: string[], replyToken: string | undefined) {
-  if (!replyToken) return;
-  const linked = classrooms.filter((item) => item.line_group_id);
-  const query = args.join(' ').trim();
-  const target = query
-    ? classrooms.find((item) => item.id === query || item.name === query || classroomTitle(item) === query)
-    : linked.length === 1 ? linked[0] : undefined;
-
-  if (!target) {
-    if (!linked.length) {
-      await replySafely(replyToken, `⚠️ ยังไม่มีห้องเรียนที่เชื่อมกลุ่ม LINE\nเชื่อมกลุ่มก่อน แล้วค่อยทดสอบส่งข้อความ\nเชิญ Pudding Bot เข้ากลุ่ม LINE ของห้องเรียน แล้วแตะปุ่ม “เชื่อมห้องเรียน” ในกลุ่ม`);
-      return;
-    }
-    const choices = linked.slice(0, 12);
-    try {
-      await replyLineButtons(replyToken, {
-        text: `🧪 ทดสอบส่งข้อความ\n${query ? `⚠️ ไม่พบห้อง “${query}”\n` : ''}เลือกห้องที่จะทดสอบส่งข้อความเข้ากลุ่ม LINE 👇${linked.length > choices.length ? `\n(แสดง ${choices.length} จาก ${linked.length} ห้อง)` : ''}`,
-        actions: choices.map((item) => ({ type: 'message', label: classroomTitle(item), text: `#pudding test ${item.id}` })),
-      });
-    } catch (error) {
-      console.error('LINE test picker reply failed:', error);
-    }
-    return;
-  }
-
-  const result = await sendLineTestMessage(supabase, { teacherId, classroom: target, source: 'line' });
-  if (result.ok) {
-    await replySafely(replyToken, `${testSentText(result)}\n📘 ${classroomTitle(target)}`);
-    return;
-  }
-  const lines = [`${result.tone === 'warn' ? '⚠️' : '❌'} ${result.message}`, `📘 ${classroomTitle(target)}`];
-  // Not (or no longer) linked: offer the way back.
-  if (result.code === 'no_group' || result.unlinked) lines.push('เชิญ Pudding Bot เข้ากลุ่ม LINE ของห้อง แล้วแตะปุ่ม “เชื่อมห้องเรียน” ในกลุ่ม');
-  await replySafely(replyToken, lines.join('\n'));
 }
 
 /** "เชื่อมกลุ่ม" typed (or the FAQ's "เชื่อมกลุ่ม LINE") in the 1:1 chat. */
@@ -832,7 +790,7 @@ export async function POST(request: NextRequest) {
     }
     if (!commandMatch) continue;
     const rawCommand = (commandMatch[1] || '').trim();
-    const [command, ...args] = rawCommand.split(/\s+/);
+    const [command] = rawCommand.split(/\s+/);
     const normalizedCommand = normalizeCommand(command);
     const liffUrl = getLiffUrl();
 
@@ -842,7 +800,7 @@ export async function POST(request: NextRequest) {
 
     {
       if (normalizedCommand === 'help') {
-        await replySafely(event.replyToken, '#pudding status ตรวจสถานะ\n#pudding test ทดสอบแจ้งเตือน\n#pudding link เปิด Pudding\n#pudding attendance สถานะเช็กชื่อ');
+        await replySafely(event.replyToken, '#pudding status ตรวจสถานะ\n#pudding link เปิด Pudding\n#pudding attendance สถานะเช็กชื่อ');
         continue;
       }
       if (normalizedCommand === 'link') {
@@ -864,8 +822,6 @@ export async function POST(request: NextRequest) {
       if (normalizedCommand === 'status') {
         const connected = teacherClasses.filter((item) => item.line_group_id);
         await replySafely(event.replyToken, `เชื่อมต่อแล้ว ${connected.length}/${teacherClasses.length} ห้อง\nแจ้งเตือน: ${connected.length ? 'พร้อมใช้งาน' : 'ยังไม่พร้อม'}`);
-      } else if (normalizedCommand === 'test') {
-        await handleTestCommand(supabase, linkedTeacher.id, teacherClasses, args, event.replyToken);
       } else if (normalizedCommand === 'attendance') {
         await replySafely(event.replyToken, 'ระบบเช็กชื่อยังไม่ได้เปิดใช้งานใน Pudding');
       } else {

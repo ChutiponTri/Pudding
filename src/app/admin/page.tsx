@@ -135,7 +135,7 @@ export default async function AdminOverviewPage() {
               <h1 className="text-xl sm:text-2xl font-black">
                 {pending ? tr(`มีครูรออนุมัติ ${pending} คน`, `${pending} teacher${pending > 1 ? 's' : ''} waiting for approval`) : tr('ไม่มีครูรออนุมัติ', 'No teachers waiting')}
               </h1>
-              <p className="text-xs opacity-80">{tr('ครูที่สมัครใหม่ใช้งานระบบไม่ได้จนกว่าจะอนุมัติ • ดูการใช้ปุ่มทดสอบส่ง LINE ได้ที่หน้าเดียวกัน', 'New teachers cannot use the app until approved • LINE test-send usage is on the same page')}</p>
+              <p className="text-xs opacity-80">{tr('ครูที่สมัครใหม่ใช้งานระบบไม่ได้จนกว่าจะอนุมัติ', 'New teachers cannot use the app until approved')}</p>
             </div>
           </div>
           <Link

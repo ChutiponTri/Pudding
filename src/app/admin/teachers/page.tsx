@@ -1,10 +1,9 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { BookOpen, Building2, CheckCircle2, Clock, Mail, MessageCircle, Search, Send, UserX, Users } from 'lucide-react';
+import { BookOpen, Building2, CheckCircle2, Clock, Mail, MessageCircle, Search, UserX, Users } from 'lucide-react';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { fetchAll, getAdmin } from '@/lib/server/admin';
-import { LINE_TEST_WINDOW_DAYS, lineTestWindowStart } from '@/lib/server/lineTestQuota';
 import { AdminHeader, AdminMain, AdminPage, adminRecordHref } from '@/components/AdminUi';
 import { AdminTeacherApproval } from '@/components/AdminTeacherApproval';
 import { getAdminLang, translator, type AdminLang } from '@/lib/server/adminLang';
@@ -95,8 +94,7 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
   const supabase = createServiceSupabaseClient();
   const lang = await getAdminLang();
   const tr = translator(lang);
-  const since = lineTestWindowStart();
-  const [teachers, classrooms, testSends] = await Promise.all([
+  const [teachers, classrooms] = await Promise.all([
     supabase
       .from('users')
       .select('id, first_name, last_name, institution, email, avatar_url, teacher_approval, teacher_line_uid, created_at')
@@ -104,14 +102,11 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
       .order('created_at', { ascending: false })
       .range(0, 999),
     fetchAll(supabase, 'classrooms', 'teacher_id').catch(() => []),
-    supabase.from('line_test_sends').select('teacher_id').gte('created_at', since).range(0, 9999),
   ]);
   const loadError = teachers.error?.message ?? null;
   const all = (teachers.data || []) as TeacherRow[];
   const classroomCount = new Map<string, number>();
   for (const c of classrooms) classroomCount.set(c.teacher_id, (classroomCount.get(c.teacher_id) || 0) + 1);
-  const testCount = new Map<string, number>();
-  for (const t of testSends.data || []) testCount.set(t.teacher_id, (testCount.get(t.teacher_id) || 0) + 1);
 
   const counts = { pending: 0, approved: 0, rejected: 0, all: all.length };
   for (const t of all) counts[approvalOf(t.teacher_approval)]++;
@@ -134,10 +129,7 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
           <div>
             <h1 className="text-xl font-black text-slate-900 dark:text-white">{tr('อนุมัติบัญชีครู', 'Teacher approval')}</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {tr(
-                `ครูที่สมัครใหม่จะใช้งานระบบไม่ได้จนกว่าจะอนุมัติที่นี่ • ทดสอบส่ง LINE = จำนวนครั้งใน ${LINE_TEST_WINDOW_DAYS} วันล่าสุด`,
-                `New teachers cannot use the app until approved here • LINE tests = sends in the last ${LINE_TEST_WINDOW_DAYS} days`
-              )}
+              {tr('ครูที่สมัครใหม่จะใช้งานระบบไม่ได้จนกว่าจะอนุมัติที่นี่', 'New teachers cannot use the app until approved here')}
             </p>
           </div>
           <form action="/admin/teachers" className="relative w-full sm:w-80">
@@ -183,7 +175,6 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
               const style = STATUS_STYLE[approval];
               const name = `${t.first_name || ''} ${t.last_name || ''}`.trim() || tr('(ไม่มีชื่อ)', '(no name)');
               const initials = (t.first_name?.[0] || '') + (t.last_name?.[0] || '') || '?';
-              const tests = testCount.get(t.id) || 0;
               const complete = isTeacherProfileComplete(t);
               return (
                 <article
@@ -222,14 +213,10 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
                       {!complete && <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300">{tr('โปรไฟล์ยังไม่ครบ', 'Profile incomplete')}</span>}
                     </div>
 
-                    <dl className="grid grid-cols-3 gap-2 text-center">
+                    <dl className="grid grid-cols-2 gap-2 text-center">
                       <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2">
                         <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><BookOpen className="w-3 h-3" />{tr('ห้องเรียน', 'Classes')}</dt>
                         <dd className="text-base font-black tabular-nums">{classroomCount.get(t.id) || 0}</dd>
-                      </div>
-                      <div className={`rounded-xl py-2 ${tests >= 5 ? 'bg-rose-50 dark:bg-rose-950/40' : 'bg-slate-50 dark:bg-slate-800/60'}`}>
-                        <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><Send className="w-3 h-3" />{tr('ทดสอบ LINE', 'LINE tests')}</dt>
-                        <dd className={`text-base font-black tabular-nums ${tests >= 5 ? 'text-rose-600' : ''}`}>{tests}</dd>
                       </div>
                       <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 py-2" title={t.created_at ? new Date(t.created_at).toLocaleString(lang === 'en' ? 'en-GB' : 'th-TH', { timeZone: 'Asia/Bangkok' }) : ''}>
                         <dt className="text-[10px] text-slate-500 flex items-center justify-center gap-1"><Clock className="w-3 h-3" />{tr('สมัคร', 'Joined')}</dt>

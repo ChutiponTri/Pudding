@@ -10,8 +10,8 @@ export interface LineShare {
 }
 
 /**
- * Why the bot did not send it. 'limit' = this class's re-announcements
- * ("ส่งซ้ำ") are used up for now (rationed, see server/lineTestQuota).
+ * Why the bot did not send it. 'limit' = older rows only (re-announcements
+ * used to be rationed); nothing sets it any more.
  * 'card' = new work: not a failure, the teacher shares its link to the group
  * and the bot answers with the work card (no quota used).
  */

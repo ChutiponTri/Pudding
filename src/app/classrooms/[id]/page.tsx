@@ -17,7 +17,6 @@ import { dataService } from '@/lib/supabase/dataService';
 import { cacheVersion, cachedCall, patchCache, readCache, watchClassrooms, writeCache } from '@/lib/cache/sessionCache';
 import { quietly } from '@/lib/net/fetchActivity';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
-import { lineMessagesLeftNote, testQuotaNote, type LineTestQuotaInfo } from '@/lib/utils/lineTestQuotaNote';
 import { ActionToast, networkErrorMessage, readActionResult, useActionToast } from '@/components/ActionToast';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dropLineGroup, prefetchLineGroups, useLineGroupChoices } from '@/lib/line/lineGroupChoices';
@@ -394,7 +393,7 @@ export default function ClassroomWorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showLineConnectModal, lineConnection.status, classroomId, tr]);
 
-  const handleLineConnection = async (action: 'test' | 'disconnect' | 'link-group', groupRef?: string) => {
+  const handleLineConnection = async (action: 'disconnect' | 'link-group', groupRef?: string) => {
     if (!classroom) return;
     setIsLineLoading(true);
     if (action === 'link-group') setLinkingGroupRef(groupRef || null);
@@ -405,7 +404,7 @@ export default function ClassroomWorkspacePage() {
         body: JSON.stringify({ classroomId: classroom.id, action, groupRef }),
       });
       const result = await readActionResult(response, tr);
-      const data = result.data as { status?: 'connected' | 'disconnected'; groupName?: string; connectedAt?: string; testQuota?: LineTestQuotaInfo; lineMessagesLeft?: number };
+      const data = result.data as { status?: 'connected' | 'disconnected'; groupName?: string; connectedAt?: string };
       // The server may have found the link broken (bot removed from the group) and undone it.
       if (data.status) {
         setLineConnection((current) => ({ ...current, ...data, status: data.status! }));
@@ -425,8 +424,6 @@ export default function ClassroomWorkspacePage() {
       showToast(
         action === 'disconnect'
           ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group')
-          : action === 'test'
-          ? tr(`ส่งข้อความทดสอบเข้ากลุ่ม${data.groupName ? ` “${data.groupName}”` : ''} แล้ว`, `Test message sent${data.groupName ? ` to “${data.groupName}”` : ''}`) + testQuotaNote(data.testQuota, tr) + lineMessagesLeftNote(data.lineMessagesLeft, tr)
           : tr(`เชื่อม LINE Group${data.groupName ? ` “${data.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${data.groupName ? ` “${data.groupName}”` : ''} connected`)
       );
     } catch {
@@ -3112,16 +3109,8 @@ export default function ClassroomWorkspacePage() {
                   <button
                     type="button"
                     disabled={isLineLoading}
-                    onClick={() => handleLineConnection('test')}
-                    className="flex-1 px-3 py-2.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-xs hover:bg-emerald-100 cursor-pointer"
-                  >
-                    {tr('ทดสอบส่งข้อความ', 'Send test message')}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isLineLoading}
                     onClick={() => handleLineConnection('disconnect')}
-                    className="px-3 py-2.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs hover:bg-rose-100 cursor-pointer"
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs hover:bg-rose-100 cursor-pointer"
                   >
                     {tr('ยกเลิกเชื่อมต่อ', 'Disconnect')}
                   </button>

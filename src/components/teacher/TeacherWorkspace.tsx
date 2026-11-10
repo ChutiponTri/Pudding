@@ -9,7 +9,6 @@ import { Avatar } from '@/components/Avatar';
 import { CoTeacherPanel, type CoTeacherRole } from '@/components/teacher/CoTeacherPanel';
 import { teacherRoleBadgeClass, teacherRoleLabel } from '@/lib/utils/teacherRole';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { lineMessagesLeftNote, testQuotaNote, type LineTestQuotaInfo } from '@/lib/utils/lineTestQuotaNote';
 import { ActionToast, networkErrorMessage, readActionResult, useActionToast } from '@/components/ActionToast';
 import { LineGroupConnectSteps } from '@/components/LineGroupConnectSteps';
 import { dropLineGroup, prefetchLineGroups, useLineGroupChoices } from '@/lib/line/lineGroupChoices';
@@ -433,7 +432,7 @@ export function TeacherWorkspace({
     setLineConnection({ status, groupName: cls.line_group_name, connectedAt: cls.line_connected_at });
   };
 
-  const handleLineConnection = async (action: 'test' | 'disconnect' | 'link-group', groupRef?: string) => {
+  const handleLineConnection = async (action: 'disconnect' | 'link-group', groupRef?: string) => {
     const activeClassroom = lineConnectionClassroom || managingClassroom;
     if (!activeClassroom) return;
     setIsLineConnectionLoading(true);
@@ -445,7 +444,7 @@ export function TeacherWorkspace({
         body: JSON.stringify({ classroomId: activeClassroom.id, action, groupRef }),
       });
       const result = await readActionResult(response, tr);
-      const data = result.data as { status?: 'connected' | 'disconnected'; groupName?: string; connectedAt?: string; testQuota?: LineTestQuotaInfo; lineMessagesLeft?: number };
+      const data = result.data as { status?: 'connected' | 'disconnected'; groupName?: string; connectedAt?: string };
       // The server may have found the link broken (bot removed from the group) and undone it.
       if (data.status) {
         setLineConnection((current) => ({ ...current, ...data, status: data.status! }));
@@ -459,8 +458,6 @@ export function TeacherWorkspace({
       showToast(
         action === 'disconnect'
           ? tr('ยกเลิกการเชื่อมต่อแล้ว บอทออกจากกลุ่มแล้ว', 'Disconnected; the bot left the group')
-          : action === 'test'
-          ? tr(`ส่งข้อความทดสอบเข้ากลุ่ม${data.groupName ? ` “${data.groupName}”` : ''} แล้ว`, `Test message sent${data.groupName ? ` to “${data.groupName}”` : ''}`) + testQuotaNote(data.testQuota, tr) + lineMessagesLeftNote(data.lineMessagesLeft, tr)
           : tr(`เชื่อม LINE Group${data.groupName ? ` “${data.groupName}”` : ''} เรียบร้อยแล้ว`, `LINE group${data.groupName ? ` “${data.groupName}”` : ''} connected`)
       );
     } catch {
@@ -3381,14 +3378,6 @@ export function TeacherWorkspace({
               )}
               {lineConnection.status === 'connected' && (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => handleLineConnection('test')}
-                    disabled={isLineConnectionLoading}
-                    className="px-3.5 py-2 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-xs hover:bg-emerald-100 cursor-pointer"
-                  >
-                    {tr('ทดสอบส่งข้อความ', 'Send test message')}
-                  </button>
                   <button
                     type="button"
                     onClick={() => handleLineConnection('disconnect')}
