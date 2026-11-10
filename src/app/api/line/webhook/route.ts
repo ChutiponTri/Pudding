@@ -403,27 +403,39 @@ const MAX_LISTED_CLASSROOMS = 6;
  * one talks to the person: an approved teacher gets their own classrooms
  * (linked n/m, which ones are still missing) and buttons to act; a teacher
  * waiting for approval, or someone who is not a teacher yet (or a student),
- * gets what to do next. Always: the guide picture, the message, a button card
- * with the FAQ menu as quick replies. All replies, so no message quota.
+ * gets what to do next: the message and a button card with the FAQ menu as
+ * quick replies. The guide picture: after the greeting for someone not yet a
+ * teacher; none in a greeting to a teacher whose LINE is already connected;
+ * before the card for "เชื่อมกลุ่ม". All replies, so no message quota.
  */
 async function replyPrivateConnect(supabase: ServiceClient, lineUserId: string | undefined, replyToken: string | undefined, mode: 'follow' | 'connect') {
   if (!replyToken) return;
   const faq: LineAction[] = faqMenuButtons().map((label) => ({ type: 'message', label, text: label }));
   const teacher = await findTeacherByLineUid(supabase, lineUserId);
 
+  // A teacher whose LINE is already connected doesn't need the guide picture in a greeting.
+  const greetingTeacher = mode === 'follow' && !!teacher;
+  // Someone new: the greeting first, the picture under it.
+  const imageAfter = !teacher;
+  const picture = imageAfter ? 'ในภาพด้านล่าง' : 'ในภาพ';
+
   let text: string;
   let card: { text: string; actions: LineAction[] };
   if (!teacher) {
+    const studentLogin = buildLiffUrl();
     text = [
       mode === 'follow' ? 'สวัสดีค่ะ 👋 ยินดีต้อนรับสู่ Pudding 🍮' : 'บัญชี LINE นี้ยังไม่ได้เป็นบัญชีครูใน Pudding',
       '',
-      '👩‍🏫 คุณครู: เข้าสู่ระบบเว็บ Pudding ด้วย LINE บัญชีนี้ก่อน (ปุ่มด้านล่าง) แล้วบอทจะจำคุณครูได้ทันที จากนั้นทำตามขั้นตอนฝั่ง “สำหรับคุณครู” ในภาพ',
+      `👩‍🏫 คุณครู: แตะ “เข้าสู่ระบบสำหรับครู” แล้วเข้าสู่ระบบด้วย LINE บัญชีนี้ บอทจะจำคุณครูได้ทันที จากนั้นทำตามฝั่ง “สำหรับคุณครู” ${picture}`,
       '',
-      '👩‍🎓 นักเรียน: ไม่ต้องทำอะไรในแชทนี้ แตะ “เข้าร่วมห้องเรียน” ในกลุ่ม LINE ของห้องได้เลย (ฝั่ง “สำหรับนักเรียน” ในภาพ)',
+      `👩‍🎓 นักเรียน: แตะ “เข้าสู่ระบบสำหรับนักเรียน” หรือ “เข้าร่วมห้องเรียน” ในกลุ่ม LINE ของห้อง (ฝั่ง “สำหรับนักเรียน” ${picture})`,
     ].join('\n');
     card = {
-      text: 'คุณครูเริ่มต้นที่นี่ 👇',
-      actions: [{ type: 'uri', label: '🔑 เข้าสู่ระบบ Pudding', uri: webUrl('/sign-in?openExternalBrowser=1') }],
+      text: 'เลือกให้ตรงกับคุณ 👇',
+      actions: [
+        { type: 'uri', label: '👩‍🏫 เข้าสู่ระบบสำหรับครู', uri: webUrl('/sign-in?openExternalBrowser=1') },
+        ...(studentLogin ? [{ type: 'uri' as const, label: '👩‍🎓 เข้าสู่ระบบสำหรับนักเรียน', uri: studentLogin }] : []),
+      ],
     };
   } else if (teacher.access !== 'ok') {
     text = [
@@ -431,7 +443,7 @@ async function replyPrivateConnect(supabase: ServiceClient, lineUserId: string |
       '',
       teacherAccessMessage(teacher.access),
       '',
-      'เมื่อบัญชีพร้อมใช้งาน คุณครูเชื่อมกลุ่ม LINE ได้ตามขั้นตอนในภาพ',
+      greetingTeacher ? 'เมื่อบัญชีพร้อมใช้งาน คุณครูเชื่อมกลุ่ม LINE ได้เลย' : `เมื่อบัญชีพร้อมใช้งาน คุณครูเชื่อมกลุ่ม LINE ได้ตามขั้นตอน${picture}`,
     ].join('\n');
     card = {
       text: 'ตรวจสอบบัญชีครู 👇',
@@ -458,7 +470,7 @@ async function replyPrivateConnect(supabase: ServiceClient, lineUserId: string |
     if (!classrooms.length || unlinked.length) {
       lines.push(
         '',
-        'วิธีเชื่อม (ดูภาพด้านบน)',
+        greetingTeacher ? 'วิธีเชื่อม' : 'วิธีเชื่อม (ดูภาพด้านบน)',
         '1️⃣ เปิดกลุ่ม LINE ของห้อง → ☰ → เชิญ → Pudding Bot',
         '2️⃣ แตะ “เชื่อมห้องเรียน” ในข้อความของบอทในกลุ่ม',
         '3️⃣ เลือกห้องเรียน แล้วกด “เชื่อมกลุ่มกับห้องเรียนนี้”',
@@ -479,7 +491,13 @@ async function replyPrivateConnect(supabase: ServiceClient, lineUserId: string |
   }
 
   try {
-    await replyLineButtons(replyToken, { image: connectGuideImage(), intro: text, text: card.text, actions: card.actions, quickReplies: faq });
+    await replyLineButtons(replyToken, {
+      ...(greetingTeacher ? {} : { image: connectGuideImage(), imageAfter }),
+      intro: text,
+      text: card.text,
+      actions: card.actions,
+      quickReplies: faq,
+    });
   } catch (error) {
     console.error('LINE private connect reply failed:', error);
     // A reply token works once; it is still unused when LINE rejected the message.

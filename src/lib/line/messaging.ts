@@ -200,6 +200,8 @@ export async function replyLineButtons(
   options: {
     /** An image sent first (tap to view full screen). LINE wants HTTPS JPEG/PNG; the preview at most 1 MB. */
     image?: { originalContentUrl: string; previewImageUrl: string };
+    /** Send the image after the card instead of before it. */
+    imageAfter?: boolean;
     intro?: string;
     text: string;
     actions: LineAction[];
@@ -207,13 +209,14 @@ export async function replyLineButtons(
   }
 ): Promise<void> {
   const messages: Record<string, unknown>[] = [];
-  if (options.image) messages.push({ type: 'image', ...options.image });
+  if (options.image && !options.imageAfter) messages.push({ type: 'image', ...options.image });
   const body = options.intro ? `${options.intro}\n\n${options.text}` : options.text;
   messages.push(
     options.actions.length
       ? textCard(body, options.actions.map((action) => ({ label: action.label, action: bare(action) })))
       : { type: 'text', text: fit(body, 5000) }
   );
+  if (options.image && options.imageAfter) messages.push({ type: 'image', ...options.image });
   const items = (options.quickReplies || []).slice(0, 13).map((action) => ({ type: 'action', action: lineAction(action) }));
   if (items.length) messages[messages.length - 1] = { ...messages[messages.length - 1], quickReply: { items } };
   await sendLineMessage(LINE_REPLY_ENDPOINT, { replyToken, messages });
