@@ -974,6 +974,13 @@ export default function LiffStudentPage() {
         // teacher's LINE account never gets a student profile synced.
         const pendingState = new URLSearchParams(window.location.search).get("liff.state") || "";
         const teacherPath = /^\/?connect(?:[/?#]|$)/.test(pendingState);
+        // An old teacher menu card (liff.line.me/<student app>/teacher?...): the SDK moves on to
+        // /liff/teacher, which must then init with this (student) app's id.
+        if (/^\/?teacher(?:[/?#]|$)/.test(pendingState)) {
+          try {
+            sessionStorage.setItem("pudding_teacher_via_main_liff", "1");
+          } catch {}
+        }
 
         const liff = (await liffModule).default;
         await liff.init({ liffId: id });

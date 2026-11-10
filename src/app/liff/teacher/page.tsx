@@ -43,25 +43,40 @@ function liffIdInHash(): string | null {
   }
 }
 
+/** Set by the student page (/liff) when an old menu card hops through it to here (same key there). */
+const VIA_MAIN_LIFF_KEY = "pudding_teacher_via_main_liff";
+
 /**
  * Which LIFF app opened this page: the teacher menu's own app (new menu cards),
  * or the student app (menu cards posted before it existed, which come here
- * through /liff). liff.init must get that app's id, or it fails with
- * "Invalid LIFF ID". The SDK keeps each app's session as LIFF_STORE:<id>:….
+ * through /liff). liff.init must get that app's id: a wrong id fails with
+ * "Invalid LIFF ID", or worse, resolves liff.state against that app's endpoint
+ * (/liff), which lands a teacher on the student portal.
+ *
+ * Not guessed from LIFF_STORE:<id> in localStorage: on a computer the teacher
+ * website's LINE share signs the student app in there, so the guess picked the
+ * student app and every desktop menu tap ended on the student page.
  */
 function openingLiffId(mainId: string, teacherId: string): string {
   if (!teacherId || teacherId === mainId) return mainId;
-  const fromHash = liffIdInHash();
-  if (fromHash === teacherId || fromHash === mainId) return fromHash;
-  const has = (id: string) => {
+  const known = (id: string | null | undefined) => (id === teacherId || id === mainId ? id : null);
+  const remember = (id: string) => {
     try {
-      return sessionStorage.getItem(`LIFF_STORE:${id}:context`) !== null || localStorage.getItem(`LIFF_STORE:${id}:context`) !== null;
-    } catch {
-      return false;
-    }
+      if (id === mainId) sessionStorage.setItem(VIA_MAIN_LIFF_KEY, "1");
+      else sessionStorage.removeItem(VIA_MAIN_LIFF_KEY);
+    } catch {}
+    return id;
   };
-  if (has(teacherId)) return teacherId;
-  if (has(mainId)) return mainId;
+  // In LINE (first load): the context token names the app.
+  const fromHash = known(liffIdInHash());
+  if (fromHash) return remember(fromHash);
+  // Back from LINE Login (external browser): the callback names the app.
+  const fromLogin = known(new URLSearchParams(window.location.search).get("liffClientId"));
+  if (fromLogin) return remember(fromLogin);
+  // Hopped here from /liff (old card) earlier in this tab.
+  try {
+    if (sessionStorage.getItem(VIA_MAIN_LIFF_KEY)) return mainId;
+  } catch {}
   return teacherId;
 }
 
