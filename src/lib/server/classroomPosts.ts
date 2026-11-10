@@ -39,14 +39,14 @@ export function assignmentPostMetadata(
   return {
     assignmentId,
     dueDate: a.due_date,
-    groupName: a.group_name || (a.is_exam ? 'ข้อสอบ' : a.is_survey ? 'แบบสอบถาม' : 'งานทั่วไป'),
+    groupName: a.group_name || (a.is_exam ? 'ข้อสอบ' : a.is_survey ? 'กิจกรรม' : 'งานทั่วไป'),
     // Chosen students only (a retake, or a quiz the teacher gave to some): their names go in the LINE message.
     ...(Array.isArray(a.retake_student_ids) ? { ...(a.retake_of ? { retake: true } : {}), lineBody: retakeLineBody(a, students) } : {}),
   };
 }
 
 /** Prefixes of work posts; the edit path rewrites posts that start with one of them. */
-export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอบใหม่|ข้อสอบซ่อม|สอบซ่อม|แบบสอบถามใหม่):/;
+export const ASSIGNMENT_POST_PREFIX = /^(งานใหม่|ข้อสอบใหม่|ข้อสอบซ่อม|สอบซ่อม|แบบสอบถามใหม่|กิจกรรมใหม่):/;
 
 /**
  * The system adds "สอบซ่อม" itself (labels, posts, LINE), so a title that
@@ -59,7 +59,7 @@ export function assignmentPostBody(a: Pick<Assignment, 'is_exam' | 'title' | 'du
   const due = dueText({ ...a, status_override: a.status_override || 'auto', extended_until: a.extended_until }, ' · ');
   if (Array.isArray(a.retake_student_ids) && a.retake_of) return `ข้อสอบซ่อม: ${retakeTitle(a.title)} (${due})`;
   if (Array.isArray(a.retake_student_ids)) return `ข้อสอบใหม่: ${a.title} (${due} · เฉพาะ ${a.retake_student_ids.length} คน)`;
-  return `${a.is_exam ? 'ข้อสอบใหม่' : a.is_survey ? 'แบบสอบถามใหม่' : 'งานใหม่'}: ${a.title} (${due})`;
+  return `${a.is_exam ? 'ข้อสอบใหม่' : a.is_survey ? 'กิจกรรมใหม่' : 'งานใหม่'}: ${a.title} (${due})`;
 }
 
 /** A retake's LINE message body: title, deadline, and who takes it (only they can open it). */

@@ -240,7 +240,7 @@ function NewAssignmentContent() {
 
   // Form fields
   const [isExam, setIsExam] = useState(() => !editId && ((!copyId && urlMode === 'quiz') || !!retakeOfParam));
-  // "แบบสอบถาม": no scores, keys or indicators (never together with isExam).
+  // "กิจกรรม": no scores, keys or indicators (never together with isExam).
   const [isSurveyMode, setIsSurveyMode] = useState(() => !editId && !copyId && !retakeOfParam && urlMode === 'survey');
   const workMode = isExam ? 'quiz' : isSurveyMode ? 'survey' : 'homework';
   const [trackModeToggle, modeIndicator] = useSlidingIndicator(workMode);
@@ -1125,7 +1125,7 @@ function NewAssignmentContent() {
           : isExam
           ? (language === 'th' ? 'สร้างแบบทดสอบสำเร็จ!' : 'Quiz created successfully!')
           : isSurveyMode
-          ? tr('สร้างแบบสอบถามแล้ว', 'Survey created')
+          ? tr('สร้างกิจกรรมแล้ว', 'Activity created')
           : (language === 'th' ? 'สร้างการบ้านสำเร็จ!' : 'Assignment created successfully!')) +
         (lineUnsent
           ? tr(
@@ -1381,7 +1381,7 @@ function NewAssignmentContent() {
             {([
               { mode: 'homework', icon: BookOpen, short: language === 'th' ? 'การบ้าน' : 'Homework', label: t('assignment_creator.mode_assignment'), pill: 'bg-emerald-600' },
               { mode: 'quiz', icon: ShieldAlert, short: language === 'th' ? 'ข้อสอบ' : 'Quiz', label: t('assignment_creator.mode_exam'), pill: 'bg-purple-600' },
-              { mode: 'survey', icon: ClipboardList, short: language === 'th' ? 'แบบสอบถาม' : 'Survey', label: language === 'th' ? 'แบบสอบถาม' : 'Survey', pill: 'bg-sky-600' },
+              { mode: 'survey', icon: ClipboardList, short: language === 'th' ? 'กิจกรรม' : 'Activity', label: language === 'th' ? 'กิจกรรม' : 'Activity', pill: 'bg-sky-600' },
             ] as const).map((option) => {
               const Icon = option.icon;
               const selected = workMode === option.mode;
@@ -2071,11 +2071,11 @@ function NewAssignmentContent() {
                           <option value="short_answer">
                             {t('assignment_creator.questions_builder.type_short_answer')}
                           </option>
-                          <option value="file_upload">
-                            {t('assignment_creator.questions_builder.type_file_upload')}
-                          </option>
                           <option value="true_false">
                             {t('assignment_creator.questions_builder.type_true_false')}
+                          </option>
+                          <option value="file_upload">
+                            {t('assignment_creator.questions_builder.type_file_upload')}
                           </option>
                         </>
                       )}
@@ -2327,7 +2327,7 @@ function NewAssignmentContent() {
                 )}
 
                 {/* Ideal Answer & Rubric: always shown for written questions; file questions open them on demand (choices are scored from the key above) */}
-                {q.type === 'file_upload' && !(openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
+                {q.type === 'file_upload' && !isSurveyMode && !(openRubrics.includes(q.uid) || q.ideal_answer.trim() || q.rubric_criteria.trim()) && (
                   <button
                     type="button"
                     onClick={() => setOpenRubrics((prev) => [...prev, q.uid])}
@@ -2378,19 +2378,19 @@ function NewAssignmentContent() {
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               {tr('เพิ่มคำถาม', 'Add a question')}
             </p>
-            {/* Phones: one row of four (icon above a short label); wider screens: the full labels in a wrapped row. */}
-            <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-2.5">
+            {/* Phones: one row (icon above a short label); wider screens: the full labels in a wrapped row. */}
+            <div className={`grid ${isSurveyMode ? 'grid-cols-5' : 'grid-cols-4'} gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-2.5`}>
               {(isSurveyMode
                 ? SURVEY_TYPES.map((type) => {
                     const label = SURVEY_TYPE_LABEL[type];
-                    const short = { multiple_choice: ['ตัวเลือก', 'Choice'], checkboxes: ['หลายข้อ', 'Checks'], scale: ['ระดับ', 'Scale'], short_answer: ['ข้อความ', 'Text'] }[type];
+                    const short = { multiple_choice: ['ตัวเลือก', 'Choice'], checkboxes: ['หลายข้อ', 'Checks'], scale: ['ระดับ', 'Scale'], short_answer: ['ข้อความ', 'Text'], file_upload: ['ไฟล์', 'File'] }[type];
                     return { type, th: [short[0], label.th], en: [short[1], label.en] } as const;
                   })
                 : ([
                     { type: 'multiple_choice', th: ['ปรนัย', 'ปรนัย'], en: ['Choice', 'Multiple Choice'] },
                     { type: 'short_answer', th: ['ข้อความ', 'ข้อความสั้น'], en: ['Text', 'Short Answer'] },
-                    { type: 'file_upload', th: ['ไฟล์', 'อัปโหลดไฟล์'], en: ['File', 'File Upload'] },
                     { type: 'true_false', th: ['ถูก/ผิด', 'ถูก/ผิด'], en: ['T/F', 'True/False'] },
+                    { type: 'file_upload', th: ['ไฟล์', 'อัปโหลดไฟล์'], en: ['File', 'File Upload'] },
                   ] as const)
               ).map((option, i) => {
                 const [short, full] = language === 'th' ? option.th : option.en;

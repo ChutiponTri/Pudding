@@ -4,14 +4,15 @@ import React from 'react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { Globe } from 'lucide-react';
 
-export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className = '' }) => {
+export const LanguageSwitcher: React.FC<{ className?: string; full?: boolean }> = ({ className = '', full = false }) => {
   const { language, setLanguage } = useLanguage();
   const isThai = language === 'th';
 
   return (
     <>
     {/* Phones: one round button like the theme toggle, showing the current
-        language; each tap swaps to the other one. */}
+        language; each tap swaps to the other one. `full` always shows both. */}
+    {!full && (
     <button
       type="button"
       onClick={() => setLanguage(isThai ? 'en' : 'th')}
@@ -21,9 +22,10 @@ export const LanguageSwitcher: React.FC<{ className?: string }> = ({ className =
     >
       <span className="w-4 h-4 flex items-center justify-center text-sm leading-none">{isThai ? '🇹🇭' : '🇬🇧'}</span>
     </button>
+    )}
 
     <div
-      className={`hidden md:inline-flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 text-xs font-medium ${className}`}
+      className={`${full ? 'inline-flex' : 'hidden md:inline-flex'} items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 text-xs font-medium ${className}`}
       role="group"
       aria-label="Language Selector"
     >

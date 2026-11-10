@@ -1,7 +1,7 @@
 import type { Assignment, Question, QuestionType } from '@/types/database';
 
 /**
- * "แบบสอบถาม" (survey): a Google-Forms-like work type. No scores, answer keys
+ * "กิจกรรม" (survey, is_survey): a Google-Forms-like work type. No scores, answer keys
  * or indicators. A handed-in response is complete as it is (total_score 0 of
  * 0), so it never waits for grading and stays out of the grade book.
  */
@@ -9,7 +9,7 @@ import type { Assignment, Question, QuestionType } from '@/types/database';
 export const isSurvey = (a: Pick<Assignment, 'is_survey'> | null | undefined) => !!a?.is_survey;
 
 /** The question kinds a survey offers, in the order the forms show them. */
-export const SURVEY_TYPES = ['multiple_choice', 'checkboxes', 'scale', 'short_answer'] as const satisfies readonly QuestionType[];
+export const SURVEY_TYPES = ['multiple_choice', 'checkboxes', 'scale', 'short_answer', 'file_upload'] as const satisfies readonly QuestionType[];
 export type SurveyType = (typeof SURVEY_TYPES)[number];
 export const isSurveyType = (type: QuestionType): type is SurveyType => (SURVEY_TYPES as readonly QuestionType[]).includes(type);
 
@@ -18,6 +18,7 @@ export const SURVEY_TYPE_LABEL: Record<SurveyType, { th: string; en: string; ico
   checkboxes: { th: 'หลายตัวเลือก', en: 'Checkboxes', icon: '☑️' },
   scale: { th: 'ระดับ 1–5', en: 'Scale 1–5', icon: '📶' },
   short_answer: { th: 'ข้อความ', en: 'Text', icon: '✍️' },
+  file_upload: { th: 'แนบไฟล์', en: 'File', icon: '📎' },
 };
 
 /** Scale questions run 1 (lowest) to 5 (highest). */
@@ -73,7 +74,7 @@ export function cleanSurveyQuestion<T extends Partial<Question>>(q: T): T {
 export function surveyProblem(questions: Array<Pick<Question, 'type' | 'question_text' | 'options'>>): string | null {
   if (!questions.length) return 'เพิ่มคำถามอย่างน้อย 1 ข้อ';
   for (const [i, q] of questions.entries()) {
-    if (!isSurveyType(q.type)) return `ข้อ ${i + 1}: แบบสอบถามใช้คำถามประเภทนี้ไม่ได้`;
+    if (!isSurveyType(q.type)) return `ข้อ ${i + 1}: กิจกรรมใช้คำถามประเภทนี้ไม่ได้`;
     if (!String(q.question_text || '').trim()) return `ข้อ ${i + 1}: กรุณาใส่คำถาม`;
     if (hasOptions(q.type) && (q.options || []).filter((o) => String(o).trim()).length < 2) return `ข้อ ${i + 1}: ใส่ตัวเลือกอย่างน้อย 2 ข้อ`;
   }
@@ -83,7 +84,8 @@ export function surveyProblem(questions: Array<Pick<Question, 'type' | 'question
 export type SurveyQuestionSummary =
   | { kind: 'choice'; question: Question; responses: number; counts: Array<{ option: string; count: number }> }
   | { kind: 'scale'; question: Question; responses: number; counts: Array<{ option: string; count: number }>; average: number | null }
-  | { kind: 'text'; question: Question; responses: number; texts: string[] };
+  | { kind: 'text'; question: Question; responses: number; texts: string[] }
+  | { kind: 'files'; question: Question; responses: number; files: Array<{ url: string; text: string }> };
 
 /**
  * Per-question results, like Google Forms' summary: counts per option (a
@@ -92,9 +94,15 @@ export type SurveyQuestionSummary =
  */
 export function summarizeSurvey(
   questions: Question[],
-  answers: Array<{ question_id: string; answer_text?: string | null }>
+  answers: Array<{ question_id: string; answer_text?: string | null; file_url?: string | null }>
 ): SurveyQuestionSummary[] {
   return questions.map((question) => {
+    if (question.type === 'file_upload') {
+      const files = answers
+        .filter((a) => a.question_id === question.id && String(a.file_url || '').trim())
+        .map((a) => ({ url: String(a.file_url).trim(), text: String(a.answer_text || '').trim() }));
+      return { kind: 'files', question, responses: files.length, files };
+    }
     const own = answers.filter((a) => a.question_id === question.id && String(a.answer_text || '').trim());
     if (question.type === 'scale') {
       const values = own.map((a) => scaleValue(a.answer_text)).filter((v): v is number => v !== null);

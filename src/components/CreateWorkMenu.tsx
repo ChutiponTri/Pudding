@@ -180,7 +180,7 @@ export function CreateWorkMenu({
       key: 'survey',
       icon: ClipboardList,
       tile: 'bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-400',
-      label: tr('แบบสอบถาม', 'Survey'),
+      label: tr('กิจกรรม', 'Activity'),
       hint: tr('ไม่มีคะแนน', 'No scores'),
       onSelect: () => go(query({ mode: 'survey' })),
     },

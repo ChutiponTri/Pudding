@@ -108,7 +108,7 @@ export type WorkCardInput = {
 };
 
 export function workCard(input: WorkCardInput): FlexMessage {
-  const kind = input.retake ? 'สอบซ่อม' : input.isExam ? 'ข้อสอบ' : input.survey ? 'แบบสอบถาม' : 'งาน';
+  const kind = input.retake ? 'สอบซ่อม' : input.isExam ? 'ข้อสอบ' : input.survey ? 'กิจกรรม' : 'งาน';
   const tag = input.number ? `#${kind}ที่ ${input.number}` : `#${kind}ใหม่`;
   const body: unknown[] = [
     {

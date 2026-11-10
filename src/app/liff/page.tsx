@@ -3548,7 +3548,7 @@ export default function LiffStudentPage() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <span className="text-[11px] font-semibold text-slate-400">
-                                  {surveyWork ? '📊 แบบสอบถาม' : `${isRetakeOf(assignment) ? '🔁 สอบซ่อม' : assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม ${assignment.total_points || 20} คะแนน`}
+                                  {surveyWork ? '📊 กิจกรรม' : `${isRetakeOf(assignment) ? '🔁 สอบซ่อม' : assignment.is_exam ? '📝 ข้อสอบ' : '📋 งาน'} • เต็ม ${assignment.total_points || 20} คะแนน`}
                                   {assignmentAttachments(assignment).length > 0 && ` • 📎 ไฟล์แนบ ${assignmentAttachments(assignment).length}`}
                                 </span>
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
@@ -3943,7 +3943,7 @@ export default function LiffStudentPage() {
                 <CheckCircle2 className="w-7 h-7" />
               </div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                {isSurvey(activeAssignment) ? "ส่งแบบสอบถามแล้ว ขอบคุณ" : editingSubmission ? "ส่งงานที่แก้ไขแล้ว" : isTrackingAway ? "ส่งข้อสอบแล้ว" : "ส่งงานแล้ว"}
+                {isSurvey(activeAssignment) ? "ส่งกิจกรรมแล้ว ขอบคุณ" : editingSubmission ? "ส่งงานที่แก้ไขแล้ว" : isTrackingAway ? "ส่งข้อสอบแล้ว" : "ส่งงานแล้ว"}
               </h2>
               {/* Flagged by the server: shown with no reason. */}
               {submittedResult?.submission.is_flagged_suspicious && <SuspiciousLabel />}

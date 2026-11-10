@@ -362,7 +362,8 @@ export async function POST(request: NextRequest) {
           : q.type === 'scale' ? (scaleValue(text) ? String(scaleValue(text)) : '')
           : q.type === 'multiple_choice' ? (options.includes(text) ? text : '')
           : text;
-        return { ...a, answer_text: clean, file_url: null };
+        // File questions keep their file; every other survey answer is text only.
+        return { ...a, answer_text: clean, file_url: q.type === 'file_upload' ? a.file_url : null };
       });
     }
     // Left the quiz more often than warned about: whatever arrives, a blank sheet is handed in (0 points).

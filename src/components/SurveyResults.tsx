@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Paperclip } from 'lucide-react';
 import { dataService } from '@/lib/supabase/dataService';
 import { summarizeSurvey, SURVEY_TYPE_LABEL, isSurveyType, type SurveyQuestionSummary } from '@/lib/utils/survey';
 
@@ -28,7 +28,7 @@ export function SurveyResults({ assignmentId, lang = 'th', totalStudents }: { as
         if (!alive) return;
         // Same order as everywhere else the questions are shown (as stored).
         const questions = data.questions;
-        const answers = data.answers.map((a) => ({ question_id: a.question_id, answer_text: a.text_answer }));
+        const answers = data.answers.map((a) => ({ question_id: a.question_id, answer_text: a.text_answer, file_url: a.file_url }));
         setState({ loading: false, error: '', responses: data.responses, summary: summarizeSurvey(questions, answers) });
       })
       .catch((err) => alive && setState((s) => ({ ...s, loading: false, error: err instanceof Error ? err.message : th ? 'โหลดผลไม่สำเร็จ' : 'Could not load results' })));
@@ -63,7 +63,27 @@ export function SurveyResults({ assignmentId, lang = 'th', totalStudents }: { as
               {item.kind === 'scale' && item.average !== null && ` · ${th ? 'เฉลี่ย' : 'average'} ${item.average.toFixed(2)}`}
             </p>
           </div>
-          {item.kind === 'text' ? (
+          {item.kind === 'files' ? (
+            item.files.length ? (
+              <ul className="max-h-72 overflow-y-auto space-y-1.5">
+                {item.files.map((file, j) => (
+                  <li key={j}>
+                    <a
+                      href={file.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/70 text-sm font-semibold text-sky-700 dark:text-sky-400 hover:underline min-w-0"
+                    >
+                      <Paperclip className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{file.text || `${th ? 'ไฟล์' : 'File'} ${j + 1}`}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-slate-400">{th ? 'ยังไม่มีไฟล์' : 'No files yet'}</p>
+            )
+          ) : item.kind === 'text' ? (
             item.texts.length ? (
               <ul className="max-h-72 overflow-y-auto space-y-1.5">
                 {item.texts.map((text, j) => (

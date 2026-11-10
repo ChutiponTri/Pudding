@@ -74,7 +74,7 @@ export function ClassworkRow({
   const typePill = (
     <span className="contents" title={retake ? tr(`สอบซ่อม ${assignment.retake_student_ids?.length || 0} คน`, `Retake for ${assignment.retake_student_ids?.length || 0}`) : undefined}>
       <Pill tone={retake ? 'amber' : assignment.is_exam ? 'sky' : survey ? 'slate' : 'emerald'} className="shrink-0">
-        {retake ? tr('สอบซ่อม', 'Retake') : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : survey ? tr('แบบสอบถาม', 'Survey') : tr('การบ้าน', 'Homework')}
+        {retake ? tr('สอบซ่อม', 'Retake') : assignment.is_exam ? tr('ข้อสอบ', 'Quiz') : survey ? tr('กิจกรรม', 'Activity') : tr('การบ้าน', 'Homework')}
       </Pill>
       {assignment.counts_toward_grade === false && !survey && (
         <Pill tone="slate" className="shrink-0">{tr('ไม่นับคะแนน', "Doesn't count")}</Pill>

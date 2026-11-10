@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { BrandLogo } from '@/components/BrandLogo';
+import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { studentLoginUrl } from '@/lib/line/liffLink';
 import { dataService, CLASSROOMS_CHANGED_EVENT } from '@/lib/supabase/dataService';
 import { Classroom } from '@/types/database';
@@ -696,10 +697,9 @@ export const GlobalClassroomSidebar: React.FC = () => {
         )}
 
         {/* Footer */}
-        <div className="p-3 border-t border-slate-200/80 dark:border-slate-800 text-center shrink-0">
-          <span className="text-[10px] text-slate-400 font-medium">
-            Pudding Assessment Platform
-          </span>
+        <div className="p-3 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
+          <span className="text-[10px] text-slate-400 font-medium truncate">Pudding</span>
+          <LanguageSwitcher full />
         </div>
       </aside>
     </>

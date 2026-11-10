@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     classroom?.teacher_id === userId ||
     (classroom?.teachers || []).some((teacher: { teacher_id?: string }) => teacher.teacher_id === userId);
   if (!classroom || !isTeacher) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  if (announceResults && isSurvey(previous)) return NextResponse.json({ error: 'แบบสอบถามไม่มีคะแนนให้ประกาศ' }, { status: 400 });
+  if (announceResults && isSurvey(previous)) return NextResponse.json({ error: 'กิจกรรมไม่มีคะแนนให้ประกาศ' }, { status: 400 });
 
   // Posts the work's link to the class LINE group again (rationed: billed per group member).
   // Whenever the bot cannot (no group, re-announce limit, LINE refused), the

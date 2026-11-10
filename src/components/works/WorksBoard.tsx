@@ -301,6 +301,27 @@ export function WorksBoard() {
     }
   };
 
+  /** Deletes the work from every class it was given to (the work's ⋮ menu). */
+  const removeAll = async (g: WorkGroup) => {
+    const n = g.classes.length;
+    if (n === 1) return remove(g.classes[0]);
+    if (!confirm(tr(`ลบ "${g.rep.title}" ทั้ง ${n} ห้อง?\nคำตอบและคะแนนของทุกห้องจะถูกลบด้วย`, `Delete "${g.rep.title}" from all ${n} classes?\nAnswers and scores in every class are deleted too.`))) return;
+    let failed = 0;
+    let firstError = '';
+    await Promise.all(
+      g.classes.map(async (c) => {
+        try {
+          await dataService.deleteAssignment(c.assignment.id);
+          patch(c.assignment.id, null);
+        } catch (err) {
+          failed += 1;
+          firstError ||= errorText(err, tr('ลบไม่สำเร็จ', 'Could not delete'));
+        }
+      })
+    );
+    showToast(failed ? `${firstError} (${tr(`${failed}/${n} ห้อง`, `${failed}/${n} classes`)})` : tr(`ลบแล้ว ${n} ห้อง`, `Deleted from ${n} classes`));
+  };
+
   const reannounce = async (c: WorkClass) => {
     try {
       const line = await dataService.reannounceAssignment(c.assignment.id, c.assignment.title);
@@ -554,6 +575,14 @@ export function WorksBoard() {
         disabled: accepting.length === 0,
         danger: accepting.length > 0,
         onSelect: () => setClosed(accepting, true),
+      },
+      {
+        key: 'delete',
+        label: g.classes.length > 1 ? tr('ลบทุกห้อง', 'Delete in all classes') : tr('ลบ', 'Delete'),
+        hint: g.classes.length > 1 ? tr(`${g.classes.length} ห้อง`, `${g.classes.length}`) : undefined,
+        icon: <Trash2 className="w-4 h-4" />,
+        danger: true,
+        onSelect: () => removeAll(g),
       },
     ].filter(Boolean) as ActionMenuItem[];
   };
@@ -815,7 +844,7 @@ export function WorksBoard() {
   const TABS: Array<{ id: Tab; label: string }> = [
     { id: 'homework', label: tr('การบ้าน / ใบงาน', 'Assignments') },
     { id: 'quiz', label: tr('ข้อสอบ', 'Quizzes') },
-    { id: 'survey', label: tr('แบบสอบถาม', 'Surveys') },
+    { id: 'survey', label: tr('กิจกรรม', 'Activities') },
   ];
 
   return (
@@ -1034,7 +1063,7 @@ export function WorksBoard() {
                 : tab === 'quiz'
                 ? tr('ภาคเรียนนี้ยังไม่มีข้อสอบ', 'No quizzes this term')
                 : tab === 'survey'
-                ? tr('ภาคเรียนนี้ยังไม่มีแบบสอบถาม', 'No surveys this term')
+                ? tr('ภาคเรียนนี้ยังไม่มีกิจกรรม', 'No activities this term')
                 : tr('ภาคเรียนนี้ยังไม่มีการบ้าน', 'No assignments this term')}
             </p>
             {!filtering && (

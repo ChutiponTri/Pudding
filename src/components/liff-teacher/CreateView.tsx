@@ -32,7 +32,7 @@ const OPTION_LETTERS = "กขคงจฉชซ";
 const TYPE_LABEL: Partial<Record<QuestionType, string>> = { file_upload: "แนบไฟล์ / รูป", short_answer: "ข้อความ", multiple_choice: "ปรนัย", true_false: "ถูก/ผิด" };
 const TYPE_ICON: Partial<Record<QuestionType, string>> = { file_upload: "📎", short_answer: "✍️", multiple_choice: "🔘", true_false: "⭕" };
 /** Homework takes every kind; a quiz no files (it counts every time the student leaves the screen, as on the website). */
-const TYPES_FOR = (isExam: boolean): QuestionType[] => (isExam ? ["multiple_choice", "true_false", "short_answer"] : ["file_upload", "short_answer", "multiple_choice", "true_false"]);
+const TYPES_FOR = (isExam: boolean): QuestionType[] => (isExam ? ["multiple_choice", "true_false", "short_answer"] : ["multiple_choice", "short_answer", "true_false", "file_upload"]);
 /** Homework questions may leave the text empty for these (a sensible prompt is used). */
 const DEFAULT_TEXT: Partial<Record<QuestionType, string>> = { file_upload: "แนบไฟล์งาน", short_answer: "คำตอบ" };
 
@@ -241,7 +241,7 @@ export function CreateView() {
           [
             ["homework", "📋 การบ้าน"],
             ["quiz", "📝 แบบทดสอบ"],
-            ["survey", "📊 แบบสอบถาม"],
+            ["survey", "📊 กิจกรรม"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -272,7 +272,7 @@ export function CreateView() {
         </Field>
         <div className="space-y-1.5">
           <Field label="หมวดหมู่">
-            <input className={inputClass} value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={categories.length ? "เลือกด้านล่าง หรือพิมพ์ชื่อใหม่" : isExam ? "ไม่ระบุ = ข้อสอบ" : isSurvey ? "ไม่ระบุ = แบบสอบถาม" : "ไม่ระบุ = งานทั่วไป"} />
+            <input className={inputClass} value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={categories.length ? "เลือกด้านล่าง หรือพิมพ์ชื่อใหม่" : isExam ? "ไม่ระบุ = ข้อสอบ" : isSurvey ? "ไม่ระบุ = กิจกรรม" : "ไม่ระบุ = งานทั่วไป"} />
           </Field>
           {categories.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
@@ -501,7 +501,7 @@ export function CreateView() {
         ))}
       <div className="space-y-1.5">
         <p className="text-[11px] font-bold text-slate-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> เพิ่มคำถาม</p>
-        <div className={`grid gap-2 ${isExam ? "grid-cols-3" : "grid-cols-4"}`}>
+        <div className={`grid gap-2 ${isExam || isSurvey ? "grid-cols-3" : "grid-cols-4"}`}>
           {(isSurvey ? [...SURVEY_TYPES] : TYPES_FOR(isExam)).map((type) => (
             <button
               key={type}
@@ -591,6 +591,7 @@ function SurveyQuestionCard({ q, index, canRemove, patch, remove }: { q: Draft; 
           <span>มาก</span>
         </div>
       )}
+      {q.type === "file_upload" && <p className="text-[11px] text-slate-500">📎 นักเรียนถ่ายรูปหรือแนบไฟล์</p>}
       <label className="flex items-center gap-2 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer w-fit">
         <input type="checkbox" className="w-4 h-4 accent-amber-500" checked={q.required} onChange={(e) => patch({ required: e.target.checked })} />
         ต้องตอบ

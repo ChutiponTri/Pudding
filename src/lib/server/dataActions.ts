@@ -147,7 +147,7 @@ function assertAttachmentsFit(row: Partial<Assignment>) {
 const COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับงานแบบ "ไม่นับคะแนน" (ยังไม่มีคอลัมน์ counts_toward_grade) กรุณารัน SQL ใน supabase_counts_toward_grade_update.sql ก่อน หรือเลือก "นับคะแนน"';
 const SURVEY_MIGRATION_MESSAGE =
-  'ฐานข้อมูลยังไม่รองรับแบบสอบถาม กรุณารัน SQL ใน supabase_survey_update.sql ก่อน';
+  'ฐานข้อมูลยังไม่รองรับกิจกรรม กรุณารัน SQL ใน supabase_survey_update.sql ก่อน';
 
 /**
  * What graded questions may name (see questionIndicator): the course's lesson
@@ -2259,7 +2259,7 @@ export const dataActions = {
    */
   async getSurveyResponses({ supabase, actor }: Ctx, assignmentId: string) {
     const { assignment } = await requireTeacherOfAssignment(supabase, actor, assignmentId);
-    if (!isSurvey(assignment)) throw new HttpError(400, 'งานนี้ไม่ใช่แบบสอบถาม');
+    if (!isSurvey(assignment)) throw new HttpError(400, 'งานนี้ไม่ใช่กิจกรรม');
     const [{ data: questions, error: qError }, { data: subs, error: sError }] = await Promise.all([
       supabase.from('questions').select('*').eq('assignment_id', assignmentId),
       supabase.from('submissions').select('id, status').eq('assignment_id', assignmentId).in('status', ['submitted', 'late']),
@@ -2268,14 +2268,14 @@ export const dataActions = {
     if (sError) throw toDatabaseError(sError, 'submissions');
     const ids = (subs || []).map((r: { id: string }) => r.id);
     const results = await Promise.all(
-      chunk(ids).map((part) => supabase.from('submission_answers').select('submission_id, question_id, text_answer').in('submission_id', part))
+      chunk(ids).map((part) => supabase.from('submission_answers').select('submission_id, question_id, text_answer, file_url').in('submission_id', part))
     );
     const failed = results.find((r) => r.error);
     if (failed?.error) throw toDatabaseError(failed.error, 'submission_answers');
     return {
       questions: (questions || []) as Question[],
       responses: ids.length,
-      answers: results.flatMap((r) => (r.data || []) as Array<{ submission_id: string; question_id: string; text_answer: string | null }>),
+      answers: results.flatMap((r) => (r.data || []) as Array<{ submission_id: string; question_id: string; text_answer: string | null; file_url: string | null }>),
     };
   },
 

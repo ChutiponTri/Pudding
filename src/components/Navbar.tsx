@@ -7,7 +7,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useSidebar } from '@/components/SidebarContext';
-import { LanguageSwitcher } from './LanguageSwitcher';
 import { BrandLogo } from './BrandLogo';
 import { ThemeToggle } from './ThemeToggle';
 import {
@@ -122,13 +121,10 @@ export const Navbar: React.FC = () => {
           </Link>
         </div>
 
-        {/* Right Section: Theme Toggle, Language Switcher, Alerts & Profile */}
+        {/* Right Section: Theme Toggle, Alerts & Profile */}
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* Light / Dark Mode Toggle (hidden below 360px to keep the bar on one line) */}
           <ThemeToggle />
-
-          {/* Language Switcher */}
-          <LanguageSwitcher className="max-[359px]:hidden" />
 
           {/* Notification Button & Popover (only meaningful once signed in) */}
           <Show when={"signed-in"}>

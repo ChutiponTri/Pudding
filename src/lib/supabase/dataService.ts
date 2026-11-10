@@ -922,7 +922,7 @@ export const dataService = {
   },
 
   /** A survey's questions and every handed-in answer (teacher only). */
-  async getSurveyResponses(assignmentId: string): Promise<{ questions: Question[]; responses: number; answers: Array<{ submission_id: string; question_id: string; text_answer: string | null }> }> {
+  async getSurveyResponses(assignmentId: string): Promise<{ questions: Question[]; responses: number; answers: Array<{ submission_id: string; question_id: string; text_answer: string | null; file_url?: string | null }> }> {
     return call('getSurveyResponses', assignmentId);
   },
 

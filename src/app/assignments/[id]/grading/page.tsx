@@ -903,7 +903,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                     : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
                 }`}
               >
-                {assignment?.is_exam ? t('assignment_creator.mode_exam') : isSurvey(assignment) ? (th ? 'แบบสอบถาม' : 'Survey') : t('assignment_creator.mode_assignment')}
+                {assignment?.is_exam ? t('assignment_creator.mode_exam') : isSurvey(assignment) ? (th ? 'กิจกรรม' : 'Activity') : t('assignment_creator.mode_assignment')}
               </span>
               {isRetakeOf(assignment) && (
                 <span
