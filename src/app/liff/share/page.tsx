@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { Liff } from "@line/liff";
 import { CheckCircle2, Copy, Loader2, Send, ShieldAlert } from "lucide-react";
 
-type Shared = { classroom: string; text: string; messages: Parameters<Liff["shareTargetPicker"]>[0] };
+type Shared = { classroom: string; groupName?: string | null; linked?: boolean; text: string; messages: Parameters<Liff["shareTargetPicker"]>[0] };
 type Status = "loading" | "ready" | "sharing" | "done" | "error";
 
 const param = (name: string) => new URLSearchParams(window.location.search).get(name) || "";
@@ -14,7 +14,7 @@ const param = (name: string) => new URLSearchParams(window.location.search).get(
  * when the website opened this page just for it (?auto=1), the page closes.
  */
 async function pick(sdk: Liff, data: Shared): Promise<"done" | "ready"> {
-  const result = await sdk.shareTargetPicker(data.messages, { isMultiple: true });
+  const result = await sdk.shareTargetPicker(data.messages, { isMultiple: false });
   // undefined = the teacher closed the picker without sending.
   if (result?.status !== "success") return "ready";
   // The class timeline stops offering this post as unsent.
@@ -116,9 +116,13 @@ export default function LiffSharePage() {
         <h1 className="text-base font-black text-slate-900 dark:text-white">แชร์เข้ากลุ่ม LINE</h1>
         <p className="text-[11px] text-slate-500 dark:text-slate-400">ส่งจาก LINE ของคุณครู • ไม่ใช้โควตาบอท</p>
         {shared && (
-          <p className="mt-2 text-[11px] p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-200 dark:ring-violet-900 text-violet-900 dark:text-violet-200">
-            เลือกกลุ่ม LINE ของห้อง “{shared.classroom}”
-          </p>
+          <div role="note" className="mt-2 text-[12px] p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-300 dark:ring-amber-800 text-amber-900 dark:text-amber-100 flex items-start gap-2">
+            <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="min-w-0 break-words">
+              {shared.groupName ? <>เลือกกลุ่ม <b>“{shared.groupName}”</b> เท่านั้น</> : <>เลือกกลุ่ม LINE ของห้อง “{shared.classroom}”</>}
+              <span className="block text-[11px] opacity-80">ห้อง {shared.classroom} · อย่าเลือกแชตส่วนตัวหรือกลุ่มของห้องอื่น</span>
+            </span>
+          </div>
         )}
       </header>
 

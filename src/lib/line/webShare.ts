@@ -72,6 +72,16 @@ const tokenOf = (url: string | null) => {
   }
 };
 
+/** Which classroom and LINE group a share is for (null group: not linked, or a co-teacher invite). */
+export type ShareTarget = { classroom: string | null; groupName: string | null; linked: boolean };
+
+export async function loadShareTarget(url: string | null): Promise<ShareTarget | null> {
+  const token = tokenOf(url);
+  if (!token) return null;
+  const res = await fetch(`/api/line/share?t=${encodeURIComponent(token)}&target=1`, { cache: "no-store" });
+  return res.ok ? ((await res.json()) as ShareTarget) : null;
+}
+
 /** The messages a share sends (the card, or the reminder picture). */
 export async function loadShareCard(url: string | null): Promise<ShareCard | null> {
   const token = tokenOf(url);
@@ -88,7 +98,8 @@ export async function loadShareCard(url: string | null): Promise<ShareCard | nul
  * caller falls back to the share page.
  */
 export async function shareCardNow(liff: Liff, url: string | null, card: ShareCard): Promise<"shared" | "cancelled"> {
-  const result = await liff.shareTargetPicker(card.messages, { isMultiple: true });
+  // One chat per share: picking several made it easy to tick a wrong group or a personal chat.
+  const result = await liff.shareTargetPicker(card.messages, { isMultiple: false });
   if (result?.status !== "success") return "cancelled";
   const token = tokenOf(url);
   // The timeline stops offering it as unsent.

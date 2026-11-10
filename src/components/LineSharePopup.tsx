@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Liff } from '@line/liff';
-import { Check, Copy, Loader2, Send, Share2, X } from 'lucide-react';
+import { Check, Copy, Loader2, Send, Share2, ShieldAlert, X } from 'lucide-react';
 import { ModalSheet, ModalSheetBody, ModalSheetHeader } from '@/components/ModalSheet';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { LINE_PENDING_CANCEL_EVENT, LINE_UNSENT_EVENT, type LineUnsentDetail } from '@/lib/utils/lineShare';
-import { canShareNow, loadShareCard, openSharePage, shareCardNow, webLiff, type ShareCard } from '@/lib/line/webShare';
+import { canShareNow, loadShareCard, loadShareTarget, openSharePage, shareCardNow, webLiff, type ShareCard, type ShareTarget } from '@/lib/line/webShare';
 
 /**
  * Teacher pages: something to send into the class LINE group from the
@@ -100,6 +100,21 @@ export function LineSharePopup() {
     };
   }, [currentUrl, hasCard]);
 
+  // Which group to pick: LINE's picker lists every chat, so the popup names the right one first.
+  const [target, setTarget] = useState<{ url: string; target: ShareTarget } | null>(null);
+  useEffect(() => {
+    if (!currentUrl) return;
+    let alive = true;
+    loadShareTarget(currentUrl)
+      .then((loaded) => {
+        if (alive && loaded) setTarget({ url: currentUrl, target: loaded });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [currentUrl]);
+
   // The share page's window saves the LINE sign-in in this site's storage: pick it up when it lands.
   useEffect(() => {
     if (!liff) return;
@@ -120,6 +135,7 @@ export function LineSharePopup() {
   };
 
   const toGroup = current.reason === 'card';
+  const shareTarget = target?.url === current.url ? target.target : null;
   const ready: ShareCard | null = current.messages?.length
     ? { messages: current.messages as ShareCard['messages'], text: current.text }
     : card?.url === current.url
@@ -178,13 +194,25 @@ export function LineSharePopup() {
       </ModalSheetHeader>
       <ModalSheetBody className="space-y-2.5">
         {current.note && <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-relaxed">{current.note}</p>}
-        {toGroup && (
+        {toGroup && !shareTarget?.classroom && (
           <p className="text-[11px] text-violet-800 dark:text-violet-200 leading-relaxed p-2.5 rounded-xl bg-violet-50 dark:bg-violet-950/40 ring-1 ring-violet-200 dark:ring-violet-900">
-            {tr(
-              'แตะ “ส่งเข้ากลุ่ม” แล้วเลือกกลุ่ม LINE ของห้องนี้ การ์ดจะถูกส่งจาก LINE ของคุณครู — ไม่ใช้โควตาข้อความ',
-              'Tap “Send to group” and pick this class’s LINE group: the card goes from your own LINE, using no message quota'
-            )}
+            {tr('แตะ “ส่งเข้ากลุ่ม” แล้วเลือกกลุ่ม LINE ของห้องนี้', 'Tap “Send to group” and pick this class’s LINE group')}
           </p>
+        )}
+        {current.url && shareTarget?.classroom && (
+          <div role="note" className="text-[12px] text-amber-900 dark:text-amber-100 leading-relaxed p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 ring-1 ring-amber-300 dark:ring-amber-800 flex items-start gap-2">
+            <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="min-w-0 break-words">
+              {shareTarget.groupName ? (
+                <>{tr('เลือกกลุ่ม', 'Pick the group')} <b>“{shareTarget.groupName}”</b> {tr('เท่านั้น', 'only')}</>
+              ) : (
+                tr(`เลือกกลุ่ม LINE ของห้อง ${shareTarget.classroom}`, `Pick the LINE group of ${shareTarget.classroom}`)
+              )}
+              <span className="block text-[11px] opacity-80">
+                {shareTarget.classroom} · {tr('อย่าเลือกแชตส่วนตัวหรือกลุ่มของห้องอื่น', 'not a personal chat or another class’s group')}
+              </span>
+            </span>
+          </div>
         )}
         <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 max-h-36 overflow-y-auto">
           {current.pending ? (

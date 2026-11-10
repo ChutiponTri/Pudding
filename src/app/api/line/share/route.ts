@@ -13,11 +13,11 @@ import { classroomTitle } from '@/lib/utils/classroomLabel';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const ROOM_COLUMNS = 'id, name, course_name, subject_code, invite_code, teacher_id, line_group_id';
+const ROOM_COLUMNS = 'id, name, course_name, subject_code, invite_code, teacher_id, line_group_id, line_group_name';
 /** students: a reminder names who has not handed in. */
 const WORK_ROOM_COLUMNS = `${ROOM_COLUMNS}, students`;
 
-type Room = { id: string; name: string; course_name?: string | null; subject_code?: string | null; invite_code?: string | null; teacher_id?: string | null; line_group_id?: string | null; students?: User[] | null };
+type Room = { id: string; name: string; course_name?: string | null; subject_code?: string | null; invite_code?: string | null; teacher_id?: string | null; line_group_id?: string | null; line_group_name?: string | null; students?: User[] | null };
 type Post = { id: string; classroom_id: string; body: string; activity_type: string; metadata: Record<string, unknown> | null };
 /** An embedded classroom (PostgREST returns one object for a to-one embed; an array on older setups). */
 const one = <T,>(value: T | T[] | null | undefined): T | null => (Array.isArray(value) ? value[0] ?? null : value ?? null);
@@ -28,8 +28,36 @@ const SESSION_COLUMNS = 'id, classroom_id, title, starts_at, on_time_until_minut
  * reminder the picture the bot answers), and its words for the preview / copy.
  * The plain text card stands in whenever a card cannot be made.
  */
-function shared(classroom: string, text: string, messages: LineMessage[] | null) {
-  return NextResponse.json({ classroom, text, messages: messages || lineMessagesForText(text) });
+function shared(classroom: string, text: string, messages: LineMessage[] | null, room?: Room | null) {
+  return NextResponse.json({ classroom, groupName: groupNameOf(room), linked: !!room?.line_group_id, text, messages: messages || lineMessagesForText(text) });
+}
+
+/** The class LINE group's name the teacher should pick (null: unknown or not linked). */
+const groupNameOf = (room?: Room | null) => (room?.line_group_id && room.line_group_name ? room.line_group_name : null);
+
+/**
+ * GET ?t=…&target=1: only which classroom (and LINE group) a share is for, so
+ * the website's share popup can say which group to pick before LINE's picker,
+ * which lists every chat, opens. Cheap: no card is built.
+ */
+async function shareTarget(supabase: ReturnType<typeof createServiceSupabaseClient>, target: NonNullable<ReturnType<typeof parseShareToken>>) {
+  if (target.kind === 'teacher') return NextResponse.json({ classroom: null, groupName: null, linked: false });
+  let classroomId: string | null = target.kind === 'join' ? target.id : null;
+  if (target.kind === 'attendance') {
+    const { data } = await supabase.from('attendance_sessions').select('classroom_id').eq('id', target.id).maybeSingle();
+    classroomId = data?.classroom_id || null;
+  } else if (target.kind === 'post') {
+    const { data } = await supabase.from('classroom_posts').select('classroom_id').eq('id', target.id).maybeSingle();
+    classroomId = data?.classroom_id || null;
+  } else if (target.kind !== 'join') {
+    const { data } = await supabase.from('assignments').select('classroom_id').eq('id', target.id).maybeSingle();
+    classroomId = data?.classroom_id || null;
+  }
+  const { data: room } = classroomId
+    ? await supabase.from('classrooms').select(ROOM_COLUMNS).eq('id', classroomId).maybeSingle<Room>()
+    : { data: null };
+  if (!room) return NextResponse.json({ error: 'ไม่พบห้องเรียนนี้' }, { status: 404 });
+  return NextResponse.json({ classroom: classroomTitle(room), groupName: groupNameOf(room), linked: !!room.line_group_id });
 }
 
 /**
@@ -46,6 +74,7 @@ export async function GET(request: NextRequest) {
   if (!target) return NextResponse.json({ error: 'ลิงก์แชร์ไม่ถูกต้อง' }, { status: 404 });
 
   const supabase = createServiceSupabaseClient();
+  if (request.nextUrl.searchParams.get('target') === '1') return shareTarget(supabase, target);
   if (target.kind === 'teacher') {
     // A co-teacher invitation: the code itself is signed, so it only resolves for the course and role it was made for.
     const invite = await resolveTeacherInvite(supabase, target.id);
@@ -68,13 +97,13 @@ export async function GET(request: NextRequest) {
     if (session.status !== 'open') return NextResponse.json({ error: 'คาบเช็กชื่อนี้ปิดรับแล้ว' }, { status: 409 });
     const room = one(embedded);
     if (!room) return NextResponse.json({ error: 'ไม่พบห้องเรียนของคาบนี้' }, { status: 404 });
-    return shared(classroomTitle(room), attendanceLineText(session, room), attendanceMessages(session, room));
+    return shared(classroomTitle(room), attendanceLineText(session, room), attendanceMessages(session, room), room);
   }
   if (target.kind === 'join') {
     // A classroom's invitation ("เชิญในไลน์"): rebuilt now, so it carries the current join code.
     const { data: room } = await supabase.from('classrooms').select(ROOM_COLUMNS).eq('id', target.id).maybeSingle();
     if (!room) return NextResponse.json({ error: 'ไม่พบห้องเรียนนี้ อาจถูกลบไปแล้ว' }, { status: 404 });
-    return shared(classroomTitle(room), joinLineText(room), inviteMessages(room));
+    return shared(classroomTitle(room), joinLineText(room), inviteMessages(room), room);
   }
 
   // The rest are about one work (or a post, which may be about one). Each row
@@ -115,23 +144,23 @@ export async function GET(request: NextRequest) {
     const names = await missingStudentNames(supabase, assignment, room);
     if (!names.length) return NextResponse.json({ error: 'นักเรียนส่งงานนี้ครบแล้ว ไม่ต้องทวงแล้ว' }, { status: 409 });
     // In the class group the picture is enough: the bot answers it with the card and @mentions.
-    return shared(title, reminderLineText(assignment, room, names), room.line_group_id ? [remindPicture(room, assignment)] : null);
+    return shared(title, reminderLineText(assignment, room, names), room.line_group_id ? [remindPicture(room, assignment)] : null, room);
   }
   if (target.kind === 'results' && assignment) {
-    return shared(title, resultsLineText(assignment, room), await resultsMessages(supabase, assignment, room));
+    return shared(title, resultsLineText(assignment, room), await resultsMessages(supabase, assignment, room), room);
   }
   if (target.kind === 'reannounce' && assignment) {
-    return shared(title, reannounceLineText(assignment, room), await workMessages(supabase, assignment, room));
+    return shared(title, reannounceLineText(assignment, room), await workMessages(supabase, assignment, room), room);
   }
   if (post) {
     const metadata = (post.metadata || {}) as Record<string, unknown>;
     const text = postLineText({ ...post, activity_type: post.activity_type as PostActivityType }, room);
-    if (assignment) return shared(title, text, await workMessages(supabase, assignment, room));
+    if (assignment) return shared(title, text, await workMessages(supabase, assignment, room), room);
     if (post.activity_type === 'attendance' && typeof metadata.sessionId === 'string') {
       const { data: session } = await supabase.from('attendance_sessions').select(SESSION_COLUMNS).eq('id', metadata.sessionId).maybeSingle();
-      if (session) return shared(title, text, attendanceMessages(session, room));
+      if (session) return shared(title, text, attendanceMessages(session, room), room);
     }
-    return shared(title, text, null);
+    return shared(title, text, null, room);
   }
   return NextResponse.json({ error: 'ลิงก์แชร์ไม่ถูกต้อง' }, { status: 404 });
 }

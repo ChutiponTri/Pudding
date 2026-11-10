@@ -181,9 +181,30 @@ export function KitProvider({
     }
   }, [liff]);
 
+  /**
+   * LINE does not tell the page which chat it was opened in, so a menu card
+   * forwarded to another group (or the share picker) could post into the
+   * wrong chat. The teacher checks the target once per opening (group) or
+   * every time (picking a chat).
+   */
+  const [check, setCheck] = useState<{ mode: "group" | "pick"; resolve: (ok: boolean) => void } | null>(null);
+  const groupChecked = useRef(false);
+  const confirmTarget = useCallback(
+    (mode: "group" | "pick") => new Promise<boolean>((resolve) => setCheck({ mode, resolve })),
+    []
+  );
+  const closeCheck = (ok: boolean) => {
+    check?.resolve(ok);
+    setCheck(null);
+  };
+
   const postMessages = useCallback(
     async (messages: LineMessages, text = ""): Promise<PostResult> => {
       if (fromGroup && permission !== "unavailable") {
+        if (!groupChecked.current) {
+          if (!(await confirmTarget("group"))) return "cancelled";
+          groupChecked.current = true;
+        }
         try {
           if (permission === "prompt") await askPermission();
           await liff.sendMessages(messages);
@@ -196,7 +217,9 @@ export function KitProvider({
       }
       // Anywhere else (or LINE refused): the teacher picks the group.
       if (liff.isApiAvailable("shareTargetPicker")) {
-        const result = await liff.shareTargetPicker(messages, { isMultiple: true }).catch(() => null);
+        if (!(await confirmTarget("pick"))) return "cancelled";
+        // One chat only: a card picked into several chats is easy to send to the wrong one.
+        const result = await liff.shareTargetPicker(messages, { isMultiple: false }).catch(() => null);
         if (result?.status === "success") {
           toast("แชร์เข้ากลุ่มแล้ว");
           return "shared";
@@ -207,7 +230,7 @@ export function KitProvider({
       toast(text ? "คัดลอกข้อความแล้ว วางในกลุ่ม LINE ของห้องได้เลย" : "ส่งเข้ากลุ่มไม่ได้บนอุปกรณ์นี้", text ? "ok" : "error");
       return "copied";
     },
-    [liff, toast, fromGroup, permission, askPermission]
+    [liff, toast, fromGroup, permission, askPermission, confirmTarget]
   );
 
   const postShare = useCallback(
@@ -248,6 +271,31 @@ export function KitProvider({
       value={{ ...value, postMessages, postShare, postKind, toast, fetchData, loadData, keyOf, invalidate, prefetch, autoSend, fromGroup, permission, askPermission }}
     >
       {children}
+      {check && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-end sm:items-center justify-center p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+          <div role="alertdialog" aria-labelledby="send-check-title" className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 p-5 space-y-4 shadow-xl">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="w-5 h-5 shrink-0 text-amber-500 mt-0.5" />
+              <div className="space-y-1 min-w-0">
+                <p id="send-check-title" className="font-black text-slate-900 dark:text-white">
+                  {check.mode === "group" ? "ส่งเข้าแชตนี้ใช่ไหม?" : "เลือกกลุ่มของห้องนี้"}
+                </p>
+                <p className="text-sm text-slate-600 dark:text-slate-300 break-words">
+                  {value.classroom.title}
+                  {value.classroom.groupName ? <> · กลุ่ม <b>{value.classroom.groupName}</b></> : null}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {check.mode === "group" ? "ถ้าแชตนี้ไม่ใช่กลุ่มของห้องนี้ ให้กดยกเลิก" : "อย่าเลือกแชตส่วนตัวหรือกลุ่มของห้องอื่น"}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button tone="ghost" onClick={() => closeCheck(false)}>ยกเลิก</Button>
+              <Button onClick={() => closeCheck(true)}>{check.mode === "group" ? "ส่ง" : "เลือกกลุ่ม"}</Button>
+            </div>
+          </div>
+        </div>
+      )}
       {message && (
         <div className="fixed inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 pointer-events-none">
           <div

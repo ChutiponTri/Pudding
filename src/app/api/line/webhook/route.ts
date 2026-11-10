@@ -16,6 +16,7 @@ import {
   connectGuideImage,
   ensureBotGroup,
   findLinkedClassroom,
+  getClassroom,
   findRemovedGroupClassroom,
   findTeacherByLineUid,
   forgetBotGroup,
@@ -630,10 +631,33 @@ async function handleStudentCommand(supabase: ServiceClient, groupId: string, li
  * and only when a teacher or TA sent it, so nobody else can make the bot post
  * cards.
  */
+/**
+ * A card trigger posted into a group that is not its classroom's (a forwarded
+ * menu card, a wrong pick): the class's own teacher or TA gets a free reply
+ * saying so, so they can delete it. Anyone else gets nothing.
+ */
+async function warnWrongGroup(
+  supabase: ServiceClient,
+  groupClassroom: LinkClassroom | null,
+  lineUserId: string | undefined,
+  trigger: CardTrigger,
+  replyToken: string
+) {
+  if (!trigger.classroomId) return;
+  const owner = await getClassroom(supabase, trigger.classroomId);
+  if (!owner || !(await isClassroomStaff(supabase, owner, lineUserId))) return;
+  const right = owner.line_group_name ? `กลุ่ม "${owner.line_group_name}"` : 'กลุ่มของห้องนั้น';
+  const here = groupClassroom ? `กลุ่มนี้เป็นของห้อง ${classroomTitle(groupClassroom)}` : 'กลุ่มนี้ยังไม่ได้เชื่อมกับห้องเรียน';
+  await replySafely(replyToken, `⚠️ ส่งผิดกลุ่ม\nข้อความนี้เป็นของห้อง ${classroomTitle(owner)} — ${here}\nลบข้อความนี้แล้วส่งใหม่ใน${right}`);
+}
+
 async function handleCardTrigger(supabase: ServiceClient, groupId: string, lineUserId: string | undefined, trigger: CardTrigger, replyToken: string | undefined) {
   if (!replyToken) return;
   const classroom = await findLinkedClassroom(supabase, groupId);
-  if (!classroom || (trigger.classroomId && trigger.classroomId !== classroom.id)) return;
+  if (!classroom || (trigger.classroomId && trigger.classroomId !== classroom.id)) {
+    await warnWrongGroup(supabase, classroom, lineUserId, trigger, replyToken);
+    return;
+  }
   const needsWork = trigger.kind === 'work' || trigger.kind === 'remind' || trigger.kind === 'results';
   const [staff, work, session] = await Promise.all([
     isClassroomStaff(supabase, classroom, lineUserId),
