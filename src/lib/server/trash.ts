@@ -13,6 +13,10 @@ import type { Assignment, Classroom, TrashItem, TrashKind } from '@/types/databa
  * the rest of the app never has to skip "deleted" rows. Uploaded files stay in
  * R2 until the item expires (TRASH_DAYS) or is deleted for good. Restoring
  * inserts the rows back with their original ids.
+ *
+ * Every teacher of the classroom (owner, TA, …) at the time of deleting is kept
+ * in teacher_ids: they all see the item and can restore it. Only the teacher
+ * who deleted it (owner_id) can delete it for good.
  */
 
 type Supabase = SupabaseClient;
@@ -44,6 +48,15 @@ const PAGE = 1000;
 const INSERT_CHUNK = 500;
 
 const chunk = <T>(items: T[], size: number): T[][] => Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, i * size + size));
+
+/** Older trash table without teacher_ids (supabase_trash_update.sql not re-run). */
+const isMissingTeacherIds = (error: { code?: string; message?: string } | null | undefined) =>
+  !!error && (error.code === '42703' || error.code === 'PGRST204') && !!error.message?.includes('teacher_ids');
+
+/** Everyone who teaches the classroom: its owner and every co-teacher (TA, researcher). */
+export function classroomTeacherIds(classroom: { teacher_id?: string | null; teachers?: Array<{ teacher_id?: string }> | null }): string[] {
+  return [...new Set([classroom.teacher_id, ...(classroom.teachers || []).map((t) => t.teacher_id)].filter((v): v is string => !!v))];
+}
 
 const isMissingTrashTable = (error: { code?: string; message?: string } | null | undefined) =>
   !!error && (error.code === '42P01' || error.code === 'PGRST205' || !!error.message?.includes(TRASH_TABLE));
@@ -117,10 +130,21 @@ export async function snapshotClassroom(supabase: Supabase, classroom: Classroom
 /** Saves the copy; call before deleting the rows. Throws (nothing deleted) when the trash cannot take it. */
 export async function putInTrash(
   supabase: Supabase,
-  item: { kind: TrashKind; itemId: string; ownerId: string; title: string; subtitle: string; classroomId?: string | null; payload: Payload; fileKeys: string[] }
+  item: {
+    kind: TrashKind;
+    itemId: string;
+    ownerId: string;
+    /** Teachers of the classroom; they can see and restore it too. */
+    teacherIds: string[];
+    title: string;
+    subtitle: string;
+    classroomId?: string | null;
+    payload: Payload;
+    fileKeys: string[];
+  }
 ) {
   const now = Date.now();
-  const { error } = await supabase.from(TRASH_TABLE).insert({
+  const row = {
     id: `trash-${now}-${Math.random().toString(36).slice(2, 10)}`,
     kind: item.kind,
     item_id: item.itemId,
@@ -132,25 +156,48 @@ export async function putInTrash(
     file_keys: item.fileKeys,
     deleted_at: new Date(now).toISOString(),
     expires_at: new Date(now + TRASH_MS).toISOString(),
-  });
+    teacher_ids: [...new Set([item.ownerId, ...item.teacherIds])],
+  };
+  let { error } = await supabase.from(TRASH_TABLE).insert(row);
+  if (isMissingTeacherIds(error)) {
+    // Not migrated yet: only the deleting teacher will see it.
+    const { teacher_ids: _skip, ...withoutTeachers } = row;
+    void _skip;
+    ({ error } = await supabase.from(TRASH_TABLE).insert(withoutTeachers));
+  }
   if (error) throw isMissingTrashTable(error) ? new HttpError(503, TRASH_MIGRATION_MESSAGE) : new HttpError(500, `ย้ายไปถังขยะไม่สำเร็จ: ${error.message}`);
 }
 
-/** The teacher's trash, newest first (expired items are purged first). */
-export async function listTrash(supabase: Supabase, ownerId: string): Promise<TrashItem[]> {
+const LIST_FIELDS = 'id, kind, item_id, owner_id, title, subtitle, classroom_id, deleted_at, expires_at, payload';
+
+/**
+ * What the teacher deleted, plus what anyone deleted from a classroom they
+ * teach, newest first (expired items are purged first).
+ */
+export async function listTrash(supabase: Supabase, teacherId: string): Promise<TrashItem[]> {
   await purgeExpiredTrash(supabase);
-  const { data, error } = await supabase
-    .from(TRASH_TABLE)
-    .select('id, kind, item_id, title, subtitle, classroom_id, deleted_at, expires_at, payload')
-    .eq('owner_id', ownerId)
-    .order('deleted_at', { ascending: false })
-    .limit(200);
+  const query = (shared: boolean) => {
+    const q = supabase.from(TRASH_TABLE).select(LIST_FIELDS);
+    return (shared ? q.or(`owner_id.eq.${teacherId},teacher_ids.cs.{"${teacherId}"}`) : q.eq('owner_id', teacherId))
+      .order('deleted_at', { ascending: false })
+      .limit(200);
+  };
+  let { data, error } = await query(true);
+  if (isMissingTeacherIds(error)) ({ data, error } = await query(false));
   if (error) {
     if (isMissingTrashTable(error)) throw new HttpError(503, TRASH_MIGRATION_MESSAGE);
     throw new HttpError(500, error.message);
   }
-  return (data || []).map((row) => {
+  const rows = data || [];
+  const otherIds = [...new Set(rows.map((r) => r.owner_id as string).filter((id) => id !== teacherId))];
+  const names = new Map<string, string>();
+  if (otherIds.length) {
+    const { data: users } = await supabase.from('users').select('id, name, first_name, last_name').in('id', otherIds);
+    for (const u of users || []) names.set(u.id, u.name || [u.first_name, u.last_name].filter(Boolean).join(' '));
+  }
+  return rows.map((row) => {
     const payload = (row.payload || {}) as Payload;
+    const mine = row.owner_id === teacherId;
     return {
       id: row.id,
       kind: row.kind,
@@ -160,6 +207,8 @@ export async function listTrash(supabase: Supabase, ownerId: string): Promise<Tr
       classroom_id: row.classroom_id,
       deleted_at: row.deleted_at,
       expires_at: row.expires_at,
+      deleted_by_me: mine,
+      deleted_by_name: mine ? null : names.get(row.owner_id) || null,
       counts: {
         questions: payload.questions?.length || 0,
         submissions: (payload.submissions || []).filter((s) => s.status === 'submitted' || s.status === 'late').length,
@@ -170,11 +219,16 @@ export async function listTrash(supabase: Supabase, ownerId: string): Promise<Tr
   });
 }
 
-async function loadOwnTrash(supabase: Supabase, ownerId: string, trashId: string) {
+/** The item, if the teacher deleted it (or, with `shared`, teaches its classroom). */
+async function loadTrashFor(supabase: Supabase, teacherId: string, trashId: string, { shared }: { shared: boolean }) {
   const { data, error } = await supabase.from(TRASH_TABLE).select('*').eq('id', trashId).maybeSingle();
   if (error) throw isMissingTrashTable(error) ? new HttpError(503, TRASH_MIGRATION_MESSAGE) : new HttpError(500, error.message);
-  if (!data || data.owner_id !== ownerId) throw new HttpError(404, 'ไม่พบรายการนี้ในถังขยะ');
-  return data as { id: string; kind: TrashKind; item_id: string; classroom_id: string | null; payload: Payload; file_keys: string[] | null };
+  const teacherIds: string[] = Array.isArray(data?.teacher_ids) ? data.teacher_ids : [];
+  if (!data) throw new HttpError(404, 'ไม่พบรายการนี้ในถังขยะ');
+  if (data.owner_id !== teacherId) {
+    if (!shared || !teacherIds.includes(teacherId)) throw new HttpError(404, 'ไม่พบรายการนี้ในถังขยะ');
+  }
+  return data as { id: string; owner_id: string; kind: TrashKind; item_id: string; classroom_id: string | null; payload: Payload; file_keys: string[] | null };
 }
 
 async function insertRows(supabase: Supabase, table: string, rows: Record<string, unknown>[]) {
@@ -191,11 +245,11 @@ async function insertRows(supabase: Supabase, table: string, rows: Record<string
  */
 export async function restoreFromTrash(
   supabase: Supabase,
-  ownerId: string,
+  teacherId: string,
   trashId: string,
   canUseClassroom: (classroomId: string) => Promise<boolean>
 ): Promise<{ kind: TrashKind; itemId: string; classroomId: string | null }> {
-  const item = await loadOwnTrash(supabase, ownerId, trashId);
+  const item = await loadTrashFor(supabase, teacherId, trashId, { shared: true });
   const payload: Payload = { ...item.payload };
 
   if (item.kind === 'assignment') {
@@ -257,9 +311,10 @@ export async function restoreFromTrash(
   return { kind: item.kind, itemId: item.item_id, classroomId: classroomId || null };
 }
 
-/** Deletes a trashed item for good, with its files. */
-export async function deleteFromTrash(supabase: Supabase, ownerId: string, trashId: string) {
-  const item = await loadOwnTrash(supabase, ownerId, trashId);
+/** Deletes a trashed item for good, with its files (only the teacher who deleted it). */
+export async function deleteFromTrash(supabase: Supabase, teacherId: string, trashId: string) {
+  const item = await loadTrashFor(supabase, teacherId, trashId, { shared: true });
+  if (item.owner_id !== teacherId) throw new HttpError(403, 'ลบถาวรได้เฉพาะครูที่ลบรายการนี้');
   await removeTrashRows(supabase, [item]);
 }
 

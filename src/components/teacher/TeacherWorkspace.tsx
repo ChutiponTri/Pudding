@@ -2086,18 +2086,18 @@ export function TeacherWorkspace({
                                 <button
                                   type="button"
                                   onClick={() => handleOpenLineConnectionPopup(cls)}
-                                  className={`group/line shrink-0 h-7 px-2 rounded-full inline-flex items-center gap-1 text-[11px] font-bold whitespace-nowrap cursor-pointer transition-[transform,box-shadow,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-95 ${
+                                  className={`group/line shrink-0 h-7 px-3 rounded-full inline-flex items-center gap-1 text-[11px] font-bold whitespace-nowrap cursor-pointer transition-[transform,box-shadow,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-95 ${
                                     lineStatus === 'connected'
                                       ? 'bg-emerald-600 text-white hover:bg-emerald-500 hover:shadow-emerald-600/30'
                                       : lineStatus === 'waiting'
                                         ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 hover:shadow-amber-500/20'
-                                        : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200 hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-emerald-950/50 dark:hover:text-emerald-300 hover:shadow-emerald-500/20'
+                                        : 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-600'
                                   }`}
                                   aria-label={lineStatus === 'connected' ? tr('LINE เชื่อมแล้ว', 'LINE connected') : lineStatus === 'waiting' ? tr('LINE รอยืนยัน', 'LINE pending') : tr('LINE ยังไม่เชื่อม', 'LINE not connected')}
                                   title={tr('จัดการ LINE Group', 'Manage LINE group')}
                                 >
                                   <MessageCircle className="w-3.5 h-3.5 transition-transform duration-300 ease-out group-hover/line:-rotate-12 group-hover/line:scale-110" />
-                                  <span>{lineStatus === 'connected' ? 'LINE' : lineStatus === 'waiting' ? tr('รอยืนยัน', 'Pending') : tr('เชื่อม LINE', 'Connect')}</span>
+                                  <span>{lineStatus === 'waiting' ? tr('รอยืนยัน', 'Pending') : 'LINE'}</span>
                                 </button>
                                 <ClassroomRowMenu
                                   name={cls.name}

@@ -34,7 +34,7 @@ import { DRAFT_RETENTION_MS, canRecordNoSubmission, getAssignmentWindow, isAssig
 import { isHandedIn } from '@/lib/utils/gradingStatus';
 import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions, type ResultRelease } from '@/lib/server/resultRelease';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
-import { deleteFromTrash, listTrash, purgeExpiredTrashOccasionally, putInTrash, restoreFromTrash, snapshotAssignment, snapshotClassroom } from '@/lib/server/trash';
+import { classroomTeacherIds, deleteFromTrash, listTrash, purgeExpiredTrashOccasionally, putInTrash, restoreFromTrash, snapshotAssignment, snapshotClassroom } from '@/lib/server/trash';
 import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, rescaleChangedMaxScores, zeroFillNoSubmissions } from '@/lib/server/grading';
 import { invalidMaxScoreMessage, isObjectiveQuestion, missingKeyMessage } from '@/lib/utils/autoGrade';
 import { cleanSurveyQuestion, isSurvey, surveyProblem } from '@/lib/utils/survey';
@@ -1449,6 +1449,7 @@ export const dataActions = {
       kind: 'classroom',
       itemId: id,
       ownerId: actor!.userId,
+      teacherIds: classroomTeacherIds(classroom),
       title: classroom.name,
       subtitle: [classroom.course_name, classroom.subject_code].filter(Boolean).join(' · '),
       classroomId: id,
@@ -2228,6 +2229,7 @@ export const dataActions = {
       kind: 'assignment',
       itemId: id,
       ownerId: actor!.userId,
+      teacherIds: classroomTeacherIds(classroom),
       title: assignment.title,
       subtitle: classroom.name,
       classroomId: assignment.classroom_id,
@@ -2248,7 +2250,7 @@ export const dataActions = {
   },
 
   // ---------- TRASH (ถังขยะ) ----------
-  /** The signed-in teacher's deleted classrooms and work (kept TRASH_DAYS). */
+  /** Classrooms and work the signed-in teacher deleted or that were deleted from a classroom they teach (kept TRASH_DAYS). */
   async getTrash({ supabase, actor }: Ctx) {
     const teacher = requireTeacher(actor);
     return listTrash(supabase, teacher.userId);

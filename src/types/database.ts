@@ -295,5 +295,9 @@ export interface TrashItem {
   deleted_at: string;
   /** Deleted for good (with its files) after this. */
   expires_at: string;
+  /** Only the teacher who deleted it can delete it for good; other teachers of the classroom (TA, …) can restore it. */
+  deleted_by_me: boolean;
+  /** Who deleted it, when it was another teacher. */
+  deleted_by_name: string | null;
   counts: { questions: number; submissions: number; assignments: number; students: number };
 }

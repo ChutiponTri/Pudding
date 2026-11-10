@@ -13,8 +13,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * ถังขยะ: classrooms and work the teacher deleted (on the web or in LINE),
- * kept 7 days. Each can be restored or deleted for good; the server deletes
- * expired ones (and their files) by itself.
+ * or a co-teacher (TA) deleted from a classroom they share, kept 7 days.
+ * Anyone who teaches the classroom can restore; only the deleter can delete
+ * for good. The server deletes expired ones (and their files) by itself.
  */
 export default function TrashPage() {
   const { tr, language } = useLanguage();
@@ -166,7 +167,8 @@ export default function TrashPage() {
                       {item.subtitle && ` · ${item.subtitle}`} · {detail}
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      {tr('ลบเมื่อ', 'Deleted')} {dateText(item.deleted_at)} ·{' '}
+                      {tr('ลบเมื่อ', 'Deleted')} {dateText(item.deleted_at)}
+                      {!item.deleted_by_me && ` ${tr('โดย', 'by')} ${item.deleted_by_name || tr('ครูร่วมสอน', 'a co-teacher')}`} ·{' '}
                       <span className={left <= 1 ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}>
                         {left === 0 ? tr('ลบถาวรเร็ว ๆ นี้', 'Deleting soon') : tr(`เหลือ ${left} วัน`, `${left} day${left === 1 ? '' : 's'} left`)}
                       </span>
@@ -183,15 +185,17 @@ export default function TrashPage() {
                     {isBusy && busy?.action === 'restore' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
                     {tr('กู้คืน', 'Restore')}
                   </button>
-                  <button
-                    type="button"
-                    disabled={!!busy}
-                    onClick={() => remove(item)}
-                    className="flex-1 sm:flex-none h-10 px-4 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-black inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    {isBusy && busy?.action === 'delete' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                    {tr('ลบถาวร', 'Delete forever')}
-                  </button>
+                  {item.deleted_by_me && (
+                    <button
+                      type="button"
+                      disabled={!!busy}
+                      onClick={() => remove(item)}
+                      className="flex-1 sm:flex-none h-10 px-4 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-black inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {isBusy && busy?.action === 'delete' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                      {tr('ลบถาวร', 'Delete forever')}
+                    </button>
+                  )}
                 </div>
               </li>
             );

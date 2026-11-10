@@ -699,6 +699,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
 
         {/* Footer */}
         <div className="p-3 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
+          <LanguageSwitcher full />
           {isGuest ? (
             <span className="text-[10px] text-slate-400 font-medium truncate">Pudding</span>
           ) : (
@@ -715,7 +716,7 @@ export const GlobalClassroomSidebar: React.FC = () => {
               <span className="truncate">{tr('ถังขยะ', 'Trash')}</span>
             </Link>
           )}
-          <LanguageSwitcher full />
+          
         </div>
       </aside>
     </>
