@@ -20,6 +20,23 @@ import { studentLoginUrl } from '@/lib/line/liffLink';
 
 const noopSubscribe = () => () => {};
 
+/**
+ * The section beside the logo, from the route: short and always current.
+ * Order matters (first match wins). Null = show nothing (landing, sign-in).
+ */
+const SECTIONS: Array<{ test: (path: string) => boolean; th: string; en: string }> = [
+  { test: (p) => p.startsWith('/dashboard'), th: 'แดชบอร์ด', en: 'Dashboard' },
+  { test: (p) => p.startsWith('/works/grade') || p.startsWith('/grading') || /^\/assignments\/[^/]+\/grading/.test(p), th: 'ตรวจงาน', en: 'Grading' },
+  { test: (p) => p.startsWith('/assignments/new') || p.startsWith('/creation'), th: 'งานและข้อสอบ', en: 'Work' },
+  { test: (p) => p.startsWith('/works'), th: 'งานและข้อสอบ', en: 'Work' },
+  { test: (p) => p.startsWith('/classrooms'), th: 'ห้องเรียน', en: 'Classrooms' },
+  { test: (p) => p.startsWith('/students'), th: 'นักเรียน', en: 'Students' },
+  { test: (p) => p.startsWith('/exports'), th: 'ส่งออกข้อมูล', en: 'Export' },
+  { test: (p) => p.startsWith('/teacher-invite'), th: 'คำเชิญครู', en: 'Invite' },
+  { test: (p) => p.startsWith('/pending-approval'), th: 'รออนุมัติ', en: 'Pending' },
+  { test: (p) => p.startsWith('/admin'), th: 'ผู้ดูแลระบบ', en: 'Admin' },
+];
+
 export const Navbar: React.FC = () => {
   const pathname = usePathname();
   const { t, tr, language } = useLanguage();
@@ -63,6 +80,7 @@ export const Navbar: React.FC = () => {
   }, [isNotificationOpen]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const section = SECTIONS.find((s) => s.test(pathname)) || null;
 
   // Signing in syncs the users row in TeacherProfileGate (AppShell).
 
@@ -92,15 +110,15 @@ export const Navbar: React.FC = () => {
             className="flex items-center gap-3 group min-w-0"
           >
             <BrandLogo priority className="h-11 sm:h-12 w-auto shrink-0 group-hover:scale-105 group-hover:-rotate-2 transition-transform duration-300" />
-            {/* Two hand-split lines of similar width: Thai has no spaces to wrap on,
-                and the English phrase wraps lopsidedly when left to the browser. */}
-            <p
-              title={t('brand.subtitle')}
-              className={`hidden md:flex flex-col justify-center self-center border-l border-slate-200 dark:border-slate-700 pl-3 text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap ${language === 'th' ? 'leading-[1.45]' : 'leading-tight tracking-tight'}`}
-            >
-              <span>{tr('ระบบจัดการการเรียนรู้', 'Intelligent Learning Assessment')}</span>
-              <span>{tr('และตรวจประเมินอัจฉริยะ', '& Grading Platform')}</span>
-            </p>
+            {/* Current section, sized to sit beside the logo; fades in on each change. */}
+            {section && (
+              <span
+                key={section.th}
+                className="hidden md:block self-center border-l-2 border-slate-200 dark:border-slate-700 pl-3 text-xl font-black tracking-tight leading-8 text-slate-900 dark:text-white whitespace-nowrap truncate max-w-64 animate-in fade-in slide-in-from-left-1 [--tw-duration:250ms]"
+              >
+                {tr(section.th, section.en)}
+              </span>
+            )}
           </Link>
         </div>
 

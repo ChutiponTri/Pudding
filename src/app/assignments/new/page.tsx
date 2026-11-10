@@ -1558,13 +1558,13 @@ function NewAssignmentContent() {
                   <option value="counts">{tr('นับคะแนน', 'Counts')}</option>
                   <option value="not">{tr('ไม่นับคะแนน', "Doesn't count")}</option>
                 </select>
-                {/* Same height as the category box beside it (38px from sm up). */}
-                <div className="relative hidden sm:grid grid-cols-2 h-[38px] p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+                {/* Looks like the category box beside it: same 38px height, border and background; the pill fills it. */}
+                <div className="relative hidden sm:grid grid-cols-2 h-[38px] p-[3px] rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                   {/* The pill slides under the picked choice. */}
                   <span
                     aria-hidden
-                    className={`absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg shadow-xs transition-[translate,background-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                      countsTowardGrade ? 'translate-x-0 bg-amber-500' : 'translate-x-full bg-white dark:bg-slate-600'
+                    className={`absolute top-[3px] bottom-[3px] left-[3px] w-[calc(50%-3px)] rounded-[9px] shadow-xs transition-[translate,background-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                      countsTowardGrade ? 'translate-x-0 bg-amber-500' : 'translate-x-full bg-slate-200 dark:bg-slate-600'
                     }`}
                   />
                   {([
