@@ -619,17 +619,32 @@ function NewAssignmentContent() {
   }, [urlClassroomId, editId, copyId, templateToken, siblingKey, isReuse, retakeOfParam, clerkUser?.id]);
 
   // Groups already used in the selected classrooms, offered as one-tap choices.
+  // Fetched once per classroom (cached here), not again when switching back and forth.
   const selectedClassroomKey = selectedClassroomIds.join(',');
+  const groupsByClassRef = useRef<Record<string, string[]>>({});
   useEffect(() => {
     const ids = selectedClassroomKey ? selectedClassroomKey.split(',') : [];
     if (!ids.length) return;
+    const cache = groupsByClassRef.current;
+    const show = () => {
+      const names = new Set(ids.flatMap((id) => cache[id] || []));
+      setExistingGroups([...names].sort((a, b) => a.localeCompare(b, 'th')));
+    };
+    const missing = ids.filter((id) => !cache[id]);
+    if (!missing.length) {
+      show();
+      return;
+    }
     let cancelled = false;
     dataService
-      .getAssignmentsByClassroomIds(ids)
+      .getAssignmentsByClassroomIds(missing)
       .then((list) => {
-        if (cancelled) return;
-        const names = new Set(list.map((a) => a.group_name?.trim()).filter((name): name is string => !!name));
-        setExistingGroups([...names].sort((a, b) => a.localeCompare(b, 'th')));
+        for (const id of missing) cache[id] = [];
+        for (const a of list) {
+          const name = a.group_name?.trim();
+          if (name && cache[a.classroom_id] && !cache[a.classroom_id].includes(name)) cache[a.classroom_id].push(name);
+        }
+        if (!cancelled) show();
       })
       .catch(() => {});
     return () => {
@@ -1141,9 +1156,11 @@ function NewAssignmentContent() {
     }
   };
 
-  const currentCourseClassrooms = classrooms.filter(
-    (c) => !selectedCourseId || c.course_id === selectedCourseId
-  );
+  // Classroom choices: only the selected course's classrooms (none until a course is picked).
+  const selectedCourse = courses.find((c) => c.id === selectedCourseId);
+  const currentCourseClassrooms = selectedCourseId
+    ? classrooms.filter((c) => c.course_id === selectedCourseId || (!c.course_id && selectedCourse?.classroom_ids?.includes(c.id)))
+    : [];
   const selectedClassroomsLineReady = selectedClassroomIds.length > 0
     && selectedClassroomIds.every((classroomId) => lineConnectionStatuses[classroomId] === 'connected');
 
@@ -1442,12 +1459,18 @@ function NewAssignmentContent() {
               </label>
               <select
                 value={selectedClassroomIds[0] || ''}
-                disabled={!!editingAssignment || !!retake}
+                disabled={!!editingAssignment || !!retake || !selectedCourseId}
                 onChange={(e) => selectClassroom(e.target.value)}
                 className="w-full px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <option value="" disabled>{language === 'th' ? 'กรุณาเลือกห้องเรียน...' : 'Please select a classroom...'}</option>
-                {(editingAssignment ? currentCourseClassrooms.filter((c) => c.id === editingAssignment.classroom_id) : currentCourseClassrooms).map((cls) => (
+                <option value="" disabled>
+                  {!selectedCourseId
+                    ? tr('กรุณาเลือกรายวิชาก่อน', 'Choose a course first')
+                    : currentCourseClassrooms.length
+                    ? tr('กรุณาเลือกห้องเรียน...', 'Please select a classroom...')
+                    : tr('รายวิชานี้ยังไม่มีห้องเรียน', 'This course has no classrooms yet')}
+                </option>
+                {(editingAssignment || retake ? classrooms.filter((c) => c.id === selectedClassroomIds[0]) : currentCourseClassrooms).map((cls) => (
                   <option key={cls.id} value={cls.id}>
                     {cls.name}
                     {copySource?.classroom_id === cls.id ? ` ${tr('(ต้นฉบับ)', '(original)')}` : ''}
