@@ -165,7 +165,7 @@
     "title": "Create Assignment or Exam",
     "subtitle": "Set the topic, indicators, grading criteria, sample work and LINE reminders",
     "mode_assignment": "Standard Assignment",
-    "mode_exam": "Online Exam (Proctored)",
+    "mode_exam": "Online Exam",
     "fields": {
       "parent_course": "Select Parent Course",
       "title_label": "Title",

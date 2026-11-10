@@ -1901,13 +1901,17 @@ function NewAssignmentContent() {
               )}
             </div>
             ) : (
-            <div className="space-y-2">
+            // Due date and "ปิดรับส่งงาน" side by side across the form's two columns; stacked on small screens.
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-x-8">
+            <div className="space-y-2 min-w-0 rounded-2xl p-3 sm:p-4 bg-amber-100/70 border border-amber-300 dark:bg-amber-500/15 dark:border-amber-400/50">
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5 text-amber-500" />
                 <span><MobileText short={language === 'th' ? 'กำหนดส่ง' : 'Due'} full={t('assignment_creator.fields.due_date_label')} /></span>
               </label>
               <DateTimeField value={dueDate} onChange={setDueDate} presets="deadline" />
-              <label className="pt-2 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+            </div>
+            <div className="space-y-2 min-w-0 rounded-2xl p-3 sm:p-4 bg-rose-100/70 border border-rose-300 dark:bg-rose-500/15 dark:border-rose-400/50">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Lock className="w-3.5 h-3.5 text-rose-500" />
                 <span>
                   {tr('ปิดรับส่งงาน', 'Stop accepting work')}{' '}
@@ -1928,9 +1932,7 @@ function NewAssignmentContent() {
                     : tr(`ค่าเริ่มต้น: ${LATE_WINDOW_HOURS} ชม. หลังกำหนดส่ง`, `Default: ${LATE_WINDOW_HOURS}h after the due date`)
                 }
               />
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {tr('หลังกำหนดส่ง นับเป็นส่งช้า', 'Late after the due date')}
-              </p>
+            </div>
             </div>
             )}
 
