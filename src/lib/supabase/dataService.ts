@@ -15,6 +15,7 @@ import {
   User,
   TrashItem,
   TrashKind,
+  FormerStudent,
 } from '@/types/database';
 import { createClient, isSupabaseConfigured } from './client';
 import { authFetch } from '@/lib/auth/lineSession';
@@ -579,6 +580,7 @@ export const dataService = {
     answers: SubmissionAnswer[];
     sessions: Array<{ id: string; classroom_id: string; title: string; starts_at: string; status: string }>;
     records: Array<{ session_id: string; classroom_id: string; student_id: string; status: string; checked_at: string | null; checked_in_by: string | null }>;
+    formerStudents: FormerStudent[];
   }> {
     return call('getTeacherExportData', classroomIds);
   },

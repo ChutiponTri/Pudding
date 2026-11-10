@@ -31,7 +31,7 @@ import {
 } from '@/lib/server/access';
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { DRAFT_RETENTION_MS, canRecordNoSubmission, getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
-import { isHandedIn } from '@/lib/utils/gradingStatus';
+import { isHandedIn, isStudentSubmission } from '@/lib/utils/gradingStatus';
 import { maskAnswer, maskSubmission, resultRelease, resultReleaseForSubmissions, type ResultRelease } from '@/lib/server/resultRelease';
 import { deleteExpiredAssignmentDraftsOccasionally } from '@/lib/server/assignmentDrafts';
 import { classroomTeacherIds, deleteFromTrash, listTrash, purgeExpiredTrashOccasionally, putInTrash, restoreFromTrash, snapshotAssignment, snapshotClassroom } from '@/lib/server/trash';
@@ -56,6 +56,7 @@ import type {
   TeacherGradeRecord,
   TeacherRole,
   User,
+  FormerStudent,
 } from '@/types/database';
 
 /**
@@ -1723,7 +1724,7 @@ export const dataActions = {
     const rows = wanted.size ? mine.filter((c) => wanted.has(c.id)) : mine;
     const ids = rows.map((c) => c.id);
     if (!ids.length) {
-      return { classrooms: [] as Classroom[], assignments: [] as Assignment[], questions: [] as Question[], submissions: [] as Submission[], answers: [] as SubmissionAnswer[], sessions: [], records: [] };
+      return { classrooms: [] as Classroom[], assignments: [] as Assignment[], questions: [] as Question[], submissions: [] as Submission[], answers: [] as SubmissionAnswer[], sessions: [], records: [], formerStudents: [] as FormerStudent[] };
     }
     // Every matching row: PostgREST returns at most 1000 per request, and an
     // export must never be silently cut short.
@@ -1751,13 +1752,38 @@ export const dataActions = {
       byChunks<Question>('questions', 'id, assignment_id, type, question_text, max_score, indicator_id', 'assignment_id', assignmentIds),
       byChunks<Submission>('submissions', '*', 'assignment_id', assignmentIds),
     ]);
-    const answers = await byChunks<SubmissionAnswer>(
-      'submission_answers',
-      'submission_id, question_id, teacher_score, teacher_comment, graded_at',
-      'submission_id',
-      submissions.map((s) => s.id)
-    );
-    return { classrooms, assignments, questions, submissions, answers, sessions, records };
+    // Students removed from a classroom keep their work: the grade book lists them at the bottom.
+    const classroomOf = new Map(assignments.map((a) => [a.id, a.classroom_id]));
+    const rosterOf = new Map(classrooms.map((c) => [c.id, c.students || []]));
+    const formerKeys = new Map<string, Set<string>>();
+    for (const sub of submissions) {
+      const classroomId = classroomOf.get(sub.assignment_id);
+      if (!classroomId || !sub.student_id) continue;
+      if ((rosterOf.get(classroomId) || []).some((std) => isStudentSubmission(sub, std))) continue;
+      const keys = formerKeys.get(classroomId) || new Set<string>();
+      keys.add(sub.student_id);
+      formerKeys.set(classroomId, keys);
+    }
+    const [answers, formerUsers] = await Promise.all([
+      byChunks<SubmissionAnswer>(
+        'submission_answers',
+        'submission_id, question_id, teacher_score, teacher_comment, graded_at',
+        'submission_id',
+        submissions.map((s) => s.id)
+      ),
+      fetchUsersByKeys(supabase, [...formerKeys.values()].flatMap((keys) => [...keys])),
+    ]);
+    const formerStudents: FormerStudent[] = [];
+    for (const [classroomId, keys] of formerKeys) {
+      const seen = new Set<string>();
+      for (const key of keys) {
+        const user = formerUsers.get(key) || ({ id: key, name: key } as User);
+        if (seen.has(user.id)) continue;
+        seen.add(user.id);
+        formerStudents.push({ ...user, classroom_id: classroomId });
+      }
+    }
+    return { classrooms, assignments, questions, submissions, answers, sessions, records, formerStudents };
   },
 
   /**

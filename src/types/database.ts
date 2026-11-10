@@ -19,6 +19,9 @@ export interface User {
   teacher_approval?: 'pending' | 'approved' | 'rejected' | null;
 }
 
+/** A student removed from a classroom who still has work there (teacher export). */
+export type FormerStudent = User & { classroom_id: string };
+
 export type TeacherRole = 'primary' | 'assistant' | 'researcher';
 
 export interface ClassroomTeacher {

@@ -1,4 +1,4 @@
-import type { Assignment, Classroom, Question, Submission, SubmissionAnswer, User } from '@/types/database';
+import type { Assignment, Classroom, FormerStudent, Question, Submission, SubmissionAnswer, User } from '@/types/database';
 import { markKey, type Cell, type CellMark, type Sheet } from '@/lib/export/xlsx';
 import { classroomTitle, roomLabel, subjectTitle } from '@/lib/utils/classroomLabel';
 import { getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
@@ -24,6 +24,8 @@ export type ExportData = {
   answers: SubmissionAnswer[];
   sessions: Array<{ id: string; classroom_id: string; title: string; starts_at: string; status: string }>;
   records: Array<{ session_id: string; classroom_id: string; student_id: string; status: string; checked_at: string | null; checked_in_by: string | null }>;
+  /** Students removed from a classroom who still have work there (older data may not carry it). */
+  formerStudents?: FormerStudent[];
 };
 
 export type ReportId = 'gradebook' | 'attendance' | 'submissions' | 'question_scores' | 'roster' | 'missing';
@@ -57,6 +59,12 @@ function workOf(data: ExportData, classroomId: string) {
 
 function studentsOf(classroom: Classroom) {
   return [...(classroom.students || [])].sort((a, b) => (a.student_id || '').localeCompare(b.student_id || '', undefined, { numeric: true }) || fullName(a).localeCompare(fullName(b)));
+}
+
+/** Removed students with work in this classroom, listed after the roster. */
+function formerStudentsOf(data: ExportData, classroom: Classroom) {
+  const list = (data.formerStudents || []).filter((s) => s.classroom_id === classroom.id);
+  return list.sort((a, b) => (a.student_id || '').localeCompare(b.student_id || '', undefined, { numeric: true }) || fullName(a).localeCompare(fullName(b)));
 }
 
 const submissionsByAssignment = (data: ExportData) => {
@@ -103,12 +111,24 @@ function gradebook(data: ExportData, lang: Lang): Sheet[] {
     const work = workOf(data, c.id);
     const maxTotal = work.reduce((sum, a) => sum + (countsTowardGrade(a) ? pointsOf(a) : 0), 0);
     const marks: Record<string, CellMark> = {};
-    const rows = studentsOf(c).map((student, rowIndex) => {
+    const current = studentsOf(c);
+    const removedLabel = t(lang, 'ออกจากห้องแล้ว', 'Removed');
+    const rows = [...current, ...formerStudentsOf(data, c)].map((student, rowIndex) => {
+      const removed = rowIndex >= current.length;
+      // Removed from the classroom: name says so (CSV too), grey row start with a note in Excel.
+      const name = removed ? `${fullName(student)} (${removedLabel})` : fullName(student);
+      if (removed) {
+        const mark: CellMark = { fill: 'slate', comment: t(lang, 'นักเรียนถูกนำออกจากห้องเรียนแล้ว — คะแนนเดิมยังเก็บไว้', 'Removed from the classroom; earlier scores are kept') };
+        marks[markKey(rowIndex, 0)] = mark;
+        marks[markKey(rowIndex, 1)] = mark;
+      }
       let total = 0;
       let missing = 0;
       let toGrade = 0;
       const cells = work.map((a, workIndex): Cell => {
         const sub = findSub(byAssignment, a.id, student);
+        // A removed student's work without a row: not theirs to do any more, so blank and not counted.
+        if (removed && !sub) return '';
         // Missing and not yet handed in read as 0; to-grade stays empty. The status is the cell's colour and comment.
         const cell = gradeCellOf(sub, a, lang);
         if (sub && isGraded(sub)) {
@@ -121,8 +141,8 @@ function gradebook(data: ExportData, lang: Lang): Sheet[] {
       });
       total = round1(total);
       const percent = maxTotal ? round1((total / maxTotal) * 100) : null;
-      summary.push([classroomTitle(c), student.student_id || '', fullName(student), total, maxTotal, percent, missing, toGrade]);
-      return [student.student_id || '', fullName(student), ...cells, total, maxTotal, percent, missing, toGrade];
+      summary.push([classroomTitle(c), student.student_id || '', name, total, maxTotal, percent, missing, toGrade]);
+      return [student.student_id || '', name, ...cells, total, maxTotal, percent, missing, toGrade];
     });
     return {
       name: sheetLabel(t(lang, 'คะแนน', 'Grades'), c),
