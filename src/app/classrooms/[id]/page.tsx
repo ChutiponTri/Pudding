@@ -167,8 +167,6 @@ type TimelineItem = {
   isPost?: boolean;
   /** Set when the item stands for an assignment/quiz; deleting it deletes the assignment. */
   assignmentId?: string;
-  /** Publish time still ahead: only the teacher sees this item for now. */
-  scheduledAt?: string;
   title: string;
   body: string;
   type: 'announcement' | 'assignment' | 'exam' | 'attendance';
@@ -774,7 +772,6 @@ export default function ClassroomWorkspacePage() {
         rawId: post.id,
         isPost: true,
         assignmentId: aId,
-        scheduledAt: post.metadata?.publishAt && new Date(post.metadata.publishAt).getTime() > nowMs ? post.metadata.publishAt : undefined,
         title,
         body: post.body,
         type: post.activity_type || 'announcement',
@@ -801,7 +798,6 @@ export default function ClassroomWorkspacePage() {
         rawId: item.id,
         isPost: false,
         assignmentId: item.id,
-        scheduledAt: item.publish_at && new Date(item.publish_at).getTime() > nowMs ? item.publish_at : undefined,
         title: item.is_exam ? tr('ข้อสอบในระบบ', 'Exam') : tr('งานที่มอบหมาย', 'Assignment'),
         body: `${item.title} (${item.is_exam ? tr('ปิดรับ', 'Closes') : tr('กำหนดส่ง', 'Due')}: ${formatDateTime(item.due_date, language)})`,
         type: item.is_exam ? ('exam' as const) : ('assignment' as const),
@@ -2119,11 +2115,6 @@ export default function ClassroomWorkspacePage() {
                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${item.badgeColor}`}>
                               {item.badgeLabel}
                             </span>
-                            {item.scheduledAt && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
-                                ⏰ {tr('เผยแพร่', 'Publishes')} {formatDateTime(item.scheduledAt, language)}
-                              </span>
-                            )}
                           </div>
                           <time className="text-[10px] text-slate-400 block mt-0.5">
                             {new Date(item.created_at).toLocaleString(tr('th-TH', 'en-US'), {
@@ -2216,13 +2207,11 @@ export default function ClassroomWorkspacePage() {
                     {(() => {
                       const work = item.assignmentId ? assignments.find((a) => a.id === item.assignmentId) : undefined;
                       // A work: its link again with the current deadline, while it still takes work. Other posts: the same post again.
-                      const canResend = !item.scheduledAt && (work ? getAssignmentWindow(work).acceptsSubmissions && !getAssignmentWindow(work).isDraft : item.isPost);
+                      const canResend = (work ? getAssignmentWindow(work).acceptsSubmissions && !getAssignmentWindow(work).isDraft : item.isPost);
                       return (
                         <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2 text-[10px] text-slate-400">
                           <span className="min-w-0 truncate">
-                            {item.scheduledAt
-                              ? tr('⏰ ส่งเข้า LINE เมื่อถึงเวลาเผยแพร่', '⏰ Sent to LINE when it is published')
-                              : item.lineShare
+                            {item.lineShare
                               ? item.lineShare.reason === 'card'
                                 ? tr('📌 รอโพสต์การ์ดงานเข้ากลุ่ม', '📌 Work card waiting to be posted')
                                 : tr('⚠️ ยังไม่ได้ส่งเข้า LINE', '⚠️ Not in LINE yet')

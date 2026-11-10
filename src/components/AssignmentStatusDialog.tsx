@@ -152,21 +152,12 @@ export function AssignmentStatusDialog({
         {(assignmentWindow.isScheduled || assignmentWindow.isDraft) && assignment.publish_at && (
           <div className="p-3.5 rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/40 space-y-2.5">
             <p className="text-[11px] leading-relaxed text-sky-800 dark:text-sky-300">
-              {assignmentWindow.isDraft ? (
-                <>
-                  <span className="font-black">{tr('ฉบับร่าง', 'Draft')}</span> — {tr('นักเรียนยังไม่เห็นงานนี้ กดเผยแพร่เมื่อพร้อม', 'students cannot see this yet. Publish when ready.')}
-                  {draftExpiresAt(assignment) &&
-                    tr(
-                      <> (ลบอัตโนมัติ {formatDateTime(draftExpiresAt(assignment), 'th')} หากยังไม่เผยแพร่)</>,
-                      <> (deleted automatically on {formatDateTime(draftExpiresAt(assignment), 'en')} if still unpublished)</>
-                    )}
-                </>
-              ) : (
-                <>
-                  {tr('ตั้งเวลาเผยแพร่ไว้', 'Scheduled to publish')} <span className="font-black">{formatDateTime(assignment.publish_at, language)}</span> —{' '}
-                  {tr('สอนถึงหัวข้อนี้เร็วกว่ากำหนด? เปิดให้นักเรียนทำได้ทันที', 'reached this topic early? Open it to students now.')}
-                </>
-              )}
+              <span className="font-black">{tr('ฉบับร่าง', 'Draft')}</span> — {tr('นักเรียนยังไม่เห็นงานนี้ กดเผยแพร่เมื่อพร้อม', 'students cannot see this yet. Publish when ready.')}
+              {draftExpiresAt(assignment) &&
+                tr(
+                  <> (ลบอัตโนมัติ {formatDateTime(draftExpiresAt(assignment), 'th')} หากยังไม่เผยแพร่)</>,
+                  <> (deleted automatically on {formatDateTime(draftExpiresAt(assignment), 'en')} if still unpublished)</>
+                )}
             </p>
             <button
               type="button"

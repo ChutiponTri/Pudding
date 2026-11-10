@@ -1,10 +1,6 @@
 import 'server-only';
 import { dueText } from '@/lib/utils/lineDates';
 import { withLiffLink } from '@/lib/line/liffLink';
-import { isLineQuotaError, pushLineGroupText, pushLineMessages } from '@/lib/line/messaging';
-import { buildWorkCard } from '@/lib/line/workCard';
-import type { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { classroomTitle, type LabelledClassroom } from '@/lib/utils/classroomLabel';
 import { SCHOOL_TIME_ZONE } from '@/lib/utils/datetime';
 import type { Assignment } from '@/types/database';
@@ -115,88 +111,4 @@ export function postLineText(
   const metadata = (post.metadata || {}) as Record<string, unknown>;
   if (typeof metadata.lineText === 'string' && metadata.lineText) return metadata.lineText;
   return buildPostLineMessage(post.activity_type, classroom, post.body, classroom.id, metadata, classroom.invite_code, post.id);
-}
-
-/**
- * Sends the LINE "new work" message for scheduled posts whose publish time has
- * passed (the posts API holds it back with metadata.pendingLine). Runs from the
- * reminder cron and whenever a classroom timeline is opened, so the message
- * goes out at publish time even if the cron is late or not set up.
- */
-export async function announceScheduledPosts(
-  supabase: ReturnType<typeof createServiceSupabaseClient>,
-  now: Date = new Date(),
-  classroomId?: string
-): Promise<number> {
-  let query = supabase
-    .from('classroom_posts')
-    .select('id, classroom_id, body, activity_type, metadata')
-    .contains('metadata', { pendingLine: true });
-  /** Marks a post the bot could not send, so the teacher's timeline offers to share it by hand. */
-  const markUnsent = (id: string, metadata: Record<string, unknown>, lineStatus: PostLineFailure) =>
-    supabase.from('classroom_posts').update({ metadata: { ...metadata, lineStatus } }).eq('id', id);
-  if (classroomId) query = query.eq('classroom_id', classroomId);
-  const { data: pending, error } = await query;
-  if (error) {
-    console.error('Scheduled post lookup failed:', error);
-    return 0;
-  }
-
-  let count = 0;
-  for (const post of pending || []) {
-    const metadata = (post.metadata || {}) as Record<string, unknown>;
-    const publishAt = typeof metadata.publishAt === 'string' ? new Date(metadata.publishAt).getTime() : 0;
-    if (publishAt > now.getTime()) continue;
-
-    // Claim the post first (only if still pending) so overlapping runs can't announce twice.
-    const { data: claimed, error: claimError } = await supabase
-      .from('classroom_posts')
-      .update({ metadata: { ...metadata, pendingLine: false, announcedAt: now.toISOString() } })
-      .eq('id', post.id)
-      .contains('metadata', { pendingLine: true })
-      .select('id');
-    if (claimError || !claimed?.length) continue;
-
-    // The assignment may have been deleted while it was scheduled.
-    let work: Assignment | null = null;
-    if (typeof metadata.assignmentId === 'string') {
-      const { data: assignment } = await supabase.from('assignments').select('*').eq('id', metadata.assignmentId).maybeSingle<Assignment>();
-      if (!assignment) continue;
-      work = assignment;
-    }
-    // Open student/teacher pages show the work right away.
-    await signalClassroom(post.classroom_id, {
-      type: 'published',
-      assignmentId: typeof metadata.assignmentId === 'string' ? metadata.assignmentId : undefined,
-    });
-    const { data: classroom } = await supabase.from('classrooms').select('id, name, course_name, subject_code, line_group_id, invite_code, teacher_id').eq('id', post.classroom_id).maybeSingle();
-    const claimedMetadata = { ...metadata, pendingLine: false, announcedAt: now.toISOString() };
-    if (!classroom) continue;
-    if (!classroom.line_group_id) {
-      await markUnsent(post.id, claimedMetadata, 'no_group');
-      continue;
-    }
-    try {
-      // New work goes out as its card (a push costs the same either way).
-      const card = work ? await buildWorkCard(supabase, work, classroom) : null;
-      if (card) await pushLineMessages(classroom.line_group_id, [card]);
-      else await pushLineGroupText(classroom.line_group_id, postLineText(post, classroom));
-      count += 1;
-    } catch (pushError) {
-      console.error(`Scheduled LINE announcement failed for post ${post.id}:`, pushError);
-      // Put it back in the queue for the next run; give up after three tries.
-      // Out of monthly messages: retrying this month cannot help, the teacher shares it by hand.
-      const quota = isLineQuotaError(pushError);
-      const attempts = Number(metadata.lineAttempts || 0) + 1;
-      if (!quota && attempts < 3) {
-        await supabase
-          .from('classroom_posts')
-          .update({ metadata: { ...metadata, pendingLine: true, lineAttempts: attempts } })
-          .eq('id', post.id);
-      } else {
-        await markUnsent(post.id, claimedMetadata, quota ? 'quota' : 'failed');
-      }
-    }
-  }
-  return count;
 }

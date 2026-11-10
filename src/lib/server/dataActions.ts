@@ -167,7 +167,18 @@ async function assertIndicators(supabase: Supabase, courseId: string | null | un
 }
 
 const PUBLISH_AT_MIGRATION_MESSAGE =
-  'ฐานข้อมูลยังไม่รองรับการตั้งเวลาเผยแพร่ (ยังไม่มีคอลัมน์ publish_at) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือเลือก "เผยแพร่ทันที"';
+  'ฐานข้อมูลยังไม่รองรับฉบับร่าง (ยังไม่มีคอลัมน์ publish_at) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือเลือก "เผยแพร่ทันที"';
+
+/**
+ * Work is released now or kept as a draft (DRAFT_PUBLISH_AT); there is no
+ * scheduled release any more, so a release time in the future is dropped
+ * (the work is released now on create, and keeps its release on edit).
+ */
+function withoutScheduledRelease<T extends { publish_at?: string }>(data: T): T {
+  if (!data.publish_at || isAssignmentDraft(data) || Date.parse(data.publish_at) <= Date.now()) return data;
+  const { publish_at: _dropped, ...rest } = data;
+  return rest as T;
+}
 
 let registeredInstitutionsCache: { value: string[]; expiresAt: number } | null = null;
 
@@ -1833,6 +1844,7 @@ export const dataActions = {
   ) {
     const me = requireTeacher(actor);
     const classroom = await requireTeacherOfClassroom(supabase, actor, assignmentData.classroom_id);
+    assignmentData = withoutScheduledRelease(assignmentData);
     if (isSurvey(assignmentData)) {
       // A survey: everyone answers, nothing is scored, it never counts toward the grade.
       const { retake_of: _of, retake_student_ids: _ids, quiz_duration_minutes: _minutes, ...plain } = assignmentData;
@@ -1915,8 +1927,6 @@ export const dataActions = {
         activityType: assignmentData.is_exam ? 'exam' : 'assignment',
         body: assignmentPostBody({ ...assignmentData, is_survey: !!row.is_survey }),
         metadata: assignmentPostMetadata(assignmentData, id, await studentsFor(supabase, assignmentData, classroom)),
-        // Only when the database kept publish_at; otherwise the assignment is already visible.
-        publishAt: row.publish_at || undefined,
         assignment: newAssignment,
       });
       lineResult = { line: posted.line, share: posted.share, postId: posted.post.id };
@@ -1930,7 +1940,7 @@ export const dataActions = {
     const { assignment: previous, classroom: ownClassroom } = await requireTeacherOfAssignment(supabase, actor, id);
     // Moving work to another classroom is not an edit; nor is turning work into a retake or back.
     const { classroom_id: _cls, retake_of: _of, retake_student_ids: retakeIds, is_survey: _survey, ...rest } = data as Partial<Assignment>;
-    let patch: Partial<Assignment> = withCleanAttachments(rest);
+    let patch: Partial<Assignment> = withCleanAttachments(withoutScheduledRelease(rest));
     // A survey stays a survey (and work never becomes one): no quiz, never counted.
     if (isSurvey(previous)) patch = { ...patch, is_exam: false, counts_toward_grade: false, total_points: 0, quiz_duration_minutes: null };
     if (isRetake(previous) && previous.retake_of) {
@@ -1947,12 +1957,7 @@ export const dataActions = {
       patch.retake_student_ids = null;
     }
 
-    const due = new Date(patch.due_date ?? previous.due_date).getTime();
-    const publishAt = patch.publish_at ?? previous.publish_at;
-    const toDraft = isAssignmentDraft({ publish_at: publishAt });
-    if (publishAt && !toDraft && patch.due_date && due <= new Date(publishAt).getTime()) {
-      throw new HttpError(400, 'กำหนดส่งต้องอยู่หลังเวลาเผยแพร่');
-    }
+    const toDraft = isAssignmentDraft({ publish_at: patch.publish_at ?? previous.publish_at });
 
     let { data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle();
     for (const column of OPTIONAL_ASSIGNMENT_COLUMNS) {
@@ -1981,37 +1986,9 @@ export const dataActions = {
     }
 
     const next = (updated as Assignment) || { ...previous, ...patch };
-    const wasDraft = isAssignmentDraft(previous);
-    const nextPublishMs = patch.publish_at ? new Date(patch.publish_at).getTime() : NaN;
-    if (toDraft && !wasDraft) {
-      // Scheduled work turned back into a draft: drop its held-back post (it was never announced).
+    if (toDraft && !isAssignmentDraft(previous)) {
+      // Turned back into a draft: drop any post still held back for LINE (it was never announced).
       await supabase.from('classroom_posts').delete().contains('metadata', { assignmentId: id, pendingLine: true });
-    } else if (wasDraft && !toDraft && !Number.isNaN(nextPublishMs) && nextPublishMs > Date.now()) {
-      // A draft given a release time: its timeline post (and LINE announcement) waits for that time.
-      try {
-        const classroom = await loadClassroom(supabase, previous.classroom_id);
-        if (classroom) {
-          await createClassroomPost(supabase, {
-            classroom,
-            authorId: requireTeacher(actor).userId,
-            activityType: next.is_exam ? 'exam' : 'assignment',
-            body: assignmentPostBody(next),
-            metadata: assignmentPostMetadata(next, id, await studentsFor(supabase, next, classroom)),
-            publishAt: new Date(nextPublishMs).toISOString(),
-          });
-        }
-      } catch (postError) {
-        console.warn('Unable to schedule draft activity:', postError);
-      }
-    } else if (!toDraft && !Number.isNaN(nextPublishMs) && nextPublishMs > Date.now() && nextPublishMs !== new Date(previous.publish_at || 0).getTime()) {
-      // A rescheduled release moves its held-back timeline post (and LINE announcement) too.
-      const publishIso = new Date(nextPublishMs).toISOString();
-      const { data: scheduledPosts } = await supabase.from('classroom_posts').select('id, metadata').contains('metadata', { assignmentId: id, pendingLine: true });
-      await Promise.all(
-        (scheduledPosts || []).map((p) =>
-          supabase.from('classroom_posts').update({ created_at: publishIso, metadata: { ...(p.metadata || {}), publishAt: publishIso } }).eq('id', p.id)
-        )
-      );
     }
 
     // The timeline post spells out the title and due date; keep it in step.

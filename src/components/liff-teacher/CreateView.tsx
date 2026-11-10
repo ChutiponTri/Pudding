@@ -525,7 +525,6 @@ export function CreateView() {
         <Button tone="ghost" busy={busy === "draft"} disabled={!!busy} onClick={() => save(true)}>บันทึกร่าง</Button>
         <Button className="flex-1" busy={busy === "publish"} disabled={!!busy} onClick={() => save(false)}>เผยแพร่ + ส่งการ์ดเข้ากลุ่ม</Button>
       </div>
-      <p className="text-[11px] text-slate-400">ตั้งเวลาเผยแพร่ได้ที่หน้าสร้างงานบนเว็บ</p>
       {picking && <StudentPickerSheet students={students} excluded={excludedNow} onChange={setExcluded} onClose={() => setPicking(false)} />}
     </Page>
   );

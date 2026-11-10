@@ -74,9 +74,8 @@ const studentName = (s: Partial<User> & { name?: string }) => `${s.first_name ||
 
 /**
  * Adds a timeline post and announces it in the classroom's LINE group.
- * Scheduled posts (publishAt in the future) appear at that time and their LINE
- * message is sent by announceScheduledPosts. Assignment posts are idempotent
- * per assignment, so a retried creation never announces twice.
+ * Assignment posts are idempotent per assignment, so a retried creation
+ * never announces twice.
  */
 export async function createClassroomPost(
   supabase: ReturnType<typeof createServiceSupabaseClient>,
@@ -86,7 +85,6 @@ export async function createClassroomPost(
     body: string;
     activityType: PostActivityType;
     metadata?: Record<string, unknown>;
-    publishAt?: string;
     /** The LINE message's own wording; otherwise it is built from the post (buildPostLineMessage). */
     lineText?: string;
     /** The work this post announces (assignment / exam): its card comes with the share. */
@@ -97,22 +95,16 @@ export async function createClassroomPost(
   deduplicated: boolean;
   /**
    * 'sent' | 'failed' | 'quota' (the LINE plan's monthly messages are used up) |
-   * 'no_group' (classroom not linked to LINE) | 'scheduled' (sent at publish time) |
+   * 'no_group' (classroom not linked to LINE) |
    * 'card' (new work: the teacher posts its trigger link, the bot answers with the card).
    */
-  line?: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' | 'card';
+  line?: 'sent' | 'failed' | 'quota' | 'no_group' | 'card';
   /** The bot could not send it: the teacher shares it to LINE by hand (see postShare). */
   share?: PostShare;
 }> {
   const { classroom, activityType } = input;
   const body = input.body.trim();
   const metadata: Record<string, unknown> = { ...(input.metadata || {}), ...(input.lineText ? { lineText: input.lineText } : {}) };
-  const publishAtMs = input.publishAt ? new Date(input.publishAt).getTime() : NaN;
-  const isScheduled = !Number.isNaN(publishAtMs) && publishAtMs > Date.now();
-  if (isScheduled) {
-    metadata.publishAt = new Date(publishAtMs).toISOString();
-    metadata.pendingLine = true;
-  }
 
   const assignmentId = typeof metadata.assignmentId === 'string' ? metadata.assignmentId : '';
   if (assignmentId && (activityType === 'assignment' || activityType === 'exam')) {
@@ -133,12 +125,12 @@ export async function createClassroomPost(
     body,
     activity_type: activityType,
     metadata,
-    created_at: isScheduled ? new Date(publishAtMs).toISOString() : new Date().toISOString(),
+    created_at: new Date().toISOString(),
   };
   // The work's card is built while the post is saved, so the share carries it.
   const isWork = activityType === 'assignment' || activityType === 'exam';
   const cardPromise: Promise<LineMessage[] | null | undefined> =
-    !isScheduled && isWork && input.assignment
+    isWork && input.assignment
       ? workMessages(supabase, input.assignment, classroom).catch((cardError) => {
           console.warn('Building the work card failed:', cardError);
           return null;
@@ -154,15 +146,15 @@ export async function createClassroomPost(
     return { post: saved as ClassroomPost, deduplicated: false };
   }
 
-  let line: 'sent' | 'failed' | 'quota' | 'no_group' | 'scheduled' | 'card' = isScheduled ? 'scheduled' : 'no_group';
+  let line: 'sent' | 'failed' | 'quota' | 'no_group' | 'card' = 'no_group';
   // New work in a linked group is not pushed (a push costs one
   // message per member): the teacher's LINE sends the card into the group
   // (teacher LIFF pages: straight in; website: /liff/share).
-  const asCard = !isScheduled && !!classroom.line_group_id && (activityType === 'assignment' || activityType === 'exam');
+  const asCard = !!classroom.line_group_id && (activityType === 'assignment' || activityType === 'exam');
   if (asCard) {
     line = 'card';
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
-  } else if (!isScheduled) {
+  } else {
     const lineGroupId = classroom.line_group_id;
     if (lineGroupId) {
       try {
@@ -173,7 +165,6 @@ export async function createClassroomPost(
         console.error(`Classroom post LINE push failed for ${saved.id}:`, lineError);
       }
     }
-    // Scheduled posts stay hidden from students, so there is nothing to show them yet.
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
   }
   let share: PostShare | undefined;

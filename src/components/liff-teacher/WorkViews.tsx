@@ -103,7 +103,7 @@ export function PublishView() {
   return (
     <Page title="📢 เผยแพร่" refreshing={data.refreshing}>
       <Card className="space-y-3">
-        <p className="text-sm font-black">ฉบับร่าง / ตั้งเวลาไว้ ({waiting.length})</p>
+        <p className="text-sm font-black">ฉบับร่าง ({waiting.length})</p>
         {waiting.length === 0 && <p className="text-xs text-slate-400">ไม่มีงานที่รอเผยแพร่</p>}
         {waiting.map((row) => (
           <WorkLine key={row.work.id} row={row}>

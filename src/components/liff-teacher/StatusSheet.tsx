@@ -13,7 +13,7 @@ type Win = ReturnType<typeof getAssignmentWindow>;
 /** Where a work stands, for the label every list shows (so closed work is still listed). */
 export function workState({ win }: { win: Win }): { label: string; tone: "slate" | "violet" | "green" | "amber" | "red" } {
   if (win.isDraft) return { label: "ฉบับร่าง", tone: "slate" };
-  if (win.isScheduled) return { label: "ตั้งเวลาไว้", tone: "violet" };
+  if (win.isScheduled) return { label: "ยังไม่เผยแพร่", tone: "violet" };
   if (win.acceptsSubmissions) return { label: win.isPastDeadline ? "รับส่งช้า" : win.isExtended ? "ขยายเวลา" : "เปิดรับ", tone: win.isPastDeadline || win.isExtended ? "amber" : "green" };
   return { label: "ปิดรับแล้ว", tone: "red" };
 }

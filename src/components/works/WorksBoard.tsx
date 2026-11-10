@@ -700,9 +700,7 @@ export function WorksBoard() {
                       {g.rep.title}
                     </span>
                     {!g.published && (
-                      <Pill tone={hidden.every((c) => c.window.isDraft) ? 'slate' : 'sky'} className="shrink-0">
-                        {hidden.every((c) => c.window.isDraft) ? tr('ฉบับร่าง', 'Draft') : tr('ตั้งเวลา', 'Scheduled')}
-                      </Pill>
+                      <Pill tone="slate" className="shrink-0">{tr('ฉบับร่าง', 'Draft')}</Pill>
                     )}
                     {isRetakeOf(g.rep) && <Pill tone="amber" className="shrink-0">{tr('สอบซ่อม', 'Retake')}</Pill>}
                     {g.published && hidden.length > 0 && <Pill tone="sky" className="shrink-0">{tr(`ยังไม่เผยแพร่ ${hidden.length}`, `${hidden.length} unpublished`)}</Pill>}

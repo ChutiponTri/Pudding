@@ -1,6 +1,6 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
-import { announceScheduledPosts, postLineText } from '@/lib/line/classroomAnnouncement';
+import { postLineText } from '@/lib/line/classroomAnnouncement';
 import { botSendOrShare } from '@/lib/server/lineSend';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { getActor } from '@/lib/auth/actor';
@@ -22,25 +22,14 @@ export async function GET(request: NextRequest) {
     const role = await classroomRole(supabase, actor, classroom);
     if (!role) throw FORBIDDEN();
 
-    // Scheduled work whose time has come: announce it in LINE now, without
-    // waiting for the cron and without slowing this response.
-    after(() => announceScheduledPosts(supabase, new Date(), classroomId));
-
     const { data, error } = await supabase
       .from('classroom_posts')
       .select('*')
       .eq('classroom_id', classroomId)
       .order('created_at', { ascending: false });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    // Students don't see scheduled work before its publish time; teachers see everything.
-    const now = Date.now();
     // Teachers: posts the bot could not send carry how to share them by hand.
-    const posts = role === 'teacher'
-      ? ((data || []) as ClassroomPost[]).map((post) => withLineShare(post, classroom))
-      : (data || []).filter((post: ClassroomPost) => {
-          const publishAt = typeof post.metadata?.publishAt === 'string' ? new Date(post.metadata.publishAt).getTime() : NaN;
-          return Number.isNaN(publishAt) || publishAt <= now;
-        });
+    const posts = role === 'teacher' ? ((data || []) as ClassroomPost[]).map((post) => withLineShare(post, classroom)) : data || [];
     return NextResponse.json({ posts });
   } catch (error) {
     return errorResponse(error);
@@ -65,7 +54,6 @@ export async function POST(request: NextRequest) {
       body: postBody,
       activityType,
       metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {},
-      publishAt: typeof body.publishAt === 'string' ? body.publishAt : undefined,
     });
     return NextResponse.json({ post, deduplicated, line, share }, { status: deduplicated ? 200 : 201 });
   } catch (error) {
@@ -85,11 +73,6 @@ async function resendPost(request: NextRequest, id: string) {
   const { data: post } = await supabase.from('classroom_posts').select('*').eq('id', id).maybeSingle<ClassroomPost>();
   if (!post) throw new HttpError(404, 'ไม่พบโพสต์');
   const classroom = await requireTeacherOfClassroom(supabase, actor, post.classroom_id);
-  const metadata = (post.metadata || {}) as Record<string, unknown>;
-  const publishAt = typeof metadata.publishAt === 'string' ? new Date(metadata.publishAt).getTime() : NaN;
-  if (metadata.pendingLine || publishAt > Date.now()) {
-    return NextResponse.json({ error: 'โพสต์นี้ยังไม่ถึงเวลาเผยแพร่ ระบบจะส่งเข้า LINE ให้เองเมื่อถึงเวลา' }, { status: 409 });
-  }
   const text = postLineText({ ...post, activity_type: post.activity_type as PostActivityType }, classroom);
   const result = await botSendOrShare(supabase, {
     groupId: classroom.line_group_id,

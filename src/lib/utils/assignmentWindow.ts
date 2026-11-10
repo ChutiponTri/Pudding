@@ -137,8 +137,8 @@ export function getAssignmentStatus(
   if (window.isScheduled && !window.isForceClosed) {
     return {
       tone: 'scheduled' as AssignmentStatusTone,
-      label: th ? 'ตั้งเวลาไว้' : 'Scheduled',
-      note: th ? 'นักเรียนจะเห็นงานเมื่อถึงเวลาเผยแพร่' : 'Students see it at the publish time',
+      label: th ? 'ยังไม่เผยแพร่' : 'Not published',
+      note: th ? 'นักเรียนยังไม่เห็นงานนี้ กดเผยแพร่เมื่อพร้อม' : 'Students cannot see it yet; publish it when ready',
     };
   }
   if (!window.acceptsSubmissions) {

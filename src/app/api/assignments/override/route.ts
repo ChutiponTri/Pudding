@@ -4,7 +4,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { reannounceLineText, resultsLineText } from '@/lib/line/classroomAnnouncement';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, postShare, reannounceShare, remindShare, resultsShare } from '@/lib/server/classroomPosts';
+import { assignmentPostBody, assignmentPostMetadata, createClassroomPost, reannounceShare, remindShare, resultsShare } from '@/lib/server/classroomPosts';
 import { botSendOrShare } from '@/lib/server/lineSend';
 import { remindPicture, resultsMessages, workMessages, type LineMessage } from '@/lib/line/teacherCards';
 import { missingStudentNames, reminderLineText } from '@/lib/server/workReminder';
@@ -205,65 +205,23 @@ export async function POST(request: NextRequest) {
       console.error('Assignment publish-now failed:', publishError);
       return NextResponse.json({ error: 'เผยแพร่งานไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' }, { status: 500 });
     }
-    if (wasDraft) {
-      // Drafts have no timeline post yet: post and announce it in LINE now.
-      let line: Awaited<ReturnType<typeof createClassroomPost>>['line'];
-      let share: Awaited<ReturnType<typeof createClassroomPost>>['share'];
-      try {
-        ({ line, share } = await createClassroomPost(supabase, {
-          classroom,
-          authorId: userId,
-          activityType: published.is_exam ? 'exam' : 'assignment',
-          body: assignmentPostBody(published),
-          metadata: assignmentPostMetadata(published, assignmentId, isRetake(published) ? await hydratedStudents(supabase, classroom as Classroom) : classroom.students),
-          assignment: published,
-        }));
-      } catch (postError) {
-        console.warn('Unable to post published draft:', postError);
-      }
-      after(() => signalClassroom(classroom.id, { type: 'published', assignmentId }));
-      return NextResponse.json({ assignment: published, line, share });
+    // A draft has no timeline post yet: post it and hand the teacher its LINE card now.
+    let line: Awaited<ReturnType<typeof createClassroomPost>>['line'];
+    let share: Awaited<ReturnType<typeof createClassroomPost>>['share'];
+    try {
+      ({ line, share } = await createClassroomPost(supabase, {
+        classroom,
+        authorId: userId,
+        activityType: published.is_exam ? 'exam' : 'assignment',
+        body: assignmentPostBody(published),
+        metadata: assignmentPostMetadata(published, assignmentId, isRetake(published) ? await hydratedStudents(supabase, classroom as Classroom) : classroom.students),
+        assignment: published,
+      }));
+    } catch (postError) {
+      console.warn('Unable to post published draft:', postError);
     }
-    // Move the held-back timeline post to now. The teacher is here, so the
-    // work card goes in from their LINE (no push): the post waits as 'card'.
-    const lineStatus = classroom.line_group_id ? 'card' : 'no_group';
-    // The work card is built while the held-back post moves.
-    const cardPromise = cardOrNull(workMessages(supabase, published, classroom));
-    const { data: posts } = await supabase
-      .from('classroom_posts')
-      .select('id, metadata')
-      .eq('classroom_id', classroom.id)
-      .contains('metadata', { assignmentId });
-    await Promise.all(
-      (posts || [])
-        .filter((post) => typeof post.metadata?.publishAt === 'string')
-        .map((post) =>
-          supabase
-            .from('classroom_posts')
-            .update({
-              metadata: {
-                ...post.metadata,
-                publishAt: nowIso,
-                ...(durationMs ? { dueDate: published.due_date } : {}),
-                pendingLine: false,
-                announcedAt: nowIso,
-                lineStatus,
-              },
-              created_at: nowIso,
-              // The post spells out the deadline, which moved with the early start.
-              ...(durationMs ? { body: assignmentPostBody(published) } : {}),
-            })
-            .eq('id', post.id)
-        )
-    );
     after(() => signalClassroom(classroom.id, { type: 'published', assignmentId }));
-    const post = (posts || []).find((row) => typeof row.metadata?.publishAt === 'string') || posts?.[0];
-    const text = reannounceLineText(published, classroom);
-    return NextResponse.json({
-      assignment: published,
-      line: lineStatus,
-      share: post ? postShare(post.id, text, await cardPromise) : reannounceShare(assignmentId, text, await cardPromise),
-    });
+    return NextResponse.json({ assignment: published, line, share });
   }
 
   const patch: Partial<Assignment> = { status_override: status };

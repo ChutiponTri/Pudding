@@ -405,7 +405,7 @@ export function StatusView() {
           </Card>
         ))}
       </div>
-      {waiting > 0 && <p className="text-xs text-slate-500">ฉบับร่าง / ตั้งเวลาไว้ {waiting} งาน</p>}
+      {waiting > 0 && <p className="text-xs text-slate-500">ฉบับร่าง {waiting} งาน</p>}
       <div className="flex items-baseline justify-between gap-2">
         <p className="text-sm font-black">งานทั้งหมด ({work.rows.length})</p>
         {work.rows.length > 1 && <p className="text-[11px] text-slate-400">กดค้างที่ ⋮⋮ แล้วลากเพื่อเรียง</p>}

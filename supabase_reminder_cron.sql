@@ -1,9 +1,9 @@
 -- ==========================================
 -- Pudding scheduler (path kept as /api/line/reminders)
 -- ==========================================
--- Every five minutes: sends the LINE card of scheduled work when its publish
--- time comes, and deletes drafts never published. (Automatic deadline
--- reminders were removed; teachers use "ทวงงาน".) Runs from Supabase
+-- Every five minutes: deletes drafts never published and, from 17:00, sends
+-- each teacher's daily summary once. (Scheduled publishing and automatic
+-- deadline reminders were removed; teachers use "ทวงงาน".) Runs from Supabase
 -- (pg_cron + pg_net, both available on the free plan), so it does not depend
 -- on Vercel Cron limits.
 --

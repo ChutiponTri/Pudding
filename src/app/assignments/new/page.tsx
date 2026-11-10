@@ -99,7 +99,6 @@ const QUESTION_EXIT_MS = 300;
 /** Sliding highlight colour per release option (draft reads as "not live yet", the others use the app accent). */
 const RELEASE_PILL = {
   draft: 'bg-slate-800 dark:bg-slate-100',
-  schedule: 'bg-amber-500',
   now: 'bg-amber-500',
 } as const;
 
@@ -275,12 +274,9 @@ function NewAssignmentContent() {
   const [quizMinutes, setQuizMinutes] = useState(String(DEFAULT_QUIZ_MINUTES));
   // The edited quiz's minutes as loaded: unchanged, its saved deadline is kept as is.
   const [loadedQuizMinutes, setLoadedQuizMinutes] = useState<string | null>(null);
-  // Release: now, at a scheduled time (prepare work ahead for class time), or
-  // kept as a draft that only the teacher publishes, by hand.
-  const [releaseMode, setReleaseMode] = useState<'now' | 'schedule' | 'draft'>('draft');
-  const schedulePublish = releaseMode === 'schedule';
+  // Release: now, or kept as a draft that only the teacher publishes, by hand.
+  const [releaseMode, setReleaseMode] = useState<'now' | 'draft'>('draft');
   const saveAsDraft = releaseMode === 'draft';
-  const [publishAt, setPublishAt] = useState(() => daysFromNowAt(1, 8, 0));
   const [trackReleaseToggle, releaseIndicator] = useSlidingIndicator(releaseMode);
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
@@ -295,8 +291,6 @@ function NewAssignmentContent() {
   const quizStartMs = (now: number) =>
     editIsPublished && editingAssignment
       ? Date.parse(editingAssignment.publish_at || editingAssignment.created_at || '') || now
-      : schedulePublish
-      ? Date.parse(publishAt) || now
       : saveAsDraft
       ? null
       : now;
@@ -304,8 +298,7 @@ function NewAssignmentContent() {
   const effectiveDueDate = (now: number) => {
     if (!isExam) return dueDate;
     // Same minutes from the same start: the saved deadline stays (older quizzes may not be start + minutes exactly).
-    const sameStart = editIsPublished || (schedulePublish && Date.parse(publishAt) === Date.parse(editingAssignment?.publish_at || ''));
-    if (editingAssignment?.is_exam && loadedQuizMinutes === quizMinutes && sameStart) return editingAssignment.due_date;
+    if (editingAssignment?.is_exam && loadedQuizMinutes === quizMinutes && editIsPublished) return editingAssignment.due_date;
     return new Date((quizStartMs(now) ?? now) + quizMinutesValue * 60000).toISOString();
   };
 
@@ -538,14 +531,8 @@ function NewAssignmentContent() {
             setQuizMinutes(minutes);
             setLoadedQuizMinutes(editId ? minutes : null);
           }
-          const publishMs = assignment.publish_at ? new Date(assignment.publish_at).getTime() : NaN;
-          if (isAssignmentDraft(assignment)) {
-            setReleaseMode('draft');
-          } else {
-            // A copy of work students already see is released right away too; scheduled work keeps its time.
-            setReleaseMode(!Number.isNaN(publishMs) && publishMs > Date.now() ? 'schedule' : 'now');
-            if (assignment.publish_at && (editId || publishMs > Date.now())) setPublishAt(assignment.publish_at);
-          }
+          // A copy of work students already see is released right away too.
+          setReleaseMode(isAssignmentDraft(assignment) ? 'draft' : 'now');
           setAttachments(assignmentAttachments(assignment).map((a) => ({ ...a, uid: newQuestionUid() })));
           // Older homework kept a separate note about its reference; it now lives in the instructions.
           const legacyNote = assignment.sample_work_description?.trim();
@@ -861,17 +848,6 @@ function NewAssignmentContent() {
       alert(language === 'th' ? 'เวลาปิดรับส่งงานต้องไม่ก่อนกำหนดส่ง' : 'Closing time cannot be before the due date');
       return;
     }
-    if (schedulePublish && !editIsPublished) {
-      const publishMs = new Date(publishAt).getTime();
-      if (!publishAt || Number.isNaN(publishMs) || publishMs <= clockNow()) {
-        alert(language === 'th' ? 'เวลาเผยแพร่ต้องเป็นเวลาในอนาคต' : 'The publish time must be in the future');
-        return;
-      }
-      if (dueDate && new Date(dueDate).getTime() <= publishMs) {
-        alert(language === 'th' ? 'กำหนดส่งต้องอยู่หลังเวลาเผยแพร่' : 'The due date must be after the publish time');
-        return;
-      }
-    }
     const fileInQuiz = isExam ? questions.findIndex((q) => q.type === 'file_upload') : -1;
     if (fileInQuiz !== -1) {
       // Switching changes deadline and reference-file settings, so the teacher checks them before saving.
@@ -1038,7 +1014,6 @@ function NewAssignmentContent() {
           due_date: dueDate || editingAssignment.due_date,
           close_at: isExam ? null : closeAt || null,
           ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
-          ...(!editIsPublished && schedulePublish ? { publish_at: new Date(publishAt).toISOString() } : {}),
           ...(!editIsPublished && saveAsDraft ? { publish_at: DRAFT_PUBLISH_AT } : {}),
           total_points: totalPoints,
           attachments: savedAttachments,
@@ -1115,7 +1090,7 @@ function NewAssignmentContent() {
             due_date: dueDate || daysFromNowAt(7, 23, 59),
             ...(!isExam && closeAt ? { close_at: closeAt } : {}),
             ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
-            publish_at: saveAsDraft ? DRAFT_PUBLISH_AT : schedulePublish ? new Date(publishAt).toISOString() : undefined,
+            publish_at: saveAsDraft ? DRAFT_PUBLISH_AT : undefined,
             total_points: totalPoints,
             status_override: 'auto',
             attachments: savedAttachments,
@@ -1141,10 +1116,6 @@ function NewAssignmentContent() {
           ? language === 'th'
             ? `บันทึกฉบับร่างแล้ว • นักเรียนยังไม่เห็นจนกว่าจะกด "เผยแพร่ตอนนี้"\nลบอัตโนมัติถ้าไม่เผยแพร่ใน ${DRAFT_RETENTION_DAYS} วัน`
             : `Draft saved • hidden until you press "Publish now"\nDeleted if not published within ${DRAFT_RETENTION_DAYS} days`
-          : schedulePublish
-          ? language === 'th'
-            ? `ตั้งเวลาเผยแพร่${isExam ? 'แบบทดสอบ' : isSurveyMode ? 'แบบสอบถาม' : 'การบ้าน'}แล้ว: ${formatDateTime(publishAt, 'th')}\nนักเรียนจะเห็นงานและได้รับแจ้งเตือน LINE เมื่อถึงเวลา`
-            : `Scheduled for ${formatDateTime(publishAt, 'en')}. Students will see it then.`
           : retake
           ? selectedClassroomsLineReady && !lineUnsent && lineCards
             ? tr(`สร้างข้อสอบซ่อมแล้ว · เปิดได้เฉพาะ ${retake.ids.length} คนที่เลือก`, `Retake created · only the ${retake.ids.length} chosen students can open it`)
@@ -1627,11 +1598,6 @@ function NewAssignmentContent() {
                   <span className="font-semibold text-slate-400">({attachments.length}/{MAX_ASSIGNMENT_ATTACHMENTS})</span>
                 </label>
               </div>
-              {isExam && (
-                <p className="text-[11px] text-purple-600 dark:text-purple-300">
-                  {tr('การเปิดลิงก์นับเป็นการออกจากหน้าจอ', 'Opening a link counts as leaving the quiz')}
-                </p>
-              )}
               <>
                   {attachments.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -1692,6 +1658,11 @@ function NewAssignmentContent() {
                     {attachmentSlots > 0
                       ? tr(`สูงสุด ${MAX_ASSIGNMENT_ATTACHMENTS} รายการ · รูป ≤5MB, PDF ≤10MB`, `Up to ${MAX_ASSIGNMENT_ATTACHMENTS} · images ≤5MB, PDF ≤10MB`)
                       : tr(`แนบครบ ${MAX_ASSIGNMENT_ATTACHMENTS} รายการแล้ว`, `All ${MAX_ASSIGNMENT_ATTACHMENTS} slots used`)}
+                                  {isExam && (
+                  <span className="hidden sm:inline-block text-[11px] text-purple-600 dark:text-purple-300 ml-4">
+                    {tr('การเปิดลิงก์นับเป็นการออกจากหน้าจอ', 'Opening a link counts as leaving the quiz')}
+                  </span>
+              )}
                   </p>
               </>
             </div>
@@ -1709,7 +1680,7 @@ function NewAssignmentContent() {
                 </p>
               ) : (
               <>
-              <div ref={trackReleaseToggle} className="relative grid grid-cols-3 gap-2" role="radiogroup">
+              <div ref={trackReleaseToggle} className="relative grid grid-cols-2 gap-2" role="radiogroup">
                 {/* Highlight slides to the chosen option (down the stack on phones, across on wider screens). */}
                 {releaseIndicator && (
                   <span
@@ -1726,16 +1697,8 @@ function NewAssignmentContent() {
                     icon: FilePen,
                     label: language === 'th' ? 'บันทึกฉบับร่าง' : 'Save as draft',
                     short: language === 'th' ? 'ฉบับร่าง' : 'Draft',
-                    hint: language === 'th' ? 'ยังไม่เผยแพร่ คุณครูกดเผยแพร่เองภายหลัง' : 'Not released; you publish it later',
+                    hint: language === 'th' ? 'ยังไม่เผยแพร่ ครูกดเผยแพร่ภายหลัง' : 'Not released; you publish it later',
                     text: 'text-white dark:text-slate-900',
-                  },
-                  {
-                    value: 'schedule',
-                    icon: Clock,
-                    label: language === 'th' ? 'ตั้งเวลาเผยแพร่' : 'Schedule',
-                    short: language === 'th' ? 'ตั้งเวลา' : 'Schedule',
-                    hint: language === 'th' ? 'เผยแพร่เองเมื่อถึงเวลาที่เลือก' : 'Released automatically at a set time',
-                    text: 'text-slate-950',
                   },
                   {
                     value: 'now',
@@ -1775,16 +1738,6 @@ function NewAssignmentContent() {
               </div>
               {/* Each option's details open and close smoothly (inner pt-2 instead of space-y so a closed one leaves no gap). */}
               <div className="-mt-2">
-              <Collapse open={schedulePublish}>
-                <div className="pt-2">
-                <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-2">
-                  <DateTimeField value={publishAt} onChange={setPublishAt} presets="start" />
-                  <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
-                    {tr('เผยแพร่และแจ้ง LINE ตามเวลานี้', 'Released with a LINE notice at this time')}
-                  </p>
-                </div>
-                </div>
-              </Collapse>
               <Collapse open={saveAsDraft}>
                 <div className="pt-2">
                 <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-600 space-y-1.5 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
@@ -2489,7 +2442,6 @@ function NewAssignmentContent() {
                 draft: [th ? 'บันทึกร่าง' : 'Save draft', th ? 'บันทึกฉบับร่าง' : 'Save draft'],
                 savePublish: [th ? 'บันทึก+เผยแพร่' : 'Save & publish', th ? 'บันทึกและเผยแพร่' : 'Save & publish'],
                 save: [th ? 'บันทึก' : 'Save', th ? 'บันทึกการแก้ไข' : 'Save changes'],
-                schedule: [th ? 'ตั้งเวลา' : 'Schedule', th ? 'ตั้งเวลาเผยแพร่' : 'Schedule'],
                 publish: [th ? 'มอบหมายทันที' : 'Publish', t('assignment_creator.buttons.publish')],
               };
               const [short, full] = isSubmitting
@@ -2498,8 +2450,6 @@ function NewAssignmentContent() {
                 ? labels.draft
                 : editId
                 ? !editIsPublished && releaseMode === 'now' ? labels.savePublish : labels.save
-                : schedulePublish
-                ? labels.schedule
                 : labels.publish;
               return (
                 // On phones every short label sits invisibly in the same grid cell, so the
@@ -2518,8 +2468,6 @@ function NewAssignmentContent() {
                   >
                     {saveAsDraft && !editIsPublished
                       ? <FilePen className="w-4 h-4 text-slate-500" />
-                      : schedulePublish && !editIsPublished
-                      ? <Clock className="w-4 h-4" />
                       : <Send className="w-4 h-4" />}
                     {/* Phones get a short label so the bar stays balanced; from sm up the full one. */}
                     <span className="sm:hidden">{short}</span>
