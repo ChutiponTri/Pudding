@@ -831,7 +831,7 @@ export function WorksBoard() {
         <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
             <FileText className="w-6 h-6 text-amber-500 shrink-0" />
-            {tr('งานและข้อสอบ', 'Assignments & quizzes')}
+            {tr('งานทั้งหมด', 'All work')}
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             {termLabel} · {total} {tr('งาน', total === 1 ? 'item' : 'items')}
