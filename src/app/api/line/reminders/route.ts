@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { announceScheduledPosts } from '@/lib/line/classroomAnnouncement';
 import { deleteExpiredAssignmentDrafts } from '@/lib/server/assignmentDrafts';
+import { runDailySummary } from '@/lib/server/dailySummary';
+import { cronAuthError } from '@/lib/server/cronAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,7 +14,8 @@ export const dynamic = 'force-dynamic';
  * card of scheduled work when its publish time comes, and deletes drafts that
  * were never published within DRAFT_RETENTION_DAYS. There are no automatic
  * deadline reminders: teachers remind with "ทวงงาน" (the picture the bot
- * answers with the reminder card and @mentions).
+ * answers with the reminder card and @mentions). From 17:00 it also sends
+ * each teacher's "สรุปประจำวัน" once (see dailySummary.ts).
  * Accepts GET (Vercel Cron, which sends `Authorization: Bearer $CRON_SECRET`)
  * and POST (pg_cron / any external scheduler).
  */
@@ -25,17 +28,15 @@ export async function POST(request: NextRequest) {
 }
 
 async function run(request: NextRequest) {
-  const secrets = [process.env.LINE_REMINDER_CRON_SECRET, process.env.CRON_SECRET].filter(Boolean);
-  if (!secrets.length) {
-    return NextResponse.json({ error: 'LINE_REMINDER_CRON_SECRET is not configured' }, { status: 503 });
-  }
-  const authorization = request.headers.get('authorization');
-  if (!secrets.some((secret) => authorization === `Bearer ${secret}`)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = cronAuthError(request);
+  if (denied) return denied;
   const supabase = createServiceSupabaseClient();
   const now = new Date();
   const announced = await announceScheduledPosts(supabase, now);
   const expiredDrafts = await deleteExpiredAssignmentDrafts(supabase, now);
-  return NextResponse.json({ ok: true, announced, expiredDrafts });
+  const dailySummary = await runDailySummary(supabase, now).catch((error: unknown) => {
+    console.error('Daily summary failed:', error);
+    return { error: error instanceof Error ? error.message : String(error) };
+  });
+  return NextResponse.json({ ok: true, announced, expiredDrafts, dailySummary });
 }

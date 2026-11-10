@@ -31,6 +31,7 @@ const HEROES = {
   'score-announce': '1040:364',
   'open-for-submission': '1040:410',
   'submit-work': '1040:390',
+  summary: '1040:431',
 } as const;
 
 function hero(name: keyof typeof HEROES, action?: FlexAction) {
@@ -746,6 +747,144 @@ export function resultsCard(input: {
         ],
       },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', paddingTop: '0px', contents: footer },
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Daily summary (pushed to the teacher's 1:1 chat with the bot, see dailySummary.ts)
+// ---------------------------------------------------------------------------
+
+/** Cut from the summary mockup by scripts/build-line-cards.mjs. */
+const cardAsset = (file: string) => webUrl(`/cards/line/${file}?v=${CARD_IMAGE_VERSION}`);
+
+export type SummaryRow = {
+  /** The row's icon: the mockup's calendar, or an emoji on a white tile. */
+  icon: { image: 'calendar' } | { emoji: string };
+  /** "งานที่ส่งวันนี้: 2 ชิ้น". */
+  title: string;
+  /** Second line in orange ("รอตรวจ: 1 ชิ้น"). */
+  detail?: string;
+  url: string;
+  /** Button label; default "ดูรายการ". */
+  label?: string;
+};
+
+const SUMMARY = {
+  rowBg: '#F6EAFE',
+  rowText: '#5A1580',
+  heading: '#520772',
+  button: '#A961D0',
+  orange: '#E8780C',
+  underline: '#FDE68A',
+};
+
+function summaryIcon(icon: SummaryRow['icon']) {
+  if ('image' in icon) {
+    return { type: 'image', url: cardAsset(`icon-${icon.image}.png`), size: '40px', aspectRatio: '1:1', aspectMode: 'fit', flex: 0 };
+  }
+  return {
+    type: 'box',
+    layout: 'vertical',
+    flex: 0,
+    width: '40px',
+    height: '40px',
+    cornerRadius: '12px',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    contents: [text(icon.emoji, { size: 'lg', align: 'center', wrap: false })],
+  };
+}
+
+function summaryRow(row: SummaryRow) {
+  const label = row.label || 'ดูรายการ';
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    spacing: 'md',
+    margin: 'md',
+    paddingAll: '12px',
+    paddingStart: '14px',
+    backgroundColor: SUMMARY.rowBg,
+    cornerRadius: '16px',
+    alignItems: 'center',
+    action: { type: 'uri', label: fit(label, 40), uri: row.url },
+    contents: [
+      summaryIcon(row.icon),
+      {
+        type: 'box',
+        layout: 'vertical',
+        flex: 1,
+        contents: [
+          text(row.title, { size: 'sm', weight: 'bold', color: SUMMARY.rowText }),
+          ...(row.detail ? [text(row.detail, { size: 'xs', weight: 'bold', color: SUMMARY.orange, margin: 'xs' })] : []),
+        ],
+      },
+      {
+        type: 'box',
+        layout: 'vertical',
+        flex: 0,
+        backgroundColor: SUMMARY.button,
+        cornerRadius: 'xxl',
+        paddingTop: '8px',
+        paddingBottom: '8px',
+        paddingStart: '12px',
+        paddingEnd: '12px',
+        contents: [text(`${label} ›`, { size: 'xs', weight: 'bold', color: '#FFFFFF', wrap: false })],
+      },
+    ],
+  };
+}
+
+/** A heading with the mockup's star and yellow underline ("ภารกิจ"). */
+function summaryHeading(label: string, first: boolean) {
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    spacing: 'sm',
+    alignItems: 'center',
+    margin: first ? 'none' : 'xl',
+    contents: [
+      { type: 'image', url: cardAsset('icon-star.png'), size: '26px', aspectRatio: '1:1', aspectMode: 'fit', flex: 0 },
+      {
+        type: 'box',
+        layout: 'vertical',
+        flex: 0,
+        contents: [
+          text(label, { size: 'lg', weight: 'bold', color: SUMMARY.heading, wrap: false }),
+          { type: 'box', layout: 'vertical', height: '5px', cornerRadius: '3px', backgroundColor: SUMMARY.underline, contents: [] },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * "สรุปประจำวัน": the teacher's day at a glance, one row per thing that needs
+ * them (hand-ins to grade, rooms to remind, students waiting to join). Only
+ * rows with something in them are passed in, so the card grows and shrinks
+ * with the day; a day with nothing is not sent at all.
+ */
+export function dailySummaryCard(input: { sections: Array<{ heading: string; rows: SummaryRow[] }>; url: string; altText: string }): FlexMessage {
+  const sections = input.sections.filter((section) => section.rows.length);
+  return {
+    type: 'flex',
+    altText: fit(input.altText, 400),
+    contents: bubble({
+      hero: hero('summary', { type: 'uri', label: 'เปิด Pudding', uri: input.url }),
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: '18px',
+        paddingBottom: '4px',
+        contents: sections.flatMap((section, index) => [summaryHeading(section.heading, index === 0), ...section.rows.map(summaryRow)]),
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        paddingAll: '0px',
+        contents: [{ type: 'image', url: cardAsset('summary-footer.jpg'), size: 'full', aspectRatio: '1040:144', aspectMode: 'cover' }],
+      },
     }),
   };
 }

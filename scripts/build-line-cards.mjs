@@ -36,6 +36,18 @@ const CARDS = [
   { name: 'score-announce', box: { left: 0, top: 0, width: 1086, height: 380 }, radius: 0 },
   { name: 'open-for-submission', box: { left: 0, top: 0, width: 1086, height: 428 }, radius: 0 },
   { name: 'submit-work', box: { left: 0, top: 0, width: 1087, height: 408 }, radius: 0 },
+  { name: 'summary', box: { left: 28, top: 90, width: 1201, height: 498 }, radius: 18 },
+];
+
+/**
+ * Smaller parts cut from a mockup for a card drawn in Flex around them: the
+ * daily summary's cloud strip under the rows (bottom corners rounded) and
+ * its icons, kept as PNG so their edges stay crisp at icon size.
+ */
+const PARTS = [
+  { from: 'summary', name: 'summary-footer', box: { left: 28, top: 985, width: 1201, height: 166 }, width: WIDTH, bottomRadius: 18, format: 'jpeg' },
+  { from: 'summary', name: 'icon-star', box: { left: 62, top: 640, width: 100, height: 100 }, width: 96, format: 'png' },
+  { from: 'summary', name: 'icon-calendar', box: { left: 108, top: 783, width: 176, height: 176 }, width: 96, format: 'png' },
 ];
 
 /**
@@ -43,6 +55,13 @@ const CARDS = [
  * JPEG and the small preview LINE shows in the chat.
  */
 const PICTURES = [{ name: 'remind-teacher-send', width: 1280, preview: 480 }];
+
+function bottomRoundedMask(width, height, r) {
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+      `<path d="M0,0 H${width} V${height - r} A${r},${r} 0 0 1 ${width - r},${height} H${r} A${r},${r} 0 0 1 0,${height - r} Z" fill="#fff"/></svg>`
+  );
+}
 
 function topRoundedMask(width, height, r) {
   return Buffer.from(
@@ -74,6 +93,28 @@ for (const card of CARDS) {
     .resize(WIDTH, outHeight)
     .jpeg({ quality: 84, mozjpeg: true })
     .toFile(file);
+  console.log(`${file}  ${info.width}x${info.height}  ${(info.size / 1024).toFixed(0)} KB  aspectRatio "${info.width}:${info.height}"`);
+}
+
+for (const part of PARTS) {
+  const source = path.join(SRC, `${part.from}.png`);
+  if (!(await access(source).then(() => true, () => false))) {
+    console.log(`${part.name}: no mockup ${source}, keeping the built file`);
+    continue;
+  }
+  const { width, height } = part.box;
+  let image = await sharp(source).extract(part.box).png().toBuffer();
+  if (part.bottomRadius) {
+    image = await sharp(image)
+      .ensureAlpha()
+      .composite([{ input: bottomRoundedMask(width, height, part.bottomRadius), blend: 'dest-in' }])
+      .png()
+      .toBuffer();
+  }
+  const outHeight = Math.round((height * part.width) / width);
+  const resized = sharp(image).flatten({ background: '#ffffff' }).resize(part.width, outHeight);
+  const file = path.join(OUT, `${part.name}.${part.format === 'png' ? 'png' : 'jpg'}`);
+  const info = await (part.format === 'png' ? resized.png({ compressionLevel: 9, palette: true }) : resized.jpeg({ quality: 84, mozjpeg: true })).toFile(file);
   console.log(`${file}  ${info.width}x${info.height}  ${(info.size / 1024).toFixed(0)} KB  aspectRatio "${info.width}:${info.height}"`);
 }
 

@@ -50,6 +50,7 @@ import { classroomTitle, subjectName, type LabelledClassroom } from '@/lib/utils
 import type { Assignment } from '@/types/database';
 import { teacherAccessMessage } from '@/lib/server/teacherProfileGuard';
 import { teacherAccessOf } from '@/lib/utils/teacherProfile';
+import { setDailySummary, teacherSummaryCard } from '@/lib/server/dailySummary';
 
 export const runtime = 'nodejs';
 
@@ -781,6 +782,13 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
+    // 1:1 chat: "สรุป" gets today's summary card as a free reply; "ปิดสรุป" / "เปิดสรุป" stop / restart the 17:00 push.
+    const summaryCommand = event.type === 'message' ? parseSummaryCommand(normalizedText) : null;
+    if (summaryCommand) {
+      await handleSummaryCommand(supabase, lineUserId, summaryCommand, event.replyToken);
+      continue;
+    }
+
     // 1:1 chat: everyday questions get an answer from the FAQ.
     if (event.type === 'message' && !commandMatch) {
       // Unrecognized messages get no reply, so they can be answered manually.
@@ -832,4 +840,42 @@ export async function POST(request: NextRequest) {
 
   }
   return NextResponse.json({ ok: true });
+}
+
+type SummaryCommand = 'show' | 'on' | 'off';
+
+function parseSummaryCommand(text: string): SummaryCommand | null {
+  const value = text.replace(/\s+/g, '').toLowerCase();
+  if (value === 'สรุป' || value === 'สรุปประจำวัน' || value === 'สรุปวันนี้') return 'show';
+  if (value === 'ปิดสรุป' || value === 'ปิดสรุปประจำวัน') return 'off';
+  if (value === 'เปิดสรุป' || value === 'เปิดสรุปประจำวัน') return 'on';
+  return null;
+}
+
+/** "สรุป" (free reply with the card), "ปิดสรุป" / "เปิดสรุป" (the daily push). Teachers only; others get no reply. */
+async function handleSummaryCommand(supabase: ServiceClient, lineUserId: string | undefined, command: SummaryCommand, replyToken: string | undefined) {
+  const teacher = await findTeacherByLineUid(supabase, lineUserId);
+  if (!teacher) return;
+  if (teacher.access !== 'ok') {
+    await replySafely(replyToken, teacherAccessMessage(teacher.access));
+    return;
+  }
+  if (command !== 'show') {
+    const saved = await setDailySummary(supabase, teacher.id, command === 'on');
+    await replySafely(
+      replyToken,
+      !saved
+        ? 'ตั้งค่าไม่สำเร็จ ลองใหม่อีกครั้ง'
+        : command === 'on'
+          ? 'เปิดสรุปประจำวันแล้ว 🔔 ส่งให้ทุกวันเวลา 17:00 (วันที่ไม่มีงานค้างจะไม่ส่ง)'
+          : 'ปิดสรุปประจำวันแล้ว 🔕 พิมพ์ "สรุป" เพื่อดูเองได้ทุกเมื่อ หรือ "เปิดสรุป" เพื่อเปิดอีกครั้ง'
+    );
+    return;
+  }
+  const { card } = await teacherSummaryCard(supabase, teacher.id);
+  if (!card) {
+    await replySafely(replyToken, 'วันนี้ไม่มีงานค้าง 🎉\nไม่มีงานรอตรวจ ไม่มีห้องรอทวง และไม่มีนักเรียนรออนุมัติ');
+    return;
+  }
+  await replyCards(replyToken, [card], () => replySafely(replyToken, card.altText));
 }

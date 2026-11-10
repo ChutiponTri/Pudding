@@ -318,3 +318,34 @@ export async function groupPushAffordable(groupId: string): Promise<{ affordable
   const remaining = Math.max(0, quota.value - usage.totalUsage);
   return { affordable: remaining >= members.count, remaining, members: members.count };
 }
+
+/**
+ * Messages left this month: null = the plan has no limit, undefined = could
+ * not tell (a read failed).
+ */
+export async function messagesLeftThisMonth(): Promise<number | null | undefined> {
+  const [quota, usage] = await Promise.all([
+    lineGet<{ type: 'none' | 'limited'; value?: number }>('/v2/bot/message/quota'),
+    lineGet<{ totalUsage: number }>('/v2/bot/message/quota/consumption'),
+  ]);
+  if (quota?.type === 'none') return null;
+  if (!quota || quota.value == null || !usage) return undefined;
+  return Math.max(0, quota.value - usage.totalUsage);
+}
+
+/**
+ * Asks LINE whether these messages would be accepted, without sending them
+ * (free: does not touch the monthly quota). `detail` is LINE's explanation of
+ * a refusal (which property is wrong).
+ */
+export async function validateLineMessages(messages: Record<string, unknown>[], kind: 'push' | 'reply' = 'push'): Promise<{ ok: boolean; status: number; detail?: string }> {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!token) return { ok: false, status: 0, detail: 'LINE_CHANNEL_ACCESS_TOKEN is not configured' };
+  const response = await fetch(`https://api.line.me/v2/bot/message/validate/${kind}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+    cache: 'no-store',
+  });
+  return response.ok ? { ok: true, status: response.status } : { ok: false, status: response.status, detail: (await response.text().catch(() => '')).slice(0, 1000) };
+}
