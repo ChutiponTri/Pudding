@@ -2033,7 +2033,6 @@ export default function ClassroomWorkspacePage() {
                       <p className="text-xs font-bold text-slate-900 dark:text-white">
                         {user?.fullName || user?.firstName || tr('ครูผู้สอน', 'Teacher')}
                       </p>
-                      <span className="text-[10px] text-slate-400"><MobileText short={tr('ประกาศถึงนักเรียน', 'Announce to students')} full={tr('แชร์ประกาศ ข้อมูล หรือแจ้งเตือนเข้ากลุ่ม LINE', 'Share announcements, info or reminders to the LINE group')} /></span>
                     </div>
                   </div>
 
@@ -2042,7 +2041,7 @@ export default function ClassroomWorkspacePage() {
                     value={postBody}
                     onFocus={() => setIsPostExpanded(true)}
                     onChange={(e) => setPostBody(e.target.value)}
-                    placeholder={tr('ประกาศถึงนักเรียน (ส่งเข้ากลุ่ม LINE อัตโนมัติ)...', 'Announce to students (sent to the LINE group automatically)...')}
+                    placeholder={tr('ประกาศถึงนักเรียน...', 'Announce to students...')}
                     className="w-full p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 text-xs text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-amber-500 transition-all resize-none"
                   />
 
@@ -2267,9 +2266,6 @@ export default function ClassroomWorkspacePage() {
               <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
                 <div className="max-sm:w-full max-sm:text-center">
                   <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">{tr('งานและเนื้อหา', 'Classwork')}</h2>
-                  <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
-                    <MobileText short={tr('จัดกลุ่มงานได้เอง นักเรียนเห็นกลุ่มเดียวกัน', 'Group work your way; students see the same groups')} full={tr('จัดกลุ่มงานตามหมวดหมู่ได้เอง นักเรียนจะเห็นหมวดหมู่เดียวกันในหน้าของตนเอง', 'Organize work into your own groups. Students see the same groups on their page.')} />
-                  </p>
                 </div>
                 <div className="max-sm:w-full max-sm:grid max-sm:grid-cols-2 flex flex-wrap items-center gap-2">
                   <button
@@ -2277,7 +2273,7 @@ export default function ClassroomWorkspacePage() {
                     className="max-sm:h-9 px-3.5 py-2 max-sm:py-0 max-sm:px-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <FolderPlus className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                    <span className="truncate"><MobileText short={tr('หมวดหมู่ใหม่', 'New group')} full={tr('+ สร้างกลุ่มหมวดหมู่ใหม่', '+ New group')} /></span>
+                    <span className="truncate">{tr('หมวดหมู่ใหม่', 'New group')}</span>
                   </button>
                   <CreateWorkMenu
                     classroomId={classroom.id}
@@ -2645,13 +2641,9 @@ export default function ClassroomWorkspacePage() {
             <section className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-xs space-y-4 min-w-0">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h2 className="font-black text-slate-900 dark:text-white">{tr('ตารางคะแนนรวมทั้งห้อง', 'Class grade book')}</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    <MobileText short={tr('คะแนนและงานรอตรวจของทุกคน', 'Everyone\'s scores and pending grading')} full={tr('คะแนนงาน ข้อสอบ และสถานะรอตรวจของนักเรียนทุกคน', 'Assignment and exam scores, plus grading status, for every student')} />
-                  </p>
+                  <h2 className="font-black text-slate-900 dark:text-white">{tr('ตารางคะแนน', 'Grade book')}</h2>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400 font-bold">{assignments.length} {tr('งาน/ข้อสอบ', 'assignments/exams')}</span>
                   <button
                     type="button"
                     onClick={exportGrades}
@@ -2725,7 +2717,6 @@ export default function ClassroomWorkspacePage() {
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div>
               <h3 className="font-black text-sm text-slate-900 dark:text-white">{tr('เพิ่มหมวดหมู่ใหม่', 'New group')}</h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">{tr('สร้างแล้วลากงานมาวางในกลุ่มใหม่ได้ทันที', 'Once created, drag work into it right away')}</p>
             </div>
             <input
               autoFocus
@@ -2995,7 +2986,6 @@ export default function ClassroomWorkspacePage() {
                     {tr(`${otherSchool.length} คนระบุโรงเรียนต่างจากของคุณครู (${institutionLabel(teacherInstitution, language)})`, `${otherSchool.length} listed a different school from yours (${institutionLabel(teacherInstitution, language)})`)}
                   </p>
                   <p>{otherSchool.map((p) => `${p.first_name} ${p.last_name} — ${institutionLabel(p.institution, language)}`).join(', ')}</p>
-                  <p>{tr('หากนักเรียนกรอกชื่อโรงเรียนผิด แก้ไขได้ภายหลังที่แท็บ "ผู้สอนและผู้เรียน"', 'If a student typed the school wrong, you can fix it later in the "People" tab')}</p>
                 </div>
               )}
 
@@ -3076,8 +3066,7 @@ export default function ClassroomWorkspacePage() {
 
             {lineConnection.status === 'connected' ? (
               <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-800 dark:text-emerald-200 space-y-1">
-                <p className="font-bold">{tr('กลุ่มนี้พร้อมรับแจ้งเตือนงานของห้องเรียน', 'This group will receive classroom notifications')}</p>
-                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">{tr('หากนำบอทออกจากกลุ่ม การเชื่อมต่อจะยกเลิกเอง', 'Removing the bot from the group disconnects it automatically')}</p>
+                <p className="font-bold">{tr('เชื่อมกลุ่ม LINE แล้ว', 'LINE group linked')}</p>
               </div>
             ) : (
               <LineGroupConnectSteps
@@ -3375,9 +3364,6 @@ function AttendancePanel({
             <CalendarCheck className="w-5 h-5 text-amber-500" />
             <span>{tr('เช็กชื่อรายคาบ', 'Attendance by period')}</span>
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            <MobileText short={tr('เปิดคาบและเช็กชื่อแบบเรียลไทม์', 'Open periods and take attendance live')} full={tr('เปิดคาบเรียน เช็กชื่อแบบเรียลไทม์ และแก้สถานะรายคนได้ตลอด', 'Open a period, take attendance in real time, and adjust any student at any time')} />
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -3662,8 +3648,7 @@ function AttendancePanel({
         {!sessions.length && (
           <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-xs text-slate-400 space-y-2">
             <CalendarCheck className="w-8 h-8 text-slate-300 mx-auto" />
-            <p className="font-bold">{tr('ยังไม่มีประวัติคาบเช็กชื่อ', 'No attendance periods yet')}</p>
-            <p className="text-[11px]">{tr('กด "เปิดคาบเช็กชื่อใหม่" ด้านบนเพื่อเริ่ม', 'Tap "New attendance period" above to start')}</p>
+            <p className="font-bold">{tr('ยังไม่มีคาบเช็กชื่อ', 'No periods yet')}</p>
           </div>
         )}
       </div>

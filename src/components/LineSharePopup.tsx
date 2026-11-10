@@ -245,7 +245,7 @@ export function LineSharePopup() {
         {current.onDismiss ? (
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              {tr('ส่งจาก LINE ของคุณครู ไม่ใช้โควตาบอท • ปิดไว้ก่อน จะเตือนอีกครั้งเมื่อเปิดเว็บครั้งหน้า', 'Sent from your own LINE, no bot quota • close it and you are asked again next visit')}
+              {tr('ไม่ใช้โควตาบอท', 'Uses no bot quota')}
             </p>
             <button
               type="button"
@@ -260,7 +260,7 @@ export function LineSharePopup() {
           </div>
         ) : (
           <p className="text-[10px] text-slate-400 leading-relaxed">
-            {tr('ส่งจาก LINE ของคุณครู ไม่ใช้โควตาบอท • แชร์ภายหลังได้จากไทม์ไลน์', 'Sent from your own LINE, no bot quota • you can share later from the timeline')}
+            {tr('ไม่ใช้โควตาบอท', 'Uses no bot quota')}
           </p>
         )}
       </ModalSheetBody>

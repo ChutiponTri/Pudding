@@ -161,7 +161,7 @@ export default async function AdminOverviewPage() {
             icon={<FileText className="w-4 h-4" />}
             tone="indigo"
             title={tr('ชุดข้อมูลสำเร็จรูป (ดาวน์โหลดด่วน)', 'Ready-made datasets (quick download)')}
-            description={tr('ปกปิดตัวตนนักเรียนด้วยรหัสสุ่มคงที่ (ไม่มีชื่อหรือ LINE ID) — ใช้ลิงก์ "ไม่ปกปิด" เฉพาะเมื่อจำเป็น', 'Students are replaced by stable random ids (no names or LINE ids) — use "not anonymised" only when needed')}
+            description={tr('นักเรียนแทนด้วยรหัสสุ่ม (ไม่มีชื่อหรือ LINE ID)', 'Students shown as random ids (no names or LINE ids)')}
           />
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {Object.entries(ADMIN_DATASETS).map(([name, description]) => (
@@ -222,7 +222,7 @@ export default async function AdminOverviewPage() {
           <AdminSectionTitle
             icon={<Table2 className="w-4 h-4" />}
             title={tr('ตารางข้อมูลดิบ', 'Raw tables')}
-            description={tr('ค้นหา เปิดดู แก้ไข หรือลบแต่ละแถวได้ • คอลัมน์ที่เป็น token/secret จะถูกตัดออกเสมอ', 'Search, open, edit or delete rows • token/secret columns are always removed')}
+            description={tr('ค้นหา แก้ไข หรือลบแถว', 'Search, edit or delete rows')}
           />
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {ADMIN_TABLES.map((name) => (

@@ -17,7 +17,7 @@ import { DateTimeField } from '@/components/DateTimeField';
 import { Collapse } from '@/components/Collapse';
 import { indicatorStyle, useSlidingIndicator } from '@/lib/hooks/useSlidingIndicator';
 import { daysFromNowAt, formatDateTime } from '@/lib/utils/datetime';
-import { DRAFT_PUBLISH_AT, DRAFT_RETENTION_DAYS, draftExpiresAt, isAssignmentDraft, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from '@/lib/utils/assignmentWindow';
+import { DRAFT_PUBLISH_AT, DRAFT_RETENTION_DAYS, draftExpiresAt, isAssignmentDraft, LATE_WINDOW_HOURS } from '@/lib/utils/assignmentWindow';
 import { optimizeImage, UploadError, uploadToStorage } from '@/lib/storage/uploadClient';
 import { normalizeLink, uploadRejection } from '@/lib/storage/uploadRules';
 import { assignmentAttachments, googleAppName, isGoogleDriveUrl, linkDisplayName, MAX_ASSIGNMENT_ATTACHMENTS } from '@/lib/utils/referenceWork';
@@ -1186,9 +1186,9 @@ function NewAssignmentContent() {
       <WorkContextBanner
         tone="retake"
         icon={<RotateCcw className="w-4 h-4" />}
-        kicker={tr('สอบซ่อม · เห็นและทำได้เฉพาะคนที่เลือก · คะแนนแทนของเดิม', 'Retake · only chosen students · replaces their score')}
+        kicker={tr('สอบซ่อม · เฉพาะคนที่เลือก', 'Retake · chosen students only')}
         title={retake.source ? tr(`จาก ${retake.source.title}`, `Of ${retake.source.title}`) : tr('ข้อสอบเดิมถูกลบแล้ว', 'Original quiz deleted')}
-        meta={selectedClassroomsLineReady ? tr('บันทึกแล้วส่งลิงก์เข้ากลุ่ม LINE ของห้อง', 'Saving sends the link to the class LINE group') : tr('ห้องนี้ยังไม่เชื่อม LINE', 'This class has no LINE group')}
+        meta={selectedClassroomsLineReady ? tr('ส่งลิงก์เข้ากลุ่ม LINE เมื่อบันทึก', 'Link sent to LINE on save') : tr('ห้องนี้ยังไม่เชื่อม LINE', 'This class has no LINE group')}
       >
         <div id="retake-students" className="space-y-2">
           <div className="flex flex-wrap gap-1.5">
@@ -1265,10 +1265,7 @@ function NewAssignmentContent() {
         >
           <ArrowLeft className="w-4 h-4" />
           <span className="truncate">
-            <MobileText
-              short={returnTo?.startsWith('/works') ? tr('กลับไปรายการงาน', 'Back to work') : returnTo ? tr('กลับไปตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับแดชบอร์ด', 'Dashboard') : tr('กลับไปห้องเรียน', 'Back to class')}
-              full={returnTo?.startsWith('/works') ? tr('กลับไปรายการงานและข้อสอบ', 'Back to assignments & quizzes') : returnTo ? tr('กลับไปหน้าตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับสู่แดชบอร์ด (Dashboard)', 'Back to dashboard') : tr('กลับไปหน้าห้องเรียน (งานและเนื้อหา)', 'Back to classroom (Classwork)')}
-            />
+            {returnTo?.startsWith('/works') ? tr('กลับไปรายการงาน', 'Back to work') : returnTo ? tr('กลับไปตรวจงาน', 'Back to grading') : isFromDashboard ? tr('กลับแดชบอร์ด', 'Dashboard') : tr('กลับไปห้องเรียน', 'Back to class')}
           </span>
         </button>
       </div>
@@ -1312,8 +1309,8 @@ function NewAssignmentContent() {
               tone="edit"
               icon={<PencilLine className="w-4 h-4" />}
               kicker={editIsPublished
-                ? tr('กำลังแก้ไขงานเดิม · นักเรียนเห็นการเปลี่ยนแปลงทันทีที่บันทึก', 'Editing saved work · students see changes once you save')
-                : tr('กำลังแก้ไขงานเดิม (ยังไม่เผยแพร่)', 'Editing saved work (not released yet)')}
+                ? tr('กำลังแก้ไขงาน', 'Editing')
+                : tr('กำลังแก้ไขงาน (ยังไม่เผยแพร่)', 'Editing (not released)')}
               title={editingAssignment.title || tr('(ไม่มีชื่อ)', '(untitled)')}
               meta={
                 siblings.length
@@ -1351,21 +1348,14 @@ function NewAssignmentContent() {
               {siblings.length > 0 && (
                 <p className="px-3 py-2 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-[11px] font-bold text-amber-900 dark:text-amber-200">
                   {tr(
-                    `การบันทึกจะเปลี่ยนงานนี้ในทุกห้อง (${siblings.length + 1} ห้อง) · กำหนดส่งของแต่ละห้องคงเดิม ถ้าไม่ได้เปลี่ยน`,
-                    `Saving changes this work in all ${siblings.length + 1} classes · each class keeps its due date unless you change it`
+                    `บันทึกแล้วเปลี่ยนทุกห้อง (${siblings.length + 1} ห้อง)`,
+                    `Saving updates all ${siblings.length + 1} classes`
                   )}
                 </p>
               )}
               {editSubmissionCount > 0 && (
                 <p className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-[11px] font-semibold text-amber-900 dark:text-amber-200">
-                  <MobileText
-                    short={language === 'th'
-                      ? `ส่งแล้ว ${editSubmissionCount} คน — ข้อปรนัย/ถูกผิดตรวจใหม่อัตโนมัติ • ลบคำถามแล้วคำตอบข้อนั้นหาย`
-                      : `${editSubmissionCount} submitted — choice answers are re-scored • removing a question deletes its answers`}
-                    full={language === 'th'
-                      ? `ส่งแล้ว ${editSubmissionCount} คน • บันทึกแล้วข้อปรนัย/ถูก-ผิดตรวจใหม่ตามเฉลยใหม่ (คะแนนที่ปรับเองคงไว้) • ลบข้อ = คำตอบข้อนั้นหาย`
-                      : `${editSubmissionCount} handed in • choice/true-false re-scored on save (manual scores kept) • removing a question deletes its answers`}
-                  />
+                  {tr(`ส่งแล้ว ${editSubmissionCount} คน · ลบข้อแล้วคำตอบข้อนั้นหาย`, `${editSubmissionCount} submitted · removing a question deletes its answers`)}
                 </p>
               )}
             </WorkContextBanner>
@@ -1485,11 +1475,6 @@ function NewAssignmentContent() {
                   </option>
                 ))}
               </select>
-              {editingAssignment && (
-                <p className="hidden sm:block text-[11px] text-slate-500 dark:text-slate-400">
-                  {language === 'th' ? 'งานที่สร้างแล้วย้ายห้องไม่ได้ (แก้ไขเฉพาะห้องนี้)' : 'Saved work stays in its classroom.'}
-                </p>
-              )}
             </div>
 
             {/* Title */}
@@ -1503,7 +1488,7 @@ function NewAssignmentContent() {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder={t('assignment_creator.fields.title_placeholder')}
-                className="w-full px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-hidden focus:border-amber-500"
+                className="w-full px-3 sm:px-4 h-9 sm:h-10 py-0 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-hidden focus:border-amber-500"
               />
             </div>
 
@@ -1516,7 +1501,7 @@ function NewAssignmentContent() {
                 value={groupName}
                 onChange={(e) => setGroupName(e.target.value)}
                 placeholder={existingGroups.length ? tr('เลือกด้านล่าง หรือพิมพ์ชื่อใหม่', 'Pick below or type a new name') : isExam ? tr('เช่น สอบกลางภาค', 'e.g. Midterm') : tr('เช่น ใบงานบทที่ 1', 'e.g. Chapter 1 worksheet')}
-                className="w-full px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500"
+                className="w-full px-3 sm:px-4 h-9 sm:h-10 py-0 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs focus:outline-hidden focus:border-amber-500"
               />
               {existingGroups.length > 0 && (
                 <div className="space-y-1.5">
@@ -1553,13 +1538,13 @@ function NewAssignmentContent() {
                   id="assignment-counts"
                   value={countsTowardGrade ? 'counts' : 'not'}
                   onChange={(e) => setCountsTowardGrade(e.target.value === 'counts')}
-                  className="sm:hidden w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
+                  className="sm:hidden w-full h-9 px-3 py-0 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                 >
                   <option value="counts">{tr('นับคะแนน', 'Counts')}</option>
                   <option value="not">{tr('ไม่นับคะแนน', "Doesn't count")}</option>
                 </select>
-                {/* Looks like the category box beside it: same 38px height, border and background; the pill fills it. */}
-                <div className="relative hidden sm:grid grid-cols-2 h-[38px] p-[3px] rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                {/* Same fixed height (h-10), border and background as the category box beside it, so the Thai font can't make them differ. */}
+                <div className="relative hidden sm:grid grid-cols-2 h-10 p-[3px] rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                   {/* The pill slides under the picked choice. */}
                   <span
                     aria-hidden
@@ -1614,7 +1599,7 @@ function NewAssignmentContent() {
               </div>
               {isExam && (
                 <p className="text-[11px] text-purple-600 dark:text-purple-300">
-                  {tr('รูปภาพและ PDF นักเรียนเปิดดูในหน้าข้อสอบได้ • การเปิดลิงก์จะนับเป็นการออกจากหน้าจอ', 'Students view images and PDFs inside the quiz • opening a link counts as leaving the screen')}
+                  {tr('การเปิดลิงก์นับเป็นการออกจากหน้าจอ', 'Opening a link counts as leaving the quiz')}
                 </p>
               )}
               <>
@@ -1675,8 +1660,8 @@ function NewAssignmentContent() {
                   {sampleUploadError && <p className="text-[11px] text-rose-500 font-semibold">{sampleUploadError}</p>}
                   <p className="text-[11px] text-slate-400">
                     {attachmentSlots > 0
-                      ? tr(`สูงสุด ${MAX_ASSIGNMENT_ATTACHMENTS} รายการ • รูป ≤5MB, PDF ≤10MB (ใหญ่กว่านี้ใช้ลิงก์ Drive)`, `Up to ${MAX_ASSIGNMENT_ATTACHMENTS} • images ≤5MB, PDF ≤10MB (bigger: Drive link)`)
-                      : tr(`แนบครบ ${MAX_ASSIGNMENT_ATTACHMENTS} รายการแล้ว — นำออกเพื่อเพิ่มรายการใหม่`, `All ${MAX_ASSIGNMENT_ATTACHMENTS} slots used — remove one to add another`)}
+                      ? tr(`สูงสุด ${MAX_ASSIGNMENT_ATTACHMENTS} รายการ · รูป ≤5MB, PDF ≤10MB`, `Up to ${MAX_ASSIGNMENT_ATTACHMENTS} · images ≤5MB, PDF ≤10MB`)
+                      : tr(`แนบครบ ${MAX_ASSIGNMENT_ATTACHMENTS} รายการแล้ว`, `All ${MAX_ASSIGNMENT_ATTACHMENTS} slots used`)}
                   </p>
               </>
             </div>
@@ -1765,12 +1750,7 @@ function NewAssignmentContent() {
                 <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-2">
                   <DateTimeField value={publishAt} onChange={setPublishAt} presets="start" />
                   <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
-                    <MobileText
-                      short={language === 'th' ? 'นักเรียนเห็นงานและได้แจ้งเตือน LINE เมื่อถึงเวลานี้' : 'Students see it (and LINE is notified) at this time.'}
-                      full={language === 'th'
-                        ? 'นักเรียนเห็นงานและได้รับแจ้งใน LINE เมื่อถึงเวลานี้'
-                        : 'Students see it and get a LINE notice at this time'}
-                    />
+                    {tr('เผยแพร่และแจ้ง LINE ตามเวลานี้', 'Released with a LINE notice at this time')}
                   </p>
                 </div>
                 </div>
@@ -1781,12 +1761,7 @@ function NewAssignmentContent() {
                   <p className="flex items-start gap-1.5">
                     <FilePen className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-500" />
                     <span>
-                      <MobileText
-                        short={language === 'th' ? 'นักเรียนยังไม่เห็นงาน จนกว่าคุณครูจะกดเผยแพร่' : 'Hidden from students until you publish it.'}
-                        full={language === 'th'
-                          ? 'ซ่อนจากนักเรียนจนกว่าจะกด "เผยแพร่ตอนนี้"'
-                          : 'Hidden until you press "Publish now"'}
-                      />
+                      {tr('ซ่อนจากนักเรียนจนกว่าจะเผยแพร่', 'Hidden until published')}
                     </span>
                   </p>
                   <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400 font-bold">
@@ -1796,17 +1771,10 @@ function NewAssignmentContent() {
                         const expires = editingAssignment && isAssignmentDraft(editingAssignment) ? draftExpiresAt(editingAssignment) : null;
                         if (expires) {
                           return language === 'th'
-                            ? `ฉบับร่างนี้จะถูกลบอัตโนมัติ ${formatDateTime(expires, language)} หากยังไม่เผยแพร่`
-                            : `This draft is deleted automatically on ${formatDateTime(expires, language)} unless published.`;
+                            ? `ลบ ${formatDateTime(expires, language)} หากไม่เผยแพร่`
+                            : `Deleted ${formatDateTime(expires, language)} unless published`;
                         }
-                        return (
-                          <MobileText
-                            short={language === 'th' ? `ลบอัตโนมัติหากไม่เผยแพร่ใน ${DRAFT_RETENTION_DAYS} วัน` : `Deleted if not published in ${DRAFT_RETENTION_DAYS} days.`}
-                            full={language === 'th'
-                              ? `ฉบับร่างที่ไม่ได้เผยแพร่ภายใน ${DRAFT_RETENTION_DAYS} วันจะถูกลบอัตโนมัติ`
-                              : `Drafts not published within ${DRAFT_RETENTION_DAYS} days are deleted automatically.`}
-                          />
-                        );
+                        return tr(`ลบหากไม่เผยแพร่ใน ${DRAFT_RETENTION_DAYS} วัน`, `Deleted if not published in ${DRAFT_RETENTION_DAYS} days`);
                       })()}
                     </span>
                   </p>
@@ -1870,10 +1838,10 @@ function NewAssignmentContent() {
                 {(() => {
                   if (!quizMinutesValid) return tr(`ระบุ 1–${MAX_QUIZ_MINUTES} นาที`, `Enter 1–${MAX_QUIZ_MINUTES} minutes`);
                   const start = quizStartMs(clock);
-                  if (start === null) return tr('เริ่มนับเวลาเมื่อกด "เผยแพร่" ฉบับร่างนี้', 'The clock starts when you publish this draft');
+                  if (start === null) return tr('เริ่มนับเวลาเมื่อเผยแพร่', 'Starts when published');
                   return tr(
-                    `ปิดรับ ${formatDateTime(effectiveDueDate(clock), 'th')} • เปิดค้างไว้ส่งได้อีก ${QUIZ_LATE_GRACE_MINUTES} นาที (ส่งช้า)`,
-                    `Closes ${formatDateTime(effectiveDueDate(clock), 'en')} • open sheets get ${QUIZ_LATE_GRACE_MINUTES} more min (late)`
+                    `ปิดรับ ${formatDateTime(effectiveDueDate(clock), 'th')}`,
+                    `Closes ${formatDateTime(effectiveDueDate(clock), 'en')}`
                   );
                 })()}
               </p>
@@ -1931,7 +1899,7 @@ function NewAssignmentContent() {
                 }
               />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {tr('หลังกำหนดส่งยังส่งได้ (นับเป็นส่งช้า) จนถึงเวลาปิดรับ แล้วปิดรับเอง', 'After the due date work still comes in (marked late) until this time, then it closes')}
+                {tr('หลังกำหนดส่ง นับเป็นส่งช้า', 'Late after the due date')}
               </p>
             </div>
             )}
@@ -1958,8 +1926,8 @@ function NewAssignmentContent() {
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     {linkDialog === 'drive'
-                      ? tr('คัดลอกลิงก์จากปุ่ม "แชร์" ใน Drive แล้ววางที่นี่ — ตั้งค่าเป็น "ทุกคนที่มีลิงก์"', 'Copy the link from "Share" in Drive and paste it here — set it to "Anyone with the link"')
-                      : tr('วางลิงก์เว็บไซต์ วิดีโอ หรือเอกสารออนไลน์', 'Paste a website, video or online document link')}
+                      ? tr('ตั้งค่าแชร์เป็น "ทุกคนที่มีลิงก์"', 'Share as "Anyone with the link"')
+                      : tr('เว็บไซต์ วิดีโอ หรือเอกสาร', 'Website, video or document')}
                   </p>
                 </div>
               </div>
@@ -2378,7 +2346,7 @@ function NewAssignmentContent() {
           {/* QUESTION ADDER PLACEMENT: AT THE BOTTOM OF THE LAST QUESTION ITEM */}
           <div className="p-3 sm:p-6 rounded-2xl sm:rounded-3xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 text-center space-y-3">
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              <MobileText short={language === 'th' ? 'เพิ่มคำถาม' : 'Add a question'} full={t('assignment_creator.questions_builder.add_question_hint')} />
+              {tr('เพิ่มคำถาม', 'Add a question')}
             </p>
             {/* Phones: one row of four (icon above a short label); wider screens: the full labels in a wrapped row. */}
             <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-2.5">

@@ -2005,7 +2005,7 @@ export function TeacherWorkspace({
 
                 {course.sections.length === 0 ? (
                     <div className="p-4 sm:p-6 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
-                      {language === 'th' ? 'ยังไม่มีห้องเรียน กด "เพิ่มห้องเรียน" เพื่อเริ่ม' : 'No classroom enrolled under this course yet.'}
+                      {tr('ยังไม่มีห้องเรียน', 'No classrooms yet')}
                     </div>
                 ) : (() => {
                   const sections = applySavedOrder(course.sections, (cls) => cls.id, classOrderOf(courseKey));
@@ -2436,7 +2436,7 @@ export function TeacherWorkspace({
                 <div className="space-y-3">
                   {indicatorListDraft.length === 0 ? (
                     <div className="p-5 sm:p-8 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
-                      {tr('ยังไม่มีตัวชี้วัด กดปุ่มด้านล่างเพื่อเพิ่ม', 'No indicators yet. Use the button below to add one.')}
+                      {tr('ยังไม่มีตัวชี้วัด', 'No indicators yet')}
                     </div>
                   ) : (
                     indicatorListDraft.map((ind, idx) => (
@@ -2524,7 +2524,7 @@ export function TeacherWorkspace({
                   <div className="space-y-2">
                     {indicatorListDraft.length === 0 ? (
                       <div className="p-4 sm:p-6 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl text-xs text-slate-400">
-                        {tr('ยังไม่มีสมรรถนะ กดปุ่มด้านล่างเพื่อเพิ่ม', 'No competencies yet. Use the button below to add one.')}
+                        {tr('ยังไม่มีสมรรถนะ', 'No competencies yet')}
                       </div>
                     ) : (
                       indicatorListDraft.map((ind, idx) => (
@@ -3348,8 +3348,7 @@ export function TeacherWorkspace({
                 <p className="font-bold">
                   {lineConnection.groupName ? tr(`เชื่อมกับกลุ่ม “${lineConnection.groupName}” แล้ว`, `Connected to “${lineConnection.groupName}”`) : tr('เชื่อมกับกลุ่ม LINE แล้ว', 'Connected to a LINE group')}
                 </p>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">{tr('กลุ่มนี้จะได้รับแจ้งเตือนงาน ครู/TA พิมพ์', 'This group gets work notifications. Teachers/TAs type')} <b>พุดดิ้ง</b> {tr('เพื่อดูคำสั่ง (บอทไม่ตอบนักเรียน) เช่น', 'to see commands (the bot does not reply to students), e.g.')} <b>พุดดิ้ง เข้าห้อง</b> <b>พุดดิ้ง งาน</b> <b>พุดดิ้ง เช็กชื่อ</b></p>
-                <p className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">{tr('หากนำบอทออกจากกลุ่ม การเชื่อมต่อจะยกเลิกเอง', 'Removing the bot from the group disconnects it automatically')}</p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-300">{tr('คำสั่งบอท (ครู/TA): พิมพ์', 'Bot commands (teachers/TAs): type')} <b>พุดดิ้ง</b></p>
               </div>
             ) : (
               <LineGroupConnectSteps
@@ -3436,13 +3435,6 @@ export function TeacherWorkspace({
             </ModalSheetHeader>
 
             <ModalSheetBody className="space-y-4">
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                {tr(
-                  'ชื่อ นามสกุล และสถานศึกษาจะซิงก์กับบัญชีผู้ใช้ (Clerk) อัตโนมัติ',
-                  'Your name and institution are synced to your account (Clerk) automatically.'
-                )}
-              </p>
-
               <TeacherProfileFields
                 firstName={teacherFirstNameInput}
                 lastName={teacherLastNameInput}
@@ -3456,7 +3448,6 @@ export function TeacherWorkspace({
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-black text-slate-900 dark:text-white">{tr('บัญชี LINE ของครู', 'Your LINE account')}</p>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{tr('เชื่อมอัตโนมัติจากการเข้าสู่ระบบด้วย LINE', 'Linked automatically when you sign in with LINE')}</p>
                   </div>
                   <span className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-black ${teacherLineLink.status === 'connected' ? 'bg-emerald-200 text-emerald-800' : teacherLineLink.status === 'loading' ? 'bg-white text-slate-400' : 'bg-rose-100 text-rose-700'}`}>
                     {teacherLineLink.status === 'connected' ? tr('เชื่อมแล้ว', 'Connected') : teacherLineLink.status === 'loading' ? tr('กำลังตรวจสอบ...', 'Checking...') : tr('ยังไม่เชื่อม', 'Not connected')}

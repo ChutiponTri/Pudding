@@ -145,9 +145,6 @@ function ExportsContent() {
             </span>
             {tr('ส่งออกข้อมูล', 'Export data')}
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            {tr('เลือกห้องเรียนและรายงานที่ต้องการ แล้วดาวน์โหลดเป็นไฟล์ Excel ไฟล์เดียว', 'Pick classrooms and reports, then download one Excel file')}
-          </p>
         </div>
         <SemesterSelect value={semesterKey} onChange={(key) => { setSemesterKey(key); setPicked(null); }} options={options} currentPeriod={currentPeriod} />
       </div>
@@ -268,9 +265,6 @@ function ExportsContent() {
           {message && (
             <p className={`text-xs font-semibold ${message.tone === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600'}`}>{message.text}</p>
           )}
-          <p className="text-[11px] text-slate-400 leading-snug">
-            {tr('ข้อมูลดึงใหม่ทุกครั้งที่กดดาวน์โหลด • ปุ่ม “ส่งออก CSV” ในแต่ละห้องเรียนยังใช้ได้ตามเดิม', 'Data is fetched fresh on every download • the “Export CSV” buttons in each classroom still work')}
-          </p>
         </aside>
       </div>
     </div>

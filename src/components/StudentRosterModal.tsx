@@ -204,7 +204,7 @@ export function StudentRosterModal({
             <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
               <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
               <p className="leading-relaxed">
-                {tr('นักเรียนที่กดเข้าห้องจาก LINE ต้องรอคุณครูอนุมัติก่อน เพื่อกันคนนอกเข้าห้อง', 'Students who join from LINE wait for your approval, so outsiders can\'t join')}
+                {tr('นักเรียนที่เข้าจาก LINE ต้องรออนุมัติ', 'Students joining from LINE need approval')}
               </p>
             </div>
 
