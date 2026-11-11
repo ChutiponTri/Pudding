@@ -21,11 +21,11 @@ Next 16 Proxy always runs on Node = a billed function per matched request. The m
 
 ## 2. Keep pages static
 
-`npx next build` must show teacher pages as `○` (static) or `●` (SSG), not `ƒ`. Only `/`, `/admin*`, redirect routes (`/grading`, `[...rest]`) and sign-in/up are `ƒ`.
+`npx next build` must show teacher pages as `○` (static) or `●` (SSG), not `ƒ`. Only `/`, `/admin*`, redirect routes (`/grading`, `[...rest]`), sign-in/up and the two `[id]` pages are `ƒ`.
 
 - **Never** call `connection()`, `headers()`, `cookies()`, `auth()` or read `searchParams` in `src/app/layout.tsx` or `src/app/not-found.tsx`. They sit in every page's tree; one dynamic call there turned every page into a server render per visit.
 - Unknown URLs get their server redirect from `src/app/[...rest]/page.tsx`, not from not-found.
-- Client pages under a `[id]` segment get a server `layout.tsx` with `generateStaticParams() { return [] }` (see `classrooms/[id]`, `assignments/[id]`), so the shell is cached per id. Don't read user data on the server under those segments.
+- **Don't** add `generateStaticParams` (empty or not) under `classrooms/[id]` or `assignments/[id]`. Tried 2026-11-11: on Vercel, the on-demand ISR render of an id that wasn't prebuilt returned 500 for every link prefetch. Classroom and grading links then broke across the app, though `next start` locally looked fine. Those two stay `ƒ`.
 - Teacher pages are client components that load data through the API; keep it that way.
 
 ## 3. Polling must stop when nobody looks
@@ -42,6 +42,7 @@ pg_cron calls `/api/line/reminders` every 5 min (`supabase_reminder_cron.sql`). 
 
 ## Before finishing
 
-1. `npx next build` → check the route list (`○`/`●` vs `ƒ`) hasn't grown new `ƒ` teacher pages.
+1. `npx next build` → check the route list (`○`/`●` vs `ƒ`) hasn't grown new `ƒ` teacher pages (expected `ƒ`: `/`, `/admin*`, `/grading`, `[...rest]`, `/liff/[...rest]`, sign-in/up, `classrooms/[id]`, `assignments/[id]/grading`).
 2. If proxy.ts changed: `next start` and curl a LIFF API call with `-H "x-line-access-token: x"` to every route that calls `auth()` → must be 401, never 500. Check `/`, `/dashboard`, `/liff`, an unknown URL, `/api/nope` redirect as before.
-3. Kill the old `next-server` before restarting, or the new one fails with EADDRINUSE and you test the old build.
+3. After deploy, curl the live site with `-H 'rsc: 1' -H 'next-router-prefetch: 1' -H 'next-router-segment-prefetch: /_tree'` on each page (`/classrooms/abc` included) → 200, never 500. Local `next start` does not reproduce Vercel's ISR behaviour.
+4. Kill the old `next-server` before restarting, or the new one fails with EADDRINUSE and you test the old build.

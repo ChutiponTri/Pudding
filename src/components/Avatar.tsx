@@ -1,4 +1,6 @@
-import React from 'react';
+'use client';
+
+import React, { useState } from 'react';
 
 interface AvatarProps {
   src?: string | null;
@@ -18,8 +20,10 @@ function initialsOf({ name, firstName, lastName }: Pick<AvatarProps, 'name' | 'f
 
 /** A person's photo, or their initials when they have none. */
 export function Avatar({ src, name, firstName, lastName, className = 'w-8 h-8 text-xs' }: AvatarProps) {
-  if (src) {
-    return <img src={src} alt="" className={`${className} rounded-full object-cover shrink-0`} />;
+  // The src that failed to load (a LINE picture link dies when the person changes their picture).
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (src && src !== failedSrc) {
+    return <img src={src} alt="" onError={() => setFailedSrc(src)} className={`${className} rounded-full object-cover shrink-0`} />;
   }
   return (
     <span

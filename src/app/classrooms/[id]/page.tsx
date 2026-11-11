@@ -3209,15 +3209,18 @@ function StudentList({
         />
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-2 max-h-[480px] overflow-y-auto">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[480px] overflow-y-auto">
         {filtered.map((student) => (
-          <div key={student.id} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-between gap-2 border border-slate-100 dark:border-slate-700/60">
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                {student.first_name} {student.last_name}
-              </p>
-              <p className="text-[10px] text-slate-400 font-mono mt-0.5">{student.student_id || tr('ไม่มีรหัส', 'No ID')}</p>
-              <InstitutionTag institution={student.institution} otherSchool={isOtherSchool(student.institution)} />
+          <div key={student.id} className="min-w-0 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-between gap-2 border border-slate-100 dark:border-slate-700/60">
+            <div className="flex items-center gap-3 min-w-0">
+              <Avatar src={student.avatar_url} firstName={student.first_name} lastName={student.last_name} className="w-10 h-10 text-sm" />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                  {student.first_name} {student.last_name}
+                </p>
+                <p className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">{student.student_id || tr('ไม่มีรหัส', 'No ID')}</p>
+                <InstitutionTag institution={student.institution} otherSchool={isOtherSchool(student.institution)} />
+              </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {student.line_uid && (
