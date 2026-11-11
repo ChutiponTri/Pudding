@@ -378,6 +378,7 @@ export default function ClassroomWorkspacePage() {
   useEffect(() => {
     if (!showLineConnectModal || lineConnection.status === 'connected' || !classroomId) return;
     const interval = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return; // checked again within 5 s of coming back
       try {
         const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(classroomId)}`, { cache: 'no-store' });
         if (!response.ok) return;

@@ -109,11 +109,41 @@ export default clerkMiddleware(async (auth, request) => {
   return response;
 });
 
+/*
+ * The proxy runs as a billed Node function, so it only matches requests that
+ * need it. Clerk's `auth()` / `currentUser()` throw on a route the proxy
+ * skipped, so anything that reads the Clerk session must stay matched:
+ *   - `/` and `/admin` (server components call auth()/currentUser()).
+ *   - `/api/*` sent without the LINE token header (teacher website: getActor
+ *     falls through to auth(), and some routes call auth() directly).
+ *   - `/api/admin`, `line/connections`, `line/teacher-link`, `classrooms/students`
+ *     always (they call auth()/currentUser() directly; teacher website only).
+ * Skipped:
+ *   - `/liff/*` pages: client-only, public, students use LINE not Clerk.
+ *   - API calls carrying `x-line-access-token` (LIFF): getActor answers from the
+ *     LINE token and never reaches auth().
+ *   - Clerk-free API routes: LINE webhook, cron jobs, signed share links, LIFF config.
+ *   - Link prefetches of other pages: the sign-in redirect and teacher gate are
+ *     optimistic (AppShell and the API guard again), and run on the real navigation.
+ * Matcher values must be literal strings (read at build time).
+ */
 export const config = {
   matcher: [
     // Required for Clerk auto-proxy on *.vercel.app (no custom domain)
     "/__clerk/:path*",
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
+    "/",
+    "/admin/:path*",
+    {
+      source:
+        "/((?!_next|api|liff|__clerk|admin|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|txt|xml|docx?|xlsx?|zip|webmanifest)).+)",
+      missing: [{ type: "header", key: "next-router-prefetch" }],
+    },
+    // Teacher-website-only routes that call auth()/currentUser() directly, matched even
+    // with a LINE token so a stray LIFF call gets their 401, not Clerk's "no middleware" 500.
+    "/api/(admin|line/connections|line/teacher-link|classrooms/students)(.*)",
+    {
+      source: "/api/((?!line/(?:webhook|group-response|reminders|daily-summary|share|student-link)|liff/).*)",
+      missing: [{ type: "header", key: "x-line-access-token" }],
+    },
   ],
 };

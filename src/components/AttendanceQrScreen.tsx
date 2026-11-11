@@ -60,7 +60,14 @@ export function AttendanceQrScreen({
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // While the tab is hidden nobody can see or scan the code: stop asking the
+    // server (one request per code otherwise) and catch up the moment it shows.
+    let waitingForVisible = false;
     const load = async () => {
+      if (document.visibilityState === "hidden") {
+        waitingForVisible = true;
+        return;
+      }
       try {
         const res = await authFetch(`/api/attendance/qr?classroomId=${encodeURIComponent(classroomId)}&sessionId=${encodeURIComponent(sessionId)}`, { cache: "no-store" });
         const json = (await res.json().catch(() => ({}))) as QrState & { error?: string };
@@ -85,10 +92,18 @@ export function AttendanceQrScreen({
         timer = setTimeout(load, 3000);
       }
     };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible" || !waitingForVisible) return;
+      waitingForVisible = false;
+      if (timer) clearTimeout(timer);
+      void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     void load();
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [classroomId, sessionId, version]);
 

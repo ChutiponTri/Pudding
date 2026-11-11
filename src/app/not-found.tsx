@@ -1,15 +1,14 @@
 import { redirect } from "next/navigation";
-import { connection } from "next/server";
 
 /**
- * No 404 page: a mistyped or stale URL (and any `notFound()` call, e.g. a
- * non-admin opening /admin) sends the visitor to the home route instead.
- * "/" shows the dashboard to signed-in teachers and the landing page otherwise;
- * the proxy still routes unapproved teachers to /pending-approval from there.
- * Student URLs under /liff are caught earlier by app/liff/[...rest]/page.tsx.
+ * No 404 page: a `notFound()` call (e.g. a non-admin opening /admin) sends the
+ * visitor to the home route instead. Unknown URLs are redirected earlier by
+ * app/[...rest]/page.tsx.
+ *
+ * Do not add connection() / headers() / cookies() here: this component is in
+ * every page's tree, so a dynamic API here makes every page server-rendered on
+ * each visit (billed Vercel CPU) instead of prerendered.
  */
-export default async function NotFound() {
-  // Render per request (not prerendered) so this is a real server-side redirect.
-  await connection();
+export default function NotFound() {
   redirect("/");
 }

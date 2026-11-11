@@ -492,6 +492,7 @@ export function TeacherWorkspace({
   useEffect(() => {
     if (!openLineClassroomId) return;
     const interval = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return; // checked again within 5 s of coming back
       try {
         const response = await fetch(`/api/line/connections?classroomId=${encodeURIComponent(openLineClassroomId)}`, { cache: 'no-store' });
         if (!response.ok) return;
