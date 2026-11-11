@@ -11,7 +11,7 @@ import { AttachmentList } from '@/components/AssignmentAttachments';
 import { assignmentAttachments } from '@/lib/utils/referenceWork';
 import { ASSIGNMENT_STATUS_CLASSES, draftExpiresAt, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { formatDateTime } from '@/lib/utils/datetime';
-import type { GradingCounts } from '@/lib/utils/gradingStatus';
+import { pendingLabel, type GradingCounts } from '@/lib/utils/gradingStatus';
 import type { AssignmentStatusTone } from '@/lib/utils/assignmentWindow';
 
 /** Colour stripe across the top of the card, so the status reads at a glance. */
@@ -174,7 +174,7 @@ export function AssignmentProgressCard({
           <span>· {th ? 'ส่งแล้ว' : 'In'} {handedIn}/{totalStudents}</span>
           {pending > 0 ? (
             <span className="px-1.5 py-px rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold">
-              {th ? `รอตรวจ ${pending}` : `${pending} to grade`}
+              {th ? `รอตรวจ ${pendingLabel(counts.pendingItems, pending, th)}` : `${pendingLabel(counts.pendingItems, pending, th)} to grade`}
             </span>
           ) : done ? (
             <span className="inline-flex items-center gap-0.5 font-bold text-emerald-600 dark:text-emerald-400">

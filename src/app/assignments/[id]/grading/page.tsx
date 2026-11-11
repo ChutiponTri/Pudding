@@ -18,6 +18,7 @@ import {
   SubmissionAnswer,
   SubmissionEvent,
   User,
+  WorkGroupsView,
 } from '@/types/database';
 import { formatDateTime } from '@/lib/utils/datetime';
 import { AntiCheatingBadge } from '@/components/AntiCheatingBadge';
@@ -33,7 +34,8 @@ import { SiblingClassTabs } from '@/components/works/SiblingClassTabs';
 import { announcesResults } from '@/components/works/WorkBits';
 import { isRetake, isRetakeOf, rosterFor } from '@/lib/utils/retake';
 import { isSurvey } from '@/lib/utils/survey';
-import { SurveyResults } from '@/components/SurveyResults';
+import { isGroupWork } from '@/lib/utils/groupWork';
+import { GroupRoster, groupEntries } from '@/components/grading/GroupRoster';
 import {
   Search,
   Filter,
@@ -60,6 +62,7 @@ import {
   Loader2,
   Megaphone,
   Send,
+  Eye,
 } from 'lucide-react';
 import { ASSIGNMENT_STATUS_CLASSES, canRecordNoSubmission, getAssignmentStatus, getAssignmentWindow } from '@/lib/utils/assignmentWindow';
 import { useScheduleNow } from '@/lib/hooks/useScheduleNow';
@@ -132,6 +135,9 @@ const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 6000
 const EDIT_GRADE_CLASSES =
   'bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-300 ring-2 ring-amber-400 dark:ring-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 shadow-sm shadow-amber-500/10';
 
+/** กิจกรรม: no grade, the button only opens the answers. */
+const VIEW_ANSWERS_CLASSES = 'bg-sky-500 hover:bg-sky-600 text-white shadow-xs';
+
 type RosterRow = {
   key: string;
   student: Partial<User> | undefined;
@@ -155,6 +161,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  // งานกลุ่ม: groups come with the page load and are refetched with the submissions.
+  const [workGroups, setWorkGroups] = useState<WorkGroupsView | null>(null);
+  const groupWorkRef = useRef(false);
   const [classroom, setClassroom] = useState<Classroom | null>(null);
   usePageTitle(assignment?.title ? `ตรวจ: ${assignment.title}` : null);
   const [loading, setLoading] = useState(true);
@@ -234,7 +243,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     questions: qs,
     classroom: cls,
     subs,
+    workGroups: groups,
   }: Awaited<ReturnType<typeof dataService.getAssignmentById>> & { subs: Submission[] }) => {
+    setWorkGroups(groups || null);
     setAssignment(asg);
     setQuestions(qs);
     setSubmissions(subs);
@@ -253,12 +264,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
   const refreshSubmissions = async () => {
     const seq = ++submissionsSeqRef.current;
     try {
-      const subs = await dataService.getSubmissions(assignmentId);
+      const [subs, groups] = await Promise.all([
+        dataService.getSubmissions(assignmentId),
+        // Students may have changed groups since (same signal as a hand-in).
+        groupWorkRef.current ? dataService.getWorkGroups(assignmentId).catch(() => null) : Promise.resolve(null),
+      ]);
       if (seq !== submissionsSeqRef.current) return;
       setSubmissions(subs);
+      if (groups) setWorkGroups(groups);
       const teacherId = clerkUser?.id;
       const cached = teacherId ? readCache<{ subs: Submission[] }>(cacheKey, teacherId) : null;
-      if (teacherId && cached) patchCache(cacheKey, teacherId, { ...cached.value, subs });
+      if (teacherId && cached) patchCache(cacheKey, teacherId, { ...cached.value, subs, ...(groups ? { workGroups: groups } : {}) });
     } catch (err) {
       console.warn('Refreshing submissions failed:', err);
     }
@@ -610,7 +626,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
    * Handed-in quiz: "Allow retake" (a blank sheet; the earlier answers are deleted).
    */
   const reopenControl = (sub: Submission, className = '') => {
-    if (!assignment || !isHandedIn(sub) || !canReopen()) return null;
+    // A กิจกรรม is editable by the student until it closes: nothing to allow.
+    if (!assignment || !isHandedIn(sub) || !canReopen() || isSurvey(assignment)) return null;
     const name = studentLabel(sub);
     if (assignment.is_exam) {
       // A score copied from a retake quiz is retaken there, not here.
@@ -708,8 +725,17 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     return rows;
   })();
 
-  // Grading order: roster order, handed-in work only (nothing to grade otherwise).
-  const gradingOrder = rosterRows.flatMap((row) => (row.submission && isHandedIn(row.submission) ? [row.submission] : []));
+  // งานกลุ่ม: the roster as groups (each group's hand-in stands for all its members).
+  const groupWork = isGroupWork(assignment);
+  useEffect(() => {
+    groupWorkRef.current = groupWork;
+  }, [groupWork]);
+  const groupView = groupWork && workGroups ? groupEntries(workGroups, rosterRows) : null;
+
+  // Grading order: roster order (groups for group work), handed-in work only (nothing to grade otherwise).
+  const gradingOrder = groupView
+    ? groupView.entries.flatMap((entry) => (entry.submission ? [entry.submission] : []))
+    : rosterRows.flatMap((row) => (row.submission && isHandedIn(row.submission) ? [row.submission] : []));
   const gradingIndex = gradingSubmission ? gradingOrder.findIndex((s) => s.id === gradingSubmission.id) : -1;
 
   // The signed-in teacher grades with their role in this classroom.
@@ -749,9 +775,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
 
   const suspiciousTotal = submissions.filter(isSuspicious).length;
   const handedInTotal = submissions.filter(isHandedIn).length;
-  const toGradeTotal = submissions.filter(needsGrading).length;
+  // Group work counts groups to grade (one grade per group).
+  const toGradeTotal = groupView ? groupView.entries.filter((e) => !!e.submission && needsGrading(e.submission)).length : submissions.filter(needsGrading).length;
   // Checked: graded hand-ins plus scores (e.g. a 0) given to students who never handed in.
-  const gradedTotal = submissions.filter(isGraded).length;
+  const gradedTotal = groupView ? groupView.entries.filter((e) => !!e.submission && isGraded(e.submission)).length : submissions.filter(isGraded).length;
+  const gradeUnit = groupView ? (language === 'th' ? 'กลุ่ม' : 'groups') : language === 'th' ? 'คน' : '';
   const checkableTotal = gradedTotal + toGradeTotal;
   // Still missing: no row, or a recorded row the teacher has not scored yet.
   const missingTotal = rosterRows.filter((row) => isMissing(row.submission)).length;
@@ -767,6 +795,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     language
   );
   const th = language === 'th';
+  // กิจกรรม: no scores at all. The roster shows who answered; each answer opens to read and comment on.
+  const survey = isSurvey(assignment);
 
   // "ประกาศคะแนน", as on the classwork and works lists: offered once nobody is
   // left to remind (everyone handed in or has a score, or the work is closed).
@@ -800,7 +830,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
     }
   };
 
-  const summaryTiles: Array<{
+  const allSummaryTiles: Array<{
     id: typeof statusFilter;
     label: string;
     icon?: React.ReactNode;
@@ -844,7 +874,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
       label_class: 'text-emerald-700 dark:text-emerald-400',
       value_class: 'text-emerald-600 dark:text-emerald-400',
     },
-    ...(tracksAway
+    ...(tracksAway && !survey
       ? [
           {
             id: 'suspicious' as const,
@@ -858,6 +888,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         ]
       : []),
   ];
+  const summaryTiles = allSummaryTiles.filter((tile) => !survey || tile.id === 'all' || tile.id === 'missing');
 
   // First open with nothing cached yet: placeholders shaped like the page, not an empty
   // header and "no data" (which would read as a missing assignment).
@@ -1001,6 +1032,18 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               </button>
             )}
 
+            {survey ? (
+              <div className="min-w-0 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-900 text-sky-900 dark:text-sky-200">
+                <span className="text-[11px] font-bold opacity-80 block">{th ? 'คำตอบ' : 'Responses'}</span>
+                <p className="mt-0.5 text-sm sm:text-base font-black flex items-center gap-1 sm:gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" />
+                  {th ? `ตอบแล้ว ${handedInTotal}/${rosterRows.length} คน` : `${handedInTotal}/${rosterRows.length} answered`}
+                </p>
+                <div className="mt-1.5 sm:mt-2 flex w-full h-1.5 sm:h-2 rounded-full overflow-hidden bg-white/70 dark:bg-slate-900/60">
+                  <div className="h-full bg-sky-500 transition-all" style={{ width: `${(handedInTotal / (rosterRows.length || 1)) * 100}%` }} />
+                </div>
+              </div>
+            ) : (
             <div
               className={`min-w-0 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border ${
                 toGradeTotal > 0
@@ -1014,7 +1057,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               <p className="mt-0.5 text-sm sm:text-base font-black flex items-center gap-1 sm:gap-1.5">
                 {toGradeTotal > 0 ? <Clock className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
                 {toGradeTotal > 0
-                  ? th ? `รอตรวจ ${toGradeTotal} คน` : `${toGradeTotal} left to grade`
+                  ? th ? `รอตรวจ ${toGradeTotal} ${gradeUnit}` : `${toGradeTotal} ${gradeUnit} left to grade`
                   : gradedTotal > 0
                   ? th ? 'ตรวจครบแล้ว' : 'All graded'
                   : th ? 'ยังไม่มีผู้ส่งงาน' : 'Nothing handed in yet'}
@@ -1025,7 +1068,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               </div>
               <p className="mt-1 sm:mt-1.5 text-[10px] sm:text-[11px] font-semibold opacity-90 max-sm:leading-snug">
                 {th
-                  ? `ตรวจแล้ว ${gradedTotal}/${checkableTotal} คน · ส่งแล้ว ${handedInTotal}/${rosterRows.length} คน`
+                  ? `ตรวจแล้ว ${gradedTotal}/${checkableTotal} ${gradeUnit} · ส่งแล้ว ${handedInTotal}/${rosterRows.length} คน`
                   : `${gradedTotal}/${checkableTotal} checked · ${handedInTotal}/${rosterRows.length} handed in`}
               </p>
               {canAnnounce && (
@@ -1054,10 +1097,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                 </button>
               )}
             </div>
+            )}
           </div>
 
           {/* Counts: tap one to show those students below */}
-          <div className={`grid gap-1.5 sm:gap-3 ${tracksAway ? 'grid-cols-5' : 'grid-cols-4'}`}>
+          <div className={`grid gap-1.5 sm:gap-3 ${summaryTiles.length === 5 ? 'grid-cols-5' : summaryTiles.length === 4 ? 'grid-cols-4' : 'grid-cols-2'}`}>
             {summaryTiles.map((tile) => (
               <button
                 key={tile.id}
@@ -1083,7 +1127,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           </div>
 
           <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 empty:hidden">
-            {unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && canMarkNoSubmission && (
+            {!survey && unrecordedRows.length > 0 && grader && grader.role !== 'researcher' && canMarkNoSubmission && (
               <button
                 type="button"
                 onClick={handleMarkAllNoSubmission}
@@ -1122,14 +1166,6 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
         />
       )}
 
-      {/* Survey: the summary of every response comes first (the roster below shows who answered). */}
-      {assignment && isSurvey(assignment) && (
-        <section className="space-y-3">
-          <h2 className="text-sm font-black text-slate-900 dark:text-white">{th ? 'สรุปคำตอบ' : 'Summary'}</h2>
-          <SurveyResults assignmentId={assignment.id} lang={th ? 'th' : 'en'} totalStudents={rosterRows.length} />
-        </section>
-      )}
-
       {/* Submissions Table & Filter Controls */}
       <div id="grading-roster" className="scroll-mt-20 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
         {/* Table Filters Bar */}
@@ -1156,8 +1192,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             >
               <option value="all">{t('grading.filter_all')} ({rosterRows.length})</option>
-              <option value="pending">{t('grading.filter_pending')} ({toGradeTotal})</option>
-              <option value="graded">{t('grading.filter_graded')} ({gradedTotal})</option>
+              {!survey && <option value="pending">{t('grading.filter_pending')} ({toGradeTotal})</option>}
+              {!survey && <option value="graded">{t('grading.filter_graded')} ({gradedTotal})</option>}
               <option value="missing">{th ? 'ยังไม่ส่ง' : 'Not submitted'} ({missingTotal})</option>
               {tracksAway && <option value="suspicious">{t('grading.filter_suspicious')} ({suspiciousTotal})</option>}
             </select>
@@ -1210,6 +1246,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               <span>{t('grading.filter_suspicious')} ({suspiciousTotal})</span>
             </button>
             )}
+            {!survey && (
+            <>
             <button
               onClick={() => setStatusFilter('pending')}
               className={`shrink-0 px-3 h-10 sm:h-auto sm:py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
@@ -1230,9 +1268,56 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
             >
               {t('grading.filter_graded')} ({gradedTotal})
             </button>
+            </>
+            )}
           </div>
         </div>
 
+        {groupView && workGroups ? (
+          <GroupRoster
+            view={workGroups}
+            entries={groupView.entries.filter(({ members, submission: sub }) => {
+              const q = searchTerm.trim().toLowerCase();
+              if (q && !members.some((m) => `${m.student?.first_name || ''} ${m.student?.last_name || ''} ${m.student?.student_id || ''}`.toLowerCase().includes(q))) return false;
+              if (statusFilter === 'missing') return !sub;
+              if (statusFilter === 'pending') return !!sub && needsGrading(sub);
+              if (statusFilter === 'graded') return !!sub && isGraded(sub);
+              return true;
+            })}
+            ungrouped={groupView.ungrouped.filter((row) => filteredRows.includes(row as RosterRow))}
+            th={th}
+            canGrade={!!grader}
+            canManage={!!grader && grader.role !== 'researcher'}
+            maxScore={assignment?.total_points || 20}
+            onOpen={handleOpenGrading}
+            onRemoveMember={async (studentId, name, handedIn) => {
+              const question = handedIn
+                ? th
+                  ? `นำ ${name} ออกจากกลุ่ม?\n\nกลุ่มนี้ส่งงานแล้ว — งานและคะแนนของ ${name} จะถูกลบ (กลายเป็นยังไม่ส่ง และเข้ากลุ่มอื่นได้)\nคนอื่นในกลุ่มยังมีงานและคะแนนตามเดิม`
+                  : `Remove ${name} from the group?\n\nThe group already handed in — ${name}'s copy of the work and score is deleted (they become not handed in and can join another group).\nThe other members keep theirs.`
+                : th ? `นำ ${name} ออกจากกลุ่ม?` : `Remove ${name} from the group?`;
+              if (!confirm(question)) return;
+              try {
+                setWorkGroups(await dataService.leaveWorkGroup(assignmentId, studentId));
+                if (handedIn) refreshSubmissions();
+              } catch (err) {
+                showToast(err instanceof Error && err.message ? err.message : th ? 'บันทึกไม่สำเร็จ' : 'Could not save');
+              }
+            }}
+            memberActions={(row) => {
+              const r = row as RosterRow;
+              const sub = r.submission;
+              if (sub && isHandedIn(sub)) return reopenControl(sub);
+              return (
+                <>
+                  {handInControl(r)}
+                  {sub && isGraded(sub) ? clearNoSubmissionControl(sub) : missingActions(r)}
+                </>
+              );
+            }}
+          />
+        ) : (
+        <>
         {/* Phone list: one card per student instead of a sideways-scrolling table */}
         <ul className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800">
           {filteredRows.length === 0 ? (
@@ -1270,7 +1355,7 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                         )}
                       </p>
                     </div>
-                    {sub && (isGraded || isHandedIn(sub)) && (isGraded ? (
+                    {!survey && sub && (isGraded || isHandedIn(sub)) && (isGraded ? (
                       <span className="shrink-0 h-7 inline-flex items-center gap-0.5 px-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
                         <span className="text-[13px] tabular-nums">{sub.total_score}</span>
                         <span className="text-[10px] font-semibold opacity-70">/{sub.max_total_score || assignment?.total_points || 20}</span>
@@ -1349,11 +1434,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                           disabled={!grader}
                           onClick={() => handleOpenGrading(sub)}
                           className={`flex-1 min-w-0 h-8 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed ${
-                            isGraded ? EDIT_GRADE_CLASSES : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-xs'
+                            survey ? VIEW_ANSWERS_CLASSES : isGraded ? EDIT_GRADE_CLASSES : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-xs'
                           }`}
                         >
-                          {isGraded && <PencilLine className="w-3.5 h-3.5" />}
-                          <span>{isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
+                          {survey ? <Eye className="w-3.5 h-3.5" /> : isGraded && <PencilLine className="w-3.5 h-3.5" />}
+                          <span>{survey ? (th ? 'ดูคำตอบ' : 'View answers') : isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
                           <ChevronRight className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -1525,7 +1610,9 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                       </td>
 
                       <td className="py-3.5 px-3 lg:px-6 text-center whitespace-nowrap">
-                        {isGraded ? (
+                        {survey ? (
+                          <span className="text-slate-400">-</span>
+                        ) : isGraded ? (
                           <span className="inline-flex items-baseline gap-0.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-black">
                             <span className="text-sm tabular-nums">{sub.total_score}</span>
                             <span className="text-[11px] font-semibold opacity-70">/ {sub.max_total_score || assignment?.total_points || 20}</span>
@@ -1546,11 +1633,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                             disabled={!grader}
                             onClick={() => handleOpenGrading(sub)}
                             className={`h-8 px-3.5 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed ${
-                              isGraded ? EDIT_GRADE_CLASSES : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-xs'
+                              survey ? VIEW_ANSWERS_CLASSES : isGraded ? EDIT_GRADE_CLASSES : 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-xs'
                             }`}
                           >
-                            {isGraded && <PencilLine className="w-3.5 h-3.5" />}
-                            <span>{isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
+                            {survey ? <Eye className="w-3.5 h-3.5" /> : isGraded && <PencilLine className="w-3.5 h-3.5" />}
+                            <span>{survey ? (th ? 'ดูคำตอบ' : 'View answers') : isGraded ? (language === 'th' ? 'แก้ไขคะแนน' : 'Edit grade') : t('grading.actions.grade_btn')}</span>
                             <ChevronRight className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -1562,6 +1649,8 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
             </tbody>
           </table>
         </div>
+        </>
+        )}
       </div>
 
       {/* Per-student time for "Allow edit" / "Allow hand-in" close to or after the deadline */}
@@ -1607,6 +1696,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
           initialAnswers={gradingAnswers}
           grader={grader}
           tracksAway={tracksAway}
+          isSurvey={survey}
+          group={(() => {
+            const entry = groupView?.entries.find((e) => e.submission?.id === gradingSubmission.id || e.members.some((m) => m.submission?.id === gradingSubmission.id));
+            return entry ? { name: entry.group.name, members: entry.members.map((m) => m.student?.first_name || '').filter(Boolean) } : undefined;
+          })()}
           studentPosition={gradingIndex >= 0 ? { index: gradingIndex, total: gradingOrder.length } : undefined}
           onClose={() => {
             setIsGradingWorkspaceOpen(false);

@@ -49,13 +49,14 @@ import { authFetch, setLineAccessToken } from "@/lib/auth/lineSession";
 import { dataService, type ClassroomChangeEvent } from "@/lib/supabase/dataService";
 import { clearLiffSnapshots, readLiffSnapshot, readSheetCache, writeLiffSnapshot, writeSheetCache, type LiffSnapshot } from "@/lib/cache/liffSnapshot";
 import type { Liff } from "@line/liff";
-import { Classroom, Assignment, Question, Submission, SubmissionAnswer } from "@/types/database";
+import { Classroom, Assignment, Question, Submission, SubmissionAnswer, type WorkGroupsView } from "@/types/database";
 import { InstitutionSearchSelect } from "@/components/InstitutionSearchSelect";
 import { canonicalInstitution, institutionLabel } from "@/lib/data/thaiInstitutions";
 import { getDefaultAcademicPeriod } from "@/lib/utils/academicYear";
 import { getAssignmentWindow, isAssignmentPublished, QUIZ_LATE_GRACE_MS } from "@/lib/utils/assignmentWindow";
 import { formatDateTime } from "@/lib/utils/datetime";
 import { SubmitConfirmSheet, type SubmitReview } from "@/components/liff/SubmitConfirmSheet";
+import { WorkGroupBanner, WorkGroupPicker, groupMemberNames } from "@/components/liff/WorkGroupPicker";
 import { QuizTimer } from "@/components/liff/QuizTimer";
 import { quizExitRule, quizLeaveWarning, QuizExitWarningSheet, SuspiciousLabel } from "@/components/liff/QuizExitNotice";
 import type { QuizOpenResult } from "@/lib/utils/quizExit";
@@ -770,6 +771,10 @@ export default function LiffStudentPage() {
   // The classmate the open assignment is being done for; null = the phone's owner.
   // Set every time an assignment is opened (handleOpenAssignment).
   const [activeProxy, setActiveProxy] = useState<ProxyFriend | null>(null);
+  // งานกลุ่ม: the groups of the open work (they arrive with its questions).
+  const [workGroups, setWorkGroups] = useState<WorkGroupsView | null>(null);
+  // On a borrowed phone the group screens act for the classmate.
+  const groupProxy = activeProxy ? { number: activeProxy.studentNumber, name: activeProxy.first_name } : undefined;
   // For live away reports during a quiz (a ref: it must not restart the tracking).
   const activeProxyNumberRef = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -1511,8 +1516,12 @@ export default function LiffStudentPage() {
     if (currentStudent?.line_uid) loadClassroomPosts(selectedClassroom, currentStudent.line_uid);
   }, [selectedClassroom?.id, currentStudent?.line_uid]);
 
-  /** Handed-in work is view-only until the teacher allows an edit (homework only). */
-  const canEditWork = (a: Assignment, s?: Submission) => !!s && canEditSubmission(s, a.is_exam);
+  /**
+   * Handed-in work is view-only until the teacher allows an edit (homework only).
+   * A กิจกรรม stays editable while it takes answers (until the teacher closes it).
+   */
+  const canEditWork = (a: Assignment, s?: Submission) =>
+    !!s && (canEditSubmission(s, a.is_exam) || (isSurvey(a) && isHandedIn(s) && getAssignmentWindow(a).acceptsSubmissions));
   /**
    * The teacher recorded "no submission", but the student may still hand in:
    * the work still takes (late) work, or the teacher opened hand-in for them.
@@ -1609,6 +1618,7 @@ export default function LiffStudentPage() {
     setIsQuizExitWarningOpen(false);
     setActiveAssignment(a);
     setActiveProxy(forFriend || null);
+    setWorkGroups(null);
     setIsLoadingQuestions(true);
     try {
       // One data-service call loads the assignment and its questions together.
@@ -1626,7 +1636,28 @@ export default function LiffStudentPage() {
         await forfeitQuiz(a, forFriend || null, opened);
         return;
       }
-      const { questions } = await questionsRequest;
+      const { questions, workGroups: ownGroups } = await questionsRequest;
+      // งานกลุ่ม on a borrowed phone: the classmate's groups, not the phone owner's.
+      const groups = forFriend && ownGroups
+        ? await dataService.getWorkGroups(a.id, forFriend.studentNumber).catch(() => null)
+        : ownGroups;
+      const ownGroup = groups?.groups.find((g) => g.id === groups.myGroupId);
+      if (ownGroup?.submitted_at && !edit && forFriend) {
+        alert(`กลุ่มของ ${forFriend.first_name} (${ownGroup.name}) ส่ง “${a.title}” แล้ว`);
+        setActiveAssignment(null);
+        return;
+      }
+      // A groupmate may have handed in since this page loaded; show that work instead.
+      if (ownGroup?.submitted_at && !edit && !forFriend) {
+        const handed = (await dataService.getSubmissions(a.id).catch(() => [] as Submission[])).find((sub) => isHandedIn(sub));
+        if (handed) {
+          setSubmissions((prev) => ({ ...prev, [a.id]: handed }));
+          setActiveAssignment(null);
+          handleOpenGradedDetail(a, handed);
+          return;
+        }
+      }
+      setWorkGroups(groups || null);
       setQuizOpen(opened);
       setActiveQuestions(questions);
       if (opened?.action === "warn") setIsQuizExitWarningOpen(true);
@@ -2562,7 +2593,7 @@ export default function LiffStudentPage() {
     setViewingClosedWork({ assignment: a, questions: cached ?? null });
     let questions: Question[];
     try {
-      ({ questions } = await dataService.getAssignmentById(a.id));
+      ({ questions } = await dataService.getAssignmentById(a.id, { withGroups: false }));
     } catch (err) {
       console.error("Could not load the work:", err);
       if (!cached) setViewingClosedWork((prev) => (prev?.assignment.id === a.id ? { ...prev, loadFailed: true } : prev));
@@ -3579,6 +3610,7 @@ export default function LiffStudentPage() {
                                 <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5 line-clamp-2">{assignment.title}</h4>
                               </div>
                               <div className="shrink-0 flex flex-col items-end gap-1">
+                                {!assignment.is_exam && Number(assignment.group_size) >= 2 && <Pill tone="sky">👥 งานกลุ่ม</Pill>}
                                 {isSubmitted && !assignment.is_exam && isReopenActive(submission) && <Pill tone="violet">✏️ ครูเปิดให้แก้ไข</Pill>}
                                 {handInAllowed && <Pill tone="violet">✏️ ครูเปิดให้ส่ง</Pill>}
                                 {isGraded ? (
@@ -3942,6 +3974,9 @@ export default function LiffStudentPage() {
               <div className="h-40 rounded-3xl bg-slate-200/70 dark:bg-slate-800 animate-pulse" />
               <p className="text-center text-sm text-slate-500">กำลังเตรียมข้อสอบ...</p>
             </div>
+          ) : workGroups && !workGroups.myGroupId && !submissionSuccess ? (
+            // งานกลุ่ม: a group first, then the work (on a borrowed phone, for the classmate).
+            <WorkGroupPicker assignmentId={activeAssignment.id} view={workGroups} onChange={setWorkGroups} proxy={groupProxy} />
           ) : isQuizForfeited && quizOpen ? (
             <div className={`${CARD} w-full max-w-sm mx-auto text-center space-y-3.5 p-5 mt-4 animate-in fade-in zoom-in-95`}>
               <div className="w-14 h-14 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 mx-auto flex! items-center justify-center">
@@ -3968,8 +4003,14 @@ export default function LiffStudentPage() {
                 <CheckCircle2 className="w-7 h-7" />
               </div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                {isSurvey(activeAssignment) ? "ส่งกิจกรรมแล้ว ขอบคุณ" : editingSubmission ? "ส่งงานที่แก้ไขแล้ว" : isTrackingAway ? "ส่งข้อสอบแล้ว" : "ส่งงานแล้ว"}
+                {isSurvey(activeAssignment) ? "ส่งกิจกรรมแล้ว ขอบคุณ" : editingSubmission ? "ส่งงานที่แก้ไขแล้ว" : isTrackingAway ? "ส่งข้อสอบแล้ว" : workGroups?.myGroupId ? "ส่งงานกลุ่มแล้ว" : "ส่งงานแล้ว"}
               </h2>
+              {/* งานกลุ่ม: one hand-in counts for everyone in the group. */}
+              {workGroups?.myGroupId && (
+                <p className="px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 text-xs font-semibold text-sky-800 dark:text-sky-200">
+                  👥 ส่งให้ทุกคนในกลุ่มแล้ว: {groupMemberNames(workGroups, groupProxy?.name).join(", ")}
+                </p>
+              )}
               {/* Flagged by the server: shown with no reason. */}
               {submittedResult?.submission.is_flagged_suspicious && <SuspiciousLabel />}
               {isSurvey(activeAssignment) ? null : submittedResult?.submission.results_hidden ? (
@@ -4012,10 +4053,13 @@ export default function LiffStudentPage() {
             </div>
           ) : (
             <>
+              {workGroups?.myGroupId && (
+                <WorkGroupBanner assignmentId={activeAssignment.id} view={workGroups} onChange={setWorkGroups} locked={!!editingSubmission} proxy={groupProxy} />
+              )}
               {/* Exam header */}
               <div className="p-5 rounded-3xl bg-linear-to-br from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/30 ring-1 ring-amber-200/80 dark:ring-amber-900/60 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Pill tone={activeAssignment.is_exam ? "violet" : "amber"}>{activeAssignment.is_exam ? "ข้อสอบออนไลน์" : "ใบงาน"}</Pill>
+                  <Pill tone={activeAssignment.is_exam ? "violet" : "amber"}>{activeAssignment.is_exam ? "ข้อสอบออนไลน์" : workGroups ? "งานกลุ่ม" : "ใบงาน"}</Pill>
                   <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
                     เต็ม {activeAssignment.total_points || 20} คะแนน • {formatTimeLeft(getAssignmentWindow(activeAssignment).deadline)}
                   </span>
@@ -4710,6 +4754,10 @@ export default function LiffStudentPage() {
 
           {/* Flagged by the server: shown with no reason. */}
           {viewingGradedSub.submission.is_flagged_suspicious && <SuspiciousLabel />}
+          {/* งานกลุ่ม: the same work and score for everyone in the group. */}
+          {!viewingGradedSub.assignment.is_exam && Number(viewingGradedSub.assignment.group_size) >= 2 && isHandedIn(viewingGradedSub.submission) && (
+            <p className="px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 text-xs font-semibold text-sky-800 dark:text-sky-200">👥 งานกลุ่ม — ส่งครั้งเดียว นับให้ทุกคนในกลุ่ม</p>
+          )}
 
           {isSurvey(viewingGradedSub.assignment) ? null : gradedSubmissionIds.has(viewingGradedSub.submission.id) && viewingGradedSub.submission.total_score != null ? (
             <div className="liff-sheen p-5 rounded-2xl bg-linear-to-br from-violet-500 to-purple-700 text-white text-center space-y-1">

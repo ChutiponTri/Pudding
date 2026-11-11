@@ -47,7 +47,7 @@ export type RosterData = { students: RosterStudent[]; pending: RosterStudent[] }
 export type WorkData = {
   students: number;
   pending: number;
-  works: Array<{ work: import("@/types/database").Assignment; total: number; handed: number; graded: number; toGrade: number; missing: number }>;
+  works: Array<{ work: import("@/types/database").Assignment; total: number; handed: number; graded: number; toGrade: number; toGradeStudents?: number; missing: number }>;
 };
 export type AttendanceData = {
   sessions: Array<{ id: string; title: string; starts_at: string; on_time_until_minutes: number; late_until_minutes: number; status: "open" | "closed" }>;

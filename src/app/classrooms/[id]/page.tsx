@@ -105,6 +105,7 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/LoadingState';
+import { isGroupWork } from '@/lib/utils/groupWork';
 
 
 type Tab = 'overview' | 'classwork' | 'attendance' | 'people' | 'grades';
@@ -1058,12 +1059,14 @@ export default function ClassroomWorkspacePage() {
     const bySubmission = new Map<string, Submission[]>();
     for (const s of submissions) bySubmission.set(s.assignment_id, [...(bySubmission.get(s.assignment_id) || []), s]);
     const total = classroom?.students?.length || 0;
-    return new Map(assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSizeFor(a, total), a.is_exam)]));
+    return new Map(assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSizeFor(a, total), a.is_exam, isGroupWork(a))]));
   }, [assignments, submissions, classroom?.students?.length]);
   const classworkSummary = useMemo(() => {
     const all = [...classworkCounts.values()];
     return {
       pending: all.reduce((sum, c) => sum + c.pending, 0),
+      // A group counts once (one grade for all its members).
+      pendingItems: all.reduce((sum, c) => sum + c.pendingItems, 0),
       graded: all.reduce((sum, c) => sum + c.graded, 0),
       checkable: all.reduce((sum, c) => sum + c.checkable, 0),
       done: all.filter((c) => classworkFilterOf(c) === 'done').length,
@@ -2284,8 +2287,11 @@ export default function ClassroomWorkspacePage() {
                     <div className={`p-3 rounded-2xl ${classworkSummary.pending > 0 ? 'bg-amber-50 dark:bg-amber-950/40' : 'bg-emerald-50 dark:bg-emerald-950/40'}`}>
                       <span className={`text-[11px] font-bold block ${classworkSummary.pending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>{tr('รอตรวจ', 'To grade')}</span>
                       <span className={`text-xl sm:text-2xl font-black ${classworkSummary.pending > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
-                        {classworkSummary.pending}
+                        {classworkSummary.pendingItems}
                         <span className="text-[11px] font-semibold ml-1">{tr('ชิ้น', 'items')}</span>
+                        {classworkSummary.pendingItems !== classworkSummary.pending && (
+                          <span className="block text-[11px] font-semibold opacity-80">{tr(`${classworkSummary.pending} คน`, `${classworkSummary.pending} students`)}</span>
+                        )}
                       </span>
                     </div>
                     <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60">

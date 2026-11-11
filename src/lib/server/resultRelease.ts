@@ -83,12 +83,13 @@ export type ResultRelease = {
  */
 export async function resultRelease(
   supabase: Supabase,
-  assignments: Array<Pick<Assignment, 'id' | 'classroom_id' | 'due_date' | 'status_override' | 'extended_until' | 'is_exam' | 'publish_at' | 'retake_student_ids'>>,
+  assignments: Array<Pick<Assignment, 'id' | 'classroom_id' | 'due_date' | 'status_override' | 'extended_until' | 'is_exam' | 'publish_at' | 'retake_student_ids' | 'is_survey'>>,
   ownSubmissions: Array<Pick<Submission, 'assignment_id' | 'status'> & { total_score?: number | null }>,
   now: number = Date.now()
 ): Promise<ResultRelease> {
   const own = new Map(ownSubmissions.filter((s) => isHandedIn(s)).map((s) => [s.assignment_id, s]));
-  const candidates = assignments.filter((a) => own.has(a.id));
+  // กิจกรรม has no score to hold back: the teacher's feedback shows at once.
+  const candidates = assignments.filter((a) => own.has(a.id) && !a.is_survey);
   const empty: ResultRelease = { hidden: new Set(), hiddenQuestionIds: new Set() };
   if (!candidates.length) return empty;
 

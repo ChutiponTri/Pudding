@@ -66,6 +66,8 @@ export function CreateView() {
   const [groupName, setGroupName] = useState("");
   /** false = "ไม่นับคะแนน": students still see the score; the grade book leaves it out of the total / percent. */
   const [countsTowardGrade, setCountsTowardGrade] = useState(true);
+  /** งานกลุ่ม (homework only): most students per group; 0 = individual work. */
+  const [groupSize, setGroupSize] = useState(0);
   /** Quiz: roster ids unticked in the picker (empty = everyone takes it). */
   const [excluded, setExcluded] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
@@ -166,6 +168,7 @@ export function CreateView() {
           ...(groupName.trim() ? { group_name: groupName.trim() } : {}),
           is_exam: isExam,
           ...(isSurvey ? { is_survey: true } : isExam || countsTowardGrade ? {} : { counts_toward_grade: false }),
+          ...(kind === "homework" && groupSize >= 2 ? { group_size: groupSize } : {}),
           // Some students unticked: only the rest see and take the quiz.
           ...(isExam && excludedNow.length ? { retake_student_ids: students.filter((s) => !excludedNow.includes(s.id)).map((s) => s.id) } : {}),
           // A quiz runs for its minutes from publishing; the server moves it again when a draft is published.
@@ -302,6 +305,17 @@ export function CreateView() {
             <select className={inputClass} value={countsTowardGrade ? "counts" : "not"} onChange={(e) => setCountsTowardGrade(e.target.value === "counts")}>
               <option value="counts">นับคะแนน</option>
               <option value="not">ไม่นับคะแนน</option>
+            </select>
+          </Field>
+        )}
+        {/* งานกลุ่ม: students form their own groups; one member hands in for everyone. */}
+        {kind === "homework" && (
+          <Field label="การทำงาน">
+            <select className={inputClass} value={groupSize} onChange={(e) => setGroupSize(Number(e.target.value))}>
+              <option value={0}>เดี่ยว</option>
+              {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
+                <option key={n} value={n}>👥 กลุ่ม ไม่เกิน {n} คน</option>
+              ))}
             </select>
           </Field>
         )}

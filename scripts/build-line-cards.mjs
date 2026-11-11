@@ -26,6 +26,7 @@ const WIDTH = 1040;
  */
 const CARDS = [
   { name: 'new-assignment', box: { left: 0, top: 0, width: 1086, height: 452 }, radius: 0 },
+  { name: 'new-activity', box: { left: 22, top: 22, width: 1211, height: 425 }, radius: 0 },
   { name: 'new-quiz', box: { left: 32, top: 24, width: 1192, height: 404 }, radius: 18 },
   { name: 'new-student', box: { left: 23, top: 24, width: 1110, height: 330 }, radius: 18 },
   { name: 'menu', box: { left: 26, top: 20, width: 1106, height: 282 }, radius: 18 },

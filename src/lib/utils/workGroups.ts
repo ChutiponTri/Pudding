@@ -3,6 +3,7 @@ import { assignmentGroupKey } from '@/components/AssignmentGroupHeader';
 import { getAssignmentWindow, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 import { gradingCounts, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { isRetake, rosterSizeFor } from '@/lib/utils/retake';
+import { isGroupWork } from '@/lib/utils/groupWork';
 
 /**
  * A teacher's "work" as one thing across classrooms. Creating work for several
@@ -97,7 +98,7 @@ export function buildWorkGroups(
     const item: WorkClass = {
       assignment,
       classroom,
-      counts: gradingCounts(subsByAssignment.get(assignment.id) || [], rosterSizeFor(assignment, rosterSize), assignment.is_exam),
+      counts: gradingCounts(subsByAssignment.get(assignment.id) || [], rosterSizeFor(assignment, rosterSize), assignment.is_exam, isGroupWork(assignment)),
       window: getAssignmentWindow(assignment, now),
       published: isAssignmentPublished(assignment, now),
     };

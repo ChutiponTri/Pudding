@@ -1,4 +1,5 @@
 import type { Submission, User } from '@/types/database';
+import { countToGrade } from '@/lib/utils/groupWork';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 
 type SubmissionScore = Pick<Submission, 'status' | 'total_score'>;
@@ -99,7 +100,15 @@ export type GradingCounts = {
   graded: number;
   /** Of `graded`, the scores given to students who never handed in (usually a 0). */
   scoredMissing: number;
+  /** Students whose hand-in waits for a grade. */
   pending: number;
+  /**
+   * What the teacher has to grade: like `pending`, but a group (งานกลุ่ม)
+   * counts once, since one grade covers all its members.
+   */
+  pendingItems: number;
+  /** งานกลุ่ม: the counts above are per student; pendingItems per group. */
+  groupWork: boolean;
   /** What the teacher has to check: graded + pending. */
   checkable: number;
   /** Not handed in and not scored yet. */
@@ -110,12 +119,15 @@ export type GradingCounts = {
 
 /** Handed in / checked / waiting / missing for one assignment's submissions. */
 export function gradingCounts(
-  subs: Array<Pick<Submission, 'status' | 'total_score' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'>>,
+  subs: Array<Pick<Submission, 'status' | 'total_score' | 'is_flagged_suspicious' | 'tab_switch_count' | 'total_time_away_seconds'> & { submitted_at?: string | null }>,
   totalStudents: number,
-  isExam?: boolean
+  isExam?: boolean,
+  /** งานกลุ่ม: members' copies of one hand-in count once in pendingItems. */
+  groupWork = false
 ): GradingCounts {
   const handedIn = subs.filter(isHandedIn).length;
-  const pending = subs.filter(needsGrading).length;
+  const waiting = subs.filter(needsGrading);
+  const pending = waiting.length;
   const scoredMissing = subs.filter(isScoredMissing).length;
   const graded = handedIn - pending + scoredMissing;
   return {
@@ -124,6 +136,8 @@ export function gradingCounts(
     graded,
     scoredMissing,
     pending,
+    pendingItems: countToGrade(waiting, groupWork),
+    groupWork,
     checkable: graded + pending,
     notSubmitted: Math.max(0, totalStudents - handedIn - scoredMissing),
     flagged: subs.filter((s) => isIntegrityFlagged(s, isExam)).length,
@@ -147,4 +161,15 @@ export function isStudentSubmission(
     (sub.student?.id && student.id && sub.student.id === student.id) ||
     (sub.student?.line_uid && student.line_uid && sub.student.line_uid === student.line_uid)
   );
+}
+
+/**
+ * The "to grade" amount with both numbers when they differ: what to grade
+ * (a group counts once) and, beside it, how many students that is.
+ * "8", or "2 กลุ่ม (8 คน)" for group work; unit "ชิ้น" for totals over many works.
+ */
+export function pendingLabel(items: number, students: number, th: boolean, unit: 'group' | 'item' = 'group'): string {
+  if (items === students) return String(items);
+  const what = unit === 'group' ? (th ? 'กลุ่ม' : items === 1 ? 'group' : 'groups') : th ? 'ชิ้น' : items === 1 ? 'item' : 'items';
+  return th ? `${items} ${what} (${students} คน)` : `${items} ${what} (${students} students)`;
 }

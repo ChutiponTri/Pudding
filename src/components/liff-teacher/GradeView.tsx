@@ -1,7 +1,7 @@
 "use client";
 
-import { isSurvey } from "@/lib/utils/survey";
-import { SurveyResults } from "@/components/SurveyResults";
+import { isSurvey, surveyAnswerText } from "@/lib/utils/survey";
+import { isGroupWork } from "@/lib/utils/groupWork";
 
 import { useEffect, useState } from "react";
 import { ChevronRight, ExternalLink, PencilLine, RotateCcw, Send } from "lucide-react";
@@ -11,9 +11,9 @@ import { getAssignmentWindow } from "@/lib/utils/assignmentWindow";
 import { rosterFor } from "@/lib/utils/retake";
 import { IntegrityAuditModal } from "@/components/IntegrityAuditModal";
 import { dataService } from "@/lib/supabase/dataService";
-import { isGraded, isHandedIn, isReopenActive } from "@/lib/utils/gradingStatus";
+import { isGraded, isHandedIn, isReopenActive, pendingLabel } from "@/lib/utils/gradingStatus";
 import { isSuspiciousActivity } from "@/lib/utils/integrity";
-import type { Assignment, Question, Submission, SubmissionAnswer, SubmissionEvent } from "@/types/database";
+import type { Assignment, Question, Submission, SubmissionAnswer, SubmissionEvent, WorkGroupsView } from "@/types/database";
 import { fetchOnce, isFresh, readCache, staleCache } from "./cache";
 import { Button, Card, Empty, ErrorBox, Field, Page, Pill, Skeleton, errorText, inputClass, useCached, useKit, useViewData, type RosterData, type RosterStudent } from "./kit";
 import { WorkStatus } from "./StatusSheet";
@@ -127,6 +127,7 @@ const keys = (scope: string) => ({
   questions: (workId: string) => `${scope}:mem:questions:${workId}`,
   answers: (subId: string) => `${scope}:mem:answers:${subId}`,
   events: (subId: string) => `${scope}:mem:events:${subId}`,
+  groups: (workId: string) => `${scope}:mem:groups:${workId}`,
 });
 
 /** "ตรวจงาน": pick a work, a student, then score each answer (a minimal version of the web's grading page). */
@@ -134,19 +135,23 @@ export function GradeView() {
   const work = useWork();
   const [picked, setPicked] = useState<Assignment | null>(null);
   const [submission, setSubmission] = useState<Submission | null>(null);
+  // งานกลุ่ม: the group being graded ("กลุ่ม 2 · ก้อง, มิ้น, …").
+  const [groupTitle, setGroupTitle] = useState<string | null>(null);
   // The latest copy of the picked work (its status may change on this screen).
   const current = picked ? work.rows.find((row) => row.work.id === picked.id)?.work || picked : null;
-  // A survey has nothing to grade: its summary instead.
-  if (current && isSurvey(current)) {
+  if (current && submission) return <GradeSubmission work={current} submission={submission} groupTitle={groupTitle} onDone={() => setSubmission(null)} />;
+  if (current) {
     return (
-      <Page title={current.title} subtitle="สรุปคำตอบ">
-        <Button tone="ghost" small onClick={() => setPicked(null)}>← งานทั้งหมด</Button>
-        <SurveyResults assignmentId={current.id} lang="th" totalStudents={work.rows.find((row) => row.work.id === current.id)?.total} />
-      </Page>
+      <SubmissionList
+        work={current}
+        onBack={() => setPicked(null)}
+        onPick={(sub, title) => {
+          setGroupTitle(title || null);
+          setSubmission(sub);
+        }}
+      />
     );
   }
-  if (current && submission) return <GradeSubmission work={current} submission={submission} onDone={() => setSubmission(null)} />;
-  if (current) return <SubmissionList work={current} onBack={() => setPicked(null)} onPick={setSubmission} />;
   return <WorkList work={work} onPick={setPicked} />;
 }
 
@@ -165,12 +170,12 @@ function WorkList({ work: data, onPick }: { work: ReturnType<typeof useWork>; on
             return (
               <div key={row.work.id} className="px-4 py-3 flex items-center gap-2">
                 <button type="button" onClick={() => onPick(row.work)} className="flex-1 min-w-0 text-left cursor-pointer">
-                  <span className="block text-sm font-bold truncate">{row.work.is_exam ? "📝" : isSurvey(row.work) ? "📊" : "📋"} {row.work.title}</span>
+                  <span className="block text-sm font-bold truncate">{row.work.is_exam ? "📝" : isSurvey(row.work) ? "📊" : isGroupWork(row.work) ? "👥" : "📋"} {row.work.title}</span>
                   <span className="block text-[11px] text-slate-500">ส่งแล้ว {row.handed}/{row.total} คน</span>
                 </button>
                 <WorkStatus work={row.work} />
                 <button type="button" onClick={() => onPick(row.work)} aria-label={`ตรวจ ${row.work.title}`} className="flex items-center gap-1 shrink-0 cursor-pointer">
-                  {isSurvey(row.work) ? <Pill tone="violet">ดูสรุป</Pill> : <Pill tone={left > 0 ? "amber" : "green"}>{left > 0 ? `รอตรวจ ${left}` : "ตรวจครบ"}</Pill>}
+                  {isSurvey(row.work) ? <Pill tone="violet">ดูคำตอบ</Pill> : <Pill tone={left > 0 ? "amber" : "green"}>{left > 0 ? `รอตรวจ ${pendingLabel(left, row.toGradeStudents ?? left, true)}` : "ตรวจครบ"}</Pill>}
                   <ChevronRight className="w-4 h-4 text-slate-400" />
                 </button>
               </div>
@@ -211,7 +216,7 @@ function Integrity({ sub, onOpen }: { sub: Submission; onOpen: (sub: Submission)
   );
 }
 
-function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: () => void; onPick: (sub: Submission) => void }) {
+function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: () => void; onPick: (sub: Submission, groupTitle?: string) => void }) {
   const { cacheScope } = useKit();
   const k = keys(cacheScope);
   // Every row (also "allowed to hand in" ones without work yet); the list shows the handed-in ones.
@@ -221,6 +226,11 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
   const adjust = useAdjust(work);
   // Quizzes track leaving the screen (as on the website): only they show the integrity chip.
   const tracksAway = !!work.is_exam;
+  // กิจกรรม: no scores, only answers to read (and feedback).
+  const survey = isSurvey(work);
+  // งานกลุ่ม: one row per group (its hand-in counts for every member).
+  const groupWork = isGroupWork(work);
+  const groups = useCached<WorkGroupsView>(groupWork ? k.groups(work.id) : null, () => dataService.getWorkGroups(work.id));
   const rows = [...(data.data || [])].filter(isHandedIn).sort((a, b) => Number(isGraded(a)) - Number(isGraded(b)) || studentName(a).localeCompare(studentName(b), "th"));
   const flagged = rows.filter((sub) => sub.is_flagged_suspicious || (sub.quiz_exit_count || 0) > 0 || isSuspiciousActivity(sub.tab_switch_count || 0, sub.total_time_away_seconds || 0)).length;
 
@@ -239,7 +249,7 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
 
   return (
     <>
-    <Page title={work.title} subtitle="เลือกนักเรียนเพื่อตรวจ" refreshing={data.refreshing}>
+    <Page title={work.title} subtitle={survey ? "เลือกนักเรียนเพื่อดูคำตอบ" : "เลือกนักเรียนเพื่อตรวจ"} refreshing={data.refreshing}>
       <div className="flex items-center justify-between gap-2">
         <Button tone="ghost" small onClick={onBack}>← งานทั้งหมด</Button>
         <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
@@ -253,8 +263,51 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
       )}
       {data.error && <ErrorBox text={data.error} />}
       {!data.data && !data.error && <Skeleton rows={4} />}
-      {data.data && rows.length === 0 && <Empty text="ยังไม่มีใครส่ง" />}
-      {rows.length > 0 && (
+      {data.data && rows.length === 0 && !groupWork && <Empty text="ยังไม่มีใครส่ง" />}
+      {groupWork && groups.data && (() => {
+        const view = groups.data;
+        const all = data.data || [];
+        const nameOf = (id: string) => view.students.find((s) => s.id === id)?.first_name || "นักเรียน";
+        const subOf = (id: string) => all.find((sub) => sub.student_id === id && isHandedIn(sub));
+        const grouped = new Set(view.groups.flatMap((g) => g.member_ids));
+        const loose = view.students.filter((s) => !grouped.has(s.id)).length;
+        return (
+          <>
+            {view.groups.length === 0 && <Empty text="ยังไม่มีกลุ่ม — นักเรียนเลือกกลุ่มเองก่อนส่งงาน" />}
+            {view.groups.length > 0 && (
+              <Card className="p-0! divide-y divide-slate-100 dark:divide-slate-800">
+                {[...view.groups]
+                  .map((group) => ({ group, sub: subOf(group.submitted_by || "") || group.member_ids.map(subOf).find(Boolean) || null }))
+                  // Waiting to be graded first, then not handed in.
+                  .sort((a, b) => Number(!a.sub || isGraded(a.sub)) - Number(!b.sub || isGraded(b.sub)))
+                  .map(({ group, sub }) => {
+                    const members = group.member_ids.map(nameOf).join(", ");
+                    const title = `${group.name} · ${members}`;
+                    return (
+                      <button
+                        key={group.id}
+                        type="button"
+                        disabled={!sub}
+                        onClick={() => sub && onPick(sub, title)}
+                        className="w-full px-4 py-3 flex items-center gap-2 text-left cursor-pointer disabled:cursor-default"
+                      >
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm font-bold truncate">👥 {group.name} <span className="text-[11px] font-semibold text-slate-400">{group.member_ids.length}/{view.groupSize}</span></span>
+                          <span className="block text-[11px] text-slate-500 truncate">{members}</span>
+                        </span>
+                        {!sub ? <Pill tone="slate">ยังไม่ส่ง</Pill> : isGraded(sub) ? <Pill tone="green">{sub.total_score}/{sub.max_total_score ?? "-"}</Pill> : <Pill tone="amber">รอตรวจ</Pill>}
+                        {sub && <ChevronRight className="w-4 h-4 text-slate-400" />}
+                      </button>
+                    );
+                  })}
+              </Card>
+            )}
+            {loose > 0 && <p className="px-1 text-[11px] font-bold text-slate-500">ยังไม่มีกลุ่ม {loose} คน</p>}
+          </>
+        );
+      })()}
+      {groupWork && groups.error && <ErrorBox text={groups.error} />}
+      {!groupWork && rows.length > 0 && (
         <Card className="p-0! divide-y divide-slate-100 dark:divide-slate-800">
           {rows.map((sub) => (
             <div key={sub.id} className="px-4 py-3 flex items-center gap-2">
@@ -263,8 +316,8 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
                 <span className="block text-[11px] text-slate-500">{sub.auto_forfeited ? "ระบบส่งกระดาษเปล่า" : sub.status === "late" ? "ส่งช้า" : "ส่งแล้ว"}</span>
               </button>
               {tracksAway && <Integrity sub={sub} onOpen={audit.open} />}
-              <button type="button" onClick={() => onPick(sub)} aria-label={`ตรวจงานของ ${studentName(sub)}`} className="flex items-center gap-1 shrink-0 cursor-pointer">
-                {isGraded(sub) ? <Pill tone="green">{sub.total_score}/{sub.max_total_score ?? "-"}</Pill> : <Pill tone="amber">รอตรวจ</Pill>}
+              <button type="button" onClick={() => onPick(sub)} aria-label={`${survey ? "ดูคำตอบ" : "ตรวจงาน"}ของ ${studentName(sub)}`} className="flex items-center gap-1 shrink-0 cursor-pointer">
+                {survey ? <Pill tone="violet">ดูคำตอบ</Pill> : isGraded(sub) ? <Pill tone="green">{sub.total_score}/{sub.max_total_score ?? "-"}</Pill> : <Pill tone="amber">รอตรวจ</Pill>}
                 <ChevronRight className="w-4 h-4 text-slate-400" />
               </button>
             </div>
@@ -304,7 +357,7 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
   );
 }
 
-function GradeSubmission({ work, submission, onDone }: { work: Assignment; submission: Submission; onDone: () => void }) {
+function GradeSubmission({ work, submission, groupTitle, onDone }: { work: Assignment; submission: Submission; groupTitle?: string | null; onDone: () => void }) {
   const { teacher, liff, toast, invalidate, cacheScope } = useKit();
   const k = keys(cacheScope);
   // The questions are the same for every student of this work: loaded once.
@@ -317,6 +370,8 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
   const loadError = questions.error || answers.error;
   const [scores, setScores] = useState<Record<string, { score: string; comment: string }>>({});
   const [busy, setBusy] = useState(false);
+  // กิจกรรม: no score, only feedback.
+  const survey = isSurvey(work);
 
   const value = (q: Question, answer?: SubmissionAnswer) =>
     scores[q.id] || { score: answer?.teacher_score != null ? String(answer.teacher_score) : "", comment: answer?.teacher_comment || "" };
@@ -326,22 +381,31 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
     const grades: Array<{ questionId: string; score: number; comment: string }> = [];
     for (const q of data.questions) {
       const current = value(q, data.answers[q.id]);
+      if (survey) {
+        // Only the comments that changed (the server ignores the score).
+        if (scores[q.id] && current.comment.trim() !== (data.answers[q.id]?.teacher_comment || "")) grades.push({ questionId: q.id, score: 0, comment: current.comment.trim() });
+        continue;
+      }
       if (current.score === "") continue;
       const score = Number(current.score);
       if (Number.isNaN(score) || score < 0 || score > Number(q.max_score)) return toast(`คะแนนต้องอยู่ระหว่าง 0 ถึง ${q.max_score}`, "error");
       grades.push({ questionId: q.id, score, comment: current.comment.trim() });
     }
-    if (!grades.length) return toast("ยังไม่ได้ใส่คะแนน", "error");
+    if (!grades.length) {
+      if (survey) return onDone();
+      return toast("ยังไม่ได้ใส่คะแนน", "error");
+    }
     setBusy(true);
     try {
       await dataService.saveTeacherGrades(submission.id, grades, teacher.name);
       // "รอตรวจ" counts, this student's row and saved scores, and the results page change.
       invalidate("work");
+      // A group's grade was copied to every member's own answers too.
       staleCache([k.subs(work.id), k.answers(submission.id)]);
-      toast("บันทึกคะแนนแล้ว");
+      toast(survey ? "บันทึกความเห็นแล้ว" : "บันทึกคะแนนแล้ว");
       onDone();
     } catch (err) {
-      toast(errorText(err, "บันทึกคะแนนไม่สำเร็จ"), "error");
+      toast(errorText(err, survey ? "บันทึกไม่สำเร็จ" : "บันทึกคะแนนไม่สำเร็จ"), "error");
     } finally {
       setBusy(false);
     }
@@ -349,13 +413,13 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
 
   return (
     <>
-    <Page title={studentName(submission)} subtitle={work.title} refreshing={questions.refreshing || answers.refreshing}>
+    <Page title={groupTitle ? `👥 ${groupTitle}` : studentName(submission)} subtitle={groupTitle ? `${work.title} · คะแนนนี้ให้ทุกคนในกลุ่ม` : work.title} refreshing={questions.refreshing || answers.refreshing}>
       <div className="flex items-center justify-between gap-2">
         <Button tone="ghost" small onClick={onDone}>← รายชื่อ</Button>
         <span className="flex items-center gap-1.5">
           {work.is_exam && <Integrity sub={submission} onOpen={audit.open} />}
-          {/* A score copied from a retake is retaken there, not here. */}
-          {!(work.is_exam && submission.retake_submission_id) && (
+          {/* A score copied from a retake is retaken there, not here. A กิจกรรม is editable by the student until it closes. */}
+          {!survey && !(work.is_exam && submission.retake_submission_id) && (
             <AdjustControl adjust={adjust} target={{ key: submission.id, name: studentName(submission), sub: submission }} kind={work.is_exam ? "retry" : "edit"} />
           )}
         </span>
@@ -368,17 +432,22 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
           const current = value(q, answer);
           return (
             <Card key={q.id} className="space-y-2">
-              <p className="text-xs font-bold text-amber-600">ข้อ {index + 1} · เต็ม {q.max_score}</p>
+              <p className="text-xs font-bold text-amber-600">ข้อ {index + 1}{survey ? "" : ` · เต็ม ${q.max_score}`}</p>
               <p className="text-sm font-bold whitespace-pre-wrap">{q.question_text}</p>
               <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-slate-800 text-sm whitespace-pre-wrap wrap-break-word">
-                {answer?.text_answer || (!answer?.file_url && <span className="text-slate-400">ไม่ได้ตอบ</span>)}
+                {surveyAnswerText(q.type, answer?.text_answer) || (!answer?.file_url && <span className="text-slate-400">ไม่ได้ตอบ</span>)}
                 {answer?.file_url && (
                   <button type="button" onClick={() => liff.openWindow({ url: answer.file_url!, external: true })} className="mt-1 inline-flex items-center gap-1 text-amber-700 dark:text-amber-300 font-bold underline cursor-pointer">
                     <ExternalLink className="w-3.5 h-3.5" /> เปิดไฟล์ที่ส่ง
                   </button>
                 )}
               </div>
-              {(q.type === "multiple_choice" || q.type === "true_false") && q.ideal_answer && <p className="text-[11px] text-slate-500">เฉลย: {q.ideal_answer}</p>}
+              {!survey && (q.type === "multiple_choice" || q.type === "true_false") && q.ideal_answer && <p className="text-[11px] text-slate-500">เฉลย: {q.ideal_answer}</p>}
+              {survey ? (
+                <Field label="ความเห็นถึงนักเรียน">
+                  <input className={inputClass} value={current.comment} placeholder="ไม่บังคับ" onChange={(e) => setScores((all) => ({ ...all, [q.id]: { ...current, comment: e.target.value } }))} />
+                </Field>
+              ) : (
               <div className="grid grid-cols-[6rem_1fr] gap-2">
                 <Field label="คะแนน">
                   <input
@@ -398,10 +467,11 @@ function GradeSubmission({ work, submission, onDone }: { work: Assignment; submi
                   <input className={inputClass} value={current.comment} onChange={(e) => setScores((all) => ({ ...all, [q.id]: { ...current, comment: e.target.value } }))} />
                 </Field>
               </div>
+              )}
             </Card>
           );
         })}
-      {data && <Button className="w-full" busy={busy} onClick={save}>บันทึกคะแนน</Button>}
+      {data && <Button className="w-full" busy={busy} onClick={save}>{survey ? "บันทึกความเห็น" : "บันทึกคะแนน"}</Button>}
     </Page>
     {/* Outside the page: its cards' rise animation must not move the popup. */}
     {audit.modal}

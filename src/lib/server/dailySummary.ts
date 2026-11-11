@@ -1,5 +1,6 @@
 import 'server-only';
 import { dailySummaryCard, type FlexMessage, type SummaryRow } from '@/lib/line/flex';
+import { countToGrade } from '@/lib/utils/groupWork';
 import { webUrl } from '@/lib/line/groupLink';
 import { isLineQuotaError, LineApiError, messagesLeftThisMonth, pushLineMessages } from '@/lib/line/messaging';
 import type { createServiceSupabaseClient } from '@/lib/supabase/server';
@@ -168,7 +169,9 @@ export async function buildSummaries(supabase: Supabase, teacherIds: string[], n
 
     tally.handedToday += handed.filter((sub) => sub.submitted_at && Date.parse(sub.submitted_at) >= startMs).length;
     if (!work.is_survey) {
-      const toGrade = handed.filter((sub) => !isGraded(sub)).length;
+      // งานกลุ่ม counts each group once: members' copies share their hand-in time (no
+      // two students' own hand-ins do), so dedupe always — group_size is not read here.
+      const toGrade = countToGrade(handed.filter((sub) => !isGraded(sub)), true);
       tally.toGrade += toGrade;
       if (toGrade) tally.toGradeWorks.push({ id: work.id, isExam: !!work.is_exam });
     }

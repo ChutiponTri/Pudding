@@ -33,6 +33,7 @@ import {
   type WorkGroup,
 } from '@/lib/utils/workGroups';
 import { isSurvey } from '@/lib/utils/survey';
+import { pendingLabel } from '@/lib/utils/gradingStatus';
 
 type Tab = 'homework' | 'quiz' | 'survey';
 const TAB_ORDER: Tab[] = ['homework', 'quiz', 'survey'];
@@ -453,7 +454,7 @@ export function WorksBoard() {
           ? {
               key: 'results',
               label: tr('ประกาศคะแนน', 'Announce scores'),
-              hint: c.counts.pending > 0 ? tr(`รอตรวจ ${c.counts.pending}`, `${c.counts.pending} to grade`) : undefined,
+              hint: c.counts.pending > 0 ? tr(`รอตรวจ ${pendingLabel(c.counts.pendingItems, c.counts.pending, true)}`, `${pendingLabel(c.counts.pendingItems, c.counts.pending, false)} to grade`) : undefined,
               icon: <Megaphone className="w-4 h-4" />,
               disabled: c.counts.graded === 0,
               onSelect: () => announce([c]),

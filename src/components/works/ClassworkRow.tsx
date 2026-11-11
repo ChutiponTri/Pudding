@@ -7,7 +7,7 @@ import { BellRing, Clock, Copy, Edit2, EyeOff, Megaphone, MessageCircle, Rocket,
 import type { Assignment } from '@/types/database';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { getAssignmentWindow } from '@/lib/utils/assignmentWindow';
-import type { GradingCounts } from '@/lib/utils/gradingStatus';
+import { pendingLabel, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { isRetakeOf } from '@/lib/utils/retake';
 import { isSurvey } from '@/lib/utils/survey';
 import { ActionMenu, type ActionMenuItem } from '@/components/works/ActionMenu';
@@ -112,7 +112,7 @@ export function ClassworkRow({
       ? onAnnounceResults && {
           key: 'results',
           label: tr('ประกาศคะแนน', 'Announce scores'),
-          hint: counts.pending > 0 ? tr(`รอตรวจ ${counts.pending}`, `${counts.pending} to grade`) : undefined,
+          hint: counts.pending > 0 ? tr(`รอตรวจ ${pendingLabel(counts.pendingItems, counts.pending, true)}`, `${pendingLabel(counts.pendingItems, counts.pending, false)} to grade`) : undefined,
           icon: <Megaphone className="w-4 h-4" />,
           disabled: counts.graded === 0,
           onSelect: onAnnounceResults,

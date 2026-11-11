@@ -366,6 +366,8 @@ export function StatusView() {
   const open = work.rows.filter((row) => row.win.acceptsSubmissions);
   const waiting = work.rows.filter((row) => row.win.isDraft || row.win.isScheduled).length;
   const toGrade = work.rows.reduce((sum, row) => sum + row.toGrade, 0);
+  // งานกลุ่ม counts once per group; the students it covers are shown beside it.
+  const toGradeStudents = work.rows.reduce((sum, row) => sum + (row.toGradeStudents ?? row.toGrade), 0);
 
   // Work by category (as on the website), each in the order the teacher dragged it into.
   const groups = new Map<string, WorkRow[]>();
@@ -397,7 +399,7 @@ export function StatusView() {
           ["นักเรียน", work.data.students],
           ["รออนุมัติ", work.data.pending],
           ["งานที่เปิดรับ", open.length],
-          ["รอตรวจ", toGrade],
+          ["รอตรวจ", toGradeStudents !== toGrade ? `${toGrade} (${toGradeStudents} คน)` : toGrade],
         ].map(([label, value]) => (
           <Card key={label as string} className="text-center py-3!">
             <p className="text-2xl font-black text-slate-900 dark:text-white">{value}</p>

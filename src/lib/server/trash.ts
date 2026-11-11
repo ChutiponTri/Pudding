@@ -41,6 +41,8 @@ const RESTORE_ORDER = [
   'submission_answers',
   'submission_events',
   'quiz_attempts',
+  'work_groups',
+  'work_group_members',
 ] as const;
 
 const IN_CHUNK = 100;
@@ -84,17 +86,28 @@ const ids = (rows: Record<string, unknown>[]) => rows.map((r) => String(r.id));
 /** The rows that belong to these assignments (not the assignments themselves). */
 async function assignmentChildren(supabase: Supabase, assignmentIds: string[]): Promise<Payload> {
   if (!assignmentIds.length) return {};
-  const [questions, submissions, quizAttempts] = await Promise.all([
+  const [questions, submissions, quizAttempts, workGroups, workGroupMembers] = await Promise.all([
     selectAll(supabase, 'questions', 'assignment_id', assignmentIds),
     selectAll(supabase, 'submissions', 'assignment_id', assignmentIds),
     selectAll(supabase, 'quiz_attempts', 'assignment_id', assignmentIds),
+    selectAll(supabase, 'work_groups', 'assignment_id', assignmentIds),
+    selectAll(supabase, 'work_group_members', 'assignment_id', assignmentIds),
   ]);
   const submissionIds = ids(submissions);
   const [answers, events] = await Promise.all([
     selectAll(supabase, 'submission_answers', 'submission_id', submissionIds),
     selectAll(supabase, 'submission_events', 'submission_id', submissionIds),
   ]);
-  return { questions, submissions, submission_answers: answers, submission_events: events, quiz_attempts: quizAttempts };
+  return {
+    questions,
+    submissions,
+    submission_answers: answers,
+    submission_events: events,
+    quiz_attempts: quizAttempts,
+    // งานกลุ่ม (empty / skipped on databases without the tables).
+    work_groups: workGroups,
+    work_group_members: workGroupMembers,
+  };
 }
 
 /** A work as it is now, with everything that is deleted along with it. */

@@ -17,6 +17,7 @@ import { isRetake, retakeIncludes } from '@/lib/utils/retake';
 import { syncRetakeScores } from '@/lib/server/retake';
 import { mergeAwayEvents, readQuizAttempt, type QuizAttempt } from '@/lib/server/quizAttempts';
 import { quizOpenAction } from '@/lib/utils/quizExit';
+import { groupOfStudent, isGroupWork, syncGroupCopies } from '@/lib/server/workGroups';
 import type { Classroom, Question, Submission } from '@/types/database';
 
 /** What the student's browser sends; the body is untrusted, so only these fields are read. */
@@ -292,7 +293,26 @@ export async function POST(request: NextRequest) {
         : closedError;
       return NextResponse.json({ error }, { status: 409 });
     }
-    if (isEdit && !reopened) {
+    // งานกลุ่ม: handed in for the student's group, so they must be in one first.
+    const groupWork = isGroupWork(assignment);
+    const group = groupWork
+      ? await groupOfStudent(supabase, assignment_id, [targetUserDbId, ...(proxyStudent ? [proxyStudent.line_uid || ''] : actor.keys)]).catch((groupErr) => {
+          console.error('[POST /api/submissions] group lookup failed:', groupErr);
+          return null;
+        })
+      : null;
+    if (groupWork && !group) {
+      return NextResponse.json({
+        error: proxyStudent
+          ? `งานกลุ่ม: เลือกกลุ่มให้ ${firstName} ก่อนส่งงาน`
+          : 'งานกลุ่ม: เลือกกลุ่มก่อนส่งงาน',
+      }, { status: 409 });
+    }
+    // A กิจกรรม can be answered again while it is open (closedError covers a closed one).
+    if (isEdit && !reopened && !isSurvey(assignment)) {
+      if (groupWork) {
+        return NextResponse.json({ error: 'กลุ่มของคุณส่งงานนี้แล้ว (ส่งให้ทุกคนในกลุ่ม) — ติดต่อคุณครูหากต้องการแก้ไข' }, { status: 409 });
+      }
       return NextResponse.json({
         error: reopenExpired
           ? 'เวลาที่คุณครูเปิดให้แก้ไขงานนี้หมดแล้ว — ติดต่อคุณครูหากต้องการเวลาเพิ่ม'
@@ -584,6 +604,15 @@ export async function POST(request: NextRequest) {
         await syncRetakeScores(supabase, assignment, [subId]);
       } catch (syncError) {
         console.error('[POST /api/submissions] Retake score sync failed:', syncError);
+      }
+    }
+
+    // งานกลุ่ม: the same work counts for every member (before replying, so the teacher sees the whole group).
+    if (group) {
+      try {
+        await syncGroupCopies(supabase, assignment_id, subId, 'handin', group);
+      } catch (groupError) {
+        console.error('[POST /api/submissions] Group copy failed:', groupError);
       }
     }
 

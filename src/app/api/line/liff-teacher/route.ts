@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getActor } from '@/lib/auth/actor';
+import { countToGrade, isGroupWork } from '@/lib/utils/groupWork';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { canLinkLine, findBotGroupByRef, LINK_COLUMNS, liffConnectUrl, type LinkClassroom, type ServiceClient } from '@/lib/line/groupLink';
 import { guideMessages, inviteMessages, openClassMessages, remindPicture, resultsMessages, workMessages, type LineMessage } from '@/lib/line/teacherCards';
@@ -94,7 +95,7 @@ async function loadWork(supabase: ServiceClient, classroomId: string) {
     loadRoster(supabase, classroomId),
     supabase
       .from('submissions')
-      .select('assignment_id, student_id, status, total_score, assignments!inner(classroom_id)')
+      .select('assignment_id, student_id, status, total_score, submitted_at, assignments!inner(classroom_id)')
       .eq('assignments.classroom_id', classroomId),
   ]);
   const list = (works || []) as Assignment[];
@@ -103,10 +104,10 @@ async function loadWork(supabase: ServiceClient, classroomId: string) {
     // The join is not available: the hand-ins of each work, one more round trip.
     console.warn('LIFF teacher: submissions join failed, using two queries:', joined.error.message);
     subs = list.length
-      ? (await supabase.from('submissions').select('assignment_id, student_id, status, total_score').in('assignment_id', list.map((work) => work.id))).data
+      ? (await supabase.from('submissions').select('assignment_id, student_id, status, total_score, submitted_at').in('assignment_id', list.map((work) => work.id))).data
       : [];
   }
-  const rows = (subs || []) as Array<{ assignment_id: string; student_id: string; status: Submission['status']; total_score: number | null }>;
+  const rows = (subs || []) as Array<{ assignment_id: string; student_id: string; status: Submission['status']; total_score: number | null; submitted_at?: string | null }>;
   return {
     students: roster.students.length,
     pending: roster.pending.length,
@@ -116,7 +117,10 @@ async function loadWork(supabase: ServiceClient, classroomId: string) {
       const mine = rows.filter((row) => row.assignment_id === work.id && keys.has(row.student_id));
       const handed = mine.filter((row) => isHandedIn(row)).length;
       const graded = mine.filter((row) => isHandedIn(row) && row.total_score != null).length;
-      return { work, total: takers.length, handed, graded, toGrade: handed - graded, missing: Math.max(0, takers.length - handed) };
+      // งานกลุ่ม: one grade per group (members' copies share their hand-in time).
+      const toGrade = countToGrade(mine.filter((row) => isHandedIn(row) && row.total_score == null), isGroupWork(work));
+      // toGradeStudents: the students those hand-ins cover (more than toGrade for group work).
+      return { work, total: takers.length, handed, graded, toGrade, toGradeStudents: handed - graded, missing: Math.max(0, takers.length - handed) };
     }),
   };
 }

@@ -12,7 +12,8 @@ import { fetchCached, onCacheInvalidated, readCache, watchClassrooms } from '@/l
 import { GradingWorkspace } from '@/components/GradingWorkspace';
 import { Avatar } from '@/components/Avatar';
 import { GradingBar } from '@/components/AssignmentProgressCard';
-import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isStudentSubmission, needsGrading } from '@/lib/utils/gradingStatus';
+import { isGraded, isHandedIn, isIntegrityFlagged, isMissing, isStudentSubmission, needsGrading, pendingLabel } from '@/lib/utils/gradingStatus';
+import { countToGrade, isGroupWork } from '@/lib/utils/groupWork';
 import { rosterFor } from '@/lib/utils/retake';
 
 type Block = { assignment: Assignment; questions: Question[]; classroom: Classroom | null; subs: Submission[] };
@@ -123,16 +124,26 @@ export function CombinedGrading() {
           return true;
         });
         const handedIn = all.filter((r) => r.submission && isHandedIn(r.submission)).length;
-        const pending = all.filter((r) => r.submission && needsGrading(r.submission)).length;
+        const waiting = all.flatMap((r) => (r.submission && needsGrading(r.submission) ? [r.submission] : []));
+        const pending = waiting.length;
+        // งานกลุ่ม: a group's hand-in is graded once for all its members.
+        const pendingItems = countToGrade(waiting, isGroupWork(block.assignment));
         const graded = all.filter((r) => r.submission && isGraded(r.submission)).length;
-        return { block, all, rows, handedIn, pending, graded, missing: all.filter((r) => isMissing(r.submission)).length };
+        return { block, all, rows, handedIn, pending, pendingItems, graded, missing: all.filter((r) => isMissing(r.submission)).length };
       })
       .sort((a, b) => (a.block.classroom?.name || '').localeCompare(b.block.classroom?.name || '', 'th', { numeric: true }));
   }, [blocks, filter, query]);
 
   const totals = sections.reduce(
-    (t, s) => ({ all: t.all + s.all.length, pending: t.pending + s.pending, graded: t.graded + s.graded, missing: t.missing + s.missing, handedIn: t.handedIn + s.handedIn }),
-    { all: 0, pending: 0, graded: 0, missing: 0, handedIn: 0 }
+    (t, s) => ({
+      all: t.all + s.all.length,
+      pending: t.pending + s.pending,
+      pendingItems: t.pendingItems + s.pendingItems,
+      graded: t.graded + s.graded,
+      missing: t.missing + s.missing,
+      handedIn: t.handedIn + s.handedIn,
+    }),
+    { all: 0, pending: 0, pendingItems: 0, graded: 0, missing: 0, handedIn: 0 }
   );
 
   // "Next" runs through every class's hand-ins in the order shown.
@@ -217,7 +228,7 @@ export function CombinedGrading() {
               <GradingBar graded={totals.graded} pending={totals.pending} notSubmitted={Math.max(0, totals.all - totals.handedIn)} />
               <p className="text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
                 {tr(`ส่งแล้ว ${totals.handedIn}/${totals.all} · ตรวจแล้ว ${totals.graded}`, `${totals.handedIn}/${totals.all} handed in · ${totals.graded} graded`)}
-                {totals.pending > 0 && <span className="text-amber-700 dark:text-amber-400 font-bold">{tr(` · รอตรวจ ${totals.pending}`, ` · ${totals.pending} to grade`)}</span>}
+                {totals.pending > 0 && <span className="text-amber-700 dark:text-amber-400 font-bold">{tr(` · รอตรวจ ${pendingLabel(totals.pendingItems, totals.pending, true)}`, ` · ${pendingLabel(totals.pendingItems, totals.pending, false)} to grade`)}</span>}
               </p>
             </div>
           </div>
@@ -358,6 +369,7 @@ export function CombinedGrading() {
           initialAnswers={open.answers}
           grader={grader}
           tracksAway={!!open.block.assignment.is_exam}
+          isSurvey={!!open.block.assignment.is_survey}
           studentPosition={index >= 0 ? { index, total: order.length } : undefined}
           onClose={closeStudent}
           onPrevStudent={index > 0 ? () => openStudent(order[index - 1].block, order[index - 1].submission) : undefined}

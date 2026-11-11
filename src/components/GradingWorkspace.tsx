@@ -8,7 +8,7 @@ import { Avatar } from '@/components/Avatar';
 import { useSidebar } from '@/components/SidebarContext';
 import { isImageUrl, isPdfUrl as isPdf } from '@/lib/utils/referenceWork';
 import { isObjectiveAnswerCorrect, isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade';
-import { surveyAnswerText } from '@/lib/utils/survey';
+import { SURVEY_TYPE_LABEL, isSurveyType, surveyAnswerText } from '@/lib/utils/survey';
 import { TRUE_FALSE_OPTIONS } from '@/lib/utils/trueFalse';
 import { isIntegrityFlagged } from '@/lib/utils/gradingStatus';
 import {
@@ -58,6 +58,10 @@ interface GradingWorkspaceProps {
   studentPosition?: { index: number; total: number };
   /** Quizzes track leaving the screen; homework does not, so no integrity alert. */
   tracksAway?: boolean;
+  /** กิจกรรม: no scores; the teacher reads each answer and may leave feedback. */
+  isSurvey?: boolean;
+  /** งานกลุ่ม: the group being graded (its grade goes to every member). */
+  group?: { name: string; members: string[] };
   onClose: () => void;
   onPrevStudent?: () => void;
   onNextStudent?: () => void;
@@ -124,6 +128,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   grader,
   studentPosition,
   tracksAway = true,
+  isSurvey: survey = false,
+  group,
   onClose,
   onPrevStudent,
   onNextStudent,
@@ -226,7 +232,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
 
   const isDirty = (g?: QuestionGradeState) => !!g && (g.score !== g.savedScore || g.comment !== g.savedComment);
   const dirtyQuestions = questions.filter((q) => isDirty(grades[q.id]));
-  const gradedCount = questions.filter((q) => grades[q.id]?.savedScore !== '').length;
+  // A question is "done" once it has a saved score (an activity: saved feedback).
+  const isSaved = (g?: QuestionGradeState) => (survey ? !!g?.savedComment : g?.savedScore !== '');
+  const gradedCount = questions.filter((q) => isSaved(grades[q.id])).length;
   const maxTotal = questions.reduce((sum, q) => sum + Number(q.max_score || 0), 0);
   const runningTotal = roundHalf(questions.reduce((sum, q) => sum + (Number(grades[q.id]?.score) || 0), 0));
 
@@ -298,6 +306,11 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
     for (const q of targets) {
       const g = grades[q.id];
       if (!g || !isDirty(g)) continue;
+      // An activity has no score: only the feedback is sent (the server ignores the score).
+      if (survey) {
+        pending.push({ q, score: 0, comment: g.comment });
+        continue;
+      }
       const score = Number(g.score);
       const invalid =
         g.score.trim() === ''
@@ -331,6 +344,10 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
         for (const { q, score, comment } of pending) {
           const record = { teacher_id: grader.teacher_id, teacher_name: grader.name, teacher_role: grader.role, score, comment, graded_at: gradedAt };
           const existing = prev[q.id] || ({ id: `ans-${submission.id}-${q.id}`, submission_id: submission.id, question_id: q.id } as SubmissionAnswer);
+          if (survey) {
+            next[q.id] = { ...existing, teacher_comment: comment };
+            continue;
+          }
           next[q.id] = {
             ...existing,
             teacher_score: isResearcher ? existing.teacher_score : score,
@@ -344,7 +361,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       setGrades((prev) => {
         const next = { ...prev };
         for (const { q, score, comment } of pending) {
-          next[q.id] = { ...prev[q.id], score: String(score), savedScore: String(score), savedComment: comment, status: 'saved' };
+          next[q.id] = survey
+            ? { ...prev[q.id], savedComment: comment, status: 'saved' }
+            : { ...prev[q.id], score: String(score), savedScore: String(score), savedComment: comment, status: 'saved' };
         }
         return next;
       });
@@ -356,7 +375,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
         for (const { q } of pending) next[q.id] = { ...prev[q.id], status: 'error' };
         return next;
       });
-      alert(err instanceof Error ? `${th ? 'บันทึกคะแนนไม่สำเร็จ' : 'Could not save'}: ${err.message}` : th ? 'บันทึกคะแนนไม่สำเร็จ' : 'Could not save');
+      const failed = survey ? (th ? 'บันทึกไม่สำเร็จ' : 'Could not save') : th ? 'บันทึกคะแนนไม่สำเร็จ' : 'Could not save';
+      alert(err instanceof Error ? `${failed}: ${err.message}` : failed);
       return false;
     }
   };
@@ -370,7 +390,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
     try {
       if (!(await saveQuestions(dirtyQuestions, true))) return false;
       // Researcher scores never change the official total.
-      if (dirtyQuestions.length && !isResearcher && onGraded) {
+      if (dirtyQuestions.length && !isResearcher && !survey && onGraded) {
         const scoreOf = (q: Question) => (isDirty(grades[q.id]) ? grades[q.id].score : grades[q.id]?.savedScore ?? '');
         const complete = questions.every((q) => scoreOf(q).trim() !== '');
         onGraded(complete ? Math.round(questions.reduce((sum, q) => sum + Number(scoreOf(q)), 0) * 10) / 10 : null, maxTotal);
@@ -435,7 +455,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
   const roleLabel = (role: TeacherRole) =>
     role === 'primary' ? (th ? 'ครูประจำวิชา' : 'Teacher') : role === 'assistant' ? 'TA' : th ? 'ผู้ตรวจวิจัย' : 'Researcher';
   const typeLabel = (type: Question['type']) =>
-    ({
+    survey && isSurveyType(type) ? SURVEY_TYPE_LABEL[type][th ? 'th' : 'en'] : ({
       multiple_choice: th ? 'ปรนัย' : 'Multiple choice',
       true_false: th ? 'ถูก/ผิด' : 'True/false',
       short_answer: th ? 'เขียนตอบสั้น' : 'Short answer',
@@ -476,15 +496,28 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
               className="w-9 h-9 text-xs"
             />
             <div className="min-w-0">
-              <p className="text-sm font-black text-slate-900 dark:text-white truncate">{studentName}</p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                {submission.student?.student_id ? `${th ? 'รหัส' : 'ID'} ${submission.student.student_id}` : ''}
-                {studentPosition ? `${submission.student?.student_id ? ' · ' : ''}${th ? 'คนที่' : 'Student'} ${studentPosition.index + 1}/${studentPosition.total}` : ''}
-              </p>
+              {group ? (
+                <>
+                  <p className="text-sm font-black text-slate-900 dark:text-white truncate">👥 {group.name}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate" title={group.members.join(', ')}>
+                    {studentPosition ? `${th ? 'กลุ่มที่' : 'Group'} ${studentPosition.index + 1}/${studentPosition.total} · ` : ''}
+                    {group.members.join(', ')}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-black text-slate-900 dark:text-white truncate">{studentName}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {submission.student?.student_id ? `${th ? 'รหัส' : 'ID'} ${submission.student.student_id}` : ''}
+                    {studentPosition ? `${submission.student?.student_id ? ' · ' : ''}${th ? 'คนที่' : 'Student'} ${studentPosition.index + 1}/${studentPosition.total}` : ''}
+                  </p>
+                </>
+              )}
             </div>
           </div>
 
           {/* Progress */}
+          {!survey && (
           <div className="hidden md:flex flex-col items-end gap-1 shrink-0 w-44">
             <div className="flex items-baseline gap-2 text-xs">
               <span className="text-slate-500 dark:text-slate-400">{th ? 'ตรวจแล้ว' : 'Graded'} {gradedCount}/{questions.length}</span>
@@ -499,6 +532,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
               />
             </div>
           </div>
+          )}
 
           {/* Grader */}
           <div className="hidden sm:flex items-center gap-2 pl-3 ml-1 border-l border-slate-200 dark:border-slate-800 shrink-0">
@@ -513,6 +547,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
         </div>
 
         {/* Compact progress for phones, where the header progress block is hidden */}
+        {!survey && (
         <div className="md:hidden px-3 sm:px-6 pb-2.5 flex items-center gap-3 text-[11px]">
           <div className="flex-1 h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
             <div
@@ -525,6 +560,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             {runningTotal}/{maxTotal}
           </span>
         </div>
+        )}
 
         {/* Phones: jump to a question (the desktop list sits in the side panel) */}
         {questions.length > 1 && (
@@ -532,7 +568,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
             {questions.map((q, idx) => {
               const g = grades[q.id];
               const dirty = isDirty(g);
-              const saved = g?.savedScore !== '';
+              const saved = isSaved(g);
               return (
                 <button
                   key={q.id}
@@ -547,7 +583,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                   }`}
                 >
                   {th ? 'ข้อ' : 'Q'} {idx + 1}
-                  <span className="font-mono font-semibold opacity-70 tabular-nums">{g?.score !== '' ? g?.score : '–'}</span>
+                  {!survey && <span className="font-mono font-semibold opacity-70 tabular-nums">{g?.score !== '' ? g?.score : '–'}</span>}
                 </button>
               );
             })}
@@ -569,12 +605,12 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
       <div className="flex-1 flex overflow-hidden">
         {/* ── Question list ── */}
         <aside className="w-52 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 hidden md:flex flex-col gap-3 overflow-y-auto">
-          <span className="px-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">{th ? 'ข้อสอบ' : 'Questions'}</span>
+          <span className="px-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">{survey ? (th ? 'คำถาม' : 'Questions') : th ? 'ข้อสอบ' : 'Questions'}</span>
           <nav className="space-y-1">
             {questions.map((q, idx) => {
               const g = grades[q.id];
               const dirty = isDirty(g);
-              const saved = g?.savedScore !== '';
+              const saved = isSaved(g);
               return (
                 <button
                   key={q.id}
@@ -588,9 +624,11 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                     />
                     {th ? 'ข้อ' : 'Q'} {idx + 1}
                   </span>
-                  <span className="font-mono text-[11px] text-slate-400 tabular-nums">
-                    {g?.score !== '' ? g?.score : '–'}/{q.max_score}
-                  </span>
+                  {!survey && (
+                    <span className="font-mono text-[11px] text-slate-400 tabular-nums">
+                      {g?.score !== '' ? g?.score : '–'}/{q.max_score}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -648,7 +686,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
               const controls = imageControls[q.id] || { zoom: 1, rotate: 0 };
               const setControls = (zoom: number, rotate: number) => setImageControls((prev) => ({ ...prev, [q.id]: { zoom, rotate } }));
               const otherGrades = Object.values(ans?.co_grades || {}).filter((r) => r.teacher_id !== grader.teacher_id);
-              const isObjective = isObjectiveQuestion(q);
+              // An activity's choices have no key: its answers show as text.
+              const isObjective = !survey && isObjectiveQuestion(q);
               const choiceOptions = q.options?.length ? q.options : q.type === 'true_false' ? [...TRUE_FALSE_OPTIONS] : [];
               const isCorrect = isObjectiveAnswerCorrect(q, ans?.text_answer);
               // A saved score above the full score (e.g. the full score was lowered later) is flagged until fixed.
@@ -680,7 +719,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                             {q.indicator.code}
                           </span>
                         )}
-                        <span className="text-[11px] text-slate-400">{th ? `เต็ม ${q.max_score} คะแนน` : `${q.max_score} pts`}</span>
+                        {!survey && <span className="text-[11px] text-slate-400">{th ? `เต็ม ${q.max_score} คะแนน` : `${q.max_score} pts`}</span>}
                       </div>
                     </div>
                     <span className="shrink-0 text-[11px] font-bold">
@@ -688,7 +727,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                         <span className="text-slate-400 flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" />{th ? 'กำลังบันทึก' : 'Saving'}</span>
                       ) : dirty ? (
                         <span className="text-amber-600 dark:text-amber-400">{th ? 'ยังไม่บันทึก' : 'Unsaved'}</span>
-                      ) : g?.savedScore !== '' ? (
+                      ) : isSaved(g) ? (
                         <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />{th ? 'บันทึกแล้ว' : 'Saved'}</span>
                       ) : null}
                     </span>
@@ -882,7 +921,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                   </div>
 
                   {/* Other graders */}
-                  {otherGrades.length > 0 && (
+                  {!survey && otherGrades.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                       {otherGrades.map((r) => (
                         <span key={r.teacher_id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
@@ -896,6 +935,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
 
                   {/* Grading panel */}
                   <div className={`p-3 sm:p-4 rounded-2xl space-y-3 ${isResearcher ? 'bg-purple-50/70 dark:bg-purple-950/30' : 'bg-amber-50/60 dark:bg-amber-950/20'}`}>
+                    {survey ? (
+                      <span className="block text-xs font-bold text-slate-700 dark:text-slate-300">{th ? 'ความเห็นถึงนักเรียน' : 'Feedback'}</span>
+                    ) : (
                     <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                       <span className="text-xs font-bold text-slate-700 dark:text-slate-300 w-full sm:w-auto">
                         {isResearcher ? (th ? 'คะแนนวิจัย' : 'Research score') : t('grading.workspace.teacher_score_label')}
@@ -949,8 +991,9 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                         ))}
                       </div>
                     </div>
+                    )}
 
-                    {(scoreHints[q.id] || scoreInvalid) && (
+                    {!survey && (scoreHints[q.id] || scoreInvalid) && (
                       <p role="alert" className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1">
                         <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                         {scoreHints[q.id] || (th ? `คะแนนต้องอยู่ระหว่าง 0 ถึง ${maxScoreOf(q)}` : `Score must be 0 – ${maxScoreOf(q)}`)}
@@ -972,12 +1015,14 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
                     <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none -mx-1 px-1">
                       <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                       {/* Suggestions follow the score: its level's comments first, then those for any score. */}
+                      {!survey && (
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap shrink-0 ${level ? LEVEL_TONE[level] : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}
                       >
                         {level ? scoreLevelLabel(level, th) : th ? 'ใส่คะแนนเพื่อดูคำแนะนำตามระดับ' : 'Enter a score for matching suggestions'}
                       </span>
-                      {rankedPresets(g?.comment || '', level).map((preset) => (
+                      )}
+                      {rankedPresets(g?.comment || '', survey ? null : level).map((preset) => (
                         <button
                           key={preset.id}
                           type="button"
@@ -1038,6 +1083,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
         <span className={`flex-1 min-w-0 text-xs font-semibold truncate ${dirtyQuestions.length ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}`}>
           {dirtyQuestions.length
             ? th ? `ยังไม่บันทึก ${dirtyQuestions.length} ข้อ` : `${dirtyQuestions.length} unsaved`
+            : survey
+            ? th ? 'ความเห็นไม่บังคับ' : 'Feedback is optional'
             : gradedCount === questions.length
             ? th ? 'บันทึกครบทุกข้อแล้ว' : 'All questions saved'
             : th ? `ตรวจแล้ว ${gradedCount}/${questions.length} ข้อ` : `${gradedCount}/${questions.length} graded`}
@@ -1064,6 +1111,8 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           <span className="hidden sm:inline">
             {isLast
               ? th ? 'บันทึกแล้วปิด' : 'Save & close'
+              : group
+              ? th ? 'บันทึกแล้วไปกลุ่มถัดไป' : 'Save & next group'
               : th ? 'บันทึกแล้วไปคนถัดไป' : 'Save & next'}
           </span>
           <span className="sm:hidden whitespace-nowrap">

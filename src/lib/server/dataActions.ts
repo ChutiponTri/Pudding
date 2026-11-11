@@ -38,6 +38,8 @@ import { classroomTeacherIds, deleteFromTrash, listTrash, purgeExpiredTrashOccas
 import { clearRetiredAutoScores, recomputeSubmissionTotals, regradeObjectiveQuestions, rescaleChangedMaxScores, zeroFillNoSubmissions } from '@/lib/server/grading';
 import { invalidMaxScoreMessage, isObjectiveQuestion, missingKeyMessage } from '@/lib/utils/autoGrade';
 import { cleanSurveyQuestion, isSurvey, surveyProblem } from '@/lib/utils/survey';
+import { resolveProxyStudent } from '@/lib/server/proxyStudent';
+import { GROUP_MIGRATION_MESSAGE, MAX_GROUP_SIZE, groupError, isGroupWork, loadWorkGroups, syncGroupCopies } from '@/lib/server/workGroups';
 import { indicatorChoicesFor, missingIndicatorMessage } from '@/lib/utils/questionIndicator';
 import { isRetake, isRetakeOf, retakeIncludes, rosterFor } from '@/lib/utils/retake';
 import { RETAKE_MIGRATION_MESSAGE, noteRetakeSheetReset, resyncRetakesOf, syncRetakeScores, unlinkRetake, withHistoryEntry } from '@/lib/server/retake';
@@ -57,6 +59,8 @@ import type {
   TeacherRole,
   User,
   FormerStudent,
+  WorkGroup,
+  WorkGroupsView,
 } from '@/types/database';
 
 /**
@@ -120,7 +124,16 @@ async function withTeacherAvatars<T extends { teachers?: ClassroomTeacher[] | nu
 /** PostgREST `in.(…)` lists live in the URL, so keep each request reasonably small. */
 const IN_CHUNK = 150;
 /** Assignment columns added by later migrations; dropped from writes when the database lacks them. */
-const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes', 'close_at', 'counts_toward_grade', 'is_survey'] as const;
+const OPTIONAL_ASSIGNMENT_COLUMNS = ['group_name', 'publish_at', 'attachments', 'quiz_duration_minutes', 'close_at', 'counts_toward_grade', 'is_survey', 'group_size'] as const;
+
+/** งานกลุ่ม: a whole number of students per group (2 – MAX_GROUP_SIZE) on homework only; anything else is individual work. */
+function cleanGroupSize<T extends Partial<Assignment>>(data: T, base: Partial<Assignment> = {}): T {
+  if (!('group_size' in data) && !('is_exam' in data)) return data;
+  const merged = { ...base, ...data };
+  const size = Math.floor(Number(merged.group_size));
+  const valid = !merged.is_exam && !merged.is_survey && Number.isFinite(size) && size >= 2;
+  return { ...data, group_size: valid ? Math.min(size, MAX_GROUP_SIZE) : null };
+}
 const ATTACHMENTS_MIGRATION_MESSAGE =
   'ฐานข้อมูลยังไม่รองรับการแนบหลายไฟล์ (ยังไม่มีคอลัมน์ attachments) กรุณารัน SQL ใน supabase_schema_update.sql ก่อน หรือแนบเพียง 1 รายการ';
 
@@ -825,6 +838,82 @@ async function assertCoursePeriodFree(
   if (taken) {
     throw new HttpError(409, `รายวิชา ${normalized} มีอยู่แล้วในภาคเรียน ${semester}/${yearCe + 543} กรุณาเลือกภาคเรียนอื่น`);
   }
+}
+
+/**
+ * งานกลุ่ม: the work and its classroom for a group action, if the caller
+ * teaches the classroom or is a student it is published for.
+ */
+async function groupWorkContext(supabase: Supabase, actor: Actor | null, assignmentId: string) {
+  if (!actor) throw UNAUTHORIZED();
+  const { data, error } = await supabase.from('assignments').select('*, classroom:classrooms(*)').eq('id', assignmentId).maybeSingle();
+  if (error) throw toDatabaseError(error, 'assignments');
+  if (!data) throw new HttpError(404, 'ไม่พบงานนี้');
+  const { classroom, ...assignment } = data as Assignment & { classroom?: Classroom | null };
+  if (!classroom) throw new HttpError(404, 'ไม่พบห้องเรียน');
+  const role = await classroomRole(supabase, actor, classroom);
+  if (role !== 'teacher' && role !== 'student') throw FORBIDDEN();
+  if (actor.kind === 'student' && (!isAssignmentPublished(assignment) || !retakeIncludes(assignment, actor.keys))) throw FORBIDDEN();
+  if (!isGroupWork(assignment)) throw new HttpError(400, 'งานนี้ไม่ใช่งานกลุ่ม');
+  return { assignment: assignment as Assignment, classroom };
+}
+
+/**
+ * Borrowed phone ("ส่งแทนเพื่อน"): the classmate the phone's owner acts for,
+ * found by student number as for a hand-in. Undefined = the caller themselves.
+ */
+async function groupKeysFor(supabase: Supabase, actor: Actor | null, classroom: Classroom, proxyNumber?: unknown): Promise<string[] | undefined> {
+  if (!actor || actor.kind !== 'student' || typeof proxyNumber !== 'string' || !proxyNumber.trim()) return undefined;
+  const friend = await resolveProxyStudent(supabase, actor, classroom, proxyNumber);
+  return [friend.id, friend.line_uid].filter((k): k is string => !!k);
+}
+
+/** Groups, the roster (names and photos only; teachers also see school numbers) and the student's own group. */
+async function workGroupsView(
+  supabase: Supabase,
+  actor: Actor,
+  assignment: Assignment,
+  classroom: Classroom,
+  hydratedRoster?: User[],
+  /** Borrowed phone: the classmate's ids, so "me" is the classmate. */
+  asKeys?: string[]
+): Promise<WorkGroupsView> {
+  const [list, roster] = await Promise.all([loadWorkGroups(supabase, assignment.id), hydratedRoster ? Promise.resolve(hydratedRoster) : hydratedStudents(supabase, classroom)]);
+  const forTeacher = actor.kind === 'teacher';
+  const students = rosterFor(assignment, roster).map((s) => ({
+    id: s.id,
+    first_name: s.first_name,
+    last_name: s.last_name,
+    avatar_url: s.avatar_url,
+    ...(forTeacher ? { student_id: s.student_id } : {}),
+  }));
+  const keys = asKeys || (actor.kind === 'student' ? actor.keys : []);
+  const me = actor.kind === 'student' ? roster.find((s) => keys.includes(s.id) || (!!s.line_uid && keys.includes(s.line_uid)))?.id || null : null;
+  return {
+    groupSize: Number(assignment.group_size) || 0,
+    groups: list,
+    students,
+    me,
+    myGroupId: me ? list.find((g) => g.member_ids.includes(me))?.id || null : null,
+  };
+}
+
+/** A group that already handed in stays as it is (its members all have the work). */
+const assertGroupOpen = (group: WorkGroup) => {
+  if (group.submitted_at) throw new HttpError(409, `“${group.name}” ส่งงานแล้ว จึงเปลี่ยนสมาชิกไม่ได้`);
+};
+
+/** Students may only change groups while the work still takes hand-ins. */
+const assertGroupsChangeable = (actor: Actor, assignment: Assignment) => {
+  if (actor.kind === 'student' && !getAssignmentWindow(assignment).acceptsSubmissions) throw new HttpError(409, 'ปิดรับงานนี้แล้ว จึงเปลี่ยนกลุ่มไม่ได้');
+};
+
+/** Adds students to a group in one insert; the (assignment, student) key refuses anyone already in a group. */
+async function insertGroupMembers(supabase: Supabase, assignmentId: string, groupId: string, studentIds: string[]) {
+  const { error } = await supabase.from('work_group_members').insert(studentIds.map((student_id) => ({ assignment_id: assignmentId, student_id, group_id: groupId })));
+  if (!error) return;
+  if (error.code === '23505') throw new HttpError(409, 'มีบางคนอยู่กลุ่มอื่นแล้ว — ลองเลือกใหม่อีกครั้ง');
+  throw groupError(error);
 }
 
 export const dataActions = {
@@ -1850,7 +1939,7 @@ export const dataActions = {
 
   /** The assignment with its questions. Students get published work of their classroom, without answer keys. */
   /** withClassroom: teachers also get the classroom with its roster (saves the grading page a request). */
-  async getAssignmentById({ supabase, actor }: Ctx, id: string, options: { withClassroom?: boolean } = {}) {
+  async getAssignmentById({ supabase, actor }: Ctx, id: string, options: { withClassroom?: boolean; withGroups?: boolean } = {}) {
     if (!actor) throw UNAUTHORIZED();
     const [assignmentResult, questionsResult] = await Promise.all([
       supabase.from('assignments').select('*, classroom:classrooms(*)').eq('id', id).maybeSingle(),
@@ -1865,15 +1954,159 @@ export const dataActions = {
     if (role === 'teacher') {
       if (!options.withClassroom) return { assignment, questions };
       const [hydrated] = await hydrateClassrooms(supabase, [classroom!]);
-      return { assignment, questions, classroom: hydrated };
+      // งานกลุ่ม: the grading page gets the groups in the same request.
+      const workGroups = isGroupWork(assignment)
+        ? await workGroupsView(supabase, actor, assignment, hydrated, hydrated.students || []).catch((groupErr) => {
+            console.warn('[getAssignmentById] groups unavailable:', groupErr);
+            return null;
+          })
+        : null;
+      return { assignment, questions, classroom: hydrated, ...(workGroups ? { workGroups } : {}) };
     }
     if (!role || !isAssignmentPublished(assignment)) throw FORBIDDEN();
     if (actor.kind === 'student' && !retakeIncludes(assignment, actor.keys)) throw new HttpError(403, RETAKE_NOT_YOURS);
-    return { assignment, questions: questionsForStudent(questions) };
+    // งานกลุ่ม: the groups come with the work, so opening it needs no extra request.
+    const workGroups = options.withGroups !== false && actor.kind === 'student' && isGroupWork(assignment)
+      ? await workGroupsView(supabase, actor, assignment, classroom!).catch((groupErr) => {
+          console.warn('[getAssignmentById] groups unavailable:', groupErr);
+          return null;
+        })
+      : null;
+    return { assignment, questions: questionsForStudent(questions), ...(workGroups ? { workGroups } : {}) };
+  },
+
+  /** งานกลุ่ม: every group of the work, the roster and (students) their own group. */
+  async getWorkGroups({ supabase, actor }: Ctx, assignmentId: string, proxyNumber?: string): Promise<WorkGroupsView> {
+    const { assignment, classroom } = await groupWorkContext(supabase, actor, assignmentId);
+    const asKeys = await groupKeysFor(supabase, actor, classroom, proxyNumber);
+    return workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
+  },
+
+  /**
+   * Creates a group. A student creates it with themselves plus the classmates
+   * they picked; a teacher with the picked students. Nobody may already be in
+   * a group (checked again by the database, so two phones cannot both take
+   * the same student).
+   */
+  async createWorkGroup({ supabase, actor }: Ctx, assignmentId: string, memberIds: string[], name?: string, proxyNumber?: string): Promise<WorkGroupsView> {
+    const { assignment, classroom } = await groupWorkContext(supabase, actor, assignmentId);
+    const asKeys = await groupKeysFor(supabase, actor, classroom, proxyNumber);
+    assertGroupsChangeable(actor!, assignment);
+    const view = await workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
+    if (actor!.kind === 'student' && !view.me) throw FORBIDDEN();
+    if (view.myGroupId) throw new HttpError(409, 'คุณอยู่ในกลุ่มแล้ว');
+    const roster = new Set(view.students.map((s) => s.id));
+    const ids = [...new Set([...(view.me ? [view.me] : []), ...(Array.isArray(memberIds) ? memberIds : [])])].filter((id) => typeof id === 'string' && roster.has(id));
+    if (!ids.length) throw new HttpError(400, 'เลือกสมาชิกอย่างน้อย 1 คน');
+    if (ids.length > view.groupSize) throw new HttpError(400, `กลุ่มละไม่เกิน ${view.groupSize} คน`);
+    const taken = ids.filter((id) => view.groups.some((g) => g.member_ids.includes(id)));
+    if (taken.length) {
+      const names = view.students.filter((s) => taken.includes(s.id)).map((s) => s.first_name).join(', ');
+      throw new HttpError(409, `${names} อยู่กลุ่มอื่นแล้ว`);
+    }
+    const used = new Set(view.groups.map((g) => g.name));
+    let number = view.groups.length + 1;
+    while (used.has(`กลุ่ม ${number}`)) number += 1;
+    const groupName = (typeof name === 'string' ? name.trim().slice(0, 40) : '') || `กลุ่ม ${number}`;
+    const groupId = `wg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const { error } = await supabase.from('work_groups').insert({ id: groupId, assignment_id: assignment.id, name: groupName, created_by: view.me || requireTeacher(actor).userId });
+    if (error) throw groupError(error);
+    try {
+      await insertGroupMembers(supabase, assignment.id, groupId, ids);
+    } catch (memberError) {
+      await supabase.from('work_groups').delete().eq('id', groupId);
+      throw memberError;
+    }
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId: assignment.id }));
+    return workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
+  },
+
+  /** A student joins a group that still has room and has not handed in. */
+  async joinWorkGroup({ supabase, actor }: Ctx, assignmentId: string, groupId: string, proxyNumber?: string): Promise<WorkGroupsView> {
+    const { assignment, classroom } = await groupWorkContext(supabase, actor, assignmentId);
+    const asKeys = await groupKeysFor(supabase, actor, classroom, proxyNumber);
+    requireStudent(actor);
+    assertGroupsChangeable(actor!, assignment);
+    const view = await workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
+    if (!view.me) throw FORBIDDEN();
+    if (view.myGroupId) throw new HttpError(409, 'คุณอยู่ในกลุ่มแล้ว');
+    const group = view.groups.find((g) => g.id === groupId);
+    if (!group) throw new HttpError(404, 'ไม่พบกลุ่มนี้แล้ว');
+    assertGroupOpen(group);
+    if (group.member_ids.length >= view.groupSize) throw new HttpError(409, `“${group.name}” เต็มแล้ว`);
+    await insertGroupMembers(supabase, assignment.id, group.id, [view.me]);
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId: assignment.id }));
+    return workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
+  },
+
+  /** Adds classmates to a group: a member adds to their own group, a teacher to any group. */
+  async addWorkGroupMembers({ supabase, actor }: Ctx, assignmentId: string, groupId: string, memberIds: string[], proxyNumber?: string): Promise<WorkGroupsView> {
+    const { assignment, classroom } = await groupWorkContext(supabase, actor, assignmentId);
+    const asKeys = await groupKeysFor(supabase, actor, classroom, proxyNumber);
+    assertGroupsChangeable(actor!, assignment);
+    const view = await workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
+    const group = view.groups.find((g) => g.id === groupId);
+    if (!group) throw new HttpError(404, 'ไม่พบกลุ่มนี้แล้ว');
+    if (actor!.kind === 'student' && view.myGroupId !== group.id) throw FORBIDDEN();
+    assertGroupOpen(group);
+    const roster = new Set(view.students.map((s) => s.id));
+    const ids = [...new Set(Array.isArray(memberIds) ? memberIds : [])].filter((id) => typeof id === 'string' && roster.has(id) && !group.member_ids.includes(id));
+    if (!ids.length) return view;
+    if (group.member_ids.length + ids.length > view.groupSize) throw new HttpError(400, `กลุ่มละไม่เกิน ${view.groupSize} คน`);
+    const taken = ids.filter((id) => view.groups.some((g) => g.member_ids.includes(id)));
+    if (taken.length) {
+      const names = view.students.filter((s) => taken.includes(s.id)).map((s) => s.first_name).join(', ');
+      throw new HttpError(409, `${names} อยู่กลุ่มอื่นแล้ว`);
+    }
+    await insertGroupMembers(supabase, assignment.id, group.id, ids);
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId: assignment.id }));
+    return workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
+  },
+
+  /**
+   * Leaves a group (a student, themselves, before the group hands in), or a
+   * teacher takes a student out of one. An empty group is removed.
+   */
+  async leaveWorkGroup({ supabase, actor }: Ctx, assignmentId: string, studentId?: string, proxyNumber?: string): Promise<WorkGroupsView> {
+    const { assignment, classroom } = await groupWorkContext(supabase, actor, assignmentId);
+    const asKeys = await groupKeysFor(supabase, actor, classroom, proxyNumber);
+    assertGroupsChangeable(actor!, assignment);
+    const view = await workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
+    const target = actor!.kind === 'student' ? view.me : typeof studentId === 'string' ? studentId : null;
+    const group = target ? view.groups.find((g) => g.member_ids.includes(target)) : undefined;
+    if (!target || !group) return view;
+    if (actor!.kind === 'student') assertGroupOpen(group);
+    // A teacher may still fix a group that handed in: the student taken out loses the
+    // group's work (their copy), so they show as not handed in and may join another group.
+    // The group itself keeps its work, so it must keep at least one member.
+    const handedIn = !!group.submitted_at;
+    if (handedIn && group.member_ids.length <= 1) throw new HttpError(409, `“${group.name}” ส่งงานแล้ว ต้องเหลือสมาชิกอย่างน้อย 1 คน`);
+    const { error } = await supabase.from('work_group_members').delete().eq('assignment_id', assignment.id).eq('student_id', target);
+    if (error) throw groupError(error);
+    if (group.member_ids.length <= 1) await supabase.from('work_groups').delete().eq('id', group.id);
+    if (handedIn) {
+      const { data: user } = await supabase.from('users').select('id, line_uid').or(`id.eq.${pgValue(target)},line_uid.eq.${pgValue(target)}`).limit(1).maybeSingle();
+      const ids = [...new Set([target, user?.id, user?.line_uid].filter((v): v is string => !!v))];
+      const { data: copies } = await supabase.from('submissions').select('id').eq('assignment_id', assignment.id).in('student_id', ids);
+      const copyIds = (copies || []).map((row) => row.id as string);
+      if (copyIds.length) {
+        // Files stay: the other members' copies still point at them.
+        await supabase.from('submission_answers').delete().in('submission_id', copyIds);
+        const { error: deleteError } = await supabase.from('submissions').delete().in('id', copyIds);
+        if (deleteError) throw toDatabaseError(deleteError, 'submissions');
+      }
+      // Whoever handed in left: the group's work is now credited to a remaining member.
+      if (group.submitted_by && ids.includes(group.submitted_by)) {
+        const next = group.member_ids.find((id) => id !== target);
+        if (next) await supabase.from('work_groups').update({ submitted_by: next }).eq('id', group.id);
+      }
+    }
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId: assignment.id }));
+    return workGroupsView(supabase, actor!, assignment, classroom, undefined, asKeys);
   },
 
   async getQuestions(ctx: Ctx, assignmentId: string) {
-    return (await dataActions.getAssignmentById(ctx, assignmentId)).questions;
+    return (await dataActions.getAssignmentById(ctx, assignmentId, { withGroups: false })).questions;
   },
 
   async createAssignment(
@@ -1910,6 +2143,12 @@ export const dataActions = {
       // Every graded question names its indicator / lesson plan (no default).
       await assertIndicators(supabase, assignmentData.course_id || classroom.course_id, questionsData);
     }
+    assignmentData = cleanGroupSize(assignmentData);
+    if (!assignmentData.group_size) {
+      // Individual work: no column needed on older databases.
+      const { group_size: _size, ...solo } = assignmentData;
+      assignmentData = solo;
+    }
     const stamp = Date.now();
     const id = `assign-${stamp}-${Math.random().toString(36).slice(2, 6)}`;
     const newAssignment: Assignment = {
@@ -1934,6 +2173,8 @@ export const dataActions = {
       if (column === 'counts_toward_grade' && row.counts_toward_grade === false && !row.is_survey) throw new HttpError(503, COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE);
       // Without is_survey the survey would become ordinary homework.
       if (column === 'is_survey' && row.is_survey) throw new HttpError(503, SURVEY_MIGRATION_MESSAGE);
+      // Without group_size group work would become individual work.
+      if (column === 'group_size' && row.group_size) throw new HttpError(503, GROUP_MIGRATION_MESSAGE);
       const { [column]: _unused, ...rest } = row;
       row = rest;
       ({ error } = await supabase.from('assignments').insert(row));
@@ -1982,6 +2223,12 @@ export const dataActions = {
     let patch: Partial<Assignment> = withCleanAttachments(withoutScheduledRelease(rest));
     // A survey stays a survey (and work never becomes one): no quiz, never counted.
     if (isSurvey(previous)) patch = { ...patch, is_exam: false, counts_toward_grade: false, total_points: 0, quiz_duration_minutes: null };
+    patch = cleanGroupSize(patch, previous);
+    // Already individual and staying so: older databases need no group_size column.
+    if (patch.group_size === null && !previous.group_size) {
+      const { group_size: _size, ...solo } = patch;
+      patch = solo;
+    }
     if (isRetake(previous) && previous.retake_of) {
       // A retake stays a quiz; its list of students may change.
       patch.is_exam = true;
@@ -2004,6 +2251,7 @@ export const dataActions = {
       if (column === 'publish_at' && patch.publish_at) throw new Error(PUBLISH_AT_MIGRATION_MESSAGE);
       if (column === 'attachments') assertAttachmentsFit(patch);
       if (column === 'counts_toward_grade' && patch.counts_toward_grade === false && !isSurvey(previous)) throw new HttpError(503, COUNTS_TOWARD_GRADE_MIGRATION_MESSAGE);
+      if (column === 'group_size' && patch.group_size) throw new HttpError(503, GROUP_MIGRATION_MESSAGE);
       const { [column]: _unused, ...others } = patch;
       patch = others;
       ({ data: updated, error } = await supabase.from('assignments').update(patch).eq('id', id).select().maybeSingle());
@@ -2481,6 +2729,34 @@ export const dataActions = {
     const maxScoreOf = new Map(questions.map((q) => [q.id, Number(q.max_score || 0)]));
     const existingOf = new Map((row.submission_answers || []).map((a) => [a.question_id, a]));
     const gradedAt = new Date().toISOString();
+
+    // กิจกรรม (survey): never scored. Only the official feedback is saved; the
+    // total stays 0 of 0 so it never shows as waiting for grading.
+    if (isSurvey(row.assignment)) {
+      if (!isOfficial) throw FORBIDDEN();
+      const comments = new Map<string, string>();
+      for (const grade of grades) {
+        if (!grade || typeof grade.questionId !== 'string' || !maxScoreOf.has(grade.questionId)) throw new HttpError(400, 'ไม่พบคำถามนี้ในงาน');
+        comments.set(grade.questionId, typeof grade.comment === 'string' ? grade.comment : '');
+      }
+      const commentRows = [...comments].map(([questionId, comment]) => {
+        const existing = (existingOf.get(questionId) || {}) as Partial<SubmissionAnswer>;
+        return {
+          id: existing.id || `ans-${submissionId}-${questionId}`,
+          submission_id: submissionId,
+          question_id: questionId,
+          teacher_score: null,
+          teacher_comment: comment,
+          graded_at: comment ? gradedAt : null,
+          updated_at: gradedAt,
+        };
+      });
+      const { error: commentError } = await supabase.from('submission_answers').upsert(commentRows, { onConflict: 'submission_id,question_id' });
+      if (commentError) throw toDatabaseError(commentError, 'submission_answers');
+      const assignmentId = row.assignment_id;
+      after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
+      return;
+    }
     // The last grade of a question wins if the browser sent it twice.
     const byQuestion = new Map<string, { score: number; comment: string }>();
     for (const grade of grades) {
@@ -2522,6 +2798,8 @@ export const dataActions = {
         const { classroom: _c, questions: _q, ...retake } = row.assignment;
         await syncRetakeScores(supabase, retake as Assignment, [submissionId]);
       }
+      // งานกลุ่ม: one grade for the whole group.
+      if (isGroupWork(row.assignment)) await syncGroupCopies(supabase, row.assignment_id, submissionId, 'grades');
       // Open score tables (classroom grades tab, co-teachers, the student) refetch.
       const assignmentId = row.assignment_id;
       after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));

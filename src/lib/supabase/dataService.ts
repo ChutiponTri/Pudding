@@ -16,6 +16,7 @@ import {
   TrashItem,
   TrashKind,
   FormerStudent,
+  WorkGroupsView,
 } from '@/types/database';
 import { createClient, isSupabaseConfigured } from './client';
 import { authFetch } from '@/lib/auth/lineSession';
@@ -565,9 +566,29 @@ export const dataService = {
   /** withClassroom: teachers also get the assignment's classroom with its roster, in the same request. */
   async getAssignmentById(
     id: string,
-    options: { withClassroom?: boolean } = {}
-  ): Promise<{ assignment: Assignment | null; questions: Question[]; classroom?: Classroom }> {
+    options: { withClassroom?: boolean; withGroups?: boolean } = {}
+  ): Promise<{ assignment: Assignment | null; questions: Question[]; classroom?: Classroom; workGroups?: WorkGroupsView }> {
     return call('getAssignmentById', id, options);
+  },
+
+  /** งานกลุ่ม: the groups of a work, the roster and (students) their own group. */
+  // proxyNumber: on a borrowed phone, the classmate's student number (acts as them).
+  async getWorkGroups(assignmentId: string, proxyNumber?: string): Promise<WorkGroupsView> {
+    return call('getWorkGroups', assignmentId, proxyNumber);
+  },
+  /** Creates a group: a student with themselves plus these classmates, a teacher with these students. */
+  async createWorkGroup(assignmentId: string, memberIds: string[], name?: string, proxyNumber?: string): Promise<WorkGroupsView> {
+    return call('createWorkGroup', assignmentId, memberIds, name, proxyNumber);
+  },
+  async joinWorkGroup(assignmentId: string, groupId: string, proxyNumber?: string): Promise<WorkGroupsView> {
+    return call('joinWorkGroup', assignmentId, groupId, proxyNumber);
+  },
+  async addWorkGroupMembers(assignmentId: string, groupId: string, memberIds: string[], proxyNumber?: string): Promise<WorkGroupsView> {
+    return call('addWorkGroupMembers', assignmentId, groupId, memberIds, proxyNumber);
+  },
+  /** A student leaves their group; a teacher passes the student to take out. */
+  async leaveWorkGroup(assignmentId: string, studentId?: string, proxyNumber?: string): Promise<WorkGroupsView> {
+    return call('leaveWorkGroup', assignmentId, studentId, proxyNumber);
   },
 
   /** The LINE student's published work in these classrooms and their own submissions, in one request. */

@@ -261,6 +261,8 @@ function NewAssignmentContent() {
   const [groupName, setGroupName] = useState('');
   // false = "ไม่นับคะแนน": students still see the score; the grade book lists it without adding it to the total / percent.
   const [countsTowardGrade, setCountsTowardGrade] = useState(true);
+  // งานกลุ่ม (homework only): most students per group; 0 = individual work.
+  const [groupSize, setGroupSize] = useState(0);
   /** Quiz: students unticked per classroom (empty = everyone in it takes the quiz). */
   const [excludedByClass, setExcludedByClass] = useState<Record<string, string[]>>({});
   const [rosters, setRosters] = useState<Record<string, User[]>>({});
@@ -520,6 +522,7 @@ function NewAssignmentContent() {
           setTitle(assignment.title || '');
           setGroupName(assignment.group_name || '');
           setCountsTowardGrade(assignment.counts_toward_grade !== false);
+          setGroupSize(Number(assignment.group_size) >= 2 ? Number(assignment.group_size) : 0);
           setDescription(assignment.description || '');
           // A copy can't start with a deadline that has already passed.
           const dueMs = assignment.due_date ? new Date(assignment.due_date).getTime() : NaN;
@@ -925,6 +928,8 @@ function NewAssignmentContent() {
       }
       // "ไม่นับคะแนน" is for homework only: a quiz always counts, a survey never.
       const countsNow = !isSurveyMode && (isExam || countsTowardGrade);
+      // Group work is homework only (a quiz and an activity are always individual).
+      const groupSizeNow = !retake && !isExam && !isSurveyMode && groupSize >= 2 ? groupSize : null;
       const totalPoints = isSurveyMode ? 0 : questions.reduce((acc, q) => acc + (nonNegativeScore(q.max_score) || defaultMaxScore(q.type)), 0);
 
       const questionRows = questions.map((q) => ({
@@ -1011,6 +1016,7 @@ function NewAssignmentContent() {
           description,
           is_exam: isExam,
           ...(retake || isSurveyMode || countsNow === (editingAssignment.counts_toward_grade !== false) ? {} : { counts_toward_grade: countsNow }),
+          ...(groupSizeNow === (editingAssignment.group_size ?? null) ? {} : { group_size: groupSizeNow }),
           due_date: dueDate || editingAssignment.due_date,
           close_at: isExam ? null : closeAt || null,
           ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : editingAssignment.quiz_duration_minutes ? { quiz_duration_minutes: null } : {}),
@@ -1040,6 +1046,7 @@ function NewAssignmentContent() {
           if ((isExam ? null : closeAt || null) !== (before.close_at || null)) changed.close_at = isExam ? null : closeAt || null;
           if (isExam !== !!before.is_exam) changed.is_exam = isExam;
           if (!retake && !isSurveyMode && countsNow !== (before.counts_toward_grade !== false)) changed.counts_toward_grade = countsNow;
+          if (groupSizeNow !== (before.group_size ?? null)) changed.group_size = groupSizeNow;
           if (isExam && quizMinutesValue !== Number(before.quiz_duration_minutes)) changed.quiz_duration_minutes = quizMinutesValue;
           const sameQuestion = (a: Pick<Question, 'type' | 'question_text'>, b: Pick<Question, 'type' | 'question_text'>) =>
             a.type === b.type && (a.question_text || '').trim() === (b.question_text || '').trim();
@@ -1087,6 +1094,7 @@ function NewAssignmentContent() {
             description,
             is_exam: isExam,
             ...(isSurveyMode ? { is_survey: true } : !retake && !countsNow ? { counts_toward_grade: false } : {}),
+            ...(groupSizeNow ? { group_size: groupSizeNow } : {}),
             due_date: dueDate || daysFromNowAt(7, 23, 59),
             ...(!isExam && closeAt ? { close_at: closeAt } : {}),
             ...(isExam ? { quiz_duration_minutes: quizMinutesValue } : {}),
@@ -1571,6 +1579,52 @@ function NewAssignmentContent() {
                       {label}
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* งานกลุ่ม: homework only. Students form their own groups; one member hands in for the group. */}
+            {!retake && !isExam && !isSurveyMode && (
+              <div className="space-y-2">
+                <label htmlFor="assignment-group-size" className="block text-xs font-bold text-slate-700 dark:text-slate-300">{tr('การทำงาน', 'Work')}</label>
+                <div className="flex gap-2">
+                  <div className="relative grid grid-cols-2 flex-1 h-10 p-[3px] rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <span
+                      aria-hidden
+                      className={`absolute top-[3px] bottom-[3px] left-[3px] w-[calc(50%-3px)] rounded-[9px] shadow-xs bg-amber-500 transition-[translate] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                        groupSize >= 2 ? 'translate-x-full' : 'translate-x-0'
+                      }`}
+                    />
+                    {([
+                      [false, tr('เดี่ยว', 'Individual')],
+                      [true, tr('👥 กลุ่ม', '👥 Group')],
+                    ] as const).map(([group, label]) => (
+                      <button
+                        key={String(group)}
+                        type="button"
+                        aria-pressed={(groupSize >= 2) === group}
+                        onClick={() => setGroupSize(group ? (groupSize >= 2 ? groupSize : 4) : 0)}
+                        className={`relative z-10 rounded-lg text-xs font-bold transition-colors duration-300 cursor-pointer ${
+                          (groupSize >= 2) === group ? 'text-slate-950' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {groupSize >= 2 && (
+                    <select
+                      id="assignment-group-size"
+                      value={groupSize}
+                      onChange={(e) => setGroupSize(Number(e.target.value))}
+                      aria-label={tr('จำนวนคนต่อกลุ่มสูงสุด', 'Most students per group')}
+                      className="shrink-0 h-10 px-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
+                    >
+                      {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
+                        <option key={n} value={n}>{tr(`ไม่เกิน ${n} คน`, `Up to ${n}`)}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
             )}

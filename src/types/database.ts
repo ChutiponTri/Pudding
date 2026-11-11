@@ -171,6 +171,45 @@ export interface Assignment {
    * the work stays out of the grade book. Missing (older databases) = false.
    */
   is_survey?: boolean | null;
+  /**
+   * งานกลุ่ม (homework only): at most this many students per group; null =
+   * individual work. Students pick their group before handing in; one member
+   * hands in for everyone (copied to each member's own submission).
+   */
+  group_size?: number | null;
+}
+
+/** A student group of one group-work assignment. */
+export interface WorkGroup {
+  id: string;
+  assignment_id: string;
+  name: string;
+  /** Roster ids (users.id) of its members. */
+  member_ids: string[];
+  created_by?: string | null;
+  /** The member who last handed in for the group, and when. */
+  submitted_by?: string | null;
+  submitted_at?: string | null;
+}
+
+/** A classmate as the group screens show them (no LINE ids). */
+export interface WorkGroupStudent {
+  id: string;
+  first_name?: string;
+  last_name?: string;
+  student_id?: string;
+  avatar_url?: string;
+}
+
+/** Everything the group screens need, in one response. */
+export interface WorkGroupsView {
+  groupSize: number;
+  groups: WorkGroup[];
+  /** The classroom roster (or the chosen students of the work). */
+  students: WorkGroupStudent[];
+  /** Students only: their own roster id and group. */
+  me: string | null;
+  myGroupId: string | null;
 }
 
 /** checkboxes (several picks) and scale (1–5) are survey-only. */

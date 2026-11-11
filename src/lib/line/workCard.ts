@@ -1,4 +1,5 @@
 import 'server-only';
+import { isGroupWork } from '@/lib/utils/groupWork';
 import { dueRows } from '@/lib/utils/lineDates';
 import { after } from 'next/server';
 import { buildLiffUrl } from '@/lib/line/liffLink';
@@ -58,6 +59,8 @@ export async function buildWorkCard(supabase: ServiceClient, assignment: Assignm
   } else {
     rows.push(...dueRows(assignment));
     if (assignment.total_points) rows.push({ label: 'คะแนน', value: `${assignment.total_points} คะแนน` });
+    // งานกลุ่ม: students pick their group in the app; one hand-in counts for the group.
+    if (isGroupWork(assignment)) rows.push({ label: 'งานกลุ่ม', value: `ไม่เกิน ${assignment.group_size} คน/กลุ่ม` });
   }
 
   return workCard({

@@ -72,7 +72,7 @@ import { DragReorder, onLocalOrderChange, readLocalOrder, useDragReorder, writeL
 import { applySavedOrder, mergeVisibleOrder } from '@/lib/hooks/useSidebarPrefs';
 import { useCollapsedGroups } from '@/lib/hooks/useCollapsedGroups';
 import { notificationManager } from '@/lib/utils/notificationManager';
-import { gradingCounts, needsGrading } from '@/lib/utils/gradingStatus';
+import { gradingCounts } from '@/lib/utils/gradingStatus';
 import { TeacherProfileFields, announceTeacherProfile, profileFormValues } from '@/components/TeacherProfileGate';
 import { TEACHER_PROFILE_UPDATED_EVENT, isTeacherProfileComplete } from '@/lib/utils/teacherProfile';
 import { canonicalInstitution, institutionLabel, sameInstitution } from '@/lib/data/thaiInstitutions';
@@ -84,6 +84,7 @@ import { StudentRosterModal } from '@/components/StudentRosterModal';
 import { ModalSheet, ModalSheetBody, ModalSheetFooter, ModalSheetHeader, MODAL_SHEET_FORM } from '@/components/ModalSheet';
 import { MobileText } from '@/components/MobileText';
 import { buildWorkGroups } from '@/lib/utils/workGroups';
+import { isGroupWork } from '@/lib/utils/groupWork';
 
 /**
  * Checks an assessment framework before saving. Returns a message naming the
@@ -741,9 +742,6 @@ export function TeacherWorkspace({
   } = useDragReorder(orderedCourseKeys, commitCourseOrder);
   const canDragCourses = !isSearchingCourses && orderedCourseKeys.length > 1;
 
-  const pendingGradingCount = useMemo(() => {
-    return filteredSubmissions.filter(needsGrading).length;
-  }, [filteredSubmissions]);
 
   // Per assignment: handed in, and how many of those still wait for a grade.
   const gradingByAssignment = useMemo(() => {
@@ -751,9 +749,12 @@ export function TeacherWorkspace({
     for (const s of filteredSubmissions) bySubmission.set(s.assignment_id, [...(bySubmission.get(s.assignment_id) || []), s]);
     const rosterSize = new Map(classrooms.map((c) => [c.id, c.students?.length || c.student_count || 0]));
     return new Map(
-      assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSizeFor(a, rosterSize.get(a.classroom_id) || 0), a.is_exam)])
+      assignments.map((a) => [a.id, gradingCounts(bySubmission.get(a.id) || [], rosterSizeFor(a, rosterSize.get(a.classroom_id) || 0), a.is_exam, isGroupWork(a))])
     );
   }, [filteredSubmissions, assignments, classrooms]);
+  // What to grade (a group counts once) and how many students that is.
+  const pendingGradingCount = useMemo(() => [...gradingByAssignment.values()].reduce((sum, g) => sum + g.pendingItems, 0), [gradingByAssignment]);
+  const pendingStudentCount = useMemo(() => [...gradingByAssignment.values()].reduce((sum, g) => sum + g.pending, 0), [gradingByAssignment]);
   const assignmentsToGradeCount = useMemo(
     () => [...gradingByAssignment.values()].filter((g) => g.pending > 0).length,
     [gradingByAssignment]
@@ -1526,6 +1527,10 @@ export function TeacherWorkspace({
           </div>
           <p className={`text-xl sm:text-3xl font-black leading-none sm:leading-tight text-center sm:text-left tabular-nums mt-1.5 sm:mt-3 ${pendingGradingCount > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-white'}`}>
             {loading && !classrooms.length ? <span className="text-slate-300 dark:text-slate-600 animate-pulse">–</span> : pendingGradingCount}
+            {/* งานกลุ่ม: groups count once; the students they cover beside it. */}
+            {pendingStudentCount !== pendingGradingCount && (
+              <span className="ml-1 text-[10px] sm:text-xs font-bold text-slate-400">({pendingStudentCount} {tr('คน', 'st.')})</span>
+            )}
           </p>
           <span className="sm:hidden block truncate text-center text-[10px] font-bold leading-tight mt-1 text-slate-500 dark:text-slate-400">{tr('รอตรวจ', 'To grade')}</span>
           {pendingGradingCount > 0 ? (

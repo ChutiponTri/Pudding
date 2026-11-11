@@ -41,15 +41,17 @@ export function CategoryDetailSheet({
   const open = items.filter((i) => getAssignmentWindow(i.assignment).acceptsSubmissions).length;
   const published = items.filter((i) => isAssignmentPublished(i.assignment));
   const pending = published.reduce((n, i) => n + i.counts.pending, 0);
+  // A group counts once; the students it covers in brackets.
+  const pendingItems = published.reduce((n, i) => n + i.counts.pendingItems, 0);
   const done = published.filter((i) => i.counts.pending === 0 && i.counts.notSubmitted === 0 && i.counts.totalStudents > 0).length;
-  const tiles: Array<[string, number]> = [
+  const tiles: Array<[string, number | string]> = [
     [tr('งานทั้งหมด', 'Items'), items.length],
     [tr('การบ้าน', 'Homework'), items.length - quizzes],
     [tr('ข้อสอบ', 'Quizzes'), quizzes],
     [tr('เปิดรับอยู่', 'Open'), open],
     [tr('ยังไม่เผยแพร่', 'Not published'), hidden],
     [tr('ตรวจครบแล้ว', 'Fully graded'), done],
-    [tr('รอตรวจ (ชิ้น)', 'To grade'), pending],
+    [tr('รอตรวจ (ชิ้น)', 'To grade'), pendingItems === pending ? pending : `${pendingItems} (${pending} ${tr('คน', 'st.')})`],
   ];
   return (
     <ModalSheet onClose={onClose} size="sm:max-w-md">

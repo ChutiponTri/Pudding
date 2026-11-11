@@ -3,7 +3,7 @@
 import React from 'react';
 import { CheckCircle2, ChevronDown, Clock, EyeOff, Layers, UserX } from 'lucide-react';
 import type { Assignment } from '@/types/database';
-import type { GradingCounts } from '@/lib/utils/gradingStatus';
+import { pendingLabel, type GradingCounts } from '@/lib/utils/gradingStatus';
 import { isAssignmentPublished } from '@/lib/utils/assignmentWindow';
 
 export type GroupChipTone = 'amber' | 'rose' | 'slate' | 'emerald' | 'sky';
@@ -35,6 +35,7 @@ export function teacherGroupChips(
   th: boolean
 ): GroupChip[] {
   let pending = 0;
+  let pendingItems = 0;
   let graded = 0;
   let checkable = 0;
   let missing = 0;
@@ -46,6 +47,7 @@ export function teacherGroupChips(
       continue;
     }
     pending += counts.pending;
+    pendingItems += counts.pendingItems;
     graded += counts.graded;
     checkable += counts.checkable;
     if (counts.notSubmitted > 0) {
@@ -58,8 +60,10 @@ export function teacherGroupChips(
     chips.push({
       tone: 'amber',
       icon: <Clock className="w-3 h-3" />,
-      label: th ? `ครูกำลังตรวจ ${graded}/${checkable} · รอตรวจ ${pending}` : `Grading ${graded}/${checkable} · ${pending} to grade`,
-      short: th ? `ตรวจ ${graded}/${checkable} · รอ ${pending}` : `${graded}/${checkable} · ${pending} to grade`,
+      label: th
+        ? `ครูกำลังตรวจ ${graded}/${checkable} · รอตรวจ ${pendingLabel(pendingItems, pending, th, 'item')}`
+        : `Grading ${graded}/${checkable} · ${pendingLabel(pendingItems, pending, th, 'item')} to grade`,
+      short: th ? `ตรวจ ${graded}/${checkable} · รอ ${pendingItems}` : `${graded}/${checkable} · ${pendingItems} to grade`,
     });
   }
   if (missing > 0) {

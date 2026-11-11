@@ -22,6 +22,7 @@ export { COLORS, type FlexMessage } from '@/lib/line/flexKit';
 const HEROES = {
   'new-assignment': '1040:433',
   'new-quiz': '1040:352',
+  'new-activity': '1040:365',
   'new-student': '1040:309',
   'first-conn': '1040:572',
   menu: '1040:265',
@@ -139,7 +140,8 @@ export function workCard(input: WorkCardInput): FlexMessage {
   ];
   if (input.note) body.push(text(input.note, { size: 'xs', color: COLORS.muted, margin: 'md' }));
 
-  const footer: unknown[] = [button(input.isExam ? '📝 ทำแบบทดสอบ' : '📤 ส่งงาน', { type: 'uri', uri: input.openUrl })];
+  const action = input.isExam ? '📝 ทำแบบทดสอบ' : input.survey ? '📋 ดูรายละเอียดกิจกรรม' : '📤 ส่งงาน';
+  const footer: unknown[] = [button(action, { type: 'uri', uri: input.openUrl })];
   if (input.statusUrl) {
     footer.push(statusLink(input.statusUrl));
   }
@@ -147,9 +149,9 @@ export function workCard(input: WorkCardInput): FlexMessage {
   const due = input.rows.map((item) => `${item.label}: ${item.value}`).join('\n');
   return {
     type: 'flex',
-    altText: fit(`${input.isExam ? '📝 ข้อสอบใหม่' : '📋 งานใหม่'}: ${input.title}${due ? `\n${due}` : ''}`, 400),
+    altText: fit(`${input.isExam ? '📝 ข้อสอบใหม่' : input.survey ? '📣 กิจกรรมใหม่' : '📋 งานใหม่'}: ${input.title}${due ? `\n${due}` : ''}`, 400),
     contents: bubble({
-      hero: hero(input.isExam ? 'new-quiz' : 'new-assignment', { type: 'uri', label: 'เปิด', uri: input.openUrl }),
+      hero: hero(input.isExam ? 'new-quiz' : input.survey ? 'new-activity' : 'new-assignment', { type: 'uri', label: 'เปิด', uri: input.openUrl }),
       body: { type: 'box', layout: 'vertical', paddingAll: '20px', contents: body },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', paddingTop: '0px', contents: footer },
     }),
