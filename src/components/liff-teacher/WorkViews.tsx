@@ -55,9 +55,14 @@ function WorkLine({ row, children, right }: { row: WorkRow; children?: React.Rea
           <WorkStatus work={row.work} />
           <p className="text-[11px] text-slate-500">
             {row.work.group_name?.trim() && <span className="font-bold text-slate-400">{row.work.group_name.trim()} · </span>}
-            {row.work.is_exam ? "ปิดรับคำตอบ" : "กำหนดส่ง"} {due(row)}
-            {!row.work.is_exam && row.win.lateUntil != null && row.win.lateUntil !== row.win.deadline ? ` · ปิดรับส่งงาน ${lineDate(row.win.lateUntil)}` : ""}
+            {row.work.is_exam ? "ปิดรับคำตอบ" : "กำหนดส่ง"} <span className="whitespace-nowrap">{due(row)}</span>
           </p>
+          {/* Own line: next to the due date it wraps mid-date (the year drops to a new line) on phones. */}
+          {!row.work.is_exam && row.win.lateUntil != null && row.win.lateUntil !== row.win.deadline && (
+            <p className="text-[11px] text-slate-500">
+              ปิดรับส่งงาน <span className="whitespace-nowrap">{lineDate(row.win.lateUntil)}</span>
+            </p>
+          )}
         </div>
         {right}
       </div>

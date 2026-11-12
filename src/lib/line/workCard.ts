@@ -18,7 +18,7 @@ import type { Assignment } from '@/types/database';
 export type CardClassroom = LabelledClassroom & { id: string; invite_code?: string | null; teacher_id?: string | null };
 
 
-/** "#งานที่ 3" and "ภาษาไทย · ครูต้น": the work's place among the classroom's homework (or quizzes), and who teaches it. */
+/** "#งานที่ 3" / "#กิจกรรมที่ 1" and "ภาษาไทย · ครูต้น": the work's place among the classroom's homework (or quizzes), and who teaches it. */
 export async function workMeta(supabase: ServiceClient, assignment: Assignment, classroom: CardClassroom) {
   const [count, teacher] = await Promise.all([
     assignment.created_at
@@ -27,6 +27,8 @@ export async function workMeta(supabase: ServiceClient, assignment: Assignment, 
           .select('id', { count: 'exact', head: true })
           .eq('classroom_id', classroom.id)
           .eq('is_exam', !!assignment.is_exam)
+          // กิจกรรม are numbered on their own ("#กิจกรรมที่ 2"), apart from homework.
+          .or(assignment.is_survey ? 'is_survey.eq.true' : 'is_survey.is.null,is_survey.eq.false')
           .lte('created_at', assignment.created_at)
       : Promise.resolve({ count: null }),
     classroom.teacher_id

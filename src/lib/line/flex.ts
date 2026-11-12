@@ -526,7 +526,7 @@ function statusLink(uri: string, color = COLORS.amber) {
   };
 }
 
-const workTag = (isExam: boolean, number?: number) => `#${isExam ? 'ข้อสอบ' : 'งาน'}${number ? `ที่ ${number}` : ''}`;
+const workTag = (isExam: boolean, number?: number, survey?: boolean) => `#${isExam ? 'ข้อสอบ' : survey ? 'กิจกรรม' : 'งาน'}${number ? `ที่ ${number}` : ''}`;
 
 /**
  * "ทวงงาน" ("ส่งให้ครูหน่อยน้า~"): the bot's answer to the teacher's
@@ -535,6 +535,8 @@ const workTag = (isExam: boolean, number?: number) => `#${isExam ? 'ข้อส
  */
 export type WorkStatusInput = {
   isExam: boolean;
+  /** กิจกรรม (survey): tagged "#กิจกรรมที่ N". */
+  survey?: boolean;
   number?: number;
   subject?: string;
   title: string;
@@ -582,7 +584,7 @@ function nameList(names: string[], maxNames: number, moreNote = ''): unknown[] {
 }
 
 function workStatusBubble(art: 'remind' | 'submit-work', input: WorkStatusInput, maxNames: number, moreNote = '') {
-  const footer: unknown[] = [button(input.isExam ? '📝 ทำข้อสอบ' : '📤 ส่งงาน', { type: 'uri', uri: input.url })];
+  const footer: unknown[] = [button(input.isExam ? '📝 ทำข้อสอบ' : input.survey ? '📋 ดูรายละเอียดกิจกรรม' : '📤 ส่งงาน', { type: 'uri', uri: input.url })];
   if (input.statusUrl) footer.push(statusLink(input.statusUrl));
   return bubble({
     hero: hero(art, { type: 'uri', label: 'ส่งงาน', uri: input.url }),
@@ -591,7 +593,7 @@ function workStatusBubble(art: 'remind' | 'submit-work', input: WorkStatusInput,
       layout: 'vertical',
       paddingAll: '20px',
       contents: [
-        badge([workTag(input.isExam, input.number), input.subject].filter(Boolean).join('  ')),
+        badge([workTag(input.isExam, input.number, input.survey), input.subject].filter(Boolean).join('  ')),
         text(input.title, { size: 'xl', weight: 'bold', color: COLORS.purpleDark, margin: 'md' }),
         ...[
           { label: input.isExam ? 'ปิดรับคำตอบ' : 'กำหนดส่ง', value: input.due },

@@ -611,7 +611,7 @@ export function Pill({ children, tone = "amber" }: { children: ReactNode; tone?:
     red: "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200",
     slate: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200",
   };
-  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold transition-colors duration-300 ${tones[tone]}`}>{children}</span>;
+  return <span className={`inline-flex shrink-0 items-center whitespace-nowrap px-2 py-0.5 rounded-full text-[11px] font-bold transition-colors duration-300 ${tones[tone]}`}>{children}</span>;
 }
 
 /** Runs an async load and keeps its data, error and a reload function (the old data stays on screen while it reloads). */

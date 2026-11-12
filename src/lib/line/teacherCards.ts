@@ -114,6 +114,7 @@ async function workStatus(supabase: ServiceClient, assignment: Assignment, class
   const win = getAssignmentWindow(assignment);
   const card: WorkStatusInput = {
     isExam: !!assignment.is_exam,
+    survey: !!assignment.is_survey,
     number: meta.number,
     subject: meta.subject,
     title: assignment.title,
