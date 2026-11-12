@@ -37,22 +37,49 @@ export function requireStudent(actor: Actor | null): Extract<Actor, { kind: 'stu
 
 export type ClassroomRole = 'teacher' | 'student' | 'pending' | null;
 
+/**
+ * What a teacher / membership check needs from a classroom, without the JSON
+ * roster snapshot (students, pending_students: ~12 KB per classroom, the
+ * largest part of Supabase egress). classroomRole loads the snapshot itself
+ * only when classroom_students has no row for the student (older classrooms).
+ */
+export const CLASSROOM_ACCESS_FIELDS = 'id, teacher_id, teachers';
+
+/** The classroom with only CLASSROOM_ACCESS_FIELDS (see there). */
+export async function loadClassroomAccess(supabase: Supabase, classroomId: string): Promise<Classroom | null> {
+  if (!classroomId) return null;
+  const { data } = await supabase.from('classrooms').select(CLASSROOM_ACCESS_FIELDS).eq('id', classroomId).maybeSingle();
+  return (data as Classroom | null) || null;
+}
+
+/** Whether the row carries the roster snapshot (selected with `*` or by name). */
+const hasRoster = (classroom: Classroom) => 'students' in classroom || 'pending_students' in classroom;
+
+/** The classroom with its roster snapshot, loading it if the row was read without it (borrowed-phone lookups need it). */
+export async function withRoster(supabase: Supabase, classroom: Classroom): Promise<Classroom> {
+  if (hasRoster(classroom)) return classroom;
+  const { data } = await supabase.from('classrooms').select('students, pending_students').eq('id', classroom.id).maybeSingle();
+  return { ...classroom, students: data?.students || [], pending_students: data?.pending_students || [] } as Classroom;
+}
+
 /** How the caller relates to a classroom: teaches it, is enrolled, is waiting for approval, or none. */
 export async function classroomRole(supabase: Supabase, actor: Actor | null, classroom: Classroom): Promise<ClassroomRole> {
   if (!actor) return null;
   if (actor.kind === 'teacher') return isTeacherOf(classroom, actor.userId) ? 'teacher' : null;
   const mine = (s?: Partial<User> | null) => !!s && (actor.keys.includes(s.id || '') || (!!s.line_uid && actor.keys.includes(s.line_uid)));
-  if ((classroom.students || []).some(mine)) return 'student';
-  if ((classroom.pending_students || []).some(mine)) return 'pending';
-  const { data: link } = await supabase
-    .from('classroom_students')
-    .select('status')
-    .eq('classroom_id', classroom.id)
-    .in('student_id', actor.keys)
-    .limit(1)
-    .maybeSingle();
-  if (!link) return null;
-  return link.status === 'pending_approval' ? 'pending' : 'student';
+  const fromSnapshot = (c: Classroom): ClassroomRole =>
+    (c.students || []).some(mine) ? 'student' : (c.pending_students || []).some(mine) ? 'pending' : null;
+  const fromLinks = async (): Promise<ClassroomRole> => {
+    // Rows exist only as 'active' or 'pending_approval' (reject / remove delete them); admitted wins
+    // if the student has one row per key.
+    const { data: links } = await supabase.from('classroom_students').select('status').eq('classroom_id', classroom.id).in('student_id', actor.keys);
+    if (!links?.length) return null;
+    return links.some((l) => l.status !== 'pending_approval') ? 'student' : 'pending';
+  };
+  if (hasRoster(classroom)) return fromSnapshot(classroom) || fromLinks();
+  // Read without the roster: classroom_students (the source of truth) first, the snapshot
+  // only for a student it does not list.
+  return (await fromLinks()) || fromSnapshot(await withRoster(supabase, classroom));
 }
 
 export async function loadClassroom(supabase: Supabase, classroomId: string): Promise<Classroom | null> {

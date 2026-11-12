@@ -16,6 +16,7 @@ import { notifyAdminNewTeacher } from '@/lib/server/adminNotify';
 import { assignmentFileKeys, attachFiles, attachmentKeysInUse, keysFromUrls, questionFileKeys, removeFiles } from '@/lib/storage/files';
 import { assignmentAttachmentUrls, cleanAttachments } from '@/lib/utils/referenceWork';
 import {
+  CLASSROOM_ACCESS_FIELDS,
   classroomForStudent,
   classroomRole,
   FORBIDDEN,
@@ -28,6 +29,7 @@ import {
   requireTeacherOfAssignment,
   requireTeacherOfClassroom,
   UNAUTHORIZED,
+  withRoster,
 } from '@/lib/server/access';
 import { parseAcademicPeriod } from '@/lib/utils/academicYear';
 import { DRAFT_RETENTION_MS, canRecordNoSubmission, getAssignmentWindow, isAssignmentDraft, isAssignmentPublished } from '@/lib/utils/assignmentWindow';
@@ -711,6 +713,30 @@ async function classroomsByIds(supabase: Supabase, ids: string[]): Promise<Class
   const { data, error } = await supabase.from('classrooms').select('*').in('id', ids);
   if (error) console.warn('[classroomsByIds]', error.message);
   return (data || []) as Classroom[];
+}
+
+/** When the database last said student_classroom_rows does not exist (supabase_student_classrooms_update.sql not run). */
+let ownRosterRpcMissingAt = 0;
+
+/**
+ * Classroom rows for a student's own view: their roster arrays hold only entries whose
+ * id / line_uid is in `ownKeys` or whose student_id is in `schoolNumbers` (filtered in
+ * Postgres, so the rest of the class never leaves the database). Entries outside those
+ * are exactly what hydrateClassroomsForStudent drops anyway. Full rows until the SQL is run.
+ */
+async function studentClassroomRows(supabase: Supabase, ids: string[], ownKeys: Iterable<string>, schoolNumbers: Iterable<string>): Promise<Classroom[]> {
+  if (!ids.length) return [];
+  if (Date.now() - ownRosterRpcMissingAt > 10 * 60_000) {
+    const { data, error } = await supabase.rpc('student_classroom_rows', {
+      p_ids: ids,
+      p_keys: [...new Set(ownKeys)].filter(Boolean),
+      p_numbers: [...new Set(schoolNumbers)].filter(Boolean),
+    });
+    if (!error) return (data || []) as Classroom[];
+    if (error.code === 'PGRST202' || /could not find the function|does not exist/i.test(error.message || '')) ownRosterRpcMissingAt = Date.now();
+    else console.warn('[studentClassroomRows]', error.message);
+  }
+  return classroomsByIds(supabase, ids);
 }
 
 /** Classrooms whose JSON roster contains the student (by users.id or LINE id). */
@@ -1753,12 +1779,14 @@ export const dataActions = {
     const allowed = actor.kind === 'teacher' ? await teacherClassroomIds(supabase, actor.userId) : await studentClassroomIds(supabase, actor);
     const ids = [...new Set(classroomIds)].filter((id) => allowed.has(id));
     if (!ids.length) return '';
+    // Every join / admit / reject / remove writes classroom_students, so its rows (plus the
+    // count) show a roster change without reading the JSON snapshots (~12 KB per classroom, per poll).
     const [cls, links] = await Promise.all([
-      supabase.from('classrooms').select('id, students, pending_students').in('id', ids),
+      supabase.from('classrooms').select('id, student_count').in('id', ids),
       supabase.from('classroom_students').select('classroom_id, student_id, status').in('classroom_id', ids),
     ]);
     return JSON.stringify([
-      ((cls.data || []) as Classroom[]).map((c) => [c.id, (c.students || []).map((s) => s.id), (c.pending_students || []).map((s) => s.id)]),
+      ((cls.data || []) as Classroom[]).map((c) => [c.id, c.student_count ?? null]),
       (links.data || []).map((l: EnrollmentLink) => `${l.classroom_id}:${l.student_id}:${l.status}`).sort(),
     ]);
   },
@@ -1920,9 +1948,13 @@ export const dataActions = {
     if (submissionResult.error) throw toDatabaseError(submissionResult.error, 'submissions');
     const ownLinks = membership.links;
     const classroomIds = membership.ids;
-    // Each classroom row once, and the work of every classroom, at once.
+    // Each classroom row once (only the student's own roster entries), and the work of every classroom, at once.
+    // The same ids and school numbers hydrateClassroomsForStudent treats as the student's.
+    const users = [...ownUsers.values()];
+    const ownKeys = [...me.keys, ...users.flatMap((u) => [u.id, u.line_uid || ''])];
+    const schoolNumbers = users.map((u) => u.student_id || '');
     const [rows, assignments] = await Promise.all([
-      classroomsByIds(supabase, classroomIds),
+      studentClassroomRows(supabase, classroomIds, ownKeys, schoolNumbers),
       loadAssignments(supabase, classroomIds, false, me.keys),
     ]);
     rows.sort(byCreatedDesc);
@@ -1957,8 +1989,10 @@ export const dataActions = {
   /** withClassroom: teachers also get the classroom with its roster (saves the grading page a request). */
   async getAssignmentById({ supabase, actor }: Ctx, id: string, options: { withClassroom?: boolean; withGroups?: boolean } = {}) {
     if (!actor) throw UNAUTHORIZED();
+    // Students never get the roster from here, so their check reads the classroom without it.
+    const classroomFields = actor.kind === 'teacher' ? '*' : CLASSROOM_ACCESS_FIELDS;
     const [assignmentResult, questionsResult] = await Promise.all([
-      supabase.from('assignments').select('*, classroom:classrooms(*)').eq('id', id).maybeSingle(),
+      supabase.from('assignments').select(`*, classroom:classrooms(${classroomFields})`).eq('id', id).maybeSingle(),
       supabase.from('questions').select('*').eq('assignment_id', id),
     ]);
     if (assignmentResult.error) throw toDatabaseError(assignmentResult.error, 'assignments');
@@ -1983,7 +2017,7 @@ export const dataActions = {
     if (actor.kind === 'student' && !retakeIncludes(assignment, actor.keys)) throw new HttpError(403, RETAKE_NOT_YOURS);
     // งานกลุ่ม: the groups come with the work, so opening it needs no extra request.
     const workGroups = options.withGroups !== false && actor.kind === 'student' && isGroupWork(assignment)
-      ? await workGroupsView(supabase, actor, assignment, classroom!).catch((groupErr) => {
+      ? await workGroupsView(supabase, actor, assignment, await withRoster(supabase, classroom!)).catch((groupErr) => {
           console.warn('[getAssignmentById] groups unavailable:', groupErr);
           return null;
         })
@@ -2654,7 +2688,7 @@ export const dataActions = {
     const me = requireStudent(actor);
     const { data, error } = await supabase
       .from('submissions')
-      .select('id, assignment_id, status, total_score, submission_answers(*), assignment:assignments(*, questions(*), classroom:classrooms(id, teacher_id, teachers, students, pending_students))')
+      .select(`id, assignment_id, status, total_score, submission_answers(*), assignment:assignments(*, questions(*), classroom:classrooms(${CLASSROOM_ACCESS_FIELDS}))`)
       .eq('id', submissionId)
       .in('student_id', me.keys)
       .maybeSingle();

@@ -2,7 +2,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getActor } from '@/lib/auth/actor';
-import { classroomRole, errorResponse, HttpError, requireStudent } from '@/lib/server/access';
+import { CLASSROOM_ACCESS_FIELDS, classroomRole, errorResponse, HttpError, requireStudent, withRoster } from '@/lib/server/access';
 import { resolveProxyStudent } from '@/lib/server/proxyStudent';
 import { handInBlankQuiz, readQuizAttempt, recordQuizOpen } from '@/lib/server/quizAttempts';
 import { maskSubmission } from '@/lib/server/resultRelease';
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
         readQuizAttempt(supabase, assignmentId, studentId),
       ]);
     const [{ data: assignmentRow }, ownEarly] = await Promise.all([
-      supabase.from('assignments').select('*, classroom:classrooms(id, students, pending_students), questions(id, max_score)').eq('id', assignmentId).maybeSingle(),
+      supabase.from('assignments').select(`*, classroom:classrooms(${CLASSROOM_ACCESS_FIELDS}), questions(id, max_score)`).eq('id', assignmentId).maybeSingle(),
       proxyNumber ? Promise.resolve(null) : ownRows(actor.userId),
     ]);
     if (!assignmentRow) throw new HttpError(404, 'ไม่พบข้อสอบนี้ในระบบ อาจถูกลบไปแล้ว');
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     if (!classroom || (await classroomRole(supabase, actor, classroom)) !== 'student') {
       throw new HttpError(403, 'คุณยังไม่ได้อยู่ในห้องเรียนนี้ หรือยังรอคุณครูอนุมัติ');
     }
-    const proxyStudent = proxyNumber ? await resolveProxyStudent(supabase, actor, classroom, proxyNumber) : null;
+    const proxyStudent = proxyNumber ? await resolveProxyStudent(supabase, actor, await withRoster(supabase, classroom), proxyNumber) : null;
     if (!retakeIncludes(assignment, proxyStudent ? [proxyStudent.id, proxyStudent.line_uid || ''] : actor.keys)) {
       throw new HttpError(403, 'ข้อสอบนี้เป็นการสอบซ่อมสำหรับนักเรียนที่คุณครูเลือกเท่านั้น');
     }

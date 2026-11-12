@@ -7,7 +7,7 @@ import { isObjectiveQuestion, scoreObjectiveAnswer } from '@/lib/utils/autoGrade
 import { decodeChecks, encodeChecks, isSurvey, scaleValue } from '@/lib/utils/survey';
 import { isSuspiciousActivity } from '@/lib/utils/integrity';
 import { getActor } from '@/lib/auth/actor';
-import { classroomRole, HttpError, isTeacherOf, loadClassroom } from '@/lib/server/access';
+import { classroomRole, HttpError, isTeacherOf, loadClassroomAccess, withRoster } from '@/lib/server/access';
 import { resolveProxyStudent, type ProxyStudent } from '@/lib/server/proxyStudent';
 import { attachFiles, discardDrafts, keysFromUrls, removeFiles } from '@/lib/storage/files';
 import { hasAnyAnswer, isHandedIn, isReopenActive, REOPEN_GRACE_MS } from '@/lib/utils/gradingStatus';
@@ -187,7 +187,7 @@ export async function POST(request: NextRequest) {
     }
     const assignmentWindow = getAssignmentWindow(assignment, Date.now(), QUIZ_LATE_GRACE_MS);
     // Only admitted students of the assignment's classroom may submit.
-    const classroom = await loadClassroom(supabase, assignment.classroom_id);
+    const classroom = await loadClassroomAccess(supabase, assignment.classroom_id);
     if (!classroom || (await classroomRole(supabase, actor, classroom as Classroom)) !== 'student') {
       return NextResponse.json({ error: 'คุณยังไม่ได้อยู่ในห้องเรียนนี้ หรือยังรอคุณครูอนุมัติ' }, { status: 403 });
     }
@@ -195,7 +195,7 @@ export async function POST(request: NextRequest) {
     let proxyStudent: ProxyStudent | null = null;
     if (proxy_student_number) {
       try {
-        proxyStudent = await resolveProxyStudent(supabase, actor, classroom as Classroom, proxy_student_number);
+        proxyStudent = await resolveProxyStudent(supabase, actor, await withRoster(supabase, classroom as Classroom), proxy_student_number);
       } catch (proxyError) {
         if (proxyError instanceof HttpError) return NextResponse.json({ error: proxyError.message }, { status: proxyError.status });
         throw proxyError;

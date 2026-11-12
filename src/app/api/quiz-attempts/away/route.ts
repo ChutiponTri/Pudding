@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { getActor } from '@/lib/auth/actor';
-import { classroomRole, errorResponse, HttpError, requireStudent } from '@/lib/server/access';
+import { CLASSROOM_ACCESS_FIELDS, classroomRole, errorResponse, HttpError, requireStudent, withRoster } from '@/lib/server/access';
 import { resolveProxyStudent } from '@/lib/server/proxyStudent';
 import { AWAY_EVENT_TYPES, recordAwayEvent, type AwayEvent } from '@/lib/server/quizAttempts';
 import type { Classroom } from '@/types/database';
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     const supabase = createServiceSupabaseClient();
     const { data: assignment } = await supabase
       .from('assignments')
-      .select('id, is_exam, classroom:classrooms(id, students, pending_students)')
+      .select(`id, is_exam, classroom:classrooms(${CLASSROOM_ACCESS_FIELDS})`)
       .eq('id', assignmentId)
       .maybeSingle();
     if (!assignment) throw new HttpError(404, 'ไม่พบข้อสอบนี้ในระบบ');
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
       throw new HttpError(403, 'คุณยังไม่ได้อยู่ในห้องเรียนนี้');
     }
     const proxyNumber = typeof body.proxy_student_number === 'string' ? body.proxy_student_number : '';
-    const proxyStudent = proxyNumber ? await resolveProxyStudent(supabase, actor, classroom, proxyNumber) : null;
+    const proxyStudent = proxyNumber ? await resolveProxyStudent(supabase, actor, await withRoster(supabase, classroom), proxyNumber) : null;
 
     const saved = await recordAwayEvent(supabase, assignmentId, proxyStudent?.id || actor.userId, event);
     return NextResponse.json({ saved });

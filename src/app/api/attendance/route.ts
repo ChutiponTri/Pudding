@@ -4,7 +4,7 @@ import { createServiceSupabaseClient } from '@/lib/supabase/server';
 import { createClassroomPost } from '@/lib/server/classroomPosts';
 import { getActor, type Actor } from '@/lib/auth/actor';
 import { signalClassroom } from '@/lib/realtime/classroomSignal';
-import { classroomRole, isTeacherOf } from '@/lib/server/access';
+import { CLASSROOM_ACCESS_FIELDS, classroomRole, isTeacherOf, withRoster } from '@/lib/server/access';
 import { checkAttendanceQrKey } from '@/lib/server/attendanceQr';
 import type { Classroom } from '@/types/database';
 
@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
   // Student overview: sessions + this student's records for many classrooms in
   // one request (the LIFF home screen). Only classrooms they belong to.
   if (!classroomId && requestedIds.length > 0 && actor?.kind === 'student') {
-    const { data: rows } = await supabase.from('classrooms').select('*').in('id', requestedIds);
+    const { data: rows } = await supabase.from('classrooms').select(CLASSROOM_ACCESS_FIELDS).in('id', requestedIds);
     const roles = await Promise.all(((rows || []) as Classroom[]).map((c) => classroomRole(supabase, actor, c)));
     const classroomIds = ((rows || []) as Classroom[]).filter((_, i) => roles[i]).map((c) => c.id);
     if (!classroomIds.length) return NextResponse.json({ byClassroom: {} });
@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
 
   // Student perspective: their own records only, in a classroom they belong to.
   if (!context.classroom && actor?.kind === 'student') {
-    const { data: classroomRow } = await supabase.from('classrooms').select('*').eq('id', classroomId).maybeSingle();
+    const { data: classroomRow } = await supabase.from('classrooms').select(CLASSROOM_ACCESS_FIELDS).eq('id', classroomId).maybeSingle();
     if (!classroomRow || !(await classroomRole(supabase, actor, classroomRow as Classroom))) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -154,7 +154,8 @@ export async function POST(request: NextRequest) {
     const [{ data: session }, { data: lineUser }, { data: classroom }] = await Promise.all([
       sessionQuery,
       sb.from('users').select('id, first_name, last_name').eq('line_uid', lineUid).maybeSingle(),
-      sb.from('classrooms').select('*').eq('id', classroomId).maybeSingle(),
+      // Without the roster: the whole class checks in at once; the roster is read only when the LINE profile is incomplete.
+      sb.from('classrooms').select(CLASSROOM_ACCESS_FIELDS).eq('id', classroomId).maybeSingle(),
     ]);
 
     // Only admitted students of this classroom can check in.
@@ -207,7 +208,9 @@ export async function POST(request: NextRequest) {
     // Resolve the canonical users.id and the student's real name: from the
     // synced LINE profile first, then the classroom roster or school number.
     const matches = (value?: string) => !!value && (value.trim() === studentId || value.trim() === lineUid);
-    const rosterStudent = ((classroom?.students || []) as RosterEntry[]).find(
+    const needsRoster = !lineUser?.id || !lineUser.first_name?.trim() || !lineUser.last_name?.trim();
+    const roster = needsRoster && classroom ? (await withRoster(sb, classroom as Classroom)).students : [];
+    const rosterStudent = ((roster || []) as RosterEntry[]).find(
       (st) => st && (matches(st.id) || matches(st.line_uid) || matches(st.student_id))
     );
     let canonicalUserId = lineUser?.id || rosterStudent?.id || studentId || lineUid;
