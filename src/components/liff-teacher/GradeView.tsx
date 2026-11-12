@@ -1,5 +1,6 @@
 "use client";
 
+import { Avatar } from "@/components/Avatar";
 import { isSurvey, surveyAnswerText } from "@/lib/utils/survey";
 import { isGroupWork } from "@/lib/utils/groupWork";
 
@@ -311,6 +312,7 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
         <Card className="p-0! divide-y divide-slate-100 dark:divide-slate-800">
           {rows.map((sub) => (
             <div key={sub.id} className="px-4 py-3 flex items-center gap-2">
+              <Avatar zoom src={sub.student?.avatar_url} firstName={sub.student?.first_name} lastName={sub.student?.last_name} className="w-9 h-9 text-[11px]" />
               <button type="button" onClick={() => onPick(sub)} className="flex-1 min-w-0 text-left cursor-pointer">
                 <span className="block text-sm font-bold truncate">{studentName(sub)}</span>
                 <span className="block text-[11px] text-slate-500">{sub.auto_forfeited ? "ระบบส่งกระดาษเปล่า" : sub.status === "late" ? "ส่งช้า" : "ส่งแล้ว"}</span>
@@ -341,6 +343,7 @@ function SubmissionList({ work, onBack, onPick }: { work: Assignment; onBack: ()
             <Card className="p-0! divide-y divide-slate-100 dark:divide-slate-800">
               {shown.map(({ student, sub }) => (
                 <div key={student.id} className="px-4 py-2.5 flex items-center gap-2">
+                  <Avatar zoom src={student.avatar_url} firstName={student.first_name} lastName={student.last_name} className="w-8 h-8 text-[10px]" />
                   <span className="flex-1 min-w-0 text-sm truncate">{rosterName(student)}</span>
                   <AdjustControl adjust={adjust} target={{ key: sub?.id || student.id, name: rosterName(student), sub, rosterId: student.id }} kind="handin" />
                 </div>

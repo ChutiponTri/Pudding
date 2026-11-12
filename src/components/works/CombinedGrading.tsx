@@ -319,7 +319,7 @@ export function CombinedGrading() {
                         const flagged = !!sub && isIntegrityFlagged(sub, s.block.assignment.is_exam);
                         return (
                           <li key={key} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5">
-                            <Avatar src={student?.avatar_url} name={fullName(student)} firstName={student?.first_name} lastName={student?.last_name} className="w-8 h-8 text-xs shrink-0" />
+                            <Avatar zoom src={student?.avatar_url} name={fullName(student)} firstName={student?.first_name} lastName={student?.last_name} className="w-8 h-8 text-xs shrink-0" />
                             <div className="min-w-0 flex-1">
                               <p className="text-[13px] sm:text-sm font-bold leading-tight text-slate-900 dark:text-white truncate">{fullName(student)}</p>
                               {student?.student_id && <p className="text-[10px] sm:text-[11px] text-slate-400 tabular-nums">{student.student_id}</p>}

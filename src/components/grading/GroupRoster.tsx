@@ -85,7 +85,7 @@ export function GroupRoster({
     const studentId = row.rosterId || row.student?.id;
     return (
       <li key={row.key} className="flex items-center gap-2.5 px-3 sm:px-4 py-2.5">
-        <Avatar src={row.student?.avatar_url} firstName={row.student?.first_name} lastName={row.student?.last_name} className="w-8 h-8 text-[10px] shrink-0" />
+        <Avatar zoom src={row.student?.avatar_url} firstName={row.student?.first_name} lastName={row.student?.last_name} className="w-8 h-8 text-[10px] shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-[13px] font-bold text-slate-900 dark:text-white truncate">{name}</p>
           <p className="text-[10px] text-slate-400 font-mono truncate">

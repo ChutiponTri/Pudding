@@ -1,5 +1,6 @@
 'use client';
 
+import { Avatar } from '@/components/Avatar';
 import { announceNote } from '@/lib/utils/announceNote';
 import { usePageTitle } from '@/lib/hooks/usePageTitle';
 import React, { useState, useEffect, useRef, useMemo, use, Suspense } from 'react';
@@ -1330,17 +1331,10 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
               const fullName = student?.first_name
                 ? `${student.first_name} ${student.last_name || ''}`.trim()
                 : (language === 'th' ? 'ไม่พบข้อมูลนักเรียน' : 'Unknown student');
-              const initials = (student?.first_name?.[0] || '?') + (student?.last_name?.[0] || '');
               return (
                 <li key={key} className={`px-3 py-2.5 space-y-2 ${sub ? '' : 'bg-slate-50/40 dark:bg-slate-900/40'}`}>
                   <div className="flex items-center gap-2.5">
-                    {student?.avatar_url ? (
-                      <img src={student.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0 ring-2 ring-white dark:ring-slate-900" />
-                    ) : (
-                      <span className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[11px] font-black flex items-center justify-center shrink-0">
-                        {initials}
-                      </span>
-                    )}
+                    <Avatar zoom src={student?.avatar_url} firstName={student?.first_name} lastName={student?.last_name} className="w-8 h-8 text-[11px] ring-2 ring-white dark:ring-slate-900" />
                     <div className="min-w-0 flex-1">
                       <p className="font-bold text-[13px] leading-snug text-slate-900 dark:text-white truncate">{fullName}</p>
                       <p className="text-[10px] leading-tight mt-0.5 text-slate-400 truncate">
@@ -1477,18 +1471,11 @@ export default function GradingPage({ params }: { params: Promise<{ id: string }
                   const fullName = student?.first_name
                     ? `${student.first_name} ${student.last_name || ''}`.trim()
                     : (language === 'th' ? 'ไม่พบข้อมูลนักเรียน' : 'Unknown student');
-                  const initials = (student?.first_name?.[0] || '?') + (student?.last_name?.[0] || '');
                   const isLate = sub?.status === 'late';
                   const studentCell = (
                       <td className="py-3.5 px-3 lg:px-6">
                         <div className="flex items-center gap-3 min-w-0">
-                          {student?.avatar_url ? (
-                            <img src={student.avatar_url} alt="" className="w-9 h-9 rounded-full object-cover shrink-0 ring-2 ring-white dark:ring-slate-900" />
-                          ) : (
-                            <span className="w-9 h-9 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-xs font-black flex items-center justify-center shrink-0">
-                              {initials}
-                            </span>
-                          )}
+                          <Avatar zoom src={student?.avatar_url} firstName={student?.first_name} lastName={student?.last_name} className="w-9 h-9 text-xs ring-2 ring-white dark:ring-slate-900" />
                           <div className="min-w-0">
                             <p className="font-bold text-sm text-slate-900 dark:text-white truncate">{fullName}</p>
                             <p className="text-[11px] text-slate-400 font-mono">

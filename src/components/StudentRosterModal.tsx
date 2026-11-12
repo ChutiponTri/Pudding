@@ -160,7 +160,7 @@ export function StudentRosterModal({
                 {students.map((s, index) => (
                   <li key={s.id} className="px-3 py-2.5 flex items-center gap-3 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                     <span className="w-5 shrink-0 text-right text-[11px] font-bold tabular-nums text-slate-400">{index + 1}</span>
-                    <Avatar src={s.avatar_url} firstName={s.first_name} lastName={s.last_name} name={s.name} className="w-8 h-8 shrink-0 text-[10px]" />
+                    <Avatar zoom src={s.avatar_url} firstName={s.first_name} lastName={s.last_name} name={s.name} className="w-8 h-8 shrink-0 text-[10px]" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                         {fullName(s) || tr('นักเรียน', 'Student')}
@@ -243,7 +243,7 @@ export function StudentRosterModal({
                   {pending.map((s) => (
                     <li key={s.id} className="px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2.5 bg-white dark:bg-slate-900">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <Avatar src={s.avatar_url} firstName={s.first_name} lastName={s.last_name} name={s.name} className="w-9 h-9 shrink-0 ring-2 ring-amber-400 text-[10px]" />
+                        <Avatar zoom src={s.avatar_url} firstName={s.first_name} lastName={s.last_name} name={s.name} className="w-9 h-9 shrink-0 ring-2 ring-amber-400 text-[10px]" />
                         <div className="min-w-0">
                           <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                             {fullName(s) || tr('นักเรียน', 'Student')}

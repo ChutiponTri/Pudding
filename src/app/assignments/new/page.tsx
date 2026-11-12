@@ -259,7 +259,8 @@ function NewAssignmentContent() {
   })();
   const [title, setTitle] = useState('');
   const [groupName, setGroupName] = useState('');
-  // false = "ไม่นับคะแนน": students still see the score; the grade book lists it without adding it to the total / percent.
+  // No picker any more (กิจกรรม covers ungraded work): new homework always counts. Editing an older
+  // "ไม่นับคะแนน" work keeps its flag, so the grade book doesn't change behind the teacher's back.
   const [countsTowardGrade, setCountsTowardGrade] = useState(true);
   // งานกลุ่ม (homework only): most students per group; 0 = individual work.
   const [groupSize, setGroupSize] = useState(0);
@@ -1538,50 +1539,6 @@ function NewAssignmentContent() {
                 </div>
               )}
             </div>
-
-            {/* Counts toward the grade: homework only (a quiz always counts, a survey never). Phones get a dropdown. */}
-            {!retake && !isExam && !isSurveyMode && (
-              <div className="space-y-2">
-                <label htmlFor="assignment-counts" className="block text-xs font-bold text-slate-700 dark:text-slate-300">{tr('การนับคะแนน', 'Grading')}</label>
-                <select
-                  id="assignment-counts"
-                  value={countsTowardGrade ? 'counts' : 'not'}
-                  onChange={(e) => setCountsTowardGrade(e.target.value === 'counts')}
-                  className="sm:hidden w-full h-9 px-3 py-0 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
-                >
-                  <option value="counts">{tr('นับคะแนน', 'Counts')}</option>
-                  <option value="not">{tr('ไม่นับคะแนน', "Doesn't count")}</option>
-                </select>
-                {/* Same fixed height (h-10), border and background as the category box beside it, so the Thai font can't make them differ. */}
-                <div className="relative hidden sm:grid grid-cols-2 h-10 p-[3px] rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                  {/* The pill slides under the picked choice. */}
-                  <span
-                    aria-hidden
-                    className={`absolute top-[3px] bottom-[3px] left-[3px] w-[calc(50%-3px)] rounded-[9px] shadow-xs transition-[translate,background-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                      countsTowardGrade ? 'translate-x-0 bg-amber-500' : 'translate-x-full bg-slate-200 dark:bg-slate-600'
-                    }`}
-                  />
-                  {([
-                    [true, tr('นับคะแนน', 'Counts')],
-                    [false, tr('ไม่นับคะแนน', "Doesn't count")],
-                  ] as const).map(([value, label]) => (
-                    <button
-                      key={String(value)}
-                      type="button"
-                      aria-pressed={countsTowardGrade === value}
-                      onClick={() => setCountsTowardGrade(value)}
-                      className={`relative z-10 rounded-lg text-xs font-bold transition-colors duration-300 cursor-pointer ${
-                        countsTowardGrade === value
-                          ? value ? 'text-slate-950' : 'text-slate-950 dark:text-white'
-                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* งานกลุ่ม: homework only. Students form their own groups; one member hands in for the group. */}
             {!retake && !isExam && !isSurveyMode && (

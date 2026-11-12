@@ -42,7 +42,7 @@ export const dataKindFor = (view: TeacherView): DataKind | null =>
     ? "attendance"
     : null;
 
-export type RosterStudent = { id: string; first_name: string; last_name: string; student_id?: string; line_uid?: string };
+export type RosterStudent = { id: string; first_name: string; last_name: string; student_id?: string; line_uid?: string; avatar_url?: string | null };
 export type RosterData = { students: RosterStudent[]; pending: RosterStudent[] };
 export type WorkData = {
   students: number;

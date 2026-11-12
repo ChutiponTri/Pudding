@@ -1,5 +1,6 @@
 "use client";
 
+import { Avatar } from "@/components/Avatar";
 import { useState } from "react";
 import { Check, ExternalLink, GripVertical, Loader2, Send, UserCheck, Users, X } from "lucide-react";
 import { dataService } from "@/lib/supabase/dataService";
@@ -311,9 +312,12 @@ export function ClassroomView() {
             {roster.data.pending.length === 0 && <p className="text-xs text-slate-400">ไม่มีคำขอเข้าห้อง</p>}
             {roster.data.pending.map((student) => (
               <div key={student.id} className="liff-rise flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-bold truncate">{studentName(student)}</p>
-                  {student.student_id && <p className="text-[11px] text-slate-400">รหัส {student.student_id}</p>}
+                <div className="min-w-0 flex items-center gap-2.5">
+                  <Avatar zoom src={student.avatar_url} firstName={student.first_name} lastName={student.last_name} className="w-9 h-9 text-[11px]" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold truncate">{studentName(student)}</p>
+                    {student.student_id && <p className="text-[11px] text-slate-400">รหัส {student.student_id}</p>}
+                  </div>
                 </div>
                 <div className="flex gap-1.5 shrink-0">
                   <Button small tone="green" busy={busy === student.id} onClick={() => act(student, true)}>
@@ -334,8 +338,9 @@ export function ClassroomView() {
             {roster.data.students.length === 0 && <Empty text="ยังไม่มีนักเรียน" />}
             <ul className="text-sm divide-y divide-slate-100 dark:divide-slate-800">
               {roster.data.students.map((student, index) => (
-                <li key={student.id} className="py-1.5 flex gap-2">
-                  <span className="w-6 text-right text-slate-400 text-xs pt-0.5">{index + 1}.</span>
+                <li key={student.id} className="py-1.5 flex items-center gap-2">
+                  <span className="w-6 shrink-0 text-right text-slate-400 text-xs">{index + 1}.</span>
+                  <Avatar zoom src={student.avatar_url} firstName={student.first_name} lastName={student.last_name} className="w-7 h-7 text-[10px]" />
                   <span className="truncate">
                     {student.student_id ? <span className="text-slate-400">[{student.student_id.slice(-3)}] </span> : null}
                     {studentName(student)}

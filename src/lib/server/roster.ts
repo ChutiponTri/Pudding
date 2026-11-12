@@ -3,7 +3,7 @@ import type { createServiceSupabaseClient } from '@/lib/supabase/server';
 
 type Supabase = ReturnType<typeof createServiceSupabaseClient>;
 
-export type RosterStudent = { id: string; first_name: string; last_name: string; student_id?: string; line_uid?: string };
+export type RosterStudent = { id: string; first_name: string; last_name: string; student_id?: string; line_uid?: string; avatar_url?: string | null };
 
 /**
  * The classroom's students, admitted and waiting for approval, from
@@ -11,7 +11,7 @@ export type RosterStudent = { id: string; first_name: string; last_name: string;
  * snapshot) with their users in one query; sorted by student number.
  */
 export async function loadRoster(supabase: Supabase, classroomId: string) {
-  const USER_COLUMNS = 'id, first_name, last_name, student_id, line_uid';
+  const USER_COLUMNS = 'id, first_name, last_name, student_id, line_uid, avatar_url';
   const { data, error } = await supabase
     .from('classroom_students')
     .select(`status, users(${USER_COLUMNS})`)

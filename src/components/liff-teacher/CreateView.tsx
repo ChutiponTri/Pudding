@@ -64,8 +64,6 @@ export function CreateView() {
   const [description, setDescription] = useState("");
   /** Category ("" = the default one: งานทั่วไป / ข้อสอบ). */
   const [groupName, setGroupName] = useState("");
-  /** false = "ไม่นับคะแนน": students still see the score; the grade book leaves it out of the total / percent. */
-  const [countsTowardGrade, setCountsTowardGrade] = useState(true);
   /** งานกลุ่ม (homework only): most students per group; 0 = individual work. */
   const [groupSize, setGroupSize] = useState(0);
   /** Quiz: roster ids unticked in the picker (empty = everyone takes it). */
@@ -167,7 +165,7 @@ export function CreateView() {
           ...(savedAttachments.length ? { attachments: savedAttachments } : {}),
           ...(groupName.trim() ? { group_name: groupName.trim() } : {}),
           is_exam: isExam,
-          ...(isSurvey ? { is_survey: true } : isExam || countsTowardGrade ? {} : { counts_toward_grade: false }),
+          ...(isSurvey ? { is_survey: true } : {}),
           ...(kind === "homework" && groupSize >= 2 ? { group_size: groupSize } : {}),
           // Some students unticked: only the rest see and take the quiz.
           ...(isExam && excludedNow.length ? { retake_student_ids: students.filter((s) => !excludedNow.includes(s.id)).map((s) => s.id) } : {}),
@@ -299,15 +297,6 @@ export function CreateView() {
             </div>
           )}
         </div>
-        {/* "ไม่นับคะแนน": homework only (a quiz always counts, a survey never). */}
-        {kind === "homework" && (
-          <Field label="การนับคะแนน">
-            <select className={inputClass} value={countsTowardGrade ? "counts" : "not"} onChange={(e) => setCountsTowardGrade(e.target.value === "counts")}>
-              <option value="counts">นับคะแนน</option>
-              <option value="not">ไม่นับคะแนน</option>
-            </select>
-          </Field>
-        )}
         {/* งานกลุ่ม: students form their own groups; one member hands in for everyone. */}
         {kind === "homework" && (
           <Field label="การทำงาน">

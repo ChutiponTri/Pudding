@@ -489,7 +489,7 @@ export const GradingWorkspace: React.FC<GradingWorkspaceProps> = ({
           </button>
 
           <div className="flex items-center gap-2.5 min-w-0 flex-1">
-            <Avatar
+            <Avatar zoom
               src={submission.student?.avatar_url}
               firstName={submission.student?.first_name}
               lastName={submission.student?.last_name}

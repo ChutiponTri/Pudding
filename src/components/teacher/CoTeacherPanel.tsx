@@ -151,7 +151,7 @@ export function CoTeacherPanel({
               const added = teachers?.some((t) => t.teacher_id === found.id);
               return (
                 <div key={found.id} className="px-2 py-1.5 flex items-center gap-2">
-                  <Avatar src={found.avatar_url} name={found.name} className="w-6 h-6 text-[9px]" />
+                  <Avatar zoom src={found.avatar_url} name={found.name} className="w-6 h-6 text-[9px]" />
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                       {`${found.first_name || ''} ${found.last_name || ''}`.trim() || found.name || tr('ครูผู้สอน', 'Teacher')}
@@ -185,7 +185,7 @@ export function CoTeacherPanel({
           {teachers.map((teacher) => {
             return (
               <div key={teacher.teacher_id} className="px-2 py-1.5 flex items-center gap-2">
-                <Avatar src={teacher.avatar_url} name={teacher.name} className="w-6 h-6 text-[9px]" />
+                <Avatar zoom src={teacher.avatar_url} name={teacher.name} className="w-6 h-6 text-[9px]" />
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{teacher.name || teacher.email || teacher.teacher_id}</p>
                   {teacher.email && <p className="text-[10px] text-slate-400 truncate">{teacher.email}</p>}

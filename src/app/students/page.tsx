@@ -175,7 +175,7 @@ function StudentsContent() {
             const { student } = row;
             return (
               <li key={student.id} className="flex items-center gap-3 p-3 sm:px-4 min-w-0">
-                <Avatar
+                <Avatar zoom
                   src={student.avatar_url}
                   firstName={student.first_name}
                   lastName={student.last_name}

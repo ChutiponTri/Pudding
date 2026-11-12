@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Avatar } from '@/components/Avatar';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { BookOpen, Building2, CheckCircle2, Clock, Mail, MessageCircle, Search, UserX, Users } from 'lucide-react';
@@ -187,8 +188,7 @@ export default async function AdminTeachersPage({ searchParams }: { searchParams
                   <div className="p-4 space-y-3">
                     <div className="flex items-start gap-3">
                       {t.avatar_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={t.avatar_url} alt="" className="w-12 h-12 rounded-2xl object-cover shrink-0 ring-2 ring-white dark:ring-slate-800 shadow" />
+                        <Avatar zoom src={t.avatar_url} firstName={t.first_name} lastName={t.last_name} className="w-12 h-12 text-lg ring-2 ring-white dark:ring-slate-800 shadow" />
                       ) : (
                         <div className={`w-12 h-12 rounded-2xl shrink-0 bg-linear-to-br ${AVATAR_TONES[index % AVATAR_TONES.length]} text-white font-black text-lg flex items-center justify-center shadow`}>
                           {initials}

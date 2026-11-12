@@ -2561,7 +2561,7 @@ export default function ClassroomWorkspacePage() {
                         className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-between gap-3 border border-slate-100 dark:border-slate-700/60"
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          <Avatar src={teacher.avatar_url} name={teacher.name} className="w-10 h-10 text-sm" />
+                          <Avatar zoom src={teacher.avatar_url} name={teacher.name} className="w-10 h-10 text-sm" />
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                               {teacher.name || teacher.teacher_id}
@@ -3219,7 +3219,7 @@ function StudentList({
         {filtered.map((student) => (
           <div key={student.id} className="min-w-0 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-between gap-2 border border-slate-100 dark:border-slate-700/60">
             <div className="flex items-center gap-3 min-w-0">
-              <Avatar src={student.avatar_url} firstName={student.first_name} lastName={student.last_name} className="w-10 h-10 text-sm" />
+              <Avatar zoom src={student.avatar_url} firstName={student.first_name} lastName={student.last_name} className="w-10 h-10 text-sm" />
               <div className="min-w-0">
                 <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                   {student.first_name} {student.last_name}
