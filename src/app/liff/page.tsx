@@ -1445,6 +1445,10 @@ export default function LiffStudentPage() {
         // "no submission". A teacher grading quickly sends many: at most one reload
         // every few seconds (the timer is not pushed back by later signals).
         if (signal?.type === "submission") {
+          // A classmate's hand-in or grade: nothing on this page changes, so no reload
+          // (otherwise a whole class handing in a quiz made every open phone reload over and over).
+          const about = signal.studentIds;
+          if (about?.length && !about.some((id) => id === currentStudent?.id || (!!currentStudent?.line_uid && id === currentStudent.line_uid))) return;
           if (!signalTimer) signalTimer = setTimeout(() => {
             signalTimer = null;
             reloadClassroom(classroomId);

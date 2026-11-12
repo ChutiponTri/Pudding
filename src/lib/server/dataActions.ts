@@ -669,17 +669,53 @@ async function ensureTeacherUser(
   });
 }
 
+/**
+ * Every classroom the student is in or asked to join (any status), by users.id or LINE id.
+ * classroom_students is the source of truth; the JSON roster snapshot is still searched
+ * because an older classroom may list the student only there. Those searches return ids
+ * only: they used to return each matching classroom's whole roster, up to four copies per
+ * key, on every student page load and fallback poll (the heaviest part of the request).
+ */
+async function studentMembership(supabase: Supabase, keys: string[]) {
+  const unique = [...new Set(keys.filter(Boolean))];
+  if (!unique.length) return { ids: [] as string[], links: [] as EnrollmentLink[] };
+  const [links, snapshotIds] = await Promise.all([
+    supabase.from('classroom_students').select('classroom_id, student_id, status').in('student_id', unique),
+    snapshotClassroomIds(supabase, unique),
+  ]);
+  // Best effort, as before: a failed search only leaves its classrooms out.
+  if (links.error) console.warn('[studentMembership] classroom_students:', links.error.message);
+  const ownLinks = (links.data || []) as EnrollmentLink[];
+  return { ids: [...new Set([...snapshotIds, ...ownLinks.map((l) => l.classroom_id)])], links: ownLinks };
+}
+
+/** Ids of classrooms whose JSON roster snapshot lists the student (by users.id or LINE id). */
+async function snapshotClassroomIds(supabase: Supabase, keys: string[]): Promise<string[]> {
+  const unique = [...new Set(keys.filter(Boolean))];
+  const search = (column: 'students' | 'pending_students', field: 'id' | 'line_uid', key: string) =>
+    supabase.from('classrooms').select('id').contains(column, jsonArray({ [field]: key }));
+  const results = await Promise.all(
+    unique.flatMap((key) => [
+      search('students', 'id', key),
+      search('pending_students', 'id', key),
+      search('students', 'line_uid', key),
+      search('pending_students', 'line_uid', key),
+    ])
+  );
+  return [...new Set(results.flatMap((r) => ((r.data || []) as Array<{ id: string }>).map((row) => row.id)))];
+}
+
+/** Classroom rows by id (each once), best effort like the searches above. */
+async function classroomsByIds(supabase: Supabase, ids: string[]): Promise<Classroom[]> {
+  if (!ids.length) return [];
+  const { data, error } = await supabase.from('classrooms').select('*').in('id', ids);
+  if (error) console.warn('[classroomsByIds]', error.message);
+  return (data || []) as Classroom[];
+}
+
 /** Classrooms whose JSON roster contains the student (by users.id or LINE id). */
 async function findClassroomsContainingStudent(supabase: Supabase, keys: string[]): Promise<Classroom[]> {
-  const unique = [...new Set(keys.filter(Boolean))];
-  const queries = unique.flatMap((key) => [
-    supabase.from('classrooms').select('*').contains('students', jsonArray({ id: key })),
-    supabase.from('classrooms').select('*').contains('pending_students', jsonArray({ id: key })),
-    supabase.from('classrooms').select('*').contains('students', jsonArray({ line_uid: key })),
-    supabase.from('classrooms').select('*').contains('pending_students', jsonArray({ line_uid: key })),
-  ]);
-  const results = await Promise.all(queries);
-  return uniqueById(results.flatMap((r) => (r.data || []) as Classroom[]));
+  return classroomsByIds(supabase, await snapshotClassroomIds(supabase, keys));
 }
 
 /** Teacher's own classroom ids (owner or co-teacher). */
@@ -748,11 +784,7 @@ const DASHBOARD_SUBMISSION_FIELDS =
 
 /** Classroom ids the student belongs to or asked to join. */
 async function studentClassroomIds(supabase: Supabase, actor: Extract<Actor, { kind: 'student' }>): Promise<Set<string>> {
-  const [fromRoster, links] = await Promise.all([
-    findClassroomsContainingStudent(supabase, actor.keys),
-    supabase.from('classroom_students').select('classroom_id').in('student_id', actor.keys),
-  ]);
-  return new Set([...fromRoster.map((c) => c.id), ...(links.data || []).map((l: { classroom_id: string }) => l.classroom_id)]);
+  return new Set((await studentMembership(supabase, actor.keys)).ids);
 }
 
 /** Shapes a hydrated classroom for the caller: full for its teachers, trimmed for students. */
@@ -1406,18 +1438,9 @@ export const dataActions = {
 
   async getStudentClassrooms({ supabase, actor }: Ctx) {
     const me = requireStudent(actor);
-    const [fromRoster, links] = await Promise.all([
-      findClassroomsContainingStudent(supabase, me.keys),
-      supabase.from('classroom_students').select('classroom_id').in('student_id', me.keys),
-    ]);
-    const known = new Set(fromRoster.map((c) => c.id));
-    const extraIds = [...new Set((links.data || []).map((l: { classroom_id: string }) => l.classroom_id))].filter((id) => !known.has(id));
-    let extra: Classroom[] = [];
-    if (extraIds.length) {
-      const { data } = await supabase.from('classrooms').select('*').in('id', extraIds);
-      extra = (data || []) as Classroom[];
-    }
-    const hydrated = await hydrateClassrooms(supabase, [...fromRoster, ...extra].sort(byCreatedDesc));
+    const { ids } = await studentMembership(supabase, me.keys);
+    const rows = await classroomsByIds(supabase, ids);
+    const hydrated = await hydrateClassrooms(supabase, rows.sort(byCreatedDesc));
     return hydrated.map((c) => classroomForStudent(c, me));
   },
 
@@ -1886,9 +1909,8 @@ export const dataActions = {
     const me = requireStudent(actor);
     // One round for everything that only needs the student's ids: their
     // classrooms, enrollment rows, own account and own submissions (with score rows).
-    const [fromRoster, links, ownUsers, submissionResult] = await Promise.all([
-      findClassroomsContainingStudent(supabase, me.keys),
-      supabase.from('classroom_students').select('classroom_id, student_id, status').in('student_id', me.keys),
+    const [membership, ownUsers, submissionResult] = await Promise.all([
+      studentMembership(supabase, me.keys),
       fetchUsersByKeys(supabase, me.keys),
       supabase
         .from('submissions')
@@ -1896,19 +1918,13 @@ export const dataActions = {
         .in('student_id', me.keys),
     ]);
     if (submissionResult.error) throw toDatabaseError(submissionResult.error, 'submissions');
-    const ownLinks = (links.data || []) as EnrollmentLink[];
-    const known = new Set(fromRoster.map((c) => c.id));
-    const extraIds = [...new Set(ownLinks.map((l) => l.classroom_id))].filter((id) => !known.has(id));
-    const rows = [...fromRoster];
-    const classroomIds = [...known, ...extraIds];
-    // Classrooms known only from an enrollment row, and the work of every classroom, at once.
-    const [extra, assignments] = await Promise.all([
-      extraIds.length
-        ? supabase.from('classrooms').select('*').in('id', extraIds).then(({ data }) => (data || []) as Classroom[])
-        : Promise.resolve([] as Classroom[]),
+    const ownLinks = membership.links;
+    const classroomIds = membership.ids;
+    // Each classroom row once, and the work of every classroom, at once.
+    const [rows, assignments] = await Promise.all([
+      classroomsByIds(supabase, classroomIds),
       loadAssignments(supabase, classroomIds, false, me.keys),
     ]);
-    rows.push(...extra);
     rows.sort(byCreatedDesc);
     // Work of a classroom id that no longer exists is dropped with it.
     const existing = new Set(rows.map((c) => c.id));
@@ -2699,13 +2715,14 @@ export const dataActions = {
     if (!Array.isArray(grades) || grades.length === 0) return;
     const { data, error } = await supabase
       .from('submissions')
-      .select('id, assignment_id, status, submission_answers(*), assignment:assignments(*, classroom:classrooms(id, teacher_id, teachers), questions(id, max_score))')
+      .select('id, assignment_id, student_id, status, submission_answers(*), assignment:assignments(*, classroom:classrooms(id, teacher_id, teachers), questions(id, max_score))')
       .eq('id', submissionId)
       .maybeSingle();
     if (error) throw toDatabaseError(error, 'submissions');
     if (!data) throw new HttpError(404, 'ไม่พบงานที่ส่ง');
     type Row = {
       assignment_id: string;
+      student_id: string;
       status: Submission['status'];
       submission_answers: SubmissionAnswer[] | null;
       assignment: (Assignment & { classroom: Pick<Classroom, 'id' | 'teacher_id' | 'teachers'> | null; questions: Pick<Question, 'id' | 'max_score'>[] | null }) | null;
@@ -2754,7 +2771,9 @@ export const dataActions = {
       const { error: commentError } = await supabase.from('submission_answers').upsert(commentRows, { onConflict: 'submission_id,question_id' });
       if (commentError) throw toDatabaseError(commentError, 'submission_answers');
       const assignmentId = row.assignment_id;
-      after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
+      // Only this student's page reloads (งานกลุ่ม: every member's, since the comment is copied).
+      const studentIds = isGroupWork(row.assignment) ? undefined : [row.student_id];
+      after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId, studentIds }));
       return;
     }
     // The last grade of a question wins if the browser sent it twice.
@@ -2802,7 +2821,8 @@ export const dataActions = {
       if (isGroupWork(row.assignment)) await syncGroupCopies(supabase, row.assignment_id, submissionId, 'grades');
       // Open score tables (classroom grades tab, co-teachers, the student) refetch.
       const assignmentId = row.assignment_id;
-      after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
+      const studentIds = isGroupWork(row.assignment) ? undefined : [row.student_id];
+      after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId, studentIds }));
     }
   },
 
@@ -2915,7 +2935,7 @@ export const dataActions = {
     }
     if (isRetake(assignment)) await syncRetakeScores(supabase, assignment, [submissionId]);
     after(() => signalClassroom(classroom.id, { type: 'timeline' }));
-    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId: assignment.id }));
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId: assignment.id, studentIds: [sub.student_id as string] }));
     return { ...(sub as Submission), ...reset } as Submission;
   },
 
@@ -3017,7 +3037,7 @@ export const dataActions = {
     // A retake records only its own students.
     const roster = rosterFor(assignment, await studentsFor(supabase, assignment, classroom)).filter((s) => s && wanted.has(s.id));
     const rows = await recordNoSubmissionZeros(supabase, assignment, roster, { id: me.userId, name: teacherName, role: teacherRole });
-    if (rows.length) after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
+    if (rows.length) after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId, studentIds: roster.flatMap((s) => [s.id, s.line_uid]).filter((k): k is string => !!k) }));
     return rows;
   },
 
@@ -3030,7 +3050,7 @@ export const dataActions = {
     const me = requireTeacher(actor);
     const role = classroom.teacher_id === me.userId ? 'primary' : (classroom.teachers || []).find((t) => t.teacher_id === me.userId)?.role;
     if (role === 'researcher') throw FORBIDDEN();
-    const { data: sub, error: readError } = await supabase.from('submissions').select('id, assignment_id, status').eq('id', submissionId).maybeSingle();
+    const { data: sub, error: readError } = await supabase.from('submissions').select('id, assignment_id, student_id, status').eq('id', submissionId).maybeSingle();
     if (readError) throw toDatabaseError(readError, 'submissions');
     if (!sub) return;
     if (isHandedIn(sub as Pick<Submission, 'status'>)) throw new HttpError(409, 'นักเรียนส่งงานแล้ว จึงยกเลิกไม่ได้');
@@ -3040,7 +3060,8 @@ export const dataActions = {
     const { error } = await supabase.from('submissions').delete().eq('id', submissionId).eq('status', 'pending');
     if (error) throw toDatabaseError(error, 'submissions');
     const assignmentId = sub.assignment_id as string;
-    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId }));
+    const studentId = sub.student_id as string;
+    after(() => signalClassroom(classroom.id, { type: 'submission', assignmentId, studentIds: [studentId] }));
   },
 };
 

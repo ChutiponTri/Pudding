@@ -625,7 +625,7 @@ export async function POST(request: NextRequest) {
     if (droppedKeys.length) after(() => removeFiles(supabase, droppedKeys));
     after(() => discardDrafts(supabase, assignment_id, actor.keys, fileUrls, proxyStudent ? onBehalfTag(proxy_student_number) : ''));
     // Teacher pages with this classroom open refresh their counts now instead of polling.
-    after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id }));
+    after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId: assignment_id, ...(group ? {} : { studentIds: [targetUserDbId] }) }));
     // Choice / true-false results are only shown once nobody can hand in any
     // more (this hand-in may have been the last one). Read after the write.
     const release = await resultRelease(supabase, [assignment], [{ assignment_id, status: submissionRecord.status as Submission['status'], total_score: calculatedTotalScore ?? null }]);

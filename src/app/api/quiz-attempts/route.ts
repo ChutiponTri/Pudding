@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
         console.error('[POST /api/quiz-attempts] Retake score sync failed:', syncError);
       }
     }
-    after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId }));
+    after(() => signalClassroom(assignment.classroom_id, { type: 'submission', assignmentId, studentIds: [ownerId] }));
     // The quiz still takes work (checked above), so its results stay hidden like any hand-in.
     return NextResponse.json({ ...result, submission: maskSubmission(submission as unknown as Submission) });
   } catch (error) {

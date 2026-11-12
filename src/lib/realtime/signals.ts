@@ -1,6 +1,10 @@
 /** Broadcast events about one classroom (shared by the server sender and browser listeners). */
 export type ClassroomSignal =
-  | { type: 'submission'; assignmentId: string }
+  /**
+   * `studentIds`: the change is about these students only (their hand-in, grade, reset), so
+   * other students' pages skip the reload. Missing = may concern anyone (answer key, group work).
+   */
+  | { type: 'submission'; assignmentId: string; studentIds?: string[] }
   | { type: 'timeline' }
   | { type: 'published'; assignmentId?: string }
   | { type: 'attendance' }
