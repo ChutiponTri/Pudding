@@ -6,7 +6,7 @@ import { dataService } from "@/lib/supabase/dataService";
 import { getAssignmentWindow, LATE_WINDOW_HOURS, QUIZ_LATE_GRACE_MINUTES } from "@/lib/utils/assignmentWindow";
 import { daysFromNowAt, lineDate, localPartsToIso, toLocalDateValue, toLocalTimeValue } from "@/lib/utils/datetime";
 import type { Assignment, SubmissionOverrideStatus } from "@/types/database";
-import { Button, Field, errorText, inputClass, useKit } from "./kit";
+import { Button, Field, dateInputClass, errorText, inputClass, useKit } from "./kit";
 
 type Win = ReturnType<typeof getAssignmentWindow>;
 
@@ -148,10 +148,10 @@ function StatusSheet({ work, onClose }: { work: Assignment; onClose: () => void 
         {mode === "extended" && (
           <div className="grid grid-cols-2 gap-2 animate-in fade-in slide-in-from-top-1">
             <Field label="ขยายถึงวันที่">
-              <input className={inputClass} type="date" value={date} min={toLocalDateValue(new Date().toISOString())} onChange={(e) => setDate(e.target.value)} />
+              <input className={`${inputClass} ${dateInputClass}`} type="date" value={date} min={toLocalDateValue(new Date().toISOString())} onChange={(e) => setDate(e.target.value)} />
             </Field>
             <Field label="เวลา">
-              <input className={inputClass} type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+              <input className={`${inputClass} ${dateInputClass}`} type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             </Field>
           </div>
         )}
