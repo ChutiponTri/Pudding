@@ -7,7 +7,6 @@
     "dev:https": "bash scripts/dev-https.sh",
     "build": "next build",
     "start": "next start",
-    "start:home": "node scripts/start-home.mjs",
     "lint": "eslint",
     "db:verify": "node scripts/verify-supabase.mjs",
     "db:setup": "node scripts/setup-db.mjs",
