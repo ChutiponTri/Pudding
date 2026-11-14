@@ -12,20 +12,21 @@ import { teacherAccessOf } from '@/lib/utils/teacherProfile';
 import type { Assignment, ClassroomTeacher, Submission } from '@/types/database';
 
 /**
- * "สรุปประจำวัน": once a day (from DAILY_SUMMARY_HOUR, Bangkok time) each
+ * "สรุปประจำวัน": every EVERY_DAYS days (from DAILY_SUMMARY_HOUR, Bangkok time) each
  * teacher gets one card in their 1:1 chat with the bot: hand-ins today and
  * what is left to grade, rooms with work due soon or overdue that students
  * have not handed in (time to ทวงงาน), and students waiting to be admitted.
- * A teacher with nothing on that list gets nothing that day.
+ * A teacher with nothing on that list gets nothing that day and stays due.
  *
  * Cost: a push to one person is one message of the plan's monthly quota, so
  * pushes stop DAILY_SUMMARY_RESERVE messages short of the limit (scheduled
- * work cards need them more). Typing "สรุป" in the 1:1 chat gets the same
+ * work cards need them more); with no messages over the reserve the run stops
+ * before reading anything. Typing "สรุป" in the 1:1 chat gets the same
  * card as a free reply (see the webhook).
  *
- * Each teacher is claimed for the day (users.line_daily_summary_on) before the
- * push, so the five-minute scheduler never sends twice; a failed push is not
- * retried that day. Needs supabase_daily_summary_update.sql.
+ * A teacher with a card is claimed (users.line_daily_summary_on = today) before
+ * the push, so the hourly scheduler never sends twice; a failed push is not
+ * retried until they are due again. Needs supabase_daily_summary_update.sql.
  */
 
 type Supabase = ReturnType<typeof createServiceSupabaseClient>;
@@ -35,6 +36,8 @@ const DAILY_SUMMARY_HOUR = Number(process.env.LINE_DAILY_SUMMARY_HOUR || 17);
 const LAST_HOUR = 21;
 /** Messages kept back for scheduled work cards and notices. */
 const DAILY_SUMMARY_RESERVE = Number(process.env.LINE_DAILY_SUMMARY_RESERVE || 30);
+/** A teacher gets the card at most once every this many days (saves quota). */
+const EVERY_DAYS = Math.max(1, Number(process.env.LINE_DAILY_SUMMARY_EVERY_DAYS || 2));
 /** Work whose deadline is older than this no longer counts (last term's leftovers). */
 const LOOKBACK_DAYS = 30;
 /** "รอทวง": work still taking hand-ins whose deadline is past or within this. */
@@ -279,21 +282,28 @@ type TeacherRow = {
 };
 
 export type DailySummaryRun =
-  | { skipped: 'not-time' | 'no-columns' | 'nobody'; detail?: string }
+  | { skipped: 'not-time' | 'no-columns' | 'nobody' | 'quota'; detail?: string }
   | { sent: number; empty: number; quotaSkipped: number; failed: number };
 
-/** The scheduler's step (every five minutes): sends today's summaries once the hour comes. */
+/** A teacher whose last card is dated before this is due (every 2, on 2026-11-14 → "2026-11-13": sent on the 12th is due, the 13th is not). */
+function lastSentBefore(day: { startMs: number }) {
+  return schoolDay(new Date(day.startMs + 12 * 60 * 60 * 1000 - (EVERY_DAYS - 1) * 24 * 60 * 60 * 1000)).date;
+}
+
+/** The hourly scheduler's step: sends due summaries (one per teacher every EVERY_DAYS days) once the hour comes. */
 export async function runDailySummary(supabase: Supabase, now = new Date()): Promise<DailySummaryRun> {
   if (process.env.LINE_DAILY_SUMMARY === 'off') return { skipped: 'not-time', detail: 'LINE_DAILY_SUMMARY=off' };
   const day = schoolDay(now);
   if (day.hour < DAILY_SUMMARY_HOUR || day.hour > LAST_HOUR) return { skipped: 'not-time' };
+  // Due = never sent, or last sent before this date.
+  const dueFilter = `line_daily_summary_on.is.null,line_daily_summary_on.lt.${lastSentBefore(day)}`;
 
   const { data, error } = await supabase
     .from('users')
     .select('id, teacher_line_uid, line_bot_friend, first_name, last_name, institution, teacher_approval, line_daily_summary, line_daily_summary_on')
     .eq('role', 'teacher')
     .not('teacher_line_uid', 'is', null)
-    .or(`line_daily_summary_on.is.null,line_daily_summary_on.lt.${day.date}`);
+    .or(dueFilter);
   if (error) {
     // Before supabase_daily_summary_update.sql: nothing to do yet.
     return { skipped: 'no-columns', detail: error.message };
@@ -303,27 +313,30 @@ export async function runDailySummary(supabase: Supabase, now = new Date()): Pro
   );
   if (!teachers.length) return { skipped: 'nobody' };
 
-  // Claim today for each teacher first: a run that overlaps this one finds them taken.
+  // Quota first: with nothing left over the reserve, skip the reads and leave everyone due.
+  // One push = one message per teacher; undefined (could not tell) lets LINE decide.
+  const left = await messagesLeftThisMonth();
+  const budget = left === null || left === undefined ? Infinity : Math.max(0, left - DAILY_SUMMARY_RESERVE);
+  if (budget <= 0) return { skipped: 'quota', detail: `${left} left, reserve ${DAILY_SUMMARY_RESERVE}` };
+
+  const summaries = await buildSummaries(supabase, teachers.map((t) => t.id), now);
+  const cards = teachers
+    .map((t) => ({ id: t.id, to: t.teacher_line_uid as string, card: summaryCard(summaryRows(summaries.get(t.id)!)) }))
+    .filter((item): item is { id: string; to: string; card: FlexMessage } => !!item.card)
+    .slice(0, budget);
+  if (!cards.length) return { sent: 0, empty: teachers.length, quotaSkipped: 0, failed: 0 };
+
+  // Claim only those about to get a card (an empty day keeps them due tomorrow);
+  // a run that overlaps this one finds them taken.
   const { data: claimed, error: claimError } = await supabase
     .from('users')
     .update({ line_daily_summary_on: day.date })
-    .in('id', teachers.map((t) => t.id))
-    .or(`line_daily_summary_on.is.null,line_daily_summary_on.lt.${day.date}`)
+    .in('id', cards.map((item) => item.id))
+    .or(dueFilter)
     .select('id');
   if (claimError) return { skipped: 'no-columns', detail: claimError.message };
   const mine = new Set((claimed || []).map((row) => row.id as string));
-  const recipients = teachers.filter((t) => mine.has(t.id));
-  if (!recipients.length) return { skipped: 'nobody' };
-
-  const summaries = await buildSummaries(supabase, recipients.map((t) => t.id), now);
-  const cards = recipients
-    .map((t) => ({ to: t.teacher_line_uid as string, card: summaryCard(summaryRows(summaries.get(t.id)!)) }))
-    .filter((item): item is { to: string; card: FlexMessage } => !!item.card);
-
-  // One push = one message per teacher. Keep the reserve; undefined (unknown) lets LINE decide.
-  const left = await messagesLeftThisMonth();
-  const budget = left === null || left === undefined ? cards.length : Math.max(0, left - DAILY_SUMMARY_RESERVE);
-  const sending = cards.slice(0, budget);
+  const sending = cards.filter((item) => mine.has(item.id));
 
   let sent = 0;
   let failed = 0;
@@ -339,7 +352,7 @@ export async function runDailySummary(supabase: Supabase, now = new Date()): Pro
       console.error(isLineQuotaError(error) ? 'Daily summary stopped (monthly quota used up):' : 'Daily summary push failed:', error instanceof LineApiError ? error.message : error);
     }
   }
-  return { sent, empty: recipients.length - cards.length, quotaSkipped: cards.length - sent - failed, failed };
+  return { sent, empty: teachers.length - cards.length, quotaSkipped: sending.length - sent - failed, failed };
 }
 
 /** "สรุป" in the 1:1 chat on/off for the daily push ("ปิดสรุป" / "เปิดสรุป"). */

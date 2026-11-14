@@ -9,8 +9,8 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Daily job, called by pg_cron hourly 17:00–21:00 Bangkok (supabase_daily_cron.sql).
- * Sends each teacher's "สรุปประจำวัน" once (see dailySummary.ts; later runs only
- * pick up teachers an earlier run missed) and deletes drafts never published
+ * Sends each teacher's "สรุปประจำวัน" at most once every 2 days (see dailySummary.ts;
+ * later runs only pick up teachers an earlier run missed; skipped when the quota is out) and deletes drafts never published
  * within DRAFT_RETENTION_DAYS (also swept on page loads, see dataActions.ts).
  * Accepts GET (Vercel Cron, `Authorization: Bearer $CRON_SECRET`) and POST
  * (pg_cron, `Bearer $LINE_REMINDER_CRON_SECRET`).
