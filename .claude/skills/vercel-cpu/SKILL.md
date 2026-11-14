@@ -5,7 +5,7 @@ description: Rules that keep Pudding's Vercel Fluid Active CPU quota low (proxy.
 
 # Vercel CPU rules
 
-The Hobby quota is small. Usage splits into **middleware** (`src/proxy.ts`) and **functions** (page renders + API routes). Active CPU counts busy CPU only (not waiting on Supabase/LINE), so cost = how often code runs × work per run.
+The Hobby quota is small. Vercel is the backup server: it serves `www` only while the home computer is down (see the `two-servers` skill), but any day can be a Vercel day. Usage splits into **middleware** (`src/proxy.ts`) and **functions** (page renders + API routes). Active CPU counts busy CPU only (not waiting on Supabase/LINE), so cost = how often code runs × work per run.
 
 ## 1. Proxy (`src/proxy.ts`) runs only where Clerk is needed
 
