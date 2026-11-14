@@ -133,7 +133,7 @@ src/
 │       ├── data/                       The data door (dataActions)
 │       ├── submissions/, quiz-attempts/, upload/, attendance/
 │       ├── line/webhook/               Bot: group linking, commands
-│       ├── line/reminders/             Scheduled-work cards + draft cleanup (called by pg_cron)
+│       ├── cron/daily/                 Daily summary + draft cleanup (called by pg_cron)
 │       └── admin/…                     Admin-only endpoints
 ├── components/                         UI (teacher, works/, liff/)
 ├── lib/
@@ -195,7 +195,7 @@ Set these in `.env` locally and in **Vercel → Settings → Environment Variabl
 | `NEXT_PUBLIC_LINE_LIFF_ID` (or `LINE_LIFF_ID`) | Student LIFF app id |
 | `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_CHANNEL_SECRET` | Messaging API: sending and webhook signature |
 | `LINE_BOT_BASIC_ID` | Bot id (e.g. `@xxxx`) for "add friend" links |
-| `LINE_REMINDER_CRON_SECRET` | Protects `/api/line/reminders` (also used in `supabase_reminder_cron.sql`) |
+| `LINE_REMINDER_CRON_SECRET` | Protects `/api/cron/daily` (also used in `supabase_daily_cron.sql`) |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` | File storage |
 | `R2_PUBLIC_URL`, `R2_LEGACY_PUBLIC_URLS` | Public file URLs (current and older ones still served) |
 | `ADMIN_EMAILS`, `ADMIN_USER_IDS` | Platform admins (comma-separated; verified Clerk emails or user ids) |
@@ -233,7 +233,7 @@ Set these in `.env` locally and in **Vercel → Settings → Environment Variabl
    | 18 | `supabase_remove_reminders_update.sql` | Drops the old automatic-reminder columns (run after deploying) |
    | 19 | `supabase_close_at_update.sql` | Homework "ปิดรับส่งงาน" (close time for late work) |
 
-3. Schedule the background job: edit the URL and `<CRON_SECRET>` in **`supabase_reminder_cron.sql`**, then run it. It calls `/api/line/reminders` every 5 minutes to send scheduled work's LINE card at publish time and delete expired drafts (there are no automatic deadline reminders).
+3. Schedule the daily job: edit the URL and `<CRON_SECRET>` in **`supabase_daily_cron.sql`**, then run it. It calls `/api/cron/daily` hourly 17:00–21:00 Bangkok to send each teacher's daily summary and delete expired drafts.
 4. Verify with `npm run db:verify`. `npm run db:setup` can apply the schema with a `DATABASE_URL` (Supabase pooler connection string).
 
 ---

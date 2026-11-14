@@ -15,7 +15,7 @@ Next 16 Proxy always runs on Node = a billed function per matched request. The m
   - A server page/layout that calls them must be matched for every request, prefetch included (today: `/` and `/admin/*`).
   - An API route that calls `auth()` directly (not via `getActor`) goes in the always-matched list: `/api/(admin|line/connections|line/teacher-link|classrooms/students)`. Add new ones there.
   - Prefer `getActor(request)` in new routes: with the LIFF header `x-line-access-token` it never reaches `auth()`, so LIFF calls skip the proxy.
-- Skipped on purpose: `/liff/*` pages, any `/api` request carrying `x-line-access-token`, Clerk-free routes (`line/webhook|group-response|reminders|daily-summary|share|student-link`, `liff/*`), and `next-router-prefetch` requests to teacher pages.
+- Skipped on purpose: `/liff/*` pages, any `/api` request carrying `x-line-access-token`, Clerk-free routes (`line/webhook|group-response|daily-summary|share|student-link`, `liff/*`, `cron/*`), and `next-router-prefetch` requests to teacher pages.
 - A new Clerk-free API route (webhook, cron, signed link) → add it to the negative lookahead of the `/api/((?!…).*)` entry.
 - Matcher values must be string literals (read at build time).
 
@@ -38,7 +38,7 @@ Local-only timers (clocks, countdowns, split-screen checks) are free; they don't
 
 ## 4. Cron
 
-pg_cron calls `/api/line/reminders` every 5 min (`supabase_reminder_cron.sql`). Each run must exit early when there is nothing to do (one cheap query). Don't add work to it that runs every tick.
+pg_cron calls `/api/cron/daily` hourly 17:00–21:00 Bangkok only (`supabase_daily_cron.sql`). Keep it that sparse; don't go back to a 5-minute tick. Each run must exit early when there is nothing to do.
 
 ## Before finishing
 

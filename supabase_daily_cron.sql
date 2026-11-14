@@ -1,30 +1,34 @@
 -- ==========================================
--- Pudding scheduler (path kept as /api/line/reminders)
+-- Pudding daily job: /api/cron/daily
 -- ==========================================
--- Every five minutes: deletes drafts never published and, from 17:00, sends
--- each teacher's daily summary once. (Scheduled publishing and automatic
--- deadline reminders were removed; teachers use "ทวงงาน".) Runs from Supabase
--- (pg_cron + pg_net, both available on the free plan), so it does not depend
--- on Vercel Cron limits.
+-- Hourly 17:00–21:00 Bangkok (10:00–14:00 UTC; pg_cron runs in UTC): sends
+-- each teacher's daily summary once and deletes drafts never published. The
+-- first run sends; later runs only pick up teachers an earlier run missed.
+-- Runs from Supabase (pg_cron + pg_net, both on the free plan).
 --
 -- Before running, replace:
 --   (the URL below is the production site; change it if the domain changes)
 --   <CRON_SECRET>  the value of LINE_REMINDER_CRON_SECRET in Vercel env vars
 --
--- Run in the Supabase SQL editor. Re-running replaces the job.
+-- Run in the Supabase SQL editor AFTER deploying the app with /api/cron/daily.
+-- Re-running replaces the job.
 
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS pg_net;
 
+-- The old 5-minute job that called /api/line/reminders.
 SELECT cron.unschedule('pudding-line-reminders')
 WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'pudding-line-reminders');
 
+SELECT cron.unschedule('pudding-daily')
+WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'pudding-daily');
+
 SELECT cron.schedule(
-  'pudding-line-reminders',
-  '*/5 * * * *',
+  'pudding-daily',
+  '0 10-14 * * *',
   $$
   SELECT net.http_post(
-    url := 'https://www.pudding-p.com/api/line/reminders',
+    url := 'https://www.pudding-p.com/api/cron/daily',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'Authorization', 'Bearer <CRON_SECRET>'

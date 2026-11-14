@@ -8,14 +8,12 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Run from a scheduler every five minutes (see supabase_reminder_cron.sql; the
- * path keeps its old name so the job needs no change). It deletes drafts
- * that were never published within DRAFT_RETENTION_DAYS. There are no automatic
- * deadline reminders: teachers remind with "ทวงงาน" (the picture the bot
- * answers with the reminder card and @mentions). From 17:00 it also sends
- * each teacher's "สรุปประจำวัน" once (see dailySummary.ts).
- * Accepts GET (Vercel Cron, which sends `Authorization: Bearer $CRON_SECRET`)
- * and POST (pg_cron / any external scheduler).
+ * Daily job, called by pg_cron hourly 17:00–21:00 Bangkok (supabase_daily_cron.sql).
+ * Sends each teacher's "สรุปประจำวัน" once (see dailySummary.ts; later runs only
+ * pick up teachers an earlier run missed) and deletes drafts never published
+ * within DRAFT_RETENTION_DAYS (also swept on page loads, see dataActions.ts).
+ * Accepts GET (Vercel Cron, `Authorization: Bearer $CRON_SECRET`) and POST
+ * (pg_cron, `Bearer $LINE_REMINDER_CRON_SECRET`).
  */
 export async function GET(request: NextRequest) {
   return run(request);

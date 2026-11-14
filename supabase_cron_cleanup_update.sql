@@ -1,9 +1,8 @@
 -- ==============================================================================
--- Keeps pg_cron's run history small. Every run of 'pudding-line-reminders'
--- (every 5 minutes = 288 a day) adds a row to cron.job_run_details, which is
--- never cleared on its own and slowly fills the database. This daily job keeps
--- the last 7 days (enough to check that reminders ran: see
--- supabase_reminder_cron.sql).
+-- Keeps pg_cron's run history small. Every run of 'pudding-daily' adds a row
+-- to cron.job_run_details, which is never cleared on its own and slowly fills
+-- the database. This daily job keeps the last 7 days (enough to check that the
+-- daily job ran: see supabase_daily_cron.sql).
 -- Run this in your Supabase SQL Editor. Safe to re-run.
 -- ==============================================================================
 

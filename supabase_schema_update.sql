@@ -270,8 +270,7 @@ ADD COLUMN IF NOT EXISTS is_required BOOLEAN NOT NULL DEFAULT TRUE;
 -- Scheduled assignment release
 -- ==========================================
 -- Students see (and can submit) an assignment only from publish_at.
--- NULL = published when created. The LINE "new work" message is sent by the
--- reminder cron (supabase_reminder_cron.sql) once publish_at passes.
+-- NULL = published when created. (Scheduled publishing was later removed.)
 ALTER TABLE public.assignments
 ADD COLUMN IF NOT EXISTS publish_at TIMESTAMPTZ;
 

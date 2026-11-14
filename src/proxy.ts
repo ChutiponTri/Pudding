@@ -142,7 +142,7 @@ export const config = {
     // with a LINE token so a stray LIFF call gets their 401, not Clerk's "no middleware" 500.
     "/api/(admin|line/connections|line/teacher-link|classrooms/students)(.*)",
     {
-      source: "/api/((?!line/(?:webhook|group-response|reminders|daily-summary|share|student-link)|liff/).*)",
+      source: "/api/((?!line/(?:webhook|group-response|daily-summary|share|student-link)|liff/|cron/).*)",
       missing: [{ type: "header", key: "x-line-access-token" }],
     },
   ],

@@ -15,8 +15,8 @@
 -- this. An older deployment still writes these columns when work is saved and
 -- would fail with "column does not exist".
 --
--- The 5-minute scheduler (supabase_reminder_cron.sql) stays: it still sends
--- scheduled work's card at publish time and deletes expired drafts.
+-- The scheduler stays as the daily job (supabase_daily_cron.sql): daily
+-- summary + expired draft cleanup.
 --
 -- Run this in your Supabase SQL Editor. Safe to re-run. Without CASCADE: if a
 -- view of your own uses one of these columns, Postgres stops and names it
